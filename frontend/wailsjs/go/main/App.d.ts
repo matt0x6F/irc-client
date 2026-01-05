@@ -31,6 +31,10 @@ export function GetNetworks():Promise<Array<storage.Network>>;
 
 export function GetOpenChannels(arg1:number):Promise<Array<storage.Channel>>;
 
+export function GetPrivateMessageConversations(arg1:number):Promise<Array<string>>;
+
+export function GetPrivateMessages(arg1:number,arg2:string,arg3:number):Promise<Array<storage.Message>>;
+
 export function GetServerCapabilities(arg1:number):Promise<main.ServerCapabilitiesInfo>;
 
 export function GetServers(arg1:number):Promise<Array<storage.Server>>;

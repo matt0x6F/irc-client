@@ -37,6 +37,8 @@ type IRCClient struct {
 	namesInProgress     map[string]bool // Track channels currently receiving NAMES list
 	namesMu             sync.Mutex      // Mutex for namesInProgress map
 	serverCapabilities  *ServerCapabilities // Server capabilities from ISUPPORT
+	whoisInProgress     map[string]*WhoisInfo // Track WHOIS requests in progress (key: nickname)
+	whoisMu             sync.Mutex      // Mutex for whoisInProgress map
 }
 
 // ServerCapabilities stores parsed ISUPPORT information
@@ -80,6 +82,7 @@ func NewIRCClient(network *storage.Network, eventBus *events.EventBus, storage *
 		saslCapRequested:    false,
 		saslCapAcknowledged: false,
 		namesInProgress:     make(map[string]bool),
+		whoisInProgress:     make(map[string]*WhoisInfo),
 		serverCapabilities:   &ServerCapabilities{
 			Prefix:      make(map[rune]rune),
 			PrefixString: "",
@@ -224,6 +227,59 @@ func (c *IRCClient) setupHandlers() {
 		channel := e.Params[0]
 		message := e.Params[1]
 		user := e.Nick()
+
+		// Check if this is a CTCP message (wrapped in \001)
+		if len(message) >= 2 && message[0] == '\001' && message[len(message)-1] == '\001' {
+			ctcpMessage := message[1 : len(message)-1] // Remove \001 delimiters
+			parts := strings.Fields(ctcpMessage)
+			if len(parts) > 0 {
+				ctcpCommand := strings.ToUpper(parts[0])
+				ctcpArgs := ""
+				if len(parts) > 1 {
+					ctcpArgs = strings.Join(parts[1:], " ")
+				}
+
+				// Handle CTCP requests
+				if ctcpCommand == "ACTION" {
+					// CTCP ACTION - already handled, but store as action type
+					// Determine if it's a channel or private message
+					var channelID *int64
+					if len(channel) > 0 && (channel[0] == '#' || channel[0] == '&') {
+						ch, err := c.storage.GetChannelByName(c.networkID, channel)
+						if err == nil {
+							channelID = &ch.ID
+						}
+					}
+
+					rawLine, _ := e.Line()
+					msg := storage.Message{
+						NetworkID:   c.networkID,
+						ChannelID:   channelID,
+						User:        user,
+						Message:     fmt.Sprintf("* %s %s", user, ctcpArgs),
+						MessageType: "action",
+						Timestamp:   time.Now(),
+						RawLine:     rawLine,
+					}
+					c.storage.WriteMessageSync(msg)
+				} else {
+					// Other CTCP requests - send response
+					c.handleCTCPRequest(user, ctcpCommand, ctcpArgs)
+					// Don't store CTCP requests as regular messages
+					return
+				}
+			}
+			return
+		}
+
+		// Regular PRIVMSG (not CTCP)
+		// Check if this is an echo of our own message (some servers echo back sent messages)
+		// If the sender is us and the target is our nickname, it's an echo - skip it
+		if strings.EqualFold(user, c.network.Nickname) && strings.EqualFold(channel, c.network.Nickname) {
+			// This is an echo of our own sent message - don't store it again
+			// The message was already stored when we sent it
+			return
+		}
 
 		// Determine if it's a channel or private message
 		var channelID *int64
@@ -966,6 +1022,7 @@ func (c *IRCClient) setupHandlers() {
 	})
 
 	// NOTICE messages - store in status window if not from a channel
+	// Also handle CTCP responses (CTCP replies come as NOTICE)
 	c.conn.AddCallback("NOTICE", func(e ircmsg.Message) {
 		if len(e.Params) < 2 {
 			return
@@ -974,6 +1031,34 @@ func (c *IRCClient) setupHandlers() {
 		notice := e.Params[1]
 		user := e.Nick()
 
+		// Check if this is a CTCP response (wrapped in \001)
+		if len(notice) >= 2 && notice[0] == '\001' && notice[len(notice)-1] == '\001' {
+			ctcpMessage := notice[1 : len(notice)-1] // Remove \001 delimiters
+			parts := strings.Fields(ctcpMessage)
+			if len(parts) > 0 {
+				ctcpCommand := strings.ToUpper(parts[0])
+				ctcpResponse := ""
+				if len(parts) > 1 {
+					ctcpResponse = strings.Join(parts[1:], " ")
+				}
+
+				// Store CTCP response in status window
+				rawLine, _ := e.Line()
+				statusMsg := storage.Message{
+					NetworkID:   c.networkID,
+					ChannelID:   nil, // Status window
+					User:        user,
+					Message:     fmt.Sprintf("CTCP %s reply from %s: %s", ctcpCommand, user, ctcpResponse),
+					MessageType: "ctcp",
+					Timestamp:   time.Now(),
+					RawLine:     rawLine,
+				}
+				c.storage.WriteMessage(statusMsg)
+				return
+			}
+		}
+
+		// Regular NOTICE
 		// If target is our nickname or starts with #, it's a channel notice
 		// Otherwise, it's a server notice - store in status window
 		if target == c.network.Nickname || (len(target) > 0 && target[0] != '#' && target[0] != '&') {
@@ -1008,6 +1093,165 @@ func (c *IRCClient) setupHandlers() {
 			}
 			c.storage.WriteMessage(statusMsg)
 		}
+	})
+
+	// WHOIS response handlers
+	// RPL_WHOISUSER (311) - Basic user information
+	c.conn.AddCallback("311", func(e ircmsg.Message) {
+		if len(e.Params) < 4 {
+			return
+		}
+		nickname := e.Params[1]
+		username := e.Params[2]
+		hostmask := e.Params[3]
+		realName := ""
+		if len(e.Params) >= 5 {
+			realName = e.Params[4]
+		}
+
+		c.whoisMu.Lock()
+		if c.whoisInProgress[nickname] == nil {
+			c.whoisInProgress[nickname] = &WhoisInfo{
+				Nickname: nickname,
+				Network:  c.network.Address,
+			}
+		}
+		c.whoisInProgress[nickname].Username = username
+		c.whoisInProgress[nickname].Hostmask = hostmask
+		c.whoisInProgress[nickname].RealName = realName
+		c.whoisMu.Unlock()
+	})
+
+	// RPL_WHOISSERVER (312) - Server information
+	c.conn.AddCallback("312", func(e ircmsg.Message) {
+		if len(e.Params) < 3 {
+			return
+		}
+		nickname := e.Params[1]
+		server := e.Params[2]
+		serverInfo := ""
+		if len(e.Params) >= 4 {
+			serverInfo = e.Params[3]
+		}
+
+		c.whoisMu.Lock()
+		if c.whoisInProgress[nickname] == nil {
+			c.whoisInProgress[nickname] = &WhoisInfo{
+				Nickname: nickname,
+				Network:  c.network.Address,
+			}
+		}
+		c.whoisInProgress[nickname].Server = server
+		c.whoisInProgress[nickname].ServerInfo = serverInfo
+		c.whoisMu.Unlock()
+	})
+
+	// RPL_WHOISOPERATOR (313) - Operator status
+	c.conn.AddCallback("313", func(e ircmsg.Message) {
+		if len(e.Params) < 2 {
+			return
+		}
+		nickname := e.Params[1]
+		// User is an IRC operator - we can store this in a future field if needed
+		logger.Log.Debug().Str("nickname", nickname).Msg("User is an IRC operator")
+	})
+
+	// RPL_WHOISIDLE (317) - Idle time and sign-on time
+	c.conn.AddCallback("317", func(e ircmsg.Message) {
+		if len(e.Params) < 3 {
+			return
+		}
+		nickname := e.Params[1]
+		idleSeconds := int64(0)
+		signOnTime := int64(0)
+
+		// Parse idle time (seconds)
+		if len(e.Params) >= 3 {
+			fmt.Sscanf(e.Params[2], "%d", &idleSeconds)
+		}
+		// Parse sign-on time (unix timestamp)
+		if len(e.Params) >= 4 {
+			fmt.Sscanf(e.Params[3], "%d", &signOnTime)
+		}
+
+		c.whoisMu.Lock()
+		if c.whoisInProgress[nickname] == nil {
+			c.whoisInProgress[nickname] = &WhoisInfo{
+				Nickname: nickname,
+				Network:  c.network.Address,
+			}
+		}
+		c.whoisInProgress[nickname].IdleTime = idleSeconds
+		c.whoisInProgress[nickname].SignOnTime = signOnTime
+		c.whoisMu.Unlock()
+	})
+
+	// RPL_ENDOFWHOIS (318) - End of WHOIS
+	c.conn.AddCallback("318", func(e ircmsg.Message) {
+		if len(e.Params) < 2 {
+			return
+		}
+		nickname := e.Params[1]
+
+		c.whoisMu.Lock()
+		whoisInfo := c.whoisInProgress[nickname]
+		delete(c.whoisInProgress, nickname)
+		c.whoisMu.Unlock()
+
+		if whoisInfo != nil {
+			// Emit WHOIS event with complete information
+			c.eventBus.Emit(events.Event{
+				Type: EventWhoisReceived,
+				Data: map[string]interface{}{
+					"network":   c.network.Address,
+					"networkId": c.networkID,
+					"whois":     whoisInfo,
+				},
+				Timestamp: time.Now(),
+				Source:    events.EventSourceIRC,
+			})
+		}
+	})
+
+	// RPL_WHOISCHANNELS (319) - Channels user is in
+	c.conn.AddCallback("319", func(e ircmsg.Message) {
+		if len(e.Params) < 3 {
+			return
+		}
+		nickname := e.Params[1]
+		channelsStr := e.Params[2]
+
+		// Parse channels (space-separated list)
+		channels := strings.Fields(channelsStr)
+
+		c.whoisMu.Lock()
+		if c.whoisInProgress[nickname] == nil {
+			c.whoisInProgress[nickname] = &WhoisInfo{
+				Nickname: nickname,
+				Network:  c.network.Address,
+			}
+		}
+		c.whoisInProgress[nickname].Channels = channels
+		c.whoisMu.Unlock()
+	})
+
+	// RPL_WHOISACCOUNT (330) - Account name (if logged in)
+	c.conn.AddCallback("330", func(e ircmsg.Message) {
+		if len(e.Params) < 3 {
+			return
+		}
+		nickname := e.Params[1]
+		accountName := e.Params[2]
+
+		c.whoisMu.Lock()
+		if c.whoisInProgress[nickname] == nil {
+			c.whoisInProgress[nickname] = &WhoisInfo{
+				Nickname: nickname,
+				Network:  c.network.Address,
+			}
+		}
+		c.whoisInProgress[nickname].AccountName = accountName
+		c.whoisMu.Unlock()
 	})
 
 	// ISUPPORT (005) - Server capabilities
@@ -1666,4 +1910,81 @@ func (c *IRCClient) GetServerCapabilities() *ServerCapabilities {
 	}
 
 	return cap
+}
+
+// handleCTCPRequest handles incoming CTCP requests and sends appropriate responses
+func (c *IRCClient) handleCTCPRequest(from, command, args string) {
+	c.mu.RLock()
+	connected := c.connected
+	c.mu.RUnlock()
+
+	if !connected {
+		return
+	}
+
+	var response string
+	switch command {
+	case "VERSION":
+		response = fmt.Sprintf("Cascade IRC Client v1.0.0")
+	case "TIME":
+		response = time.Now().Format(time.RFC1123Z)
+	case "PING":
+		// Echo back the ping argument or use current timestamp
+		if args != "" {
+			response = args
+		} else {
+			response = fmt.Sprintf("%d", time.Now().Unix())
+		}
+	case "CLIENTINFO":
+		response = "ACTION CLIENTINFO PING TIME VERSION"
+	default:
+		// Unknown CTCP command - don't respond
+		return
+	}
+
+	// Send CTCP response as NOTICE with \001 delimiters
+	ctcpResponse := fmt.Sprintf("\001%s %s\001", command, response)
+	c.conn.Notice(from, ctcpResponse)
+
+	// Log the CTCP request
+	logger.Log.Debug().
+		Str("from", from).
+		Str("command", command).
+		Str("response", response).
+		Msg("Handled CTCP request")
+}
+
+// SendCTCPRequest sends a CTCP request to a target
+func (c *IRCClient) SendCTCPRequest(target, command, args string) error {
+	c.mu.RLock()
+	if !c.connected {
+		c.mu.RUnlock()
+		return fmt.Errorf("not connected")
+	}
+	c.mu.RUnlock()
+
+	var ctcpMessage string
+	if args != "" {
+		ctcpMessage = fmt.Sprintf("\001%s %s\001", command, args)
+	} else {
+		ctcpMessage = fmt.Sprintf("\001%s\001", command)
+	}
+
+	if err := c.conn.Privmsg(target, ctcpMessage); err != nil {
+		return fmt.Errorf("failed to send CTCP request: %w", err)
+	}
+
+	// Store CTCP request in status window
+	statusMsg := storage.Message{
+		NetworkID:   c.networkID,
+		ChannelID:   nil,
+		User:        c.network.Nickname,
+		Message:     fmt.Sprintf("CTCP %s sent to %s", command, target),
+		MessageType: "ctcp",
+		Timestamp:   time.Now(),
+		RawLine:     "",
+	}
+	c.storage.WriteMessage(statusMsg)
+
+	return nil
 }

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { GetChannelInfo } from '../../wailsjs/go/main/App';
 import { main, storage } from '../../wailsjs/go/models';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
+import { UserInfo } from './user-info';
 
 interface ChannelInfoProps {
   networkId: number | null;
@@ -20,6 +21,7 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
   const [channelInfo, setChannelInfo] = useState<main.ChannelInfo | null>(null);
   const [loading, setLoading] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null);
+  const [showUserInfo, setShowUserInfo] = useState<{ nickname: string } | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
   // Use refs to avoid stale closures in event listener
   const networkIdRef = useRef<number | null>(networkId);
@@ -519,6 +521,7 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
           style={{
             left: `${contextMenu.x}px`,
             top: `${contextMenu.y}px`,
+            backgroundColor: 'var(--background)',
           }}
           onClick={(e) => e.stopPropagation()}
         >
@@ -627,8 +630,79 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
                 Cannot operate on yourself
               </div>
             )}
+
+            {/* User Info & CTCP options - available for all users */}
+            <div className="border-t border-border my-1" />
+            <button
+              className="w-full text-left px-4 py-2 text-sm hover:bg-accent text-foreground"
+              onClick={() => {
+                if (contextMenu.user) {
+                  setShowUserInfo({ nickname: contextMenu.user.nickname });
+                  setContextMenu(null);
+                }
+              }}
+            >
+              Whois
+            </button>
+            <div className="border-t border-border my-1" />
+            <div className="px-4 py-1 text-xs font-semibold text-muted-foreground uppercase">
+              CTCP
+            </div>
+            <button
+              className="w-full text-left px-4 py-2 text-sm hover:bg-accent text-foreground"
+              onClick={() => {
+                if (contextMenu.user && networkId !== null) {
+                  onSendCommand(`/version ${contextMenu.user.nickname}`);
+                  setContextMenu(null);
+                }
+              }}
+            >
+              CTCP Version
+            </button>
+            <button
+              className="w-full text-left px-4 py-2 text-sm hover:bg-accent text-foreground"
+              onClick={() => {
+                if (contextMenu.user && networkId !== null) {
+                  onSendCommand(`/time ${contextMenu.user.nickname}`);
+                  setContextMenu(null);
+                }
+              }}
+            >
+              CTCP Time
+            </button>
+            <button
+              className="w-full text-left px-4 py-2 text-sm hover:bg-accent text-foreground"
+              onClick={() => {
+                if (contextMenu.user && networkId !== null) {
+                  onSendCommand(`/ping ${contextMenu.user.nickname}`);
+                  setContextMenu(null);
+                }
+              }}
+            >
+              CTCP Ping
+            </button>
+            <button
+              className="w-full text-left px-4 py-2 text-sm hover:bg-accent text-foreground"
+              onClick={() => {
+                if (contextMenu.user && networkId !== null) {
+                  onSendCommand(`/clientinfo ${contextMenu.user.nickname}`);
+                  setContextMenu(null);
+                }
+              }}
+            >
+              CTCP ClientInfo
+            </button>
           </div>
         </div>
+      )}
+
+      {/* User Info Panel */}
+      {showUserInfo && (
+        <UserInfo
+          networkId={networkId}
+          nickname={showUserInfo.nickname}
+          onClose={() => setShowUserInfo(null)}
+        />
       )}
     </div>
   );

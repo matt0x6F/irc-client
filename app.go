@@ -93,6 +93,8 @@ func NewApp() (*App, error) {
 	eventBus.Subscribe(irc.EventUserQuit, app)
 	eventBus.Subscribe(irc.EventUserKicked, app)
 	eventBus.Subscribe(irc.EventUserNick, app)
+	// Subscribe to WHOIS events
+	eventBus.Subscribe(irc.EventWhoisReceived, app)
 
 	// Start processing plugin actions
 	go app.processPluginActions()
@@ -429,7 +431,7 @@ func (a *App) OnEvent(event events.Event) {
 				}
 			}
 		}
-		
+
 		// Forward channels changed event to frontend
 		runtime.EventsEmit(a.ctx, "channels-changed", map[string]interface{}{
 			"networkId": networkID,
@@ -447,6 +449,15 @@ func (a *App) OnEvent(event events.Event) {
 		// Forward to frontend via Wails events
 		// Convert timestamp to ISO string for JSON serialization
 		runtime.EventsEmit(a.ctx, "message-event", map[string]interface{}{
+			"type":      event.Type,
+			"data":      event.Data,
+			"timestamp": event.Timestamp.Format(time.RFC3339),
+		})
+	}
+
+	// Forward WHOIS events to frontend
+	if event.Type == irc.EventWhoisReceived {
+		runtime.EventsEmit(a.ctx, "whois-event", map[string]interface{}{
 			"type":      event.Type,
 			"data":      event.Data,
 			"timestamp": event.Timestamp.Format(time.RFC3339),
@@ -1118,6 +1129,50 @@ func (a *App) SendCommand(networkID int64, command string) error {
 			}
 			// Send CTCP ACTION: PRIVMSG target :\001ACTION text\001
 			return client.SendRawCommand(fmt.Sprintf("PRIVMSG %s :\001ACTION %s\001", target, actionText))
+		case "CTCP":
+			// /ctcp target command [args] - sends CTCP request
+			if len(parts) < 3 {
+				return fmt.Errorf("usage: /ctcp target command [args]")
+			}
+			target := parts[1]
+			ctcpCommand := strings.ToUpper(parts[2])
+			ctcpArgs := ""
+			if len(parts) > 3 {
+				ctcpArgs = strings.Join(parts[3:], " ")
+			}
+			return client.SendCTCPRequest(target, ctcpCommand, ctcpArgs)
+		case "VERSION":
+			// /version target - sends CTCP VERSION request
+			if len(parts) < 2 {
+				return fmt.Errorf("usage: /version target")
+			}
+			target := parts[1]
+			return client.SendCTCPRequest(target, "VERSION", "")
+		case "TIME":
+			// /time target - sends CTCP TIME request
+			if len(parts) < 2 {
+				return fmt.Errorf("usage: /time target")
+			}
+			target := parts[1]
+			return client.SendCTCPRequest(target, "TIME", "")
+		case "PING":
+			// /ping target [args] - sends CTCP PING request
+			if len(parts) < 2 {
+				return fmt.Errorf("usage: /ping target [args]")
+			}
+			target := parts[1]
+			pingArgs := ""
+			if len(parts) > 2 {
+				pingArgs = strings.Join(parts[2:], " ")
+			}
+			return client.SendCTCPRequest(target, "PING", pingArgs)
+		case "CLIENTINFO":
+			// /clientinfo target - sends CTCP CLIENTINFO request
+			if len(parts) < 2 {
+				return fmt.Errorf("usage: /clientinfo target")
+			}
+			target := parts[1]
+			return client.SendCTCPRequest(target, "CLIENTINFO", "")
 		case "TOPIC":
 			if len(parts) < 2 {
 				return fmt.Errorf("usage: /topic #channel [new topic]")
@@ -1296,6 +1351,28 @@ func (a *App) GetMessages(networkID int64, channelID *int64, limit int) ([]stora
 	return a.storage.GetMessages(networkID, channelID, limit)
 }
 
+// GetPrivateMessages retrieves private messages for a network and user
+func (a *App) GetPrivateMessages(networkID int64, targetUser string, limit int) ([]storage.Message, error) {
+	// Get the current user's nickname from the network
+	network, err := a.storage.GetNetwork(networkID)
+	if err != nil {
+		return nil, fmt.Errorf("network not found: %w", err)
+	}
+	currentUser := network.Nickname
+	return a.storage.GetPrivateMessages(networkID, targetUser, currentUser, limit)
+}
+
+// GetPrivateMessageConversations retrieves a list of users with private message conversations
+func (a *App) GetPrivateMessageConversations(networkID int64) ([]string, error) {
+	// Get the current user's nickname from the network
+	network, err := a.storage.GetNetwork(networkID)
+	if err != nil {
+		return nil, fmt.Errorf("network not found: %w", err)
+	}
+	currentUser := network.Nickname
+	return a.storage.GetPrivateMessageConversations(networkID, currentUser)
+}
+
 // GetConnectionStatus returns whether a network is connected
 func (a *App) GetConnectionStatus(networkID int64) (bool, error) {
 	a.mu.RLock()
@@ -1361,12 +1438,12 @@ func (a *App) GetJoinedChannels(networkID int64) ([]storage.Channel, error) {
 	if err != nil {
 		return nil, fmt.Errorf("network not found: %w", err)
 	}
-	
+
 	if network.Nickname == "" {
 		// No nickname set, return empty list
 		return []storage.Channel{}, nil
 	}
-	
+
 	return a.storage.GetJoinedChannels(networkID, network.Nickname)
 }
 
@@ -1377,12 +1454,12 @@ func (a *App) GetOpenChannels(networkID int64) ([]storage.Channel, error) {
 	if err != nil {
 		return nil, fmt.Errorf("network not found: %w", err)
 	}
-	
+
 	if network.Nickname == "" {
 		// No nickname set, return channels that are open
 		return a.storage.GetChannels(networkID)
 	}
-	
+
 	return a.storage.GetOpenChannels(networkID, network.Nickname)
 }
 
@@ -1392,7 +1469,7 @@ func (a *App) SetChannelOpen(networkID int64, channelName string, isOpen bool) e
 	if err != nil {
 		return fmt.Errorf("channel not found: %w", err)
 	}
-	
+
 	return a.storage.UpdateChannelIsOpen(channel.ID, isOpen)
 }
 
@@ -1407,16 +1484,16 @@ func (a *App) GetChannelIDByName(networkID int64, channelName string) (*int64, e
 
 // ChannelInfo represents channel information with users
 type ChannelInfo struct {
-	Channel    *storage.Channel       `json:"channel"`
-	Users      []storage.ChannelUser  `json:"users"`
+	Channel      *storage.Channel        `json:"channel"`
+	Users        []storage.ChannelUser   `json:"users"`
 	Capabilities *ServerCapabilitiesInfo `json:"capabilities,omitempty"`
 }
 
 // ServerCapabilitiesInfo represents server capabilities for frontend
 type ServerCapabilitiesInfo struct {
-	Prefix      map[string]string `json:"prefix"`       // Map prefix char to mode char (e.g., "@" -> "o", "+" -> "v")
-	PrefixString string           `json:"prefix_string"` // Raw PREFIX string
-	ChanModes   string           `json:"chanmodes"`     // Raw CHANMODES string
+	Prefix       map[string]string `json:"prefix"`        // Map prefix char to mode char (e.g., "@" -> "o", "+" -> "v")
+	PrefixString string            `json:"prefix_string"` // Raw PREFIX string
+	ChanModes    string            `json:"chanmodes"`     // Raw CHANMODES string
 }
 
 // GetChannelInfo retrieves channel information including topic and users
@@ -1448,8 +1525,8 @@ func (a *App) GetChannelInfo(networkID int64, channelName string) (*ChannelInfo,
 	capabilities, _ := a.GetServerCapabilities(networkID)
 
 	return &ChannelInfo{
-		Channel:     channel,
-		Users:       users,
+		Channel:      channel,
+		Users:        users,
 		Capabilities: capabilities,
 	}, nil
 }
@@ -1462,9 +1539,9 @@ func (a *App) GetServerCapabilities(networkID int64) (*ServerCapabilitiesInfo, e
 
 	if !exists {
 		return &ServerCapabilitiesInfo{
-			Prefix:      make(map[string]string),
+			Prefix:       make(map[string]string),
 			PrefixString: "",
-			ChanModes:   "",
+			ChanModes:    "",
 		}, nil
 	}
 
@@ -1477,9 +1554,9 @@ func (a *App) GetServerCapabilities(networkID int64) (*ServerCapabilitiesInfo, e
 	}
 
 	return &ServerCapabilitiesInfo{
-		Prefix:      prefixMap,
+		Prefix:       prefixMap,
 		PrefixString: cap.PrefixString,
-		ChanModes:   cap.ChanModes,
+		ChanModes:    cap.ChanModes,
 	}, nil
 }
 

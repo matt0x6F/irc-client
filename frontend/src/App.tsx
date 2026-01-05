@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { ConnectNetwork, GetNetworks, SendMessage, SendCommand, GetMessages, ListPlugins, GetConnectionStatus, DisconnectNetwork, DeleteNetwork, GetServers, GetChannelIDByName, GetChannelInfo, SetChannelOpen } from '../wailsjs/go/main/App';
+import { ConnectNetwork, GetNetworks, SendMessage, SendCommand, GetMessages, ListPlugins, GetConnectionStatus, DisconnectNetwork, DeleteNetwork, GetServers, GetChannelIDByName, GetChannelInfo, SetChannelOpen, GetPrivateMessages, GetPrivateMessageConversations } from '../wailsjs/go/main/App';
 import { main, storage } from '../wailsjs/go/models';
 import { EventsOn } from '../wailsjs/runtime/runtime';
 import { ServerTree } from './components/server-tree';
@@ -9,6 +9,7 @@ import { SettingsModal } from './components/settings-modal';
 import { ChannelInfo } from './components/channel-info';
 import { TopicEditModal } from './components/topic-edit-modal';
 import { ModeEditModal } from './components/mode-edit-modal';
+import { UserInfo } from './components/user-info';
 
 function App() {
   const [networks, setNetworks] = useState<storage.Network[]>([]);
@@ -20,6 +21,7 @@ function App() {
   const [channelInfo, setChannelInfo] = useState<main.ChannelInfo | null>(null);
   const [showTopicModal, setShowTopicModal] = useState(false);
   const [showModeModal, setShowModeModal] = useState(false);
+  const [showUserInfo, setShowUserInfo] = useState<{ networkId: number; nickname: string } | null>(null);
   const pendingJoinChannelRef = useRef<{ networkId: number; channel: string } | null>(null);
   // Track channels with unread activity (key: `${networkId}:${channelName}`)
   const [channelsWithActivity, setChannelsWithActivity] = useState<Set<string>>(new Set());
@@ -77,18 +79,27 @@ function App() {
     if (selectedNetwork === null) return;
     try {
       // If selectedChannel is "status" (string), pass null to get status messages
+      // If selectedChannel starts with "pm:", it's a private message conversation
       // Otherwise, look up channel ID by name
       let channelId: number | null = null;
       if (selectedChannel !== 'status' && selectedChannel !== null) {
-        try {
-          const id = await GetChannelIDByName(selectedNetwork, selectedChannel);
-          // GetChannelIDByName returns a number (the channel ID) or throws if not found
-          channelId = id as number;
-        } catch (error) {
-          console.error('Failed to get channel ID:', error);
-          // If channel not found, show empty messages
-          setMessages([]);
+        if (selectedChannel.startsWith('pm:')) {
+          // Private message conversation
+          const user = selectedChannel.substring(3); // Remove "pm:" prefix
+          const msgs = await GetPrivateMessages(selectedNetwork, user, 100);
+          setMessages(msgs || []);
           return;
+        } else {
+          try {
+            const id = await GetChannelIDByName(selectedNetwork, selectedChannel);
+            // GetChannelIDByName returns a number (the channel ID) or throws if not found
+            channelId = id as number;
+          } catch (error) {
+            console.error('Failed to get channel ID:', error);
+            // If channel not found, show empty messages
+            setMessages([]);
+            return;
+          }
         }
       }
       const msgs = await GetMessages(selectedNetwork, channelId, 100);
@@ -160,17 +171,41 @@ function App() {
       const network = eventData.network;
       const target = eventData.target || eventData.channel;
       
-      // Track activity for channels that aren't currently focused
+      // Track activity for channels and PM conversations that aren't currently focused
       if (eventType === 'message.received' || eventType === 'message.sent') {
         // Find the network by address
         const networkObj = networks.find(n => n.address === network);
         if (networkObj && target && target !== 'status') {
-          // Check if this channel is currently focused
-          const isFocused = selectedNetwork === networkObj.id && selectedChannel === target;
-          if (!isFocused) {
-            // Mark this channel as having activity
-            const activityKey = `${networkObj.id}:${target}`;
-            setChannelsWithActivity(prev => new Set(prev).add(activityKey));
+          // Check if target is a channel (starts with # or &) or a user (PM)
+          const isChannel = target.startsWith('#') || target.startsWith('&');
+          
+          // For received PMs, the target is your nickname, but we need the sender's nickname
+          // For sent PMs, the target is the recipient's nickname
+          let pmUser: string | null = null;
+          if (!isChannel) {
+            if (eventType === 'message.received') {
+              // For received PMs, use the sender (user field) as the PM conversation key
+              pmUser = eventData.user || null;
+            } else if (eventType === 'message.sent') {
+              // For sent PMs, the target is the recipient
+              pmUser = target;
+            }
+          }
+          
+          const pmKey = pmUser ? `pm:${pmUser}` : null;
+          const activityKey = isChannel 
+            ? `${networkObj.id}:${target}` 
+            : pmKey ? `${networkObj.id}:${pmKey}` : null;
+          
+          if (activityKey) {
+            // Check if this channel/PM is currently focused
+            const isFocused = selectedNetwork === networkObj.id && 
+              (isChannel ? selectedChannel === target : selectedChannel === pmKey);
+            
+            if (!isFocused) {
+              // Mark this channel/PM as having activity
+              setChannelsWithActivity(prev => new Set(prev).add(activityKey));
+            }
           }
         }
       }
@@ -418,6 +453,22 @@ function App() {
   const handleSendMessage = async (message: string) => {
     if (selectedNetwork === null || selectedChannel === null) return;
     
+    // Check if this is a private message conversation
+    if (selectedChannel.startsWith('pm:')) {
+      const user = selectedChannel.substring(3); // Remove "pm:" prefix
+      // Send message to user
+      try {
+        await SendMessage(selectedNetwork, user, message);
+        // Refresh messages after sending
+        setTimeout(() => {
+          loadMessages();
+        }, 100);
+      } catch (error) {
+        console.error('Failed to send private message:', error);
+      }
+      return;
+    }
+    
     // Check if this is a slash command - if so, route to SendCommand regardless of channel
     const trimmedMessage = message.trim();
     if (trimmedMessage.startsWith('/')) {
@@ -606,6 +657,7 @@ function App() {
           selectedChannel={selectedChannel}
           onSelectServer={setSelectedNetwork}
           channelsWithActivity={channelsWithActivity}
+          onShowUserInfo={(networkId, nickname) => setShowUserInfo({ networkId, nickname })}
           onSelectChannel={async (networkId, channel) => {
             // When switching channels, update the state of the previous and new channels
             if (selectedNetwork !== null && selectedChannel !== null && selectedChannel !== 'status') {
@@ -660,8 +712,11 @@ function App() {
                   <span className={`w-2 h-2 rounded-full ${
                     connectionStatus[selectedNetwork] ? 'bg-green-500' : 'bg-gray-400'
                   }`} title={connectionStatus[selectedNetwork] ? 'Connected' : 'Disconnected'} />
-                  {selectedChannel && selectedChannel !== 'status' && (
+                  {selectedChannel && selectedChannel !== 'status' && !selectedChannel.startsWith('pm:') && (
                     <span className="ml-2 text-muted-foreground">#{selectedChannel}</span>
+                  )}
+                  {selectedChannel && selectedChannel.startsWith('pm:') && (
+                    <span className="ml-2 text-muted-foreground">PM: {selectedChannel.substring(3)}</span>
                   )}
                   {selectedChannel === 'status' && (
                     <span className="ml-2 text-muted-foreground">Status</span>
@@ -670,7 +725,7 @@ function App() {
               )}
             </div>
           </div>
-          {selectedChannel && selectedChannel !== 'status' && channelInfo?.channel && (
+          {selectedChannel && selectedChannel !== 'status' && !selectedChannel.startsWith('pm:') && channelInfo?.channel && (
             <div className="px-4 pb-2 flex items-center gap-4 text-sm">
               {channelInfo.channel.modes && (
                 <button
@@ -705,17 +760,28 @@ function App() {
             )}
           </div>
 
-          {/* Channel Info Sidebar */}
-          <ChannelInfo 
-            networkId={selectedNetwork} 
-            channelName={selectedChannel}
-            currentNickname={selectedNetwork !== null ? networks.find(n => n.id === selectedNetwork)?.nickname || null : null}
-            onSendCommand={async (command: string) => {
-              if (selectedNetwork !== null) {
-                await SendCommand(selectedNetwork, command);
-              }
-            }}
-          />
+          {/* Channel Info Sidebar - only show for channels, not PMs or status */}
+          {selectedChannel && selectedChannel !== 'status' && !selectedChannel.startsWith('pm:') && (
+            <ChannelInfo 
+              networkId={selectedNetwork} 
+              channelName={selectedChannel}
+              currentNickname={selectedNetwork !== null ? networks.find(n => n.id === selectedNetwork)?.nickname || null : null}
+              onSendCommand={async (command: string) => {
+                if (selectedNetwork !== null) {
+                  await SendCommand(selectedNetwork, command);
+                }
+              }}
+            />
+          )}
+
+          {/* User Info Panel - show when user info is requested */}
+          {showUserInfo && (
+            <UserInfo
+              networkId={showUserInfo.networkId}
+              nickname={showUserInfo.nickname}
+              onClose={() => setShowUserInfo(null)}
+            />
+          )}
         </div>
 
         {/* Input Area */}

@@ -284,6 +284,55 @@ func (s *Storage) GetMessages(networkID int64, channelID *int64, limit int) ([]M
 	return messages, nil
 }
 
+// GetPrivateMessages retrieves private messages for a network and user
+// Private messages have channel_id IS NULL and user != '*'
+// Returns both messages FROM the target user (received) and messages TO the target user (sent by currentUser)
+func (s *Storage) GetPrivateMessages(networkID int64, targetUser string, currentUser string, limit int) ([]Message, error) {
+	var messages []Message
+	// Get messages FROM targetUser (received) OR messages TO targetUser sent by currentUser (sent)
+	// For sent messages, we check the raw_line to identify the target
+	err := s.db.Select(&messages,
+		`SELECT * FROM messages 
+		 WHERE network_id = ? AND channel_id IS NULL AND message_type IN ('privmsg', 'action')
+		 AND (
+		   user = ? OR 
+		   (user = ? AND raw_line LIKE ?)
+		 )
+		 ORDER BY timestamp DESC 
+		 LIMIT ?`,
+		networkID, targetUser, currentUser, fmt.Sprintf("PRIVMSG %s%%", targetUser), limit)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get private messages: %w", err)
+	}
+
+	// Reverse to get chronological order
+	for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {
+		messages[i], messages[j] = messages[j], messages[i]
+	}
+
+	return messages, nil
+}
+
+// GetPrivateMessageConversations retrieves a list of users with whom we have private message conversations
+// Excludes the current user's own nickname (only shows conversations with other people)
+func (s *Storage) GetPrivateMessageConversations(networkID int64, currentUser string) ([]string, error) {
+	var users []string
+	err := s.db.Select(&users,
+		`SELECT user 
+		 FROM messages 
+		 WHERE network_id = ? AND channel_id IS NULL AND user != '*' AND user != ? AND message_type IN ('privmsg', 'action')
+		 GROUP BY user
+		 ORDER BY MAX(timestamp) DESC`,
+		networkID, currentUser)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get private message conversations: %w", err)
+	}
+
+	return users, nil
+}
+
 // CreateNetwork creates a new network configuration
 func (s *Storage) CreateNetwork(network *Network) error {
 	query := `INSERT INTO networks (name, address, port, tls, nickname, username, realname, password, sasl_enabled, sasl_mechanism, sasl_username, sasl_password, sasl_external_cert, auto_connect, created_at, updated_at)

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { main, storage } from '../../wailsjs/go/models';
-import { GetChannels, GetJoinedChannels, GetOpenChannels, GetServers, LeaveChannel, ToggleChannelAutoJoin, ToggleNetworkAutoConnect, SetChannelOpen } from '../../wailsjs/go/main/App';
+import { GetChannels, GetJoinedChannels, GetOpenChannels, GetServers, LeaveChannel, ToggleChannelAutoJoin, ToggleNetworkAutoConnect, SetChannelOpen, GetPrivateMessageConversations, SendCommand } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 
 type Channel = storage.Channel;
@@ -16,14 +16,16 @@ interface ServerTreeProps {
   onDelete: (id: number) => Promise<void>;
   connectionStatus: Record<number, boolean>;
   channelsWithActivity: Set<string>;
+  onShowUserInfo: (networkId: number, nickname: string) => void;
 }
 
 interface ContextMenu {
   x: number;
   y: number;
-  type: 'server' | 'channel' | null;
+  type: 'server' | 'channel' | 'pm' | null;
   serverId?: number;
   channel?: string;
+  user?: string; // For PM context menu
 }
 
 export function ServerTree({
@@ -37,17 +39,19 @@ export function ServerTree({
   onDelete,
   connectionStatus,
   channelsWithActivity,
+  onShowUserInfo,
 }: ServerTreeProps) {
   const [expandedServers, setExpandedServers] = useState<Set<number>>(new Set());
   const [channels, setChannels] = useState<Record<number, string[]>>({});
   const [channelData, setChannelData] = useState<Record<number, Record<string, Channel>>>({});
+  const [pmConversations, setPmConversations] = useState<Record<number, string[]>>({});
   const [contextMenu, setContextMenu] = useState<ContextMenu>({ x: 0, y: 0, type: null });
   const [contextMenuChannelData, setContextMenuChannelData] = useState<Channel | null>(null);
   const [contextMenuNetworkData, setContextMenuNetworkData] = useState<storage.Network | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<{ serverId: number; serverName: string } | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
 
-  // Load channels for expanded networks
+  // Load channels and PM conversations for expanded networks
   useEffect(() => {
     expandedServers.forEach(async (networkId) => {
       // Always reload channels when network is expanded to ensure we have the latest data
@@ -76,6 +80,28 @@ export function ServerTree({
       } catch (error) {
         console.error('Failed to load channels:', error);
         setChannels(prev => ({
+          ...prev,
+          [networkId]: [],
+        }));
+      }
+
+      // Load PM conversations
+      try {
+        const pmList = await GetPrivateMessageConversations(networkId);
+        if (pmList && Array.isArray(pmList)) {
+          setPmConversations(prev => ({
+            ...prev,
+            [networkId]: pmList,
+          }));
+        } else {
+          setPmConversations(prev => ({
+            ...prev,
+            [networkId]: [],
+          }));
+        }
+      } catch (error) {
+        console.error('Failed to load PM conversations:', error);
+        setPmConversations(prev => ({
           ...prev,
           [networkId]: [],
         }));
@@ -179,7 +205,7 @@ export function ServerTree({
     });
   };
 
-  const handleContextMenu = async (e: React.MouseEvent, type: 'server' | 'channel', serverId?: number, channel?: string) => {
+  const handleContextMenu = async (e: React.MouseEvent, type: 'server' | 'channel' | 'pm', serverId?: number, channel?: string, user?: string) => {
     e.preventDefault();
     e.stopPropagation();
     // Prevent text selection
@@ -216,6 +242,7 @@ export function ServerTree({
       type,
       serverId,
       channel,
+      user,
     });
   };
 
@@ -229,6 +256,27 @@ export function ServerTree({
     onSelectServer(networkId);
     onSelectChannel(networkId, channel);
   };
+
+  // Refresh PM conversations when channels change event is received
+  useEffect(() => {
+    const unsubscribe = EventsOn('channels-changed', async (data: any) => {
+      const networkId = data?.networkId;
+      if (networkId && expandedServers.has(networkId)) {
+        try {
+          const pmList = await GetPrivateMessageConversations(networkId);
+          if (pmList && Array.isArray(pmList)) {
+            setPmConversations(prev => ({
+              ...prev,
+              [networkId]: pmList,
+            }));
+          }
+        } catch (error) {
+          console.error('Failed to refresh PM conversations:', error);
+        }
+      }
+    });
+    return () => unsubscribe();
+  }, [expandedServers]);
 
   return (
     <div className="h-full flex flex-col relative">
@@ -309,6 +357,39 @@ export function ServerTree({
                           </div>
                         );
                       })}
+                      {/* Private Message conversations */}
+                      {(pmConversations[network.id] || []).length > 0 && (
+                        <>
+                          <div className="px-2 py-1 text-xs font-semibold text-muted-foreground uppercase">
+                            Private Messages
+                          </div>
+                          {(pmConversations[network.id] || []).map((user) => {
+                            const pmKey = `pm:${user}`;
+                            const activityKey = `${network.id}:${pmKey}`;
+                            const hasActivity = channelsWithActivity.has(activityKey);
+                            return (
+                              <div
+                                key={pmKey}
+                                className={`p-2 cursor-pointer hover:bg-accent select-none flex items-center justify-between ${
+                                  isSelected && selectedChannel === pmKey ? 'bg-accent border-l-2 border-primary' : ''
+                                }`}
+                                onClick={() => handleChannelClick(network.id, pmKey)}
+                                onContextMenu={(e) => handleContextMenu(e, 'pm', network.id, undefined, user)}
+                                onMouseDown={(e) => {
+                                  if (e.button === 2) {
+                                    e.preventDefault();
+                                  }
+                                }}
+                              >
+                                <span className={`text-sm ${hasActivity ? 'font-semibold' : ''}`}>💬 {user}</span>
+                                {hasActivity && (
+                                  <span className="w-2 h-2 rounded-full bg-primary ml-2" title="Unread activity" />
+                                )}
+                              </div>
+                            );
+                          })}
+                        </>
+                      )}
                     </div>
                   )}
                 </div>
@@ -326,12 +407,14 @@ export function ServerTree({
       {contextMenu.type && (
         <div
           ref={contextMenuRef}
-          className="fixed border border-border rounded shadow-lg z-50 min-w-[150px] py-1"
+          className="fixed border border-border rounded shadow-lg z-50 w-auto py-1"
           style={{ 
             left: contextMenu.x, 
             top: contextMenu.y,
             backgroundColor: 'var(--background)',
             backdropFilter: 'blur(8px)',
+            minWidth: '140px',
+            maxWidth: '200px',
           }}
         >
           {contextMenu.type === 'server' && contextMenu.serverId && (
@@ -561,6 +644,88 @@ export function ServerTree({
                 }}
               >
                 Leave Channel
+              </button>
+            </>
+          )}
+          {contextMenu.type === 'pm' && contextMenu.serverId && contextMenu.user && (
+            <>
+              <div className="px-2 py-1 text-xs font-semibold text-muted-foreground uppercase">
+                Private Message
+              </div>
+              <button
+                className="w-full text-left px-4 py-2 text-sm hover:bg-accent text-foreground"
+                onClick={() => {
+                  if (contextMenu.serverId && contextMenu.user) {
+                    onShowUserInfo(contextMenu.serverId, contextMenu.user);
+                    setContextMenu({ x: 0, y: 0, type: null });
+                  }
+                }}
+              >
+                Whois
+              </button>
+              <div className="border-t border-border my-1" />
+              <div className="px-4 py-1 text-xs font-semibold text-muted-foreground uppercase">
+                CTCP
+              </div>
+              <button
+                className="w-full text-left px-4 py-2 text-sm hover:bg-accent text-foreground"
+                onClick={async () => {
+                  if (contextMenu.serverId && contextMenu.user) {
+                    try {
+                      await SendCommand(contextMenu.serverId, `/version ${contextMenu.user}`);
+                    } catch (error) {
+                      console.error('Failed to send CTCP VERSION:', error);
+                    }
+                    setContextMenu({ x: 0, y: 0, type: null });
+                  }
+                }}
+              >
+                CTCP Version
+              </button>
+              <button
+                className="w-full text-left px-4 py-2 text-sm hover:bg-accent text-foreground"
+                onClick={async () => {
+                  if (contextMenu.serverId && contextMenu.user) {
+                    try {
+                      await SendCommand(contextMenu.serverId, `/time ${contextMenu.user}`);
+                    } catch (error) {
+                      console.error('Failed to send CTCP TIME:', error);
+                    }
+                    setContextMenu({ x: 0, y: 0, type: null });
+                  }
+                }}
+              >
+                CTCP Time
+              </button>
+              <button
+                className="w-full text-left px-4 py-2 text-sm hover:bg-accent text-foreground"
+                onClick={async () => {
+                  if (contextMenu.serverId && contextMenu.user) {
+                    try {
+                      await SendCommand(contextMenu.serverId, `/ping ${contextMenu.user}`);
+                    } catch (error) {
+                      console.error('Failed to send CTCP PING:', error);
+                    }
+                    setContextMenu({ x: 0, y: 0, type: null });
+                  }
+                }}
+              >
+                CTCP Ping
+              </button>
+              <button
+                className="w-full text-left px-4 py-2 text-sm hover:bg-accent text-foreground"
+                onClick={async () => {
+                  if (contextMenu.serverId && contextMenu.user) {
+                    try {
+                      await SendCommand(contextMenu.serverId, `/clientinfo ${contextMenu.user}`);
+                    } catch (error) {
+                      console.error('Failed to send CTCP CLIENTINFO:', error);
+                    }
+                    setContextMenu({ x: 0, y: 0, type: null });
+                  }
+                }}
+              >
+                CTCP ClientInfo
               </button>
             </>
           )}

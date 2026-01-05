@@ -54,6 +54,14 @@ export function GetOpenChannels(arg1) {
   return window['go']['main']['App']['GetOpenChannels'](arg1);
 }
 
+export function GetPrivateMessageConversations(arg1) {
+  return window['go']['main']['App']['GetPrivateMessageConversations'](arg1);
+}
+
+export function GetPrivateMessages(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GetPrivateMessages'](arg1, arg2, arg3);
+}
+
 export function GetServerCapabilities(arg1) {
   return window['go']['main']['App']['GetServerCapabilities'](arg1);
 }
