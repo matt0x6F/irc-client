@@ -2,25 +2,26 @@ package storage
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
 	"github.com/jmoiron/sqlx"
 	"github.com/matt0x6f/irc-client/internal/logger"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 // Storage handles database operations
 type Storage struct {
-	db          *sqlx.DB
-	writeBuffer chan Message
-	bufferSize  int
+	db            *sqlx.DB
+	writeBuffer   chan Message
+	bufferSize    int
 	flushInterval time.Duration
-	mu          sync.RWMutex
-	stopCh      chan struct{}
-	wg          sync.WaitGroup
-	closed      bool
-	closedMu    sync.RWMutex
+	mu            sync.RWMutex
+	stopCh        chan struct{}
+	wg            sync.WaitGroup
+	closed        bool
+	closedMu      sync.RWMutex
 }
 
 // NewStorage creates a new storage instance
@@ -64,10 +65,10 @@ func (s *Storage) Close() error {
 
 	// Close writeBuffer first to prevent new writes
 	close(s.writeBuffer)
-	
+
 	// Signal flushLoop to stop
 	close(s.stopCh)
-	
+
 	// Wait for flushLoop to finish - it should exit quickly when stopCh is closed
 	// The flushLoop will check if storage is closed before doing any database operations
 	done := make(chan struct{})
@@ -75,7 +76,7 @@ func (s *Storage) Close() error {
 		s.wg.Wait()
 		close(done)
 	}()
-	
+
 	// Wait for flushLoop to finish (with a reasonable timeout as safety net)
 	select {
 	case <-done:
@@ -94,7 +95,7 @@ func (s *Storage) Close() error {
 		s.flushBuffer()
 		close(flushDone)
 	}()
-	
+
 	select {
 	case <-flushDone:
 		// Flush completed
@@ -166,7 +167,7 @@ func (s *Storage) flushBuffer() {
 			if closed {
 				return
 			}
-			
+
 			// Batch insert
 			query := `INSERT INTO messages (network_id, channel_id, user, message, message_type, timestamp, raw_line)
 			          VALUES (:network_id, :channel_id, :user, :message, :message_type, :timestamp, :raw_line)`
@@ -235,7 +236,7 @@ func (s *Storage) WriteMessageSync(msg Message) error {
 
 	// Flush buffer first to ensure we can read it back immediately
 	s.flushBuffer()
-	
+
 	// Write the message
 	select {
 	case s.writeBuffer <- msg:
@@ -284,60 +285,11 @@ func (s *Storage) GetMessages(networkID int64, channelID *int64, limit int) ([]M
 	return messages, nil
 }
 
-// GetPrivateMessages retrieves private messages for a network and user
-// Private messages have channel_id IS NULL and user != '*'
-// Returns both messages FROM the target user (received) and messages TO the target user (sent by currentUser)
-func (s *Storage) GetPrivateMessages(networkID int64, targetUser string, currentUser string, limit int) ([]Message, error) {
-	var messages []Message
-	// Get messages FROM targetUser (received) OR messages TO targetUser sent by currentUser (sent)
-	// For sent messages, we check the raw_line to identify the target
-	err := s.db.Select(&messages,
-		`SELECT * FROM messages 
-		 WHERE network_id = ? AND channel_id IS NULL AND message_type IN ('privmsg', 'action')
-		 AND (
-		   user = ? OR 
-		   (user = ? AND raw_line LIKE ?)
-		 )
-		 ORDER BY timestamp DESC 
-		 LIMIT ?`,
-		networkID, targetUser, currentUser, fmt.Sprintf("PRIVMSG %s%%", targetUser), limit)
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to get private messages: %w", err)
-	}
-
-	// Reverse to get chronological order
-	for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {
-		messages[i], messages[j] = messages[j], messages[i]
-	}
-
-	return messages, nil
-}
-
-// GetPrivateMessageConversations retrieves a list of users with whom we have private message conversations
-// Excludes the current user's own nickname (only shows conversations with other people)
-func (s *Storage) GetPrivateMessageConversations(networkID int64, currentUser string) ([]string, error) {
-	var users []string
-	err := s.db.Select(&users,
-		`SELECT user 
-		 FROM messages 
-		 WHERE network_id = ? AND channel_id IS NULL AND user != '*' AND user != ? AND message_type IN ('privmsg', 'action')
-		 GROUP BY user
-		 ORDER BY MAX(timestamp) DESC`,
-		networkID, currentUser)
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to get private message conversations: %w", err)
-	}
-
-	return users, nil
-}
-
 // CreateNetwork creates a new network configuration
 func (s *Storage) CreateNetwork(network *Network) error {
 	query := `INSERT INTO networks (name, address, port, tls, nickname, username, realname, password, sasl_enabled, sasl_mechanism, sasl_username, sasl_password, sasl_external_cert, auto_connect, created_at, updated_at)
 	          VALUES (:name, :address, :port, :tls, :nickname, :username, :realname, :password, :sasl_enabled, :sasl_mechanism, :sasl_username, :sasl_password, :sasl_external_cert, :auto_connect, :created_at, :updated_at)`
-	
+
 	result, err := s.db.NamedExec(query, network)
 	if err != nil {
 		return fmt.Errorf("failed to create network: %w", err)
@@ -381,7 +333,7 @@ func (s *Storage) UpdateNetwork(network *Network) error {
 	              sasl_username = :sasl_username, sasl_password = :sasl_password, sasl_external_cert = :sasl_external_cert,
 	              auto_connect = :auto_connect, updated_at = :updated_at
 	          WHERE id = :id`
-	
+
 	_, err := s.db.NamedExec(query, network)
 	if err != nil {
 		return fmt.Errorf("failed to update network: %w", err)
@@ -404,10 +356,10 @@ func (s *Storage) DeleteNetwork(networkID int64) error {
 // GetServers retrieves all server addresses for a network, ordered by priority
 func (s *Storage) GetServers(networkID int64) ([]Server, error) {
 	var servers []Server
-	err := s.db.Select(&servers, 
+	err := s.db.Select(&servers,
 		`SELECT * FROM servers 
 		 WHERE network_id = ? 
-		 ORDER BY "order" ASC, id ASC`, 
+		 ORDER BY "order" ASC, id ASC`,
 		networkID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get servers: %w", err)
@@ -419,7 +371,7 @@ func (s *Storage) GetServers(networkID int64) ([]Server, error) {
 func (s *Storage) CreateServer(server *Server) error {
 	query := `INSERT INTO servers (network_id, address, port, tls, "order", created_at)
 	          VALUES (:network_id, :address, :port, :tls, :order, :created_at)`
-	
+
 	result, err := s.db.NamedExec(query, server)
 	if err != nil {
 		return fmt.Errorf("failed to create server: %w", err)
@@ -439,7 +391,7 @@ func (s *Storage) UpdateServer(server *Server) error {
 	query := `UPDATE servers 
 	          SET address = :address, port = :port, tls = :tls, "order" = :order
 	          WHERE id = :id`
-	
+
 	_, err := s.db.NamedExec(query, server)
 	if err != nil {
 		return fmt.Errorf("failed to update server: %w", err)
@@ -463,7 +415,7 @@ func (s *Storage) DeleteAllServers(networkID int64) error {
 func (s *Storage) CreateChannel(channel *Channel) error {
 	query := `INSERT INTO channels (network_id, name, auto_join, is_open, created_at)
 	          VALUES (:network_id, :name, :auto_join, :is_open, :created_at)`
-	
+
 	result, err := s.db.NamedExec(query, channel)
 	if err != nil {
 		return fmt.Errorf("failed to create channel: %w", err)
@@ -571,7 +523,7 @@ func (s *Storage) AddChannelUser(channelID int64, nickname string, modes string)
 	query := `INSERT INTO channel_users (channel_id, nickname, modes, created_at, updated_at)
 	          VALUES (:channel_id, :nickname, :modes, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 	          ON CONFLICT(channel_id, nickname) DO UPDATE SET modes = :modes, updated_at = CURRENT_TIMESTAMP`
-	
+
 	user := ChannelUser{
 		ChannelID: channelID,
 		Nickname:  nickname,
@@ -613,3 +565,61 @@ func (s *Storage) UpdateChannelUserNickname(networkID int64, oldNickname string,
 	return err
 }
 
+// GetPrivateMessages retrieves private messages for a network and user
+// Private messages have channel_id IS NULL and user != '*'
+// Returns both messages FROM the target user (received) and messages TO the target user (sent by currentUser)
+// Uses case-insensitive matching for IRC nicknames
+func (s *Storage) GetPrivateMessages(networkID int64, targetUser string, currentUser string, limit int) ([]Message, error) {
+	var messages []Message
+	// Normalize usernames to lowercase for case-insensitive comparison
+	targetUserLower := strings.ToLower(targetUser)
+	currentUserLower := strings.ToLower(currentUser)
+	
+	// Get messages FROM targetUser (received) OR messages TO targetUser sent by currentUser (sent)
+	// For sent messages, we check the raw_line to identify the target (case-insensitive)
+	err := s.db.Select(&messages,
+		`SELECT * FROM messages 
+		 WHERE network_id = ? AND channel_id IS NULL AND message_type IN ('privmsg', 'action')
+		 AND (
+		   LOWER(user) = ? OR 
+		   (LOWER(user) = ? AND LOWER(raw_line) LIKE ?)
+		 )
+		 ORDER BY timestamp DESC 
+		 LIMIT ?`,
+		networkID, targetUserLower, currentUserLower, fmt.Sprintf("privmsg %s%%", targetUserLower), limit)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get private messages: %w", err)
+	}
+
+	// Reverse to get chronological order
+	for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {
+		messages[i], messages[j] = messages[j], messages[i]
+	}
+
+	return messages, nil
+}
+
+// GetPrivateMessageConversations retrieves a list of users with whom we have private message conversations
+// Excludes the current user's own nickname (only shows conversations with other people)
+// Uses case-insensitive grouping to consolidate conversations with different case variants of the same nickname
+func (s *Storage) GetPrivateMessageConversations(networkID int64, currentUser string) ([]string, error) {
+	var users []string
+	currentUserLower := strings.ToLower(currentUser)
+	
+	// Group by lowercase username to consolidate case variants, but return the most recent case variant
+	// We use MAX(user) to get one representative case variant per lowercase username
+	err := s.db.Select(&users,
+		`SELECT MAX(user) as user
+		 FROM messages 
+		 WHERE network_id = ? AND channel_id IS NULL AND user != '*' AND LOWER(user) != ? AND message_type IN ('privmsg', 'action')
+		 GROUP BY LOWER(user)
+		 ORDER BY MAX(timestamp) DESC`,
+		networkID, currentUserLower)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get private message conversations: %w", err)
+	}
+
+	return users, nil
+}

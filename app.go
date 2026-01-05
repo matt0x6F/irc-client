@@ -1358,6 +1358,13 @@ func (a *App) GetPrivateMessages(networkID int64, targetUser string, limit int) 
 	if err != nil {
 		return nil, fmt.Errorf("network not found: %w", err)
 	}
+	if network.Nickname == "" {
+		// No nickname set, can't determine sent messages, return only received messages
+		// This is a fallback - ideally we'd return empty, but returning received messages
+		// allows viewing PMs even if nickname isn't set yet
+		return a.storage.GetPrivateMessages(networkID, targetUser, "", limit)
+	}
+	
 	currentUser := network.Nickname
 	return a.storage.GetPrivateMessages(networkID, targetUser, currentUser, limit)
 }
@@ -1369,6 +1376,12 @@ func (a *App) GetPrivateMessageConversations(networkID int64) ([]string, error) 
 	if err != nil {
 		return nil, fmt.Errorf("network not found: %w", err)
 	}
+	
+	if network.Nickname == "" {
+		// No nickname set, can't exclude current user, return empty list
+		return []string{}, nil
+	}
+	
 	currentUser := network.Nickname
 	return a.storage.GetPrivateMessageConversations(networkID, currentUser)
 }
