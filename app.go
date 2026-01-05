@@ -42,7 +42,7 @@ func NewApp() (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get home directory: %w", err)
 	}
-	dbPath := filepath.Join(homeDir, ".irc-client", "irc-client.db")
+	dbPath := filepath.Join(homeDir, ".cascade-chat", "cascade-chat.db")
 
 	// Ensure directory exists
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
@@ -62,7 +62,7 @@ func NewApp() (*App, error) {
 	keychain := security.NewKeychain()
 
 	// Create plugin manager
-	pluginDir := filepath.Join(homeDir, ".irc-client", "plugins")
+	pluginDir := filepath.Join(homeDir, ".cascade-chat", "plugins")
 	pluginMgr := plugin.NewManager(eventBus, pluginDir)
 
 	// Discover and load plugins
@@ -85,6 +85,8 @@ func NewApp() (*App, error) {
 	// Subscribe to connection status events
 	eventBus.Subscribe(irc.EventConnectionEstablished, app)
 	eventBus.Subscribe(irc.EventConnectionLost, app)
+	// Subscribe to channel list change events
+	eventBus.Subscribe(irc.EventChannelsChanged, app)
 
 	// Start processing plugin actions
 	go app.processPluginActions()
@@ -399,6 +401,34 @@ func (a *App) OnEvent(event events.Event) {
 				"timestamp": event.Timestamp.Format(time.RFC3339),
 			})
 		}
+		return
+	}
+
+	// Handle channels changed event separately for immediate sidebar updates
+	if event.Type == irc.EventChannelsChanged {
+		// Extract network ID from event data
+		networkID, ok := event.Data["networkId"].(int64)
+		if !ok {
+			// Fallback: try to find network by address
+			networkAddress, ok := event.Data["network"].(string)
+			if ok {
+				networks, err := a.storage.GetNetworks()
+				if err == nil {
+					for _, n := range networks {
+						if n.Address == networkAddress {
+							networkID = n.ID
+							break
+						}
+					}
+				}
+			}
+		}
+		
+		// Forward channels changed event to frontend
+		runtime.EventsEmit(a.ctx, "channels-changed", map[string]interface{}{
+			"networkId": networkID,
+			"timestamp": event.Timestamp.Format(time.RFC3339),
+		})
 		return
 	}
 
@@ -932,7 +962,7 @@ func (a *App) SendMessage(networkID int64, target, message string) error {
 	return client.SendMessage(target, message)
 }
 
-// SendCommand sends a command from the status window
+// SendCommand sends a command from any channel or status window
 // Supports commands like /join #channel, /msg user message, or raw IRC commands
 func (a *App) SendCommand(networkID int64, command string) error {
 	a.mu.RLock()
@@ -958,11 +988,16 @@ func (a *App) SendCommand(networkID int64, command string) error {
 
 		cmd := strings.ToUpper(parts[0])
 		switch cmd {
-		case "JOIN":
+		case "JOIN", "J":
 			if len(parts) < 2 {
-				return fmt.Errorf("usage: /join #channel")
+				return fmt.Errorf("usage: /join #channel [key]")
 			}
 			channelName := parts[1]
+			// If channel has a key, we need to send raw JOIN command
+			if len(parts) >= 3 {
+				rawCmd := fmt.Sprintf("JOIN %s %s", channelName, parts[2])
+				return client.SendRawCommand(rawCmd)
+			}
 			logger.Log.Info().Str("channel", channelName).Msg("Joining channel")
 			if err := client.JoinChannel(channelName); err != nil {
 				logger.Log.Error().Err(err).Str("channel", channelName).Msg("Error joining channel")
@@ -970,12 +1005,24 @@ func (a *App) SendCommand(networkID int64, command string) error {
 			}
 			logger.Log.Info().Str("channel", channelName).Msg("Successfully sent JOIN command")
 			return nil
-		case "PART":
+		case "PART", "LEAVE":
 			if len(parts) < 2 {
-				return fmt.Errorf("usage: /part #channel")
+				return fmt.Errorf("usage: /part #channel [reason]")
 			}
-			return client.PartChannel(parts[1])
-		case "MSG", "PRIVMSG":
+			channelName := parts[1]
+			var rawCmd string
+			if len(parts) >= 3 {
+				reason := strings.Join(parts[2:], " ")
+				rawCmd = fmt.Sprintf("PART %s :%s", channelName, reason)
+			} else {
+				rawCmd = fmt.Sprintf("PART %s", channelName)
+			}
+			// Use PartChannel for basic part, or send raw if there's a reason
+			if len(parts) >= 3 {
+				return client.SendRawCommand(rawCmd)
+			}
+			return client.PartChannel(channelName)
+		case "MSG", "PRIVMSG", "M":
 			if len(parts) < 3 {
 				return fmt.Errorf("usage: /msg target message")
 			}
@@ -986,8 +1033,224 @@ func (a *App) SendCommand(networkID int64, command string) error {
 			if len(parts) < 2 {
 				return fmt.Errorf("usage: /nick newnick")
 			}
-			// Send raw NICK command
 			return client.SendRawCommand(fmt.Sprintf("NICK %s", parts[1]))
+		case "QUIT":
+			reason := ""
+			if len(parts) >= 2 {
+				reason = strings.Join(parts[1:], " ")
+			}
+			if reason != "" {
+				return client.SendRawCommand(fmt.Sprintf("QUIT :%s", reason))
+			}
+			return client.SendRawCommand("QUIT")
+		case "AWAY":
+			message := ""
+			if len(parts) >= 2 {
+				message = strings.Join(parts[1:], " ")
+			}
+			if message != "" {
+				return client.SendRawCommand(fmt.Sprintf("AWAY :%s", message))
+			}
+			// Empty away message means unset away
+			return client.SendRawCommand("AWAY")
+		case "WHOIS":
+			if len(parts) < 2 {
+				return fmt.Errorf("usage: /whois nickname")
+			}
+			return client.SendRawCommand(fmt.Sprintf("WHOIS %s", parts[1]))
+		case "WHOWAS":
+			if len(parts) < 2 {
+				return fmt.Errorf("usage: /whowas nickname")
+			}
+			return client.SendRawCommand(fmt.Sprintf("WHOWAS %s", parts[1]))
+		case "ME", "ACTION":
+			// /me action text - sends CTCP ACTION
+			// Format: /me [channel] action text
+			// If channel is specified as first arg (starts with # or &), use it
+			// Otherwise, channel should be encoded in command from frontend
+			if len(parts) < 2 {
+				return fmt.Errorf("usage: /me action text")
+			}
+			var target string
+			var actionText string
+			// Check if first argument is a channel
+			if len(parts) >= 2 && (strings.HasPrefix(parts[1], "#") || strings.HasPrefix(parts[1], "&")) {
+				// Channel specified as first argument
+				target = parts[1]
+				if len(parts) >= 3 {
+					actionText = strings.Join(parts[2:], " ")
+				} else {
+					return fmt.Errorf("usage: /me [channel] action text")
+				}
+			} else {
+				// No channel specified - this should have been handled by frontend
+				// But we'll return an error to be safe
+				return fmt.Errorf("usage: /me action text (must be used in a channel)")
+			}
+			// Send CTCP ACTION: PRIVMSG target :\001ACTION text\001
+			return client.SendRawCommand(fmt.Sprintf("PRIVMSG %s :\001ACTION %s\001", target, actionText))
+		case "TOPIC":
+			if len(parts) < 2 {
+				return fmt.Errorf("usage: /topic #channel [new topic]")
+			}
+			channelName := parts[1]
+			if len(parts) >= 3 {
+				topic := strings.Join(parts[2:], " ")
+				return client.SendRawCommand(fmt.Sprintf("TOPIC %s :%s", channelName, topic))
+			}
+			// Just query topic
+			return client.SendRawCommand(fmt.Sprintf("TOPIC %s", channelName))
+		case "MODE":
+			if len(parts) < 2 {
+				return fmt.Errorf("usage: /mode target modes [args]")
+			}
+			target := parts[1]
+			var rawCmd string
+			if len(parts) >= 3 {
+				// Mode change
+				modeArgs := strings.Join(parts[2:], " ")
+				rawCmd = fmt.Sprintf("MODE %s %s", target, modeArgs)
+			} else {
+				// Query mode
+				rawCmd = fmt.Sprintf("MODE %s", target)
+			}
+			return client.SendRawCommand(rawCmd)
+		case "INVITE":
+			if len(parts) < 3 {
+				return fmt.Errorf("usage: /invite nickname #channel")
+			}
+			nickname := parts[1]
+			channelName := parts[2]
+			return client.SendRawCommand(fmt.Sprintf("INVITE %s %s", nickname, channelName))
+		case "KICK":
+			if len(parts) < 3 {
+				return fmt.Errorf("usage: /kick #channel nickname [reason]")
+			}
+			channelName := parts[1]
+			nickname := parts[2]
+			var rawCmd string
+			if len(parts) >= 4 {
+				reason := strings.Join(parts[3:], " ")
+				rawCmd = fmt.Sprintf("KICK %s %s :%s", channelName, nickname, reason)
+			} else {
+				rawCmd = fmt.Sprintf("KICK %s %s", channelName, nickname)
+			}
+			return client.SendRawCommand(rawCmd)
+		case "BAN":
+			if len(parts) < 3 {
+				return fmt.Errorf("usage: /ban #channel mask")
+			}
+			channelName := parts[1]
+			mask := parts[2]
+			return client.SendRawCommand(fmt.Sprintf("MODE %s +b %s", channelName, mask))
+		case "UNBAN":
+			if len(parts) < 3 {
+				return fmt.Errorf("usage: /unban #channel mask")
+			}
+			channelName := parts[1]
+			mask := parts[2]
+			return client.SendRawCommand(fmt.Sprintf("MODE %s -b %s", channelName, mask))
+		case "OP", "HOP":
+			if len(parts) < 3 {
+				return fmt.Errorf("usage: /op #channel nickname")
+			}
+			channelName := parts[1]
+			nickname := parts[2]
+			return client.SendRawCommand(fmt.Sprintf("MODE %s +o %s", channelName, nickname))
+		case "DEOP", "DEHOP":
+			if len(parts) < 3 {
+				return fmt.Errorf("usage: /deop #channel nickname")
+			}
+			channelName := parts[1]
+			nickname := parts[2]
+			return client.SendRawCommand(fmt.Sprintf("MODE %s -o %s", channelName, nickname))
+		case "VOICE", "V":
+			if len(parts) < 3 {
+				return fmt.Errorf("usage: /voice #channel nickname")
+			}
+			channelName := parts[1]
+			nickname := parts[2]
+			return client.SendRawCommand(fmt.Sprintf("MODE %s +v %s", channelName, nickname))
+		case "DEVOICE", "DEV":
+			if len(parts) < 3 {
+				return fmt.Errorf("usage: /devoice #channel nickname")
+			}
+			channelName := parts[1]
+			nickname := parts[2]
+			return client.SendRawCommand(fmt.Sprintf("MODE %s -v %s", channelName, nickname))
+		case "LIST":
+			var rawCmd string
+			if len(parts) >= 2 {
+				// List specific channels or with filters
+				args := strings.Join(parts[1:], " ")
+				rawCmd = fmt.Sprintf("LIST %s", args)
+			} else {
+				rawCmd = "LIST"
+			}
+			return client.SendRawCommand(rawCmd)
+		case "NAMES":
+			var rawCmd string
+			if len(parts) >= 2 {
+				channelName := parts[1]
+				rawCmd = fmt.Sprintf("NAMES %s", channelName)
+			} else {
+				rawCmd = "NAMES"
+			}
+			return client.SendRawCommand(rawCmd)
+		case "NOTICE":
+			if len(parts) < 3 {
+				return fmt.Errorf("usage: /notice target message")
+			}
+			target := parts[1]
+			message := strings.Join(parts[2:], " ")
+			return client.SendRawCommand(fmt.Sprintf("NOTICE %s :%s", target, message))
+		case "QUERY", "Q":
+			// Query opens a private message window - this is client-side only
+			// We'll just send a message to the user
+			if len(parts) < 2 {
+				return fmt.Errorf("usage: /query nickname [message]")
+			}
+			nickname := parts[1]
+			if len(parts) >= 3 {
+				message := strings.Join(parts[2:], " ")
+				return client.SendMessage(nickname, message)
+			}
+			// Just opening query window - client should handle this
+			// For now, we'll just return success (client should switch to PM window)
+			return nil
+		case "CLOSE":
+			// Close a channel/query window - this is client-side only
+			// We'll part if it's a channel
+			if len(parts) < 2 {
+				return fmt.Errorf("usage: /close #channel or /close nickname")
+			}
+			target := parts[1]
+			// If it's a channel, part it
+			if len(target) > 0 && (target[0] == '#' || target[0] == '&') {
+				return client.PartChannel(target)
+			}
+			// For PM windows, this is client-side only
+			return nil
+		case "QUOTE", "RAW":
+			// Send raw IRC command
+			if len(parts) < 2 {
+				return fmt.Errorf("usage: /quote command [args] or /raw command [args]")
+			}
+			rawCommand := strings.Join(parts[1:], " ")
+			return client.SendRawCommand(rawCommand)
+		case "IGNORE":
+			// Client-side ignore - this would need to be implemented client-side
+			if len(parts) < 2 {
+				return fmt.Errorf("usage: /ignore nickname")
+			}
+			// This is a client-side feature, not an IRC command
+			return fmt.Errorf("/ignore is not yet implemented")
+		case "UNIGNORE":
+			// Client-side unignore
+			if len(parts) < 2 {
+				return fmt.Errorf("usage: /unignore nickname")
+			}
+			return fmt.Errorf("/unignore is not yet implemented")
 		default:
 			// Unknown command, send as raw IRC command
 			return client.SendRawCommand(command[1:]) // Remove leading /
@@ -1060,6 +1323,48 @@ func (a *App) GetNetworks() ([]storage.Network, error) {
 // GetChannels retrieves channels for a network
 func (a *App) GetChannels(networkID int64) ([]storage.Channel, error) {
 	return a.storage.GetChannels(networkID)
+}
+
+// GetJoinedChannels retrieves channels for a network where the current user is still a member
+func (a *App) GetJoinedChannels(networkID int64) ([]storage.Channel, error) {
+	// Get network to find the current nickname
+	network, err := a.storage.GetNetwork(networkID)
+	if err != nil {
+		return nil, fmt.Errorf("network not found: %w", err)
+	}
+	
+	if network.Nickname == "" {
+		// No nickname set, return empty list
+		return []storage.Channel{}, nil
+	}
+	
+	return a.storage.GetJoinedChannels(networkID, network.Nickname)
+}
+
+// GetOpenChannels retrieves channels for a network where the dialog is open or where the user is joined
+func (a *App) GetOpenChannels(networkID int64) ([]storage.Channel, error) {
+	// Get network to find the current nickname
+	network, err := a.storage.GetNetwork(networkID)
+	if err != nil {
+		return nil, fmt.Errorf("network not found: %w", err)
+	}
+	
+	if network.Nickname == "" {
+		// No nickname set, return channels that are open
+		return a.storage.GetChannels(networkID)
+	}
+	
+	return a.storage.GetOpenChannels(networkID, network.Nickname)
+}
+
+// SetChannelOpen sets the is_open state for a channel
+func (a *App) SetChannelOpen(networkID int64, channelName string, isOpen bool) error {
+	channel, err := a.storage.GetChannelByName(networkID, channelName)
+	if err != nil {
+		return fmt.Errorf("channel not found: %w", err)
+	}
+	
+	return a.storage.UpdateChannelIsOpen(channel.ID, isOpen)
 }
 
 // GetChannelIDByName retrieves a channel ID by network ID and channel name

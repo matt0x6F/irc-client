@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
-import { ConnectNetwork, GetNetworks, SendMessage, SendCommand, GetMessages, ListPlugins, GetConnectionStatus, DisconnectNetwork, DeleteNetwork, GetServers, GetChannelIDByName, GetChannelInfo } from '../wailsjs/go/main/App';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { ConnectNetwork, GetNetworks, SendMessage, SendCommand, GetMessages, ListPlugins, GetConnectionStatus, DisconnectNetwork, DeleteNetwork, GetServers, GetChannelIDByName, GetChannelInfo, SetChannelOpen } from '../wailsjs/go/main/App';
 import { main, storage } from '../wailsjs/go/models';
 import { EventsOn } from '../wailsjs/runtime/runtime';
 import { ServerTree } from './components/server-tree';
@@ -20,6 +20,7 @@ function App() {
   const [channelInfo, setChannelInfo] = useState<main.ChannelInfo | null>(null);
   const [showTopicModal, setShowTopicModal] = useState(false);
   const [showModeModal, setShowModeModal] = useState(false);
+  const pendingJoinChannelRef = useRef<{ networkId: number; channel: string } | null>(null);
 
   useEffect(() => {
     loadNetworks();
@@ -152,13 +153,126 @@ function App() {
   // Listen for message events for real-time updates
   useEffect(() => {
     const unsubscribe = EventsOn('message-event', (data: any) => {
-      // Only refresh if the event is for the currently selected network/channel
-      if (selectedNetwork === null) return;
-      
       const eventType = data?.type;
       const eventData = data?.data || {};
       const network = eventData.network;
       const target = eventData.target || eventData.channel;
+      
+      // Handle channel join/part events for pending join channel switching
+      if (eventType === 'user.joined' || eventType === 'user.parted') {
+        // Find the network by address (check both primary address and server addresses)
+        let networkObj = networks.find(n => n.address === network);
+        
+        // If not found by primary address, check server addresses
+        if (!networkObj) {
+          // We'll need to check server addresses, but for now just try to find by any matching
+          // The network address in events should match the primary address or one of the server addresses
+          networkObj = networks.find(n => {
+            // Check if network address matches
+            if (n.address === network) return true;
+            // In the future, we could also check server addresses here
+            return false;
+          });
+        }
+        
+        if (networkObj) {
+          // Check if this is our own join/part by comparing user to network nickname
+          const user = eventData.user;
+          const channel = eventData.channel || target;
+          
+          console.log('[App] Join/part event received:', {
+            eventType,
+            user,
+            channel,
+            network: networkObj.address,
+            networkId: networkObj.id,
+            ourNickname: networkObj.nickname,
+            pendingJoinChannel: pendingJoinChannelRef.current
+          });
+          
+          // Note: Channel sidebar updates are now handled by the channels-changed event
+          // We only need to handle pending join channel switching here
+          if (user && networkObj.nickname && user.toLowerCase() === networkObj.nickname.toLowerCase()) {
+            
+            // If this is a join event and we have a pending join for this channel, switch to it
+            const pendingJoin = pendingJoinChannelRef.current;
+            if (eventType === 'user.joined' && channel && pendingJoin) {
+              console.log('[App] Checking if we should switch to joined channel:', {
+                pendingNetworkId: pendingJoin.networkId,
+                currentNetworkId: networkObj.id,
+                networkMatch: pendingJoin.networkId === networkObj.id,
+                pendingChannel: pendingJoin.channel,
+                eventChannel: channel,
+                channelMatch: pendingJoin.channel.toLowerCase() === channel.toLowerCase()
+              });
+              
+              // Normalize channel names for comparison (ensure both have # prefix)
+              const normalizeChannel = (ch: string) => {
+                if (!ch) return '';
+                return ch.startsWith('#') || ch.startsWith('&') ? ch.toLowerCase() : '#' + ch.toLowerCase();
+              };
+              
+              const pendingChannelNormalized = normalizeChannel(pendingJoin.channel);
+              const eventChannelNormalized = normalizeChannel(channel);
+              
+              if (pendingJoin.networkId === networkObj.id && 
+                  pendingChannelNormalized === eventChannelNormalized) {
+                console.log('[App] Successful join detected, switching to channel:', channel);
+                // Capture values before setTimeout to avoid TypeScript errors
+                const networkId = networkObj.id;
+                const channelName = channel;
+                // Wait a bit longer to ensure channel is in database and sidebar is updated
+                setTimeout(async () => {
+                  try {
+                    // Verify channel exists before switching
+                    await GetChannelIDByName(networkId, channelName);
+                    console.log('[App] Channel verified, switching now');
+                    // Mark channel as open (JOINED state)
+                    try {
+                      await SetChannelOpen(networkId, channelName, true);
+                    } catch (error) {
+                      console.error('[App] Failed to set channel open:', error);
+                    }
+                    setSelectedNetwork(networkId);
+                    setSelectedChannel(channelName);
+                    pendingJoinChannelRef.current = null;
+                  } catch (error) {
+                    console.log('[App] Channel not ready yet, retrying in 500ms');
+                    // Retry once more after a longer delay
+                    setTimeout(async () => {
+                      try {
+                        await GetChannelIDByName(networkId, channelName);
+                        // Mark channel as open (JOINED state)
+                        try {
+                          await SetChannelOpen(networkId, channelName, true);
+                        } catch (error) {
+                          console.error('[App] Failed to set channel open:', error);
+                        }
+                        setSelectedNetwork(networkId);
+                        setSelectedChannel(channelName);
+                        pendingJoinChannelRef.current = null;
+                      } catch (err) {
+                        console.error('[App] Failed to switch to channel after retry:', err);
+                        pendingJoinChannelRef.current = null;
+                      }
+                    }, 500);
+                  }
+                }, 300);
+              } else {
+                console.log('[App] Join event but conditions not met - not switching', {
+                  networkMatch: pendingJoin.networkId === networkObj.id,
+                  channelMatch: pendingChannelNormalized === eventChannelNormalized,
+                  pendingNormalized: pendingChannelNormalized,
+                  eventNormalized: eventChannelNormalized
+                });
+              }
+            }
+          }
+        }
+      }
+      
+      // Only refresh messages if the event is for the currently selected network/channel
+      if (selectedNetwork === null) return;
       
       // Check if this event is relevant to the current view
       const currentNetwork = networks.find(n => n.id === selectedNetwork);
@@ -277,6 +391,126 @@ function App() {
   const handleSendMessage = async (message: string) => {
     if (selectedNetwork === null || selectedChannel === null) return;
     
+    // Check if this is a slash command - if so, route to SendCommand regardless of channel
+    const trimmedMessage = message.trim();
+    if (trimmedMessage.startsWith('/')) {
+      try {
+        let commandToSend = trimmedMessage;
+        
+        // For /me command, prepend channel context if we're in a channel
+        if (trimmedMessage.toLowerCase().startsWith('/me ') && selectedChannel && selectedChannel !== 'status') {
+          // Encode channel in command: /me #channel action text
+          const parts = trimmedMessage.substring(4).trim();
+          commandToSend = `/me ${selectedChannel} ${parts}`;
+        }
+        // For /part and /leave commands, inject current channel if not specified
+        else if ((trimmedMessage.toLowerCase().startsWith('/part') || trimmedMessage.toLowerCase().startsWith('/leave')) && selectedChannel && selectedChannel !== 'status') {
+          const isPart = trimmedMessage.toLowerCase().startsWith('/part');
+          const cmdLength = isPart ? 5 : 6; // '/part' or '/leave'
+          const rest = trimmedMessage.substring(cmdLength).trim();
+          const parts = rest ? rest.split(/\s+/) : [];
+          
+          // If no args or first arg doesn't look like a channel (doesn't start with # or &), inject current channel
+          if (parts.length === 0 || (!parts[0].startsWith('#') && !parts[0].startsWith('&'))) {
+            // No channel specified, use current channel
+            const cmd = isPart ? '/part' : '/leave';
+            if (parts.length === 0) {
+              // Just /part or /leave - part from current channel
+              commandToSend = `${cmd} ${selectedChannel}`;
+            } else {
+              // /part reason or /leave reason - part from current channel with reason
+              const reason = parts.join(' ');
+              commandToSend = `${cmd} ${selectedChannel} ${reason}`;
+            }
+          }
+          // Otherwise, channel is specified, use as-is
+        }
+        // For /join command, track the channel to switch to after successful join
+        let joinTargetChannel: string | null = null;
+        if (trimmedMessage.toLowerCase().startsWith('/join ') || trimmedMessage.toLowerCase() === '/join') {
+          const rest = trimmedMessage.substring(5).trim(); // '/join' = 5 chars
+          const parts = rest ? rest.split(/\s+/) : [];
+          if (parts.length > 0 && (parts[0].startsWith('#') || parts[0].startsWith('&'))) {
+            joinTargetChannel = parts[0];
+            // Store pending join to switch after successful join
+            console.log('[App] Setting pending join:', { networkId: selectedNetwork, channel: joinTargetChannel });
+            pendingJoinChannelRef.current = { networkId: selectedNetwork, channel: joinTargetChannel };
+            
+            // Also try a fallback approach: poll for the channel to appear and switch
+            const pollForChannel = async (attempts = 0) => {
+              if (attempts > 10) {
+                console.log('[App] Polling timeout - channel did not appear');
+                pendingJoinChannelRef.current = null;
+                return;
+              }
+              
+              try {
+                await GetChannelIDByName(selectedNetwork, joinTargetChannel!);
+                console.log('[App] Channel found via polling, switching now');
+                setSelectedNetwork(selectedNetwork);
+                setSelectedChannel(joinTargetChannel);
+                pendingJoinChannelRef.current = null;
+              } catch (error) {
+                // Channel not ready yet, try again
+                setTimeout(() => pollForChannel(attempts + 1), 300);
+              }
+            };
+            
+            // Start polling after a short delay
+            setTimeout(() => pollForChannel(), 500);
+            
+            // Clear pending join after 5 seconds if join doesn't complete (timeout/failure)
+            setTimeout(() => {
+              if (pendingJoinChannelRef.current && 
+                  pendingJoinChannelRef.current.networkId === selectedNetwork && 
+                  pendingJoinChannelRef.current.channel === joinTargetChannel) {
+                console.log('[App] Clearing pending join due to timeout');
+                pendingJoinChannelRef.current = null;
+              }
+            }, 5000);
+          }
+        }
+        
+        // For /close command, inject current channel if not specified and switch to status after closing
+        let closeTargetChannel: string | null = null;
+        if (trimmedMessage.toLowerCase().startsWith('/close') && selectedChannel && selectedChannel !== 'status') {
+          const rest = trimmedMessage.substring(6).trim(); // '/close' = 6 chars
+          const parts = rest ? rest.split(/\s+/) : [];
+          
+          // Determine target channel
+          if (parts.length === 0 || (!parts[0].startsWith('#') && !parts[0].startsWith('&'))) {
+            // No channel specified, use current channel
+            closeTargetChannel = selectedChannel;
+            commandToSend = `/close ${selectedChannel}`;
+          } else {
+            // Channel is specified
+            closeTargetChannel = parts[0];
+            // Use as-is
+          }
+        }
+        
+        await SendCommand(selectedNetwork, commandToSend);
+        
+        // If /close was used on the current channel, mark it as closed and switch to status window
+        if (closeTargetChannel && closeTargetChannel === selectedChannel) {
+          // Mark channel as closed (CLOSED state)
+          try {
+            await SetChannelOpen(selectedNetwork, closeTargetChannel, false);
+          } catch (error) {
+            console.error('[App] Failed to set channel closed:', error);
+          }
+          setSelectedChannel('status');
+        }
+        
+        // Refresh messages after command
+        await loadMessages();
+      } catch (error) {
+        console.error('Failed to send command:', error);
+        await loadMessages();
+      }
+      return;
+    }
+    
     // Optimistic UI update: show the message immediately
     const currentNetwork = networks.find(n => n.id === selectedNetwork);
     if (currentNetwork && selectedChannel !== 'status') {
@@ -337,9 +571,28 @@ function App() {
           selectedServer={selectedNetwork}
           selectedChannel={selectedChannel}
           onSelectServer={setSelectedNetwork}
-          onSelectChannel={(networkId, channel) => {
+          onSelectChannel={async (networkId, channel) => {
+            // When switching channels, update the state of the previous and new channels
+            if (selectedNetwork !== null && selectedChannel !== null && selectedChannel !== 'status') {
+              // Mark previous channel as closed if we're switching away from it
+              try {
+                await SetChannelOpen(selectedNetwork, selectedChannel, false);
+              } catch (error) {
+                console.error('[App] Failed to close previous channel:', error);
+              }
+            }
+            
             setSelectedNetwork(networkId);
             setSelectedChannel(channel);
+            
+            // Mark new channel as open if it's not the status window
+            if (channel !== null && channel !== 'status') {
+              try {
+                await SetChannelOpen(networkId, channel, true);
+              } catch (error) {
+                console.error('[App] Failed to open channel:', error);
+              }
+            }
           }}
           onConnect={handleConnect}
           onDisconnect={handleDisconnect}

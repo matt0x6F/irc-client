@@ -35,6 +35,7 @@ type Server struct {
 }
 
 // Channel represents an IRC channel
+// State: OPEN (dialog open, may or may not be joined), JOINED (dialog open and joined), CLOSED (dialog closed, not joined)
 type Channel struct {
 	ID        int64      `db:"id" json:"id"`
 	NetworkID int64      `db:"network_id" json:"network_id"`
@@ -42,6 +43,7 @@ type Channel struct {
 	Topic     string     `db:"topic" json:"topic"`
 	Modes     string     `db:"modes" json:"modes"`
 	AutoJoin  bool       `db:"auto_join" json:"auto_join"`
+	IsOpen    bool       `db:"is_open" json:"is_open"` // Dialog/pane is open (OPEN or JOINED state)
 	CreatedAt time.Time  `db:"created_at" json:"created_at"`
 	UpdatedAt *time.Time `db:"updated_at" json:"updated_at"`
 }

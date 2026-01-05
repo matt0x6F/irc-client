@@ -8,7 +8,7 @@ import (
 
 const (
 	// KeychainService is the service name used for storing passwords in the keychain
-	KeychainService = "irc-client"
+	KeychainService = "cascade-chat"
 )
 
 // Keychain provides secure password storage using OS keychain

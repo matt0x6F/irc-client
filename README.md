@@ -1,4 +1,4 @@
-# IRC Client
+# Cascade Chat
 
 A modern, multi-platform IRC client built with Wails, featuring plugin support, ShadCN UI, and efficient message storage.
 
@@ -92,7 +92,7 @@ task --list
 ## Project Structure
 
 ```
-irc-client/
+cascade/
 ├── app.go                 # Wails app entry with bindings
 ├── main.go                # Application entry point
 ├── internal/

@@ -266,6 +266,7 @@ func (c *IRCClient) setupHandlers() {
 
 		// Get or create channel in database
 		ch, err := c.storage.GetChannelByName(c.networkID, channel)
+		channelCreated := false
 		if err != nil {
 			// Channel doesn't exist, create it
 			logger.Log.Debug().Str("channel", channel).Msg("Channel doesn't exist, creating it")
@@ -274,6 +275,7 @@ func (c *IRCClient) setupHandlers() {
 				NetworkID: c.networkID,
 				Name:      channel,
 				AutoJoin:  false,
+				IsOpen:    false, // Dialog not open yet - will be opened when user selects it
 				CreatedAt: time.Now(),
 				UpdatedAt: &now,
 			}
@@ -283,6 +285,16 @@ func (c *IRCClient) setupHandlers() {
 			} else {
 				logger.Log.Debug().Str("channel", channel).Msg("Successfully created channel in database")
 				ch = newChannel
+				channelCreated = true
+			}
+		}
+		
+		// If the current user joined, mark channel as open (JOINED state)
+		channelUpdated := false
+		if strings.EqualFold(user, c.network.Nickname) && ch != nil {
+			if !ch.IsOpen {
+				c.storage.UpdateChannelIsOpen(ch.ID, true)
+				channelUpdated = true
 			}
 		}
 
@@ -292,18 +304,12 @@ func (c *IRCClient) setupHandlers() {
 			logger.Log.Debug().Str("user", user).Str("channel", channel).Msg("Added user to channel user list")
 		}
 
-		// If the current user joined, clear old user list and request fresh NAMES list
+		// If the current user joined, request fresh NAMES list to update user list
+		// Don't clear channel users - keep ourselves in the list so GetJoinedChannels works immediately
 		if strings.EqualFold(user, c.network.Nickname) {
-			logger.Log.Debug().Msg("Our user joining, clearing old user list and requesting NAMES list")
-			// Clear the user list for this channel since we're rejoining
-			// The NAMES list will repopulate it with current users
-			if ch != nil {
-				if err := c.storage.ClearChannelUsers(ch.ID); err != nil {
-					logger.Log.Error().Err(err).Msg("Failed to clear channel users")
-				} else {
-					logger.Log.Debug().Str("channel", channel).Msg("Cleared old user list for channel")
-				}
-			}
+			logger.Log.Debug().Msg("Our user joining, requesting NAMES list to update user list")
+			// Request NAMES to get full user list - this will update the channel_users table
+			// We don't clear first because we want GetJoinedChannels to work immediately
 			c.conn.SendRaw(fmt.Sprintf("NAMES %s", channel))
 		}
 
@@ -340,6 +346,19 @@ func (c *IRCClient) setupHandlers() {
 			Timestamp: time.Now(),
 			Source:    events.EventSourceIRC,
 		})
+		
+		// Emit channels changed event if channel was created or updated
+		if channelCreated || (channelUpdated && strings.EqualFold(user, c.network.Nickname)) {
+			c.eventBus.Emit(events.Event{
+				Type: EventChannelsChanged,
+				Data: map[string]interface{}{
+					"network": c.network.Address,
+					"networkId": c.networkID,
+				},
+				Timestamp: time.Now(),
+				Source:    events.EventSourceIRC,
+			})
+		}
 	})
 
 	// User parted channel
@@ -353,9 +372,16 @@ func (c *IRCClient) setupHandlers() {
 
 		// Get channel and remove user from user list
 		ch, err := c.storage.GetChannelByName(c.networkID, channel)
+		channelUpdated := false
 		if err == nil {
 			c.storage.RemoveChannelUser(ch.ID, user)
 			logger.Log.Debug().Str("user", user).Str("channel", channel).Msg("Removed user from channel user list")
+			
+			// If the current user parted, mark channel as closed (CLOSED state)
+			if strings.EqualFold(user, c.network.Nickname) {
+				c.storage.UpdateChannelIsOpen(ch.ID, false)
+				channelUpdated = true
+			}
 
 			// Store part message
 			rawLine, _ := e.Line()
@@ -394,6 +420,19 @@ func (c *IRCClient) setupHandlers() {
 			Timestamp: time.Now(),
 			Source:    events.EventSourceIRC,
 		})
+		
+		// Emit channels changed event if our own part updated the channel state
+		if channelUpdated {
+			c.eventBus.Emit(events.Event{
+				Type: EventChannelsChanged,
+				Data: map[string]interface{}{
+					"network": c.network.Address,
+					"networkId": c.networkID,
+				},
+				Timestamp: time.Now(),
+				Source:    events.EventSourceIRC,
+			})
+		}
 	})
 
 	// User quit
@@ -1186,15 +1225,28 @@ func (c *IRCClient) Connect() error {
 	go c.conn.Loop()
 
 	// Auto-join channels after a short delay to ensure connection is established
+	// Only join channels that are open (is_open=true) or have auto_join enabled
 	go func() {
 		time.Sleep(constants.AutoJoinDelay)
 		channels, err := c.storage.GetChannels(c.networkID)
 		if err == nil {
+			logger.Log.Info().Int("count", len(channels)).Msg("Checking channels for auto-join")
 			for _, channel := range channels {
-				if channel.AutoJoin {
+				logger.Log.Debug().
+					Str("channel", channel.Name).
+					Bool("auto_join", channel.AutoJoin).
+					Bool("is_open", channel.IsOpen).
+					Msg("Channel auto-join status")
+				// Only auto-join if channel is open (dialog was open) OR auto_join is enabled
+				if channel.IsOpen || channel.AutoJoin {
+					logger.Log.Info().Str("channel", channel.Name).Bool("reason", channel.IsOpen).Bool("auto_join", channel.AutoJoin).Msg("Auto-joining channel")
 					c.conn.Join(channel.Name)
+				} else {
+					logger.Log.Debug().Str("channel", channel.Name).Msg("Skipping channel (not open and auto-join disabled)")
 				}
 			}
+		} else {
+			logger.Log.Error().Err(err).Msg("Failed to get channels for auto-join")
 		}
 	}()
 

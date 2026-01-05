@@ -1,8 +1,8 @@
 version: '3'
 
 vars:
-  PLUGIN_DIR: "{{.HOME}}/.irc-client/plugins"
-  DB_PATH: "{{.HOME}}/.irc-client/irc-client.db"
+  PLUGIN_DIR: "{{.HOME}}/.cascade-chat/plugins"
+  DB_PATH: "{{.HOME}}/.cascade-chat/cascade-chat.db"
 
 tasks:
   default:
@@ -95,7 +95,7 @@ tasks:
     desc: Backup database
     cmds:
       - mkdir -p backups
-      - cp "{{.DB_PATH}}" "backups/irc-client-$(date +%Y%m%d-%H%M%S).db"
+      - cp "{{.DB_PATH}}" "backups/cascade-$(date +%Y%m%d-%H%M%S).db"
       - echo "Backed up to backups/"
 
   # Plugin Tasks

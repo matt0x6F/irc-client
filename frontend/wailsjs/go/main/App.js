@@ -38,12 +38,20 @@ export function GetConnectionStatus(arg1) {
   return window['go']['main']['App']['GetConnectionStatus'](arg1);
 }
 
+export function GetJoinedChannels(arg1) {
+  return window['go']['main']['App']['GetJoinedChannels'](arg1);
+}
+
 export function GetMessages(arg1, arg2, arg3) {
   return window['go']['main']['App']['GetMessages'](arg1, arg2, arg3);
 }
 
 export function GetNetworks() {
   return window['go']['main']['App']['GetNetworks']();
+}
+
+export function GetOpenChannels(arg1) {
+  return window['go']['main']['App']['GetOpenChannels'](arg1);
 }
 
 export function GetServers(arg1) {
@@ -80,6 +88,10 @@ export function SendCommand(arg1, arg2) {
 
 export function SendMessage(arg1, arg2, arg3) {
   return window['go']['main']['App']['SendMessage'](arg1, arg2, arg3);
+}
+
+export function SetChannelOpen(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SetChannelOpen'](arg1, arg2, arg3);
 }
 
 export function ToggleChannelAutoJoin(arg1, arg2) {

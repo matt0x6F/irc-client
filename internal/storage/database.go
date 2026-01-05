@@ -313,6 +313,16 @@ func (s *Storage) GetNetworks() ([]Network, error) {
 	return networks, nil
 }
 
+// GetNetwork retrieves a network by ID
+func (s *Storage) GetNetwork(networkID int64) (*Network, error) {
+	var network Network
+	err := s.db.Get(&network, "SELECT * FROM networks WHERE id = ?", networkID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get network: %w", err)
+	}
+	return &network, nil
+}
+
 // UpdateNetwork updates a network configuration
 func (s *Storage) UpdateNetwork(network *Network) error {
 	query := `UPDATE networks 
@@ -402,8 +412,8 @@ func (s *Storage) DeleteAllServers(networkID int64) error {
 
 // CreateChannel creates a new channel
 func (s *Storage) CreateChannel(channel *Channel) error {
-	query := `INSERT INTO channels (network_id, name, auto_join, created_at)
-	          VALUES (:network_id, :name, :auto_join, :created_at)`
+	query := `INSERT INTO channels (network_id, name, auto_join, is_open, created_at)
+	          VALUES (:network_id, :name, :auto_join, :is_open, :created_at)`
 	
 	result, err := s.db.NamedExec(query, channel)
 	if err != nil {
@@ -425,6 +435,23 @@ func (s *Storage) GetChannels(networkID int64) ([]Channel, error) {
 	err := s.db.Select(&channels, "SELECT * FROM channels WHERE network_id = ? ORDER BY name", networkID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get channels: %w", err)
+	}
+	return channels, nil
+}
+
+// GetJoinedChannels retrieves channels for a network where the specified nickname is a member
+func (s *Storage) GetJoinedChannels(networkID int64, nickname string) ([]Channel, error) {
+	query := `
+		SELECT DISTINCT c.* 
+		FROM channels c
+		INNER JOIN channel_users cu ON c.id = cu.channel_id
+		WHERE c.network_id = ? AND cu.nickname = ?
+		ORDER BY c.name
+	`
+	var channels []Channel
+	err := s.db.Select(&channels, query, networkID, nickname)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get joined channels: %w", err)
 	}
 	return channels, nil
 }
@@ -455,6 +482,29 @@ func (s *Storage) UpdateChannelModes(channelID int64, modes string) error {
 func (s *Storage) UpdateChannelAutoJoin(channelID int64, autoJoin bool) error {
 	_, err := s.db.Exec("UPDATE channels SET auto_join = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", autoJoin, channelID)
 	return err
+}
+
+// UpdateChannelIsOpen updates the is_open state for a channel
+func (s *Storage) UpdateChannelIsOpen(channelID int64, isOpen bool) error {
+	_, err := s.db.Exec("UPDATE channels SET is_open = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", isOpen, channelID)
+	return err
+}
+
+// GetOpenChannels retrieves channels for a network where the dialog is open (is_open=true) or where the user is joined
+func (s *Storage) GetOpenChannels(networkID int64, nickname string) ([]Channel, error) {
+	query := `
+		SELECT DISTINCT c.* 
+		FROM channels c
+		LEFT JOIN channel_users cu ON c.id = cu.channel_id AND cu.nickname = ?
+		WHERE c.network_id = ? AND (c.is_open = 1 OR cu.nickname IS NOT NULL)
+		ORDER BY c.name
+	`
+	var channels []Channel
+	err := s.db.Select(&channels, query, nickname, networkID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get open channels: %w", err)
+	}
+	return channels, nil
 }
 
 // GetChannelUsers retrieves all users for a channel

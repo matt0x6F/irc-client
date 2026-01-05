@@ -54,7 +54,7 @@ func discoverInDirectory(dir string) ([]*PluginInfo, error) {
 
 		// Check if it's executable and matches naming pattern
 		path := filepath.Join(dir, entry.Name())
-		if strings.HasPrefix(entry.Name(), "irc-client-") || isExecutable(path) {
+		if strings.HasPrefix(entry.Name(), "cascade-") || isExecutable(path) {
 			info, err := getPluginInfo(path)
 			if err != nil {
 				logger.Log.Warn().Err(err).Str("path", path).Msg("Failed to get plugin info")
@@ -85,8 +85,8 @@ func discoverInPATH() ([]*PluginInfo, error) {
 				continue
 			}
 
-			// Check for irc-client- prefix
-			if strings.HasPrefix(entry.Name(), "irc-client-") {
+			// Check for cascade- prefix
+			if strings.HasPrefix(entry.Name(), "cascade-") {
 				fullPath := filepath.Join(path, entry.Name())
 				info, err := getPluginInfo(fullPath)
 				if err != nil {
@@ -119,8 +119,8 @@ func getPluginInfo(path string) (*PluginInfo, error) {
 	// If name not set, derive from filename
 	if info.Name == "" {
 		name := filepath.Base(path)
-		if strings.HasPrefix(name, "irc-client-") {
-			info.Name = strings.TrimPrefix(name, "irc-client-")
+		if strings.HasPrefix(name, "cascade-") {
+			info.Name = strings.TrimPrefix(name, "cascade-")
 		} else {
 			info.Name = name
 		}

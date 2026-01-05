@@ -1,4 +1,4 @@
-# IRC Client - Technical Documentation
+# Cascade Chat - Technical Documentation
 
 ## Project Overview
 
@@ -222,8 +222,8 @@ IRC Event → EventBus → [Subscribers]
 ### Plugin Development
 
 1. **Create Plugin Executable**:
-   - Name: `irc-client-<plugin-name>`
-   - Location: `~/.irc-client/plugins/` or `$PATH`
+   - Name: `cascade-<plugin-name>`
+   - Location: `~/.cascade-chat/plugins/` or `$PATH`
    - Optional: `plugin.json` metadata file
 
 2. **Plugin Protocol**:
@@ -236,7 +236,7 @@ IRC Event → EventBus → [Subscribers]
    ```
    my-plugin/
    ├── plugin.json      # Metadata (optional)
-   └── irc-client-my-plugin  # Executable
+   └── cascade-my-plugin  # Executable
    ```
 
 ### Database Migrations
@@ -266,13 +266,13 @@ IRC Event → EventBus → [Subscribers]
 ## Configuration
 
 ### Database
-- **Location**: `~/.irc-client/irc-client.db`
+- **Location**: `~/.cascade-chat/cascade-chat.db`
 - **Mode**: WAL (Write-Ahead Logging)
 - **Buffer**: 100 messages, 5 second flush interval
 
 ### Plugins
-- **Directory**: `~/.irc-client/plugins/`
-- **PATH**: System PATH for `irc-client-*` executables
+- **Directory**: `~/.cascade-chat/plugins/`
+- **PATH**: System PATH for `cascade-*` executables
 - **Metadata**: Optional `plugin.json` in plugin directory
 
 ### Frontend

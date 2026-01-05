@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { main, storage } from '../../wailsjs/go/models';
-import { GetChannels, GetServers, LeaveChannel, ToggleChannelAutoJoin, ToggleNetworkAutoConnect } from '../../wailsjs/go/main/App';
+import { GetChannels, GetJoinedChannels, GetOpenChannels, GetServers, LeaveChannel, ToggleChannelAutoJoin, ToggleNetworkAutoConnect, SetChannelOpen } from '../../wailsjs/go/main/App';
+import { EventsOn } from '../../wailsjs/runtime/runtime';
 
 type Channel = storage.Channel;
 
@@ -49,7 +50,7 @@ export function ServerTree({
     expandedServers.forEach(async (networkId) => {
       // Always reload channels when network is expanded to ensure we have the latest data
       try {
-        const channelList = await GetChannels(networkId);
+        const channelList = await GetOpenChannels(networkId);
         if (channelList && Array.isArray(channelList)) {
           setChannels(prev => ({
             ...prev,
@@ -85,7 +86,7 @@ export function ServerTree({
     if (selectedServer !== null) {
       setExpandedServers(prev => new Set(prev).add(selectedServer));
       // Always reload channels for selected server to ensure we have the latest data
-      GetChannels(selectedServer).then(channelList => {
+      GetOpenChannels(selectedServer).then(channelList => {
         if (channelList && Array.isArray(channelList)) {
           setChannels(prev => ({
             ...prev,
@@ -105,6 +106,44 @@ export function ServerTree({
       });
     }
   }, [selectedServer, servers]);
+
+  // Listen for channels changed events for immediate sidebar updates
+  useEffect(() => {
+    const unsubscribe = EventsOn('channels-changed', (data: any) => {
+      const networkId = data?.networkId;
+      
+      if (networkId && typeof networkId === 'number') {
+        console.log('[ServerTree] Received channels-changed event for network:', networkId);
+        // Refresh channels immediately for this network
+        GetOpenChannels(networkId).then(channelList => {
+          console.log('[ServerTree] Refreshed channel list after channels-changed:', channelList?.map((c: Channel) => c.name), 'count:', channelList?.length);
+          if (channelList && Array.isArray(channelList)) {
+            setChannels(prev => ({
+              ...prev,
+              [networkId]: channelList.map((c: Channel) => c.name),
+            }));
+            const channelMap: Record<string, Channel> = {};
+            channelList.forEach((c: Channel) => {
+              channelMap[c.name] = c;
+            });
+            setChannelData(prev => ({
+              ...prev,
+              [networkId]: channelMap,
+            }));
+          } else {
+            setChannels(prev => ({
+              ...prev,
+              [networkId]: [],
+            }));
+          }
+        }).catch(err => {
+          console.error('[ServerTree] Failed to refresh channels after channels-changed:', err);
+        });
+      }
+    });
+    
+    return () => unsubscribe();
+  }, []);
 
   // Close context menu on outside click
   useEffect(() => {
@@ -418,7 +457,7 @@ export function ServerTree({
                     await ToggleChannelAutoJoin(serverId, channelName);
                     console.log('Toggle successful, reloading channels...');
                     // Reload channels to update the UI
-                    const channelList = await GetChannels(serverId);
+                      const channelList = await GetOpenChannels(serverId);
                     console.log('Reloaded channels:', channelList);
                     if (channelList && Array.isArray(channelList)) {
                       const channelMap: Record<string, Channel> = {};
@@ -454,27 +493,55 @@ export function ServerTree({
                 className="w-full text-left px-4 py-2 text-sm hover:bg-accent text-foreground"
                 onClick={async () => {
                   if (contextMenu.serverId && contextMenu.channel) {
+                    const serverId = contextMenu.serverId; // Capture for TypeScript
+                    const channelName = contextMenu.channel; // Capture for TypeScript
                     try {
-                      await LeaveChannel(contextMenu.serverId, contextMenu.channel);
-                      // Refresh channels after leaving
-                      const channelList = await GetChannels(contextMenu.serverId);
-                      if (channelList && Array.isArray(channelList)) {
-                        setChannels(prev => ({
-                          ...prev,
-                          [contextMenu.serverId!]: channelList.map((c: Channel) => c.name),
-                        }));
-                        const channelMap: Record<string, Channel> = {};
-                        channelList.forEach((c: Channel) => {
-                          channelMap[c.name] = c;
+                      await LeaveChannel(serverId, channelName);
+                      // Manually refresh channels after leaving - try multiple times to ensure it works
+                      const refreshAfterLeave = (attempt = 1) => {
+                        GetOpenChannels(serverId).then(channelList => {
+                          console.log(`[ServerTree] Manually refreshed after LeaveChannel (attempt ${attempt}):`, channelList?.map((c: Channel) => c.name), 'count:', channelList?.length);
+                          if (channelList && Array.isArray(channelList)) {
+                            setChannels(prev => ({
+                              ...prev,
+                              [serverId]: channelList.map((c: Channel) => c.name),
+                            }));
+                            const channelMap: Record<string, Channel> = {};
+                            channelList.forEach((c: Channel) => {
+                              channelMap[c.name] = c;
+                            });
+                            setChannelData(prev => ({
+                              ...prev,
+                              [serverId]: channelMap,
+                            }));
+                            
+                            // If channel is still in list and this is first attempt, retry
+                            const channelStillThere = channelList.some((c: Channel) => c.name === channelName);
+                            if (channelStillThere && attempt < 3) {
+                              console.log('[ServerTree] Channel still in list, retrying refresh...');
+                              setTimeout(() => refreshAfterLeave(attempt + 1), 200);
+                            }
+                          } else {
+                            setChannels(prev => ({
+                              ...prev,
+                              [serverId]: [],
+                            }));
+                          }
+                        }).catch(err => {
+                          console.error(`[ServerTree] Failed to manually refresh after leave (attempt ${attempt}):`, err);
+                          if (attempt < 3) {
+                            setTimeout(() => refreshAfterLeave(attempt + 1), 200);
+                          }
                         });
-                        setChannelData(prev => ({
-                          ...prev,
-                          [contextMenu.serverId!]: channelMap,
-                        }));
-                      }
+                      };
+                      
+                      // Try immediately, then retry a couple times
+                      setTimeout(() => refreshAfterLeave(1), 100);
+                      setTimeout(() => refreshAfterLeave(2), 300);
+                      setTimeout(() => refreshAfterLeave(3), 500);
                       // If we left the currently selected channel, switch to status
-                      if (selectedServer === contextMenu.serverId && selectedChannel === contextMenu.channel) {
-                        onSelectChannel(contextMenu.serverId, 'status');
+                      if (selectedServer === serverId && selectedChannel === channelName) {
+                        onSelectChannel(serverId, 'status');
                       }
                     } catch (error) {
                       console.error('Failed to leave channel:', error);

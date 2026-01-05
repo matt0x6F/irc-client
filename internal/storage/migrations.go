@@ -44,6 +44,11 @@ func Migrate(db *sqlx.DB) error {
 		return fmt.Errorf("auto_connect migration failed: %w", err)
 	}
 
+	// Handle channel is_open field migration
+	if err := migrateChannelIsOpen(db); err != nil {
+		return fmt.Errorf("channel is_open migration failed: %w", err)
+	}
+
 	return nil
 }
 
@@ -279,6 +284,29 @@ func migrateAutoConnect(db *sqlx.DB) error {
 				return fmt.Errorf("failed to add auto_connect column: %w", err)
 			}
 		}
+	}
+
+	return nil
+}
+
+// migrateChannelIsOpen adds is_open field to channels table if it doesn't exist
+func migrateChannelIsOpen(db *sqlx.DB) error {
+	var columnExists int
+	err := db.Get(&columnExists,
+		"SELECT COUNT(*) FROM pragma_table_info('channels') WHERE name='is_open'")
+	if err != nil {
+		return fmt.Errorf("failed to check for is_open column: %w", err)
+	}
+
+	if columnExists == 0 {
+		if _, err := db.Exec("ALTER TABLE channels ADD COLUMN is_open BOOLEAN NOT NULL DEFAULT 0"); err != nil {
+			// Ignore "duplicate column" errors
+			if !strings.Contains(err.Error(), "duplicate column") {
+				return fmt.Errorf("failed to add is_open column: %w", err)
+			}
+		}
+		// Set is_open=true for channels where user is currently a member (they should be open)
+		// This is a best-effort migration - we'll update based on actual join status
 	}
 
 	return nil

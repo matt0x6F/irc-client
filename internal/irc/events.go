@@ -10,6 +10,7 @@ const (
 	EventUserNick           = "user.nick"
 	EventChannelTopic       = "channel.topic"
 	EventChannelMode        = "channel.mode"
+	EventChannelsChanged    = "channels.changed"
 	EventConnectionEstablished = "connection.established"
 	EventConnectionLost     = "connection.lost"
 	EventError              = "error"

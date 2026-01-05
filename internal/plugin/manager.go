@@ -38,7 +38,7 @@ func NewManager(eventBus *events.EventBus, pluginDir string) *Manager {
 	// Default plugin directory
 	if pluginDir == "" {
 		homeDir, _ := os.UserHomeDir()
-		pluginDir = filepath.Join(homeDir, ".irc-client", "plugins")
+		pluginDir = filepath.Join(homeDir, ".cascade-chat", "plugins")
 	}
 
 	pm := &Manager{

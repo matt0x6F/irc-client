@@ -193,6 +193,7 @@ export namespace storage {
 	    topic: string;
 	    modes: string;
 	    auto_join: boolean;
+	    is_open: boolean;
 	    // Go type: time
 	    created_at: any;
 	    // Go type: time
@@ -210,6 +211,7 @@ export namespace storage {
 	        this.topic = source["topic"];
 	        this.modes = source["modes"];
 	        this.auto_join = source["auto_join"];
+	        this.is_open = source["is_open"];
 	        this.created_at = this.convertValues(source["created_at"], null);
 	        this.updated_at = this.convertValues(source["updated_at"], null);
 	    }
