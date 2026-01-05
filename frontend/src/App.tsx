@@ -453,33 +453,23 @@ function App() {
   const handleSendMessage = async (message: string) => {
     if (selectedNetwork === null || selectedChannel === null) return;
     
-    // Check if this is a private message conversation
-    if (selectedChannel.startsWith('pm:')) {
-      const user = selectedChannel.substring(3); // Remove "pm:" prefix
-      // Send message to user
-      try {
-        await SendMessage(selectedNetwork, user, message);
-        // Refresh messages after sending
-        setTimeout(() => {
-          loadMessages();
-        }, 100);
-      } catch (error) {
-        console.error('Failed to send private message:', error);
-      }
-      return;
-    }
-    
-    // Check if this is a slash command - if so, route to SendCommand regardless of channel
+    // Check if this is a slash command - if so, route to SendCommand regardless of channel or DM
     const trimmedMessage = message.trim();
     if (trimmedMessage.startsWith('/')) {
       try {
         let commandToSend = trimmedMessage;
         
-        // For /me command, prepend channel context if we're in a channel
+        // For /me command, prepend channel or user context
         if (trimmedMessage.toLowerCase().startsWith('/me ') && selectedChannel && selectedChannel !== 'status') {
-          // Encode channel in command: /me #channel action text
           const parts = trimmedMessage.substring(4).trim();
-          commandToSend = `/me ${selectedChannel} ${parts}`;
+          // If it's a private message, use the username; otherwise use the channel
+          if (selectedChannel.startsWith('pm:')) {
+            const user = selectedChannel.substring(3); // Remove "pm:" prefix
+            commandToSend = `/me ${user} ${parts}`;
+          } else {
+            // Encode channel in command: /me #channel action text
+            commandToSend = `/me ${selectedChannel} ${parts}`;
+          }
         }
         // For /part and /leave commands, inject current channel if not specified
         else if ((trimmedMessage.toLowerCase().startsWith('/part') || trimmedMessage.toLowerCase().startsWith('/leave')) && selectedChannel && selectedChannel !== 'status') {
@@ -592,6 +582,22 @@ function App() {
       } catch (error) {
         console.error('Failed to send command:', error);
         await loadMessages();
+      }
+      return;
+    }
+    
+    // Check if this is a private message conversation
+    if (selectedChannel.startsWith('pm:')) {
+      const user = selectedChannel.substring(3); // Remove "pm:" prefix
+      // Send message to user
+      try {
+        await SendMessage(selectedNetwork, user, message);
+        // Refresh messages after sending
+        setTimeout(() => {
+          loadMessages();
+        }, 100);
+      } catch (error) {
+        console.error('Failed to send private message:', error);
       }
       return;
     }

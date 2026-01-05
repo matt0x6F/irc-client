@@ -1105,27 +1105,25 @@ func (a *App) SendCommand(networkID int64, command string) error {
 			return client.SendRawCommand(fmt.Sprintf("WHOWAS %s", parts[1]))
 		case "ME", "ACTION":
 			// /me action text - sends CTCP ACTION
-			// Format: /me [channel] action text
-			// If channel is specified as first arg (starts with # or &), use it
-			// Otherwise, channel should be encoded in command from frontend
+			// Format: /me [channel|user] action text
+			// If channel/user is specified as first arg, use it
+			// Otherwise, target should be encoded in command from frontend
 			if len(parts) < 2 {
 				return fmt.Errorf("usage: /me action text")
 			}
 			var target string
 			var actionText string
-			// Check if first argument is a channel
-			if len(parts) >= 2 && (strings.HasPrefix(parts[1], "#") || strings.HasPrefix(parts[1], "&")) {
-				// Channel specified as first argument
+			// Check if first argument is a channel or user (target is always provided by frontend)
+			if len(parts) >= 2 {
+				// Target (channel or user) specified as first argument
 				target = parts[1]
 				if len(parts) >= 3 {
 					actionText = strings.Join(parts[2:], " ")
 				} else {
-					return fmt.Errorf("usage: /me [channel] action text")
+					return fmt.Errorf("usage: /me [channel|user] action text")
 				}
 			} else {
-				// No channel specified - this should have been handled by frontend
-				// But we'll return an error to be safe
-				return fmt.Errorf("usage: /me action text (must be used in a channel)")
+				return fmt.Errorf("usage: /me [channel|user] action text")
 			}
 			// Send CTCP ACTION: PRIVMSG target :\001ACTION text\001
 			return client.SendRawCommand(fmt.Sprintf("PRIVMSG %s :\001ACTION %s\001", target, actionText))
@@ -1364,7 +1362,7 @@ func (a *App) GetPrivateMessages(networkID int64, targetUser string, limit int) 
 		// allows viewing PMs even if nickname isn't set yet
 		return a.storage.GetPrivateMessages(networkID, targetUser, "", limit)
 	}
-	
+
 	currentUser := network.Nickname
 	return a.storage.GetPrivateMessages(networkID, targetUser, currentUser, limit)
 }
@@ -1376,12 +1374,12 @@ func (a *App) GetPrivateMessageConversations(networkID int64) ([]string, error) 
 	if err != nil {
 		return nil, fmt.Errorf("network not found: %w", err)
 	}
-	
+
 	if network.Nickname == "" {
 		// No nickname set, can't exclude current user, return empty list
 		return []string{}, nil
 	}
-	
+
 	currentUser := network.Nickname
 	return a.storage.GetPrivateMessageConversations(networkID, currentUser)
 }
