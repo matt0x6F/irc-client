@@ -149,6 +149,14 @@ func (c *IRCClient) setupHandlers() {
 			c.conn.SendRaw("CAP LS 302")
 		}
 
+		// On connection established, restore channel state after restart
+		// Clear all channel_users entries since we're not actually joined anymore
+		if err := c.storage.ClearNetworkChannelUsers(c.networkID); err != nil {
+			logger.Log.Warn().Err(err).Msg("Failed to clear channel users on connection")
+		} else {
+			logger.Log.Debug().Msg("Cleared channel users on connection (restoring state after restart)")
+		}
+
 		c.eventBus.Emit(events.Event{
 			Type:      EventConnectionEstablished,
 			Data:      map[string]interface{}{"network": c.network.Address},
@@ -1225,7 +1233,8 @@ func (c *IRCClient) Connect() error {
 	go c.conn.Loop()
 
 	// Auto-join channels after a short delay to ensure connection is established
-	// Only join channels that are open (is_open=true) or have auto_join enabled
+	// Only join channels that have auto_join enabled
+	// Channels with is_open=true but auto_join=false remain OPEN (dialog open but not joined)
 	go func() {
 		time.Sleep(constants.AutoJoinDelay)
 		channels, err := c.storage.GetChannels(c.networkID)
@@ -1237,10 +1246,13 @@ func (c *IRCClient) Connect() error {
 					Bool("auto_join", channel.AutoJoin).
 					Bool("is_open", channel.IsOpen).
 					Msg("Channel auto-join status")
-				// Only auto-join if channel is open (dialog was open) OR auto_join is enabled
-				if channel.IsOpen || channel.AutoJoin {
-					logger.Log.Info().Str("channel", channel.Name).Bool("reason", channel.IsOpen).Bool("auto_join", channel.AutoJoin).Msg("Auto-joining channel")
+				// Only auto-join if auto_join is enabled
+				// Channels with is_open=true but auto_join=false remain OPEN (dialog open but not joined)
+				if channel.AutoJoin {
+					logger.Log.Info().Str("channel", channel.Name).Msg("Auto-joining channel (auto_join enabled)")
 					c.conn.Join(channel.Name)
+				} else if channel.IsOpen {
+					logger.Log.Debug().Str("channel", channel.Name).Msg("Channel is open but auto_join disabled - keeping OPEN state (not joining)")
 				} else {
 					logger.Log.Debug().Str("channel", channel.Name).Msg("Skipping channel (not open and auto-join disabled)")
 				}

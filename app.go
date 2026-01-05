@@ -883,8 +883,30 @@ func (a *App) ConnectNetwork(config NetworkConfig) error {
 		ircClient := irc.NewIRCClient(&tempNetwork, a.eventBus, a.storage)
 		ircClient.SetNetworkID(network.ID)
 
-		// Try to connect
-		if err := ircClient.Connect(); err != nil {
+		// Try to connect with timeout
+		logger.Log.Debug().Str("server", serverKey).Msg("Starting connection attempt")
+		connectErr := make(chan error, 1)
+		go func() {
+			connectErr <- ircClient.Connect()
+		}()
+
+		var err error
+		select {
+		case err = <-connectErr:
+			// Connection attempt completed (success or failure)
+			if err != nil {
+				logger.Log.Debug().Err(err).Str("server", serverKey).Msg("Connection attempt failed")
+			} else {
+				logger.Log.Debug().Str("server", serverKey).Msg("Connection attempt succeeded")
+			}
+		case <-time.After(30 * time.Second):
+			// Connection timeout - disconnect and try next server
+			logger.Log.Warn().Str("server", serverKey).Msg("Connection timeout after 30 seconds")
+			ircClient.Disconnect()
+			err = fmt.Errorf("connection timeout after 30 seconds")
+		}
+
+		if err != nil {
 			lastErr = err
 			logger.Log.Warn().Err(err).Str("server", serverKey).Msg("Failed to connect")
 

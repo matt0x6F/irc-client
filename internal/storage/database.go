@@ -544,3 +544,12 @@ func (s *Storage) ClearChannelUsers(channelID int64) error {
 	return err
 }
 
+// ClearNetworkChannelUsers removes all channel users for all channels in a network
+func (s *Storage) ClearNetworkChannelUsers(networkID int64) error {
+	_, err := s.db.Exec(`
+		DELETE FROM channel_users 
+		WHERE channel_id IN (SELECT id FROM channels WHERE network_id = ?)
+	`, networkID)
+	return err
+}
+

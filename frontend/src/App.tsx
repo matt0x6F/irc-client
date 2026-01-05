@@ -21,6 +21,8 @@ function App() {
   const [showTopicModal, setShowTopicModal] = useState(false);
   const [showModeModal, setShowModeModal] = useState(false);
   const pendingJoinChannelRef = useRef<{ networkId: number; channel: string } | null>(null);
+  // Track channels with unread activity (key: `${networkId}:${channelName}`)
+  const [channelsWithActivity, setChannelsWithActivity] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     loadNetworks();
@@ -157,6 +159,21 @@ function App() {
       const eventData = data?.data || {};
       const network = eventData.network;
       const target = eventData.target || eventData.channel;
+      
+      // Track activity for channels that aren't currently focused
+      if (eventType === 'message.received' || eventType === 'message.sent') {
+        // Find the network by address
+        const networkObj = networks.find(n => n.address === network);
+        if (networkObj && target && target !== 'status') {
+          // Check if this channel is currently focused
+          const isFocused = selectedNetwork === networkObj.id && selectedChannel === target;
+          if (!isFocused) {
+            // Mark this channel as having activity
+            const activityKey = `${networkObj.id}:${target}`;
+            setChannelsWithActivity(prev => new Set(prev).add(activityKey));
+          }
+        }
+      }
       
       // Handle channel join/part events for pending join channel switching
       if (eventType === 'user.joined' || eventType === 'user.parted') {
@@ -380,6 +397,16 @@ function App() {
         setSelectedNetwork(null);
         setSelectedChannel(null);
       }
+      // Clear activity indicators for all channels in this network
+      setChannelsWithActivity(prev => {
+        const next = new Set(prev);
+        for (const key of prev) {
+          if (key.startsWith(`${networkId}:`)) {
+            next.delete(key);
+          }
+        }
+        return next;
+      });
       console.log('Delete operation completed successfully');
     } catch (error) {
       console.error('Failed to delete:', error);
@@ -499,6 +526,13 @@ function App() {
           } catch (error) {
             console.error('[App] Failed to set channel closed:', error);
           }
+          // Clear activity indicator for closed channel
+          const activityKey = `${selectedNetwork}:${closeTargetChannel}`;
+          setChannelsWithActivity(prev => {
+            const next = new Set(prev);
+            next.delete(activityKey);
+            return next;
+          });
           setSelectedChannel('status');
         }
         
@@ -571,6 +605,7 @@ function App() {
           selectedServer={selectedNetwork}
           selectedChannel={selectedChannel}
           onSelectServer={setSelectedNetwork}
+          channelsWithActivity={channelsWithActivity}
           onSelectChannel={async (networkId, channel) => {
             // When switching channels, update the state of the previous and new channels
             if (selectedNetwork !== null && selectedChannel !== null && selectedChannel !== 'status') {
@@ -584,6 +619,16 @@ function App() {
             
             setSelectedNetwork(networkId);
             setSelectedChannel(channel);
+            
+            // Clear activity indicator for the selected channel
+            if (channel !== null && channel !== 'status') {
+              const activityKey = `${networkId}:${channel}`;
+              setChannelsWithActivity(prev => {
+                const next = new Set(prev);
+                next.delete(activityKey);
+                return next;
+              });
+            }
             
             // Mark new channel as open if it's not the status window
             if (channel !== null && channel !== 'status') {

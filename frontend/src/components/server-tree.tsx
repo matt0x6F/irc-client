@@ -15,6 +15,7 @@ interface ServerTreeProps {
   onDisconnect: (id: number) => Promise<void>;
   onDelete: (id: number) => Promise<void>;
   connectionStatus: Record<number, boolean>;
+  channelsWithActivity: Set<string>;
 }
 
 interface ContextMenu {
@@ -35,6 +36,7 @@ export function ServerTree({
   onDisconnect,
   onDelete,
   connectionStatus,
+  channelsWithActivity,
 }: ServerTreeProps) {
   const [expandedServers, setExpandedServers] = useState<Set<number>>(new Set());
   const [channels, setChannels] = useState<Record<number, string[]>>({});
@@ -283,23 +285,30 @@ export function ServerTree({
                         <span className="text-sm text-muted-foreground">Status</span>
                       </div>
                       {/* Regular channels */}
-                      {networkChannels.map((channel) => (
-                        <div
-                          key={channel}
-                          className={`p-2 cursor-pointer hover:bg-accent select-none ${
-                            isSelected && selectedChannel === channel ? 'bg-accent border-l-2 border-primary' : ''
-                          }`}
-                          onClick={() => handleChannelClick(network.id, channel)}
-                          onContextMenu={(e) => handleContextMenu(e, 'channel', network.id, channel)}
-                          onMouseDown={(e) => {
-                            if (e.button === 2) {
-                              e.preventDefault();
-                            }
-                          }}
-                        >
-                          <span className="text-sm">{channel}</span>
-                        </div>
-                      ))}
+                      {networkChannels.map((channel) => {
+                        const activityKey = `${network.id}:${channel}`;
+                        const hasActivity = channelsWithActivity.has(activityKey);
+                        return (
+                          <div
+                            key={channel}
+                            className={`p-2 cursor-pointer hover:bg-accent select-none flex items-center justify-between ${
+                              isSelected && selectedChannel === channel ? 'bg-accent border-l-2 border-primary' : ''
+                            }`}
+                            onClick={() => handleChannelClick(network.id, channel)}
+                            onContextMenu={(e) => handleContextMenu(e, 'channel', network.id, channel)}
+                            onMouseDown={(e) => {
+                              if (e.button === 2) {
+                                e.preventDefault();
+                              }
+                            }}
+                          >
+                            <span className={`text-sm ${hasActivity ? 'font-semibold' : ''}`}>{channel}</span>
+                            {hasActivity && (
+                              <span className="w-2 h-2 rounded-full bg-primary ml-2" title="Unread activity" />
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
                 </div>

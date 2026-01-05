@@ -58,6 +58,7 @@ export function MessageView({ messages }: MessageViewProps) {
           const isError = msg.message_type === 'error';
           const isStatus = msg.message_type === 'status';
           const isCommand = msg.message_type === 'command';
+          const isSystemMessage = msg.message_type === 'join' || msg.message_type === 'part' || msg.message_type === 'quit';
           
           return (
             <div 
@@ -82,16 +83,16 @@ export function MessageView({ messages }: MessageViewProps) {
                 </>
               ) : (
                 <>
-                  {msg.user !== '*' && (
+                  <span className="text-sm text-muted-foreground">
+                    {new Date(msg.timestamp).toLocaleTimeString()}
+                  </span>
+                  {msg.user !== '*' && !isSystemMessage && (
                     <span className={`text-sm font-medium ${
                       isStatus || isCommand ? 'text-muted-foreground italic' : 'text-primary'
                     }`}>
                       {msg.user}
                     </span>
                   )}
-                  <span className="text-sm text-muted-foreground">
-                    {new Date(msg.timestamp).toLocaleTimeString()}
-                  </span>
                   <IRCFormattedText 
                     text={msg.message} 
                     className={`text-sm flex-1 ${
