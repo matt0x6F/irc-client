@@ -36,6 +36,15 @@ type IRCClient struct {
 	scramState          *SCRAMState
 	namesInProgress     map[string]bool // Track channels currently receiving NAMES list
 	namesMu             sync.Mutex      // Mutex for namesInProgress map
+	serverCapabilities  *ServerCapabilities // Server capabilities from ISUPPORT
+}
+
+// ServerCapabilities stores parsed ISUPPORT information
+type ServerCapabilities struct {
+	Prefix      map[rune]rune // Map prefix char to mode char (e.g., '@' -> 'o', '+' -> 'v')
+	PrefixString string       // Raw PREFIX string (e.g., "(ov)@+")
+	ChanModes   string       // Raw CHANMODES string
+	mu          sync.RWMutex // Mutex for thread-safe access
 }
 
 // IsConnected returns whether the client is connected
@@ -71,6 +80,11 @@ func NewIRCClient(network *storage.Network, eventBus *events.EventBus, storage *
 		saslCapRequested:    false,
 		saslCapAcknowledged: false,
 		namesInProgress:     make(map[string]bool),
+		serverCapabilities:   &ServerCapabilities{
+			Prefix:      make(map[rune]rune),
+			PrefixString: "",
+			ChanModes:   "",
+		},
 	}
 
 	// Debug: Log SASL configuration
@@ -389,8 +403,14 @@ func (c *IRCClient) setupHandlers() {
 		ch, err := c.storage.GetChannelByName(c.networkID, channel)
 		channelUpdated := false
 		if err == nil {
-			c.storage.RemoveChannelUser(ch.ID, user)
-			logger.Log.Debug().Str("user", user).Str("channel", channel).Msg("Removed user from channel user list")
+			if err := c.storage.RemoveChannelUser(ch.ID, user); err != nil {
+				logger.Log.Error().Err(err).Str("user", user).Str("channel", channel).Msg("Failed to remove user from channel user list")
+			} else {
+				logger.Log.Debug().Str("user", user).Str("channel", channel).Msg("Removed user from channel user list")
+				// Verify the write is committed by reading it back (forces WAL sync)
+				// This ensures the user is immediately removed when the frontend queries
+				_, _ = c.storage.GetChannelUsers(ch.ID)
+			}
 			
 			// If the current user parted, mark channel as closed (CLOSED state)
 			if strings.EqualFold(user, c.network.Nickname) {
@@ -469,8 +489,14 @@ func (c *IRCClient) setupHandlers() {
 					for _, u := range users {
 						if u.Nickname == user {
 							// User is in this channel, remove them
-							c.storage.RemoveChannelUser(ch.ID, user)
-							logger.Log.Debug().Str("user", user).Str("channel", ch.Name).Msg("Removed user from channel user list")
+							if err := c.storage.RemoveChannelUser(ch.ID, user); err != nil {
+								logger.Log.Error().Err(err).Str("user", user).Str("channel", ch.Name).Msg("Failed to remove user from channel user list")
+							} else {
+								logger.Log.Debug().Str("user", user).Str("channel", ch.Name).Msg("Removed user from channel user list")
+								// Verify the write is committed by reading it back (forces WAL sync)
+								// This ensures the user is immediately removed when the frontend queries
+								_, _ = c.storage.GetChannelUsers(ch.ID)
+							}
 
 							// Store quit message in the channel
 							rawLine, _ := e.Line()
@@ -516,17 +542,113 @@ func (c *IRCClient) setupHandlers() {
 		})
 	})
 
+	// User kicked from channel
+	c.conn.AddCallback("KICK", func(e ircmsg.Message) {
+		if len(e.Params) < 2 {
+			return
+		}
+		channel := e.Params[0]
+		kickedUser := e.Params[1]
+		kicker := e.Nick()
+		reason := ""
+		if len(e.Params) > 2 {
+			reason = e.Params[2]
+		}
+
+		// Get channel from database
+		ch, err := c.storage.GetChannelByName(c.networkID, channel)
+		channelUpdated := false
+		if err == nil {
+			// Remove kicked user from channel user list
+			if err := c.storage.RemoveChannelUser(ch.ID, kickedUser); err != nil {
+				logger.Log.Error().Err(err).Str("user", kickedUser).Str("channel", channel).Msg("Failed to remove kicked user from channel user list")
+			} else {
+				logger.Log.Debug().Str("user", kickedUser).Str("channel", channel).Msg("Removed kicked user from channel user list")
+				// Verify the write is committed by reading it back (forces WAL sync)
+				// This ensures the user is immediately removed when the frontend queries
+				_, _ = c.storage.GetChannelUsers(ch.ID)
+			}
+
+			// If we were kicked, mark channel as closed
+			if strings.EqualFold(kickedUser, c.network.Nickname) {
+				c.storage.UpdateChannelIsOpen(ch.ID, false)
+				channelUpdated = true
+			}
+
+			// Store kick message in the channel (use sync write so it appears immediately)
+			rawLine, _ := e.Line()
+			kickMsg := storage.Message{
+				NetworkID: c.networkID,
+				ChannelID: &ch.ID,
+				User:      kicker,
+				Message: fmt.Sprintf("%s kicked %s%s", kicker, kickedUser, func() string {
+					if reason != "" {
+						return fmt.Sprintf(" (%s)", reason)
+					}
+					return ""
+				}()),
+				MessageType: "kick",
+				Timestamp:   time.Now(),
+				RawLine:     rawLine,
+			}
+			if err := c.storage.WriteMessageSync(kickMsg); err != nil {
+				// During shutdown, storage may be closed - this is expected
+				if err.Error() == "storage is closed" {
+					logger.Log.Debug().Msg("Skipping kick message storage (storage closed during shutdown)")
+				} else {
+					logger.Log.Error().Err(err).Msg("Failed to store kick message")
+				}
+			}
+		}
+
+		// Emit event
+		c.eventBus.Emit(events.Event{
+			Type: EventUserKicked,
+			Data: map[string]interface{}{
+				"network":   c.network.Address,
+				"networkId": c.networkID,
+				"channel":   channel,
+				"kicker":    kicker,
+				"user":      kickedUser,
+				"reason":    reason,
+			},
+			Timestamp: time.Now(),
+			Source:    events.EventSourceIRC,
+		})
+
+		// Emit channels changed event if we were kicked
+		if channelUpdated {
+			c.eventBus.Emit(events.Event{
+				Type: EventChannelsChanged,
+				Data: map[string]interface{}{
+					"network":   c.network.Address,
+					"networkId": c.networkID,
+				},
+				Timestamp: time.Now(),
+				Source:    events.EventSourceIRC,
+			})
+		}
+	})
+
 	// Nick change
 	c.conn.AddCallback("NICK", func(e ircmsg.Message) {
 		oldNick := e.Nick()
 		newNick := e.Params[0]
 
+		// Update nickname in all channels for this network
+		if err := c.storage.UpdateChannelUserNickname(c.networkID, oldNick, newNick); err != nil {
+			logger.Log.Error().Err(err).Str("oldNick", oldNick).Str("newNick", newNick).Msg("Failed to update nickname in channel user lists")
+		} else {
+			logger.Log.Debug().Str("oldNick", oldNick).Str("newNick", newNick).Msg("Updated nickname in channel user lists")
+		}
+
 		c.eventBus.Emit(events.Event{
 			Type: EventUserNick,
 			Data: map[string]interface{}{
-				"network": c.network.Address,
-				"oldNick": oldNick,
-				"newNick": newNick,
+				"network":   c.network.Address,
+				"networkId": c.networkID,
+				"oldNick":   oldNick,
+				"newNick":   newNick,
 			},
 			Timestamp: time.Now(),
 			Source:    events.EventSourceIRC,
@@ -885,6 +1007,42 @@ func (c *IRCClient) setupHandlers() {
 				RawLine:     rawLine,
 			}
 			c.storage.WriteMessage(statusMsg)
+		}
+	})
+
+	// ISUPPORT (005) - Server capabilities
+	c.conn.AddCallback("005", func(e ircmsg.Message) {
+		// RPL_ISUPPORT - Server capability parameters
+		// Format: :server 005 nickname PREFIX=(ov)@+ CHANMODES=b,k,l,imnpst ... :are supported by this server
+		if len(e.Params) < 2 {
+			return
+		}
+
+		// Parse all parameters (skip first param which is our nickname)
+		for i := 1; i < len(e.Params); i++ {
+			param := e.Params[i]
+			if param == "" || param[0] == ':' {
+				// Last parameter starts with ':' and is usually a description
+				break
+			}
+
+			// Parse PREFIX parameter: PREFIX=(ov)@+
+			if strings.HasPrefix(param, "PREFIX=") {
+				prefixValue := param[7:] // Skip "PREFIX="
+				c.parsePREFIX(prefixValue)
+			}
+
+			// Parse CHANMODES parameter: CHANMODES=b,k,l,imnpst
+			if strings.HasPrefix(param, "CHANMODES=") {
+				chanModesValue := param[10:] // Skip "CHANMODES="
+				c.mu.Lock()
+				c.serverCapabilities.ChanModes = chanModesValue
+				c.mu.Unlock()
+				logger.Log.Debug().
+					Str("chanmodes", chanModesValue).
+					Str("network", c.network.Name).
+					Msg("Parsed CHANMODES from ISUPPORT")
+			}
 		}
 	})
 
@@ -1436,4 +1594,76 @@ func (c *IRCClient) SendRawCommand(command string) error {
 	}
 
 	return nil
+}
+
+// parsePREFIX parses the PREFIX parameter from ISUPPORT
+// Format: (ov)@+ where (ov) are the mode letters and @+ are the prefix characters
+// This maps '@' -> 'o' (op) and '+' -> 'v' (voice)
+func (c *IRCClient) parsePREFIX(prefixValue string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.serverCapabilities.PrefixString = prefixValue
+	c.serverCapabilities.Prefix = make(map[rune]rune)
+
+	// Find the opening parenthesis
+	openParen := strings.IndexRune(prefixValue, '(')
+	if openParen == -1 {
+		logger.Log.Warn().
+			Str("prefix", prefixValue).
+			Msg("Invalid PREFIX format: missing opening parenthesis")
+		return
+	}
+
+	// Find the closing parenthesis
+	closeParen := strings.IndexRune(prefixValue[openParen:], ')')
+	if closeParen == -1 {
+		logger.Log.Warn().
+			Str("prefix", prefixValue).
+			Msg("Invalid PREFIX format: missing closing parenthesis")
+		return
+	}
+	closeParen += openParen
+
+	// Extract mode letters (between parentheses)
+	modeLetters := prefixValue[openParen+1 : closeParen]
+
+	// Extract prefix characters (after closing parenthesis)
+	prefixChars := prefixValue[closeParen+1:]
+
+	// Map prefix characters to mode letters
+	// The order should match: first prefix char maps to first mode letter, etc.
+	modeRunes := []rune(modeLetters)
+	prefixRunes := []rune(prefixChars)
+
+	for i := 0; i < len(modeRunes) && i < len(prefixRunes); i++ {
+		c.serverCapabilities.Prefix[prefixRunes[i]] = modeRunes[i]
+	}
+
+	logger.Log.Debug().
+		Str("prefix", prefixValue).
+		Str("modes", modeLetters).
+		Str("prefixes", prefixChars).
+		Str("network", c.network.Name).
+		Msg("Parsed PREFIX from ISUPPORT")
+}
+
+// GetServerCapabilities returns a copy of the server capabilities
+func (c *IRCClient) GetServerCapabilities() *ServerCapabilities {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	// Return a copy to avoid race conditions
+	cap := &ServerCapabilities{
+		Prefix:      make(map[rune]rune),
+		PrefixString: c.serverCapabilities.PrefixString,
+		ChanModes:   c.serverCapabilities.ChanModes,
+	}
+
+	// Copy the prefix map
+	for k, v := range c.serverCapabilities.Prefix {
+		cap.Prefix[k] = v
+	}
+
+	return cap
 }

@@ -706,7 +706,16 @@ function App() {
           </div>
 
           {/* Channel Info Sidebar */}
-          <ChannelInfo networkId={selectedNetwork} channelName={selectedChannel} />
+          <ChannelInfo 
+            networkId={selectedNetwork} 
+            channelName={selectedChannel}
+            currentNickname={selectedNetwork !== null ? networks.find(n => n.id === selectedNetwork)?.nickname || null : null}
+            onSendCommand={async (command: string) => {
+              if (selectedNetwork !== null) {
+                await SendCommand(selectedNetwork, command);
+              }
+            }}
+          />
         </div>
 
         {/* Input Area */}

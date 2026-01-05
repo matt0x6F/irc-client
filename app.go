@@ -87,6 +87,12 @@ func NewApp() (*App, error) {
 	eventBus.Subscribe(irc.EventConnectionLost, app)
 	// Subscribe to channel list change events
 	eventBus.Subscribe(irc.EventChannelsChanged, app)
+	// Subscribe to user events to forward to frontend
+	eventBus.Subscribe(irc.EventUserJoined, app)
+	eventBus.Subscribe(irc.EventUserParted, app)
+	eventBus.Subscribe(irc.EventUserQuit, app)
+	eventBus.Subscribe(irc.EventUserKicked, app)
+	eventBus.Subscribe(irc.EventUserNick, app)
 
 	// Start processing plugin actions
 	go app.processPluginActions()
@@ -435,6 +441,7 @@ func (a *App) OnEvent(event events.Event) {
 	// Forward message and user events to frontend for real-time updates
 	if event.Type == irc.EventMessageSent || event.Type == irc.EventMessageReceived ||
 		event.Type == irc.EventUserJoined || event.Type == irc.EventUserParted || event.Type == irc.EventUserQuit ||
+		event.Type == irc.EventUserKicked ||
 		event.Type == irc.EventChannelTopic || event.Type == irc.EventChannelMode ||
 		event.Type == irc.EventError || event.Type == "channel.names.complete" {
 		// Forward to frontend via Wails events
@@ -1400,8 +1407,16 @@ func (a *App) GetChannelIDByName(networkID int64, channelName string) (*int64, e
 
 // ChannelInfo represents channel information with users
 type ChannelInfo struct {
-	Channel *storage.Channel      `json:"channel"`
-	Users   []storage.ChannelUser `json:"users"`
+	Channel    *storage.Channel       `json:"channel"`
+	Users      []storage.ChannelUser  `json:"users"`
+	Capabilities *ServerCapabilitiesInfo `json:"capabilities,omitempty"`
+}
+
+// ServerCapabilitiesInfo represents server capabilities for frontend
+type ServerCapabilitiesInfo struct {
+	Prefix      map[string]string `json:"prefix"`       // Map prefix char to mode char (e.g., "@" -> "o", "+" -> "v")
+	PrefixString string           `json:"prefix_string"` // Raw PREFIX string
+	ChanModes   string           `json:"chanmodes"`     // Raw CHANMODES string
 }
 
 // GetChannelInfo retrieves channel information including topic and users
@@ -1429,9 +1444,42 @@ func (a *App) GetChannelInfo(networkID int64, channelName string) (*ChannelInfo,
 		users = []storage.ChannelUser{}
 	}
 
+	// Get server capabilities
+	capabilities, _ := a.GetServerCapabilities(networkID)
+
 	return &ChannelInfo{
-		Channel: channel,
-		Users:   users,
+		Channel:     channel,
+		Users:       users,
+		Capabilities: capabilities,
+	}, nil
+}
+
+// GetServerCapabilities retrieves server capabilities from ISUPPORT for a network
+func (a *App) GetServerCapabilities(networkID int64) (*ServerCapabilitiesInfo, error) {
+	a.mu.RLock()
+	client, exists := a.ircClients[networkID]
+	a.mu.RUnlock()
+
+	if !exists {
+		return &ServerCapabilitiesInfo{
+			Prefix:      make(map[string]string),
+			PrefixString: "",
+			ChanModes:   "",
+		}, nil
+	}
+
+	cap := client.GetServerCapabilities()
+
+	// Convert rune map to string map for JSON serialization
+	prefixMap := make(map[string]string)
+	for k, v := range cap.Prefix {
+		prefixMap[string(k)] = string(v)
+	}
+
+	return &ServerCapabilitiesInfo{
+		Prefix:      prefixMap,
+		PrefixString: cap.PrefixString,
+		ChanModes:   cap.ChanModes,
 	}, nil
 }
 

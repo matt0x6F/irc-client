@@ -553,3 +553,14 @@ func (s *Storage) ClearNetworkChannelUsers(networkID int64) error {
 	return err
 }
 
+// UpdateChannelUserNickname updates a user's nickname across all channels in a network
+func (s *Storage) UpdateChannelUserNickname(networkID int64, oldNickname string, newNickname string) error {
+	_, err := s.db.Exec(`
+		UPDATE channel_users 
+		SET nickname = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE nickname = ? 
+		AND channel_id IN (SELECT id FROM channels WHERE network_id = ?)
+	`, newNickname, oldNickname, networkID)
+	return err
+}
+

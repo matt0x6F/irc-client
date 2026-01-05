@@ -42,9 +42,26 @@ export namespace events {
 
 export namespace main {
 	
+	export class ServerCapabilitiesInfo {
+	    prefix: Record<string, string>;
+	    prefix_string: string;
+	    chanmodes: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ServerCapabilitiesInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.prefix = source["prefix"];
+	        this.prefix_string = source["prefix_string"];
+	        this.chanmodes = source["chanmodes"];
+	    }
+	}
 	export class ChannelInfo {
 	    channel?: storage.Channel;
 	    users: storage.ChannelUser[];
+	    capabilities?: ServerCapabilitiesInfo;
 	
 	    static createFrom(source: any = {}) {
 	        return new ChannelInfo(source);
@@ -54,6 +71,7 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.channel = this.convertValues(source["channel"], storage.Channel);
 	        this.users = this.convertValues(source["users"], storage.ChannelUser);
+	        this.capabilities = this.convertValues(source["capabilities"], ServerCapabilitiesInfo);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -150,6 +168,7 @@ export namespace main {
 		    return a;
 		}
 	}
+	
 
 }
 

@@ -54,6 +54,10 @@ export function GetOpenChannels(arg1) {
   return window['go']['main']['App']['GetOpenChannels'](arg1);
 }
 
+export function GetServerCapabilities(arg1) {
+  return window['go']['main']['App']['GetServerCapabilities'](arg1);
+}
+
 export function GetServers(arg1) {
   return window['go']['main']['App']['GetServers'](arg1);
 }

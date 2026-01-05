@@ -7,6 +7,7 @@ const (
 	EventUserJoined         = "user.joined"
 	EventUserParted         = "user.parted"
 	EventUserQuit           = "user.quit"
+	EventUserKicked         = "user.kicked"
 	EventUserNick           = "user.nick"
 	EventChannelTopic       = "channel.topic"
 	EventChannelMode        = "channel.mode"

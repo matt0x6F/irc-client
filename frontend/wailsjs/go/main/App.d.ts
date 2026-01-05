@@ -31,6 +31,8 @@ export function GetNetworks():Promise<Array<storage.Network>>;
 
 export function GetOpenChannels(arg1:number):Promise<Array<storage.Channel>>;
 
+export function GetServerCapabilities(arg1:number):Promise<main.ServerCapabilitiesInfo>;
+
 export function GetServers(arg1:number):Promise<Array<storage.Server>>;
 
 export function Greet(arg1:string):Promise<string>;
