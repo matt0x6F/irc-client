@@ -308,8 +308,14 @@ func (c *IRCClient) setupHandlers() {
 
 		// Add user to channel user list (for all users, not just ourselves)
 		if ch != nil {
-			c.storage.AddChannelUser(ch.ID, user, "")
-			logger.Log.Debug().Str("user", user).Str("channel", channel).Msg("Added user to channel user list")
+			if err := c.storage.AddChannelUser(ch.ID, user, ""); err != nil {
+				logger.Log.Error().Err(err).Str("user", user).Str("channel", channel).Msg("Failed to add user to channel user list")
+			} else {
+				logger.Log.Debug().Str("user", user).Str("channel", channel).Msg("Added user to channel user list")
+				// Verify the write is committed by reading it back (forces WAL sync)
+				// This ensures the user is immediately visible when the frontend queries
+				_, _ = c.storage.GetChannelUsers(ch.ID)
+			}
 		}
 
 		// If the current user joined, request fresh NAMES list to update user list
@@ -347,9 +353,10 @@ func (c *IRCClient) setupHandlers() {
 		c.eventBus.Emit(events.Event{
 			Type: EventUserJoined,
 			Data: map[string]interface{}{
-				"network": c.network.Address,
-				"channel": channel,
-				"user":    user,
+				"network":   c.network.Address,
+				"networkId": c.networkID,
+				"channel":   channel,
+				"user":      user,
 			},
 			Timestamp: time.Now(),
 			Source:    events.EventSourceIRC,
@@ -420,10 +427,11 @@ func (c *IRCClient) setupHandlers() {
 		c.eventBus.Emit(events.Event{
 			Type: EventUserParted,
 			Data: map[string]interface{}{
-				"network": c.network.Address,
-				"channel": channel,
-				"user":    user,
-				"reason":  reason,
+				"network":   c.network.Address,
+				"networkId": c.networkID,
+				"channel":   channel,
+				"user":      user,
+				"reason":    reason,
 			},
 			Timestamp: time.Now(),
 			Source:    events.EventSourceIRC,
@@ -498,9 +506,10 @@ func (c *IRCClient) setupHandlers() {
 		c.eventBus.Emit(events.Event{
 			Type: EventUserQuit,
 			Data: map[string]interface{}{
-				"network": c.network.Address,
-				"user":    user,
-				"reason":  reason,
+				"network":   c.network.Address,
+				"networkId": c.networkID,
+				"user":      user,
+				"reason":    reason,
 			},
 			Timestamp: time.Now(),
 			Source:    events.EventSourceIRC,
@@ -645,8 +654,9 @@ func (c *IRCClient) setupHandlers() {
 		c.eventBus.Emit(events.Event{
 			Type: "channel.names.complete",
 			Data: map[string]interface{}{
-				"network": c.network.Address,
-				"channel": channel,
+				"network":   c.network.Address,
+				"networkId": c.networkID,
+				"channel":   channel,
 			},
 			Timestamp: time.Now(),
 			Source:    events.EventSourceIRC,

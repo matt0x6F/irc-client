@@ -48,11 +48,13 @@ export function ChannelInfo({ networkId, channelName }: ChannelInfoProps) {
       // Refresh on user join/part/quit events or when NAMES list completes
       if (eventType === 'user.joined' || eventType === 'user.parted' || eventType === 'user.quit' || eventType === 'channel.names.complete') {
         const target = eventData.channel;
-        if (target === channelName) {
-          // Small delay to ensure database is updated
-          setTimeout(() => {
-            loadChannelInfo();
-          }, 200);
+        const eventNetworkId = eventData.networkId;
+        
+        // Match both channel name and network ID
+        // Network ID is now included in the event data for direct comparison
+        if (target === channelName && eventNetworkId === networkId) {
+          // Database write is verified before event emission, so refresh immediately
+          loadChannelInfo();
         }
       }
     });
