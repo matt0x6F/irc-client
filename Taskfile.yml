@@ -1,0 +1,153 @@
+version: '3'
+
+vars:
+  PLUGIN_DIR: "{{.HOME}}/.irc-client/plugins"
+  DB_PATH: "{{.HOME}}/.irc-client/irc-client.db"
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+
+  # Development
+  dev:
+    desc: Run development server (Wails handles frontend + backend)
+    cmds:
+      - wails dev
+
+  build:
+    desc: Build application for current platform
+    cmds:
+      - wails build
+
+  build-all:
+    desc: Build for all platforms
+    deps: [build-darwin, build-linux, build-windows]
+
+  build-darwin:
+    desc: Build for macOS
+    cmds:
+      - wails build -platform darwin/amd64
+      - wails build -platform darwin/arm64
+
+  build-linux:
+    desc: Build for Linux
+    cmds:
+      - wails build -platform linux/amd64
+      - wails build -platform linux/arm64
+
+  build-windows:
+    desc: Build for Windows
+    cmds:
+      - wails build -platform windows/amd64
+
+  # Go Tasks
+  test:
+    desc: Run Go tests
+    cmds:
+      - go test -v ./...
+
+  test-coverage:
+    desc: Run Go tests with coverage
+    cmds:
+      - go test -v -coverprofile=coverage.out ./...
+      - go tool cover -html=coverage.out -o coverage.html
+      - echo "Coverage report generated at coverage.html"
+
+  fmt:
+    desc: Format Go code
+    cmds:
+      - go fmt ./...
+
+  lint:
+    desc: Run Go linters
+    cmds:
+      - golangci-lint run ./...
+
+  mod:
+    desc: Tidy and verify Go modules
+    cmds:
+      - go mod tidy
+      - go mod verify
+
+  # Frontend Tasks
+  frontend-install:
+    desc: Install frontend dependencies
+    dir: "frontend"
+    cmds:
+      - npm install
+
+  frontend-type-check:
+    desc: Type check TypeScript
+    dir: "frontend"
+    cmds:
+      - npx tsc --noEmit
+
+  # Database Tasks
+  db-reset:
+    desc: 'Reset database (WARNING: Deletes all data)'
+    cmds:
+      - rm -f "{{.DB_PATH}}"
+      - echo "Database reset. Will be recreated on next run."
+
+  db-backup:
+    desc: Backup database
+    cmds:
+      - mkdir -p backups
+      - cp "{{.DB_PATH}}" "backups/irc-client-$(date +%Y%m%d-%H%M%S).db"
+      - echo "Backed up to backups/"
+
+  # Plugin Tasks
+  plugin-dir:
+    desc: Create plugin directory
+    cmds:
+      - mkdir -p "{{.PLUGIN_DIR}}"
+      - echo "Plugin directory created at {{.PLUGIN_DIR}}"
+
+  # Setup
+  setup:
+    desc: Initial project setup
+    cmds:
+      - task: mod
+      - task: frontend-install
+      - task: plugin-dir
+      - echo "Setup complete!"
+
+  # Cleanup
+  clean:
+    desc: Clean build artifacts
+    cmds:
+      - rm -rf build/bin
+      - rm -rf frontend/dist
+      - rm -rf frontend/wailsjs
+      - rm -rf bin/
+      - rm -f coverage.out coverage.html
+      - echo "Clean complete"
+
+  # Checks
+  check:
+    desc: Run all checks (fmt, lint, test, type-check)
+    cmds:
+      - task: fmt
+      - task: lint
+      - task: test
+      - task: frontend-type-check
+      - echo "All checks complete"
+
+  # Release
+  release:
+    desc: Prepare release (build, test, lint)
+    deps: [test, lint, frontend-type-check]
+    cmds:
+      - task: build
+      - echo "Release build complete"
+
+  # Utilities
+  version:
+    desc: Show version information
+    cmds:
+      - go version
+      - node --version
+      - wails version || echo "Wails not found"
+      - head -1 go.mod

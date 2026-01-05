@@ -1,0 +1,1224 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/matt0x6f/irc-client/internal/constants"
+	"github.com/matt0x6f/irc-client/internal/events"
+	"github.com/matt0x6f/irc-client/internal/irc"
+	"github.com/matt0x6f/irc-client/internal/logger"
+	"github.com/matt0x6f/irc-client/internal/plugin"
+	"github.com/matt0x6f/irc-client/internal/security"
+	"github.com/matt0x6f/irc-client/internal/storage"
+	"github.com/matt0x6f/irc-client/internal/validation"
+	"github.com/wailsapp/wails/v2/pkg/runtime"
+)
+
+// App struct
+type App struct {
+	ctx                context.Context
+	storage            *storage.Storage
+	eventBus           *events.EventBus
+	pluginManager      *plugin.Manager
+	keychain           *security.Keychain
+	ircClients         map[int64]*irc.IRCClient
+	connectingNetworks map[string]chan struct{} // Track networks currently connecting by "address:port"
+	mu                 sync.RWMutex
+	startupCtx         context.Context
+	startupCancel      context.CancelFunc
+	startupWg          sync.WaitGroup
+}
+
+// NewApp creates a new App application struct
+func NewApp() (*App, error) {
+	// Get database path
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get home directory: %w", err)
+	}
+	dbPath := filepath.Join(homeDir, ".irc-client", "irc-client.db")
+
+	// Ensure directory exists
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+		return nil, fmt.Errorf("failed to create config directory: %w", err)
+	}
+
+	// Create storage
+	stor, err := storage.NewStorage(dbPath, 100, 5*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize storage: %w", err)
+	}
+
+	// Create event bus
+	eventBus := events.NewEventBus()
+
+	// Create keychain for secure password storage
+	keychain := security.NewKeychain()
+
+	// Create plugin manager
+	pluginDir := filepath.Join(homeDir, ".irc-client", "plugins")
+	pluginMgr := plugin.NewManager(eventBus, pluginDir)
+
+	// Discover and load plugins
+	if err := pluginMgr.DiscoverAndLoad(); err != nil {
+		logger.Log.Warn().Err(err).Msg("Failed to load plugins")
+	}
+
+	app := &App{
+		storage:            stor,
+		eventBus:           eventBus,
+		pluginManager:      pluginMgr,
+		keychain:           keychain,
+		ircClients:         make(map[int64]*irc.IRCClient),
+		connectingNetworks: make(map[string]chan struct{}),
+	}
+
+	// Subscribe to message events to forward to frontend
+	eventBus.Subscribe(irc.EventMessageSent, app)
+	eventBus.Subscribe(irc.EventMessageReceived, app)
+	// Subscribe to connection status events
+	eventBus.Subscribe(irc.EventConnectionEstablished, app)
+	eventBus.Subscribe(irc.EventConnectionLost, app)
+
+	// Start processing plugin actions
+	go app.processPluginActions()
+
+	return app, nil
+}
+
+// startup is called when the app starts. The context is saved
+// so we can call the runtime methods
+func (a *App) startup(ctx context.Context) {
+	a.ctx = ctx
+	// Create context for startup goroutines with cancellation
+	a.startupCtx, a.startupCancel = context.WithCancel(context.Background())
+	logger.Log.Info().Msg("App startup function called")
+
+	// Auto-connect networks that have auto_connect enabled
+	a.startupWg.Add(1)
+	go func() {
+		defer a.startupWg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Log.Error().Interface("panic", r).Msg("PANIC in auto-connect goroutine")
+			}
+		}()
+
+		logger.Log.Info().Msg("Auto-connect goroutine started, waiting for initialization...")
+		// Wait a bit for the app to fully initialize
+		time.Sleep(constants.AutoConnectDelay)
+		logger.Log.Info().Msg("Starting auto-connect process...")
+
+		networks, err := a.storage.GetNetworks()
+		if err != nil {
+			logger.Log.Error().Err(err).Msg("Failed to load networks for auto-connect")
+			return
+		}
+
+		logger.Log.Info().Int("count", len(networks)).Msg("Found networks, checking for auto-connect...")
+
+		// Log all networks and their auto-connect status
+		for _, n := range networks {
+			logger.Log.Debug().Str("network", n.Name).Int64("id", n.ID).Bool("auto_connect", n.AutoConnect).Msg("Network status")
+		}
+
+		// Count networks with auto-connect enabled for proper delay calculation
+		autoConnectCount := 0
+		for _, network := range networks {
+			if network.AutoConnect {
+				autoConnectCount++
+			}
+		}
+
+		logger.Log.Info().Int("count", autoConnectCount).Msg("Found networks with auto-connect enabled")
+
+		if autoConnectCount == 0 {
+			logger.Log.Info().Msg("No networks with auto-connect enabled, exiting")
+			return
+		}
+
+		// Track index of auto-connect networks for staggered delays
+		autoConnectIndex := 0
+		for _, network := range networks {
+			if network.AutoConnect {
+				// Capture network values for the goroutine
+				networkID := network.ID
+				networkName := network.Name
+				delay := time.Duration(autoConnectIndex) * constants.ConnectionStaggerDelay
+				autoConnectIndex++
+
+				logger.Log.Info().Str("network", networkName).Int64("id", networkID).Dur("delay", delay).Msg("Scheduling auto-connect for network")
+
+				// Connect in background with staggered delays to prevent race conditions
+				a.startupWg.Add(1)
+				go func(nID int64, nName string, d time.Duration) {
+					defer a.startupWg.Done()
+					defer func() {
+						if r := recover(); r != nil {
+							logger.Log.Error().Interface("panic", r).Str("network", nName).Msg("PANIC in auto-connect")
+						}
+					}()
+
+					// Check if context is cancelled
+					select {
+					case <-a.startupCtx.Done():
+						logger.Log.Debug().Str("network", nName).Msg("Startup cancelled, skipping auto-connect")
+						return
+					case <-time.After(d):
+						// Continue with connection
+					}
+					logger.Log.Info().Str("network", nName).Int64("id", nID).Msg("Starting auto-connect for network")
+
+					// Load servers for this network
+					dbServers, err := a.storage.GetServers(nID)
+					if err != nil || len(dbServers) == 0 {
+						logger.Log.Error().Err(err).Str("network", nName).Msg("Failed to load servers")
+						return
+					}
+
+					// Get network again to ensure we have latest data
+					networks, err := a.storage.GetNetworks()
+					if err != nil {
+						logger.Log.Error().Err(err).Msg("Failed to reload networks")
+						return
+					}
+
+					var network *storage.Network
+					for i := range networks {
+						if networks[i].ID == nID {
+							network = &networks[i]
+							break
+						}
+					}
+
+					if network == nil {
+						logger.Log.Warn().Str("network", nName).Int64("id", nID).Msg("Network not found in database")
+						return
+					}
+
+					// Double-check that auto-connect is still enabled (user might have disabled it)
+					if !network.AutoConnect {
+						logger.Log.Info().Str("network", nName).Int64("id", nID).Msg("Network no longer has auto-connect enabled, skipping")
+						return
+					}
+
+					// Build config from network and servers
+					config := NetworkConfig{}
+					// Convert servers
+					serverConfigs := make([]ServerConfig, len(dbServers))
+					for j, srv := range dbServers {
+						serverConfigs[j] = ServerConfig{
+							Address: srv.Address,
+							Port:    srv.Port,
+							TLS:     srv.TLS,
+							Order:   srv.Order,
+						}
+					}
+					config.Servers = serverConfigs
+					config.Name = network.Name
+					config.Nickname = network.Nickname
+					config.Username = network.Username
+					config.Realname = network.Realname
+					config.Password = network.Password
+					config.SASLEnabled = network.SASLEnabled
+					config.AutoConnect = network.AutoConnect // Preserve auto-connect setting
+					if network.SASLMechanism != nil {
+						config.SASLMechanism = *network.SASLMechanism
+					}
+					if network.SASLUsername != nil {
+						config.SASLUsername = *network.SASLUsername
+					}
+					if network.SASLPassword != nil {
+						config.SASLPassword = *network.SASLPassword
+					}
+					if network.SASLExternalCert != nil {
+						config.SASLExternalCert = *network.SASLExternalCert
+					}
+
+					logger.Log.Debug().
+						Str("network", nName).
+						Str("config_name", config.Name).
+						Int("servers", len(config.Servers)).
+						Bool("auto_connect", config.AutoConnect).
+						Msg("Calling ConnectNetwork")
+					logger.Log.Debug().
+						Str("nickname", config.Nickname).
+						Str("username", config.Username).
+						Str("realname", config.Realname).
+						Bool("sasl_enabled", config.SASLEnabled).
+						Msg("Config details")
+
+					if err := a.ConnectNetwork(config); err != nil {
+						logger.Log.Error().Err(err).Str("network", nName).Str("error_type", fmt.Sprintf("%T", err)).Msg("Failed to auto-connect")
+					} else {
+						logger.Log.Info().Str("network", nName).Msg("Auto-connected successfully")
+						// Verify connection status after a short delay
+						time.Sleep(constants.AutoJoinDelay)
+						connected, statusErr := a.GetConnectionStatus(nID)
+						if statusErr != nil {
+							logger.Log.Warn().Err(statusErr).Str("network", nName).Msg("Could not verify connection status")
+						} else {
+							logger.Log.Debug().Str("network", nName).Bool("connected", connected).Msg("Connection status")
+						}
+					}
+				}(networkID, networkName, delay)
+			}
+		}
+	}()
+}
+
+// shutdown is called when the app shuts down
+func (a *App) shutdown(ctx context.Context) {
+	logger.Log.Info().Msg("App shutdown initiated")
+
+	// Create a timeout context for shutdown operations
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Cancel startup context to stop any pending auto-connects
+	if a.startupCancel != nil {
+		a.startupCancel()
+	}
+
+	// Wait for startup goroutines to finish (with timeout)
+	startupDone := make(chan struct{})
+	go func() {
+		a.startupWg.Wait()
+		close(startupDone)
+	}()
+	select {
+	case <-startupDone:
+		// Startup goroutines finished
+	case <-shutdownCtx.Done():
+		logger.Log.Warn().Msg("Timeout waiting for startup goroutines, continuing shutdown")
+	}
+
+	// Send "Disconnected" message to each connected network's status window
+	a.mu.Lock()
+	for _, client := range a.ircClients {
+		if client.IsConnected() {
+			// Write disconnected message to status window
+			client.WriteStatusMessage("Disconnected from server")
+		}
+		client.Disconnect()
+	}
+	a.mu.Unlock()
+
+	// Close plugin manager (with timeout)
+	if a.pluginManager != nil {
+		pluginDone := make(chan struct{})
+		go func() {
+			a.pluginManager.Close()
+			close(pluginDone)
+		}()
+		select {
+		case <-pluginDone:
+			// Plugin manager closed
+		case <-shutdownCtx.Done():
+			logger.Log.Warn().Msg("Timeout closing plugin manager, continuing shutdown")
+		}
+	}
+
+	// Close storage (with timeout)
+	if a.storage != nil {
+		storageDone := make(chan struct{})
+		go func() {
+			a.storage.Close()
+			close(storageDone)
+		}()
+		select {
+		case <-storageDone:
+			// Storage closed
+		case <-shutdownCtx.Done():
+			logger.Log.Warn().Msg("Timeout closing storage, continuing shutdown")
+		}
+	}
+
+	logger.Log.Info().Msg("App shutdown complete")
+}
+
+// OnEvent implements the events.Subscriber interface to forward events to frontend
+func (a *App) OnEvent(event events.Event) {
+	// Ensure context is set before event emission
+	if a.ctx == nil {
+		logger.Log.Debug().Msg("OnEvent: context not yet initialized, skipping event")
+		return
+	}
+
+	// Handle connection status events separately to include network ID
+	if event.Type == irc.EventConnectionEstablished || event.Type == irc.EventConnectionLost {
+		// Extract network address from event data
+		networkAddress, ok := event.Data["network"].(string)
+		if !ok {
+			return
+		}
+
+		// Find the network ID by checking all networks and their servers
+		var networkID int64
+		found := false
+
+		networks, err := a.storage.GetNetworks()
+		if err == nil {
+			for _, n := range networks {
+				// Check primary address first (for backward compatibility)
+				if n.Address == networkAddress {
+					networkID = n.ID
+					found = true
+					break
+				}
+
+				// Check all servers for this network
+				servers, err := a.storage.GetServers(n.ID)
+				if err == nil {
+					for _, srv := range servers {
+						if srv.Address == networkAddress {
+							networkID = n.ID
+							found = true
+							break
+						}
+					}
+				}
+				if found {
+					break
+				}
+			}
+		}
+
+		if found {
+			// Forward connection status event with network ID
+			isConnected := event.Type == irc.EventConnectionEstablished
+			runtime.EventsEmit(a.ctx, "connection-status", map[string]interface{}{
+				"networkId": networkID,
+				"connected": isConnected,
+				"timestamp": event.Timestamp.Format(time.RFC3339),
+			})
+		}
+		return
+	}
+
+	// Forward message and user events to frontend for real-time updates
+	if event.Type == irc.EventMessageSent || event.Type == irc.EventMessageReceived ||
+		event.Type == irc.EventUserJoined || event.Type == irc.EventUserParted || event.Type == irc.EventUserQuit ||
+		event.Type == irc.EventChannelTopic || event.Type == irc.EventChannelMode ||
+		event.Type == irc.EventError || event.Type == "channel.names.complete" {
+		// Forward to frontend via Wails events
+		// Convert timestamp to ISO string for JSON serialization
+		runtime.EventsEmit(a.ctx, "message-event", map[string]interface{}{
+			"type":      event.Type,
+			"data":      event.Data,
+			"timestamp": event.Timestamp.Format(time.RFC3339),
+		})
+	}
+}
+
+// processPluginActions processes actions from plugins
+func (a *App) processPluginActions() {
+	for action := range a.pluginManager.GetActionQueue() {
+		switch action.Type {
+		case "send_message":
+			// Extract data
+			serverAddr, _ := action.Data["server"].(string) // server address
+			target, _ := action.Data["target"].(string)
+			message, _ := action.Data["message"].(string)
+
+			// Find IRC client for server by matching network address
+			a.mu.RLock()
+			var client *irc.IRCClient
+			if serverAddr != "" {
+				// Try to find client by server address
+				networks, err := a.storage.GetNetworks()
+				if err == nil {
+					for _, network := range networks {
+						// Check primary address
+						if network.Address == serverAddr {
+							if c, exists := a.ircClients[network.ID]; exists && c != nil {
+								client = c
+								break
+							}
+						}
+						// Check all servers for this network
+						servers, err := a.storage.GetServers(network.ID)
+						if err == nil {
+							for _, srv := range servers {
+								if srv.Address == serverAddr {
+									if c, exists := a.ircClients[network.ID]; exists && c != nil {
+										client = c
+										break
+									}
+								}
+							}
+						}
+						if client != nil {
+							break
+						}
+					}
+				}
+			} else {
+				// No server specified, use first available client
+				for _, c := range a.ircClients {
+					if c != nil {
+						client = c
+						break
+					}
+				}
+			}
+			a.mu.RUnlock()
+
+			if client != nil {
+				if err := client.SendMessage(target, message); err != nil {
+					logger.Log.Error().Err(err).Str("target", target).Msg("Failed to send message from plugin")
+				}
+			} else {
+				logger.Log.Warn().Str("server", serverAddr).Msg("No IRC client found for plugin action")
+			}
+		}
+	}
+}
+
+// ServerConfig represents a single server address configuration
+type ServerConfig struct {
+	Address string `json:"address"`
+	Port    int    `json:"port"`
+	TLS     bool   `json:"tls"`
+	Order   int    `json:"order"` // Order for fallback (lower = higher priority)
+}
+
+// NetworkConfig represents network configuration
+type NetworkConfig struct {
+	Name             string         `json:"name"`
+	Address          string         `json:"address"` // Deprecated: use Servers
+	Port             int            `json:"port"`    // Deprecated: use Servers
+	TLS              bool           `json:"tls"`     // Deprecated: use Servers
+	Servers          []ServerConfig `json:"servers"` // New: multiple server addresses
+	Nickname         string         `json:"nickname"`
+	Username         string         `json:"username"`
+	Realname         string         `json:"realname"`
+	Password         string         `json:"password"`
+	SASLEnabled      bool           `json:"sasl_enabled"`
+	SASLMechanism    string         `json:"sasl_mechanism"`
+	SASLUsername     string         `json:"sasl_username"`
+	SASLPassword     string         `json:"sasl_password"`
+	SASLExternalCert string         `json:"sasl_external_cert"`
+	AutoConnect      bool           `json:"auto_connect"`
+}
+
+// stringPtr converts a string to *string, returning nil for empty strings
+func stringPtr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// normalizeServers converts legacy single address to servers array
+func (a *App) normalizeServers(config NetworkConfig) []ServerConfig {
+	if len(config.Servers) > 0 {
+		return config.Servers
+	}
+	// Backward compatibility: convert single address to servers array
+	if config.Address != "" {
+		return []ServerConfig{
+			{
+				Address: config.Address,
+				Port:    config.Port,
+				TLS:     config.TLS,
+				Order:   0,
+			},
+		}
+	}
+	return []ServerConfig{}
+}
+
+// SaveNetwork saves network configuration without connecting
+func (a *App) SaveNetwork(config NetworkConfig) error {
+	// Normalize servers (support both old and new format)
+	servers := a.normalizeServers(config)
+	if len(servers) == 0 {
+		return fmt.Errorf("no servers provided")
+	}
+
+	var network *storage.Network
+	var err error
+
+	// Check if network already exists (by name)
+	networks, err := a.storage.GetNetworks()
+	if err == nil {
+		for _, n := range networks {
+			if n.Name == config.Name {
+				// Network exists, use it
+				network = &n
+				break
+			}
+		}
+	}
+
+	if network == nil {
+		// Create new network record (use first server for legacy fields)
+		network = &storage.Network{
+			Name:             config.Name,
+			Address:          servers[0].Address,
+			Port:             servers[0].Port,
+			TLS:              servers[0].TLS,
+			Nickname:         config.Nickname,
+			Username:         config.Username,
+			Realname:         config.Realname,
+			Password:         config.Password,
+			SASLEnabled:      config.SASLEnabled,
+			SASLMechanism:    stringPtr(config.SASLMechanism),
+			SASLUsername:     stringPtr(config.SASLUsername),
+			SASLPassword:     stringPtr(config.SASLPassword),
+			SASLExternalCert: stringPtr(config.SASLExternalCert),
+			CreatedAt:        time.Now(),
+			UpdatedAt:        time.Now(),
+		}
+
+		if err := a.storage.CreateNetwork(network); err != nil {
+			return fmt.Errorf("failed to create network: %w", err)
+		}
+
+		// Save all servers
+		for _, srv := range servers {
+			server := &storage.Server{
+				NetworkID: network.ID,
+				Address:   srv.Address,
+				Port:      srv.Port,
+				TLS:       srv.TLS,
+				Order:     srv.Order,
+				CreatedAt: time.Now(),
+			}
+			if err := a.storage.CreateServer(server); err != nil {
+				return fmt.Errorf("failed to create server: %w", err)
+			}
+		}
+	} else {
+		// Update existing network config
+		network.Name = config.Name
+		network.Nickname = config.Nickname
+		network.Username = config.Username
+		network.Realname = config.Realname
+		network.Password = config.Password
+		network.SASLEnabled = config.SASLEnabled
+		network.SASLMechanism = stringPtr(config.SASLMechanism)
+		network.SASLUsername = stringPtr(config.SASLUsername)
+		network.SASLPassword = stringPtr(config.SASLPassword)
+		network.SASLExternalCert = stringPtr(config.SASLExternalCert)
+		network.AutoConnect = config.AutoConnect
+		network.UpdatedAt = time.Now()
+		if err := a.storage.UpdateNetwork(network); err != nil {
+			return fmt.Errorf("failed to update network: %w", err)
+		}
+
+		// Update servers: delete old ones and create new ones
+		if err := a.storage.DeleteAllServers(network.ID); err != nil {
+			return fmt.Errorf("failed to delete old servers: %w", err)
+		}
+		for _, srv := range servers {
+			server := &storage.Server{
+				NetworkID: network.ID,
+				Address:   srv.Address,
+				Port:      srv.Port,
+				TLS:       srv.TLS,
+				Order:     srv.Order,
+				CreatedAt: time.Now(),
+			}
+			if err := a.storage.CreateServer(server); err != nil {
+				return fmt.Errorf("failed to create server: %w", err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// ConnectNetwork connects to an IRC network
+// If networkID is provided (> 0), reconnects to existing network
+// Otherwise, creates a new network
+func (a *App) ConnectNetwork(config NetworkConfig) error {
+	// Normalize servers (support both old and new format)
+	servers := a.normalizeServers(config)
+
+	// Validate network configuration
+	serverStructs := make([]struct {
+		Address string
+		Port    int
+	}, len(servers))
+	for i, srv := range servers {
+		serverStructs[i] = struct {
+			Address string
+			Port    int
+		}{Address: srv.Address, Port: srv.Port}
+	}
+	if err := validation.ValidateNetworkConfig(config.Name, config.Nickname, config.Username, config.Realname, serverStructs); err != nil {
+		return fmt.Errorf("invalid network configuration: %w", err)
+	}
+
+	if len(servers) == 0 {
+		return fmt.Errorf("no servers provided")
+	}
+
+	var network *storage.Network
+	var err error
+
+	// Check if network already exists (by name)
+	networks, err := a.storage.GetNetworks()
+	if err == nil {
+		for _, n := range networks {
+			if n.Name == config.Name {
+				// Network exists, use it
+				network = &n
+				break
+			}
+		}
+	}
+
+	if network == nil {
+		// Create new network record (use first server for legacy fields)
+		network = &storage.Network{
+			Name:             config.Name,
+			Address:          servers[0].Address,
+			Port:             servers[0].Port,
+			TLS:              servers[0].TLS,
+			Nickname:         config.Nickname,
+			Username:         config.Username,
+			Realname:         config.Realname,
+			Password:         config.Password,
+			SASLEnabled:      config.SASLEnabled,
+			SASLMechanism:    stringPtr(config.SASLMechanism),
+			SASLUsername:     stringPtr(config.SASLUsername),
+			SASLPassword:     stringPtr(config.SASLPassword),
+			SASLExternalCert: stringPtr(config.SASLExternalCert),
+			CreatedAt:        time.Now(),
+			UpdatedAt:        time.Now(),
+		}
+
+		if err := a.storage.CreateNetwork(network); err != nil {
+			return fmt.Errorf("failed to create network: %w", err)
+		}
+
+		// Save all servers
+		for _, srv := range servers {
+			server := &storage.Server{
+				NetworkID: network.ID,
+				Address:   srv.Address,
+				Port:      srv.Port,
+				TLS:       srv.TLS,
+				Order:     srv.Order,
+				CreatedAt: time.Now(),
+			}
+			if err := a.storage.CreateServer(server); err != nil {
+				return fmt.Errorf("failed to create server: %w", err)
+			}
+		}
+	} else {
+		// Update existing network config
+		network.Name = config.Name
+		network.Nickname = config.Nickname
+		network.Username = config.Username
+		network.Realname = config.Realname
+		network.Password = config.Password
+		network.SASLEnabled = config.SASLEnabled
+		network.SASLMechanism = stringPtr(config.SASLMechanism)
+		network.SASLUsername = stringPtr(config.SASLUsername)
+		network.SASLPassword = stringPtr(config.SASLPassword)
+		network.SASLExternalCert = stringPtr(config.SASLExternalCert)
+		network.AutoConnect = config.AutoConnect
+		network.UpdatedAt = time.Now()
+		if err := a.storage.UpdateNetwork(network); err != nil {
+			return fmt.Errorf("failed to update network: %w", err)
+		}
+
+		// Update servers: delete old ones and create new ones
+		if err := a.storage.DeleteAllServers(network.ID); err != nil {
+			return fmt.Errorf("failed to delete old servers: %w", err)
+		}
+		for _, srv := range servers {
+			server := &storage.Server{
+				NetworkID: network.ID,
+				Address:   srv.Address,
+				Port:      srv.Port,
+				TLS:       srv.TLS,
+				Order:     srv.Order,
+				CreatedAt: time.Now(),
+			}
+			if err := a.storage.CreateServer(server); err != nil {
+				return fmt.Errorf("failed to create server: %w", err)
+			}
+		}
+	}
+
+	// Get servers from database (ordered by priority)
+	dbServers, err := a.storage.GetServers(network.ID)
+	if err != nil || len(dbServers) == 0 {
+		// Fallback to servers from config
+		dbServers = make([]storage.Server, len(servers))
+		for i, srv := range servers {
+			dbServers[i] = storage.Server{
+				Address: srv.Address,
+				Port:    srv.Port,
+				TLS:     srv.TLS,
+				Order:   srv.Order,
+			}
+		}
+	}
+
+	// Create a unique key for this network connection (by network ID)
+	networkKey := fmt.Sprintf("network:%d", network.ID)
+
+	logger.Log.Info().Str("network", config.Name).Int("servers", len(dbServers)).Msg("Attempting to connect")
+
+	// Lock for the entire connection process to prevent concurrent connections
+	a.mu.Lock()
+
+	// Check if a connection is already in progress for this network
+	if _, inProgress := a.connectingNetworks[networkKey]; inProgress {
+		logger.Log.Warn().Str("network_key", networkKey).Msg("Connection already in progress, rejecting")
+		a.mu.Unlock()
+		return fmt.Errorf("connection to %s already in progress", config.Name)
+	}
+
+	// Check if already connected to this network (by ID)
+	if existingClient, exists := a.ircClients[network.ID]; exists {
+		if existingClient.IsConnected() {
+			logger.Log.Warn().Str("network", config.Name).Int64("id", network.ID).Msg("Already connected, rejecting")
+			a.mu.Unlock()
+			return fmt.Errorf("already connected to %s", config.Name)
+		}
+	}
+
+	// Mark that we're connecting to this network
+	connectDone := make(chan struct{})
+	a.connectingNetworks[networkKey] = connectDone
+	logger.Log.Debug().Str("network_key", networkKey).Msg("Marked as connecting")
+
+	// Disconnect if already connected to this network (by ID)
+	if existingClient, exists := a.ircClients[network.ID]; exists {
+		if existingClient.IsConnected() {
+			existingClient.Disconnect()
+		}
+		delete(a.ircClients, network.ID)
+	}
+
+	a.mu.Unlock()
+
+	// Wait a bit for any existing connection to clean up
+	time.Sleep(constants.ConnectionCleanupDelay)
+
+	// Try connecting to servers in order
+	var lastErr error
+	for i, srv := range dbServers {
+		serverKey := fmt.Sprintf("%s:%d", srv.Address, srv.Port)
+		logger.Log.Info().Int("current", i+1).Int("total", len(dbServers)).Str("server", serverKey).Msg("Trying server")
+
+		// Write status message
+		statusMsg := storage.Message{
+			NetworkID:   network.ID,
+			ChannelID:   nil,
+			User:        "*",
+			Message:     fmt.Sprintf("Connecting to %s:%d...", srv.Address, srv.Port),
+			MessageType: "status",
+			Timestamp:   time.Now(),
+			RawLine:     "",
+		}
+		a.storage.WriteMessage(statusMsg)
+
+		// Create a temporary network object with this server's address
+		tempNetwork := *network
+		tempNetwork.Address = srv.Address
+		tempNetwork.Port = srv.Port
+		tempNetwork.TLS = srv.TLS
+
+		// Debug: Log network configuration
+		mechanism := ""
+		username := ""
+		if tempNetwork.SASLMechanism != nil {
+			mechanism = *tempNetwork.SASLMechanism
+		}
+		if tempNetwork.SASLUsername != nil {
+			username = *tempNetwork.SASLUsername
+		}
+		logger.Log.Debug().
+			Str("network", tempNetwork.Name).
+			Bool("sasl", tempNetwork.SASLEnabled).
+			Str("mechanism", mechanism).
+			Str("username", username).
+			Msg("Creating IRC client")
+
+		// Create IRC client with this server address
+		ircClient := irc.NewIRCClient(&tempNetwork, a.eventBus, a.storage)
+		ircClient.SetNetworkID(network.ID)
+
+		// Try to connect
+		if err := ircClient.Connect(); err != nil {
+			lastErr = err
+			logger.Log.Warn().Err(err).Str("server", serverKey).Msg("Failed to connect")
+
+			// Write error status message
+			errorMsg := storage.Message{
+				NetworkID:   network.ID,
+				ChannelID:   nil,
+				User:        "*",
+				Message:     fmt.Sprintf("Failed to connect to %s:%d: %v", srv.Address, srv.Port, err),
+				MessageType: "status",
+				Timestamp:   time.Now(),
+				RawLine:     "",
+			}
+			a.storage.WriteMessage(errorMsg)
+
+			// Try next server
+			continue
+		}
+
+		// Success! Store client and clear connection-in-progress flag
+		logger.Log.Info().Str("server", serverKey).Int64("network_id", network.ID).Msg("Connection successful")
+		a.mu.Lock()
+		a.ircClients[network.ID] = ircClient
+		delete(a.connectingNetworks, networkKey)
+		close(connectDone)
+		a.mu.Unlock()
+
+		// Write success message
+		successMsg := storage.Message{
+			NetworkID:   network.ID,
+			ChannelID:   nil,
+			User:        "*",
+			Message:     fmt.Sprintf("Connected to %s:%d", srv.Address, srv.Port),
+			MessageType: "status",
+			Timestamp:   time.Now(),
+			RawLine:     "",
+		}
+		a.storage.WriteMessage(successMsg)
+
+		return nil
+	}
+
+	// All servers failed
+	logger.Log.Error().Str("network", config.Name).Msg("All connection attempts failed")
+	a.mu.Lock()
+	delete(a.connectingNetworks, networkKey)
+	close(connectDone)
+	a.mu.Unlock()
+
+	// Write final error message
+	errorMsg := storage.Message{
+		NetworkID:   network.ID,
+		ChannelID:   nil,
+		User:        "*",
+		Message:     fmt.Sprintf("Failed to connect to any server: %v", lastErr),
+		MessageType: "status",
+		Timestamp:   time.Now(),
+		RawLine:     "",
+	}
+	a.storage.WriteMessage(errorMsg)
+
+	return fmt.Errorf("failed to connect to any server: %w", lastErr)
+}
+
+// SendMessage sends a message to a channel or user
+func (a *App) SendMessage(networkID int64, target, message string) error {
+	a.mu.RLock()
+	client, exists := a.ircClients[networkID]
+	a.mu.RUnlock()
+
+	if !exists {
+		return fmt.Errorf("network not connected")
+	}
+
+	return client.SendMessage(target, message)
+}
+
+// SendCommand sends a command from the status window
+// Supports commands like /join #channel, /msg user message, or raw IRC commands
+func (a *App) SendCommand(networkID int64, command string) error {
+	a.mu.RLock()
+	client, exists := a.ircClients[networkID]
+	a.mu.RUnlock()
+
+	if !exists {
+		return fmt.Errorf("network not connected")
+	}
+
+	// Parse command
+	command = strings.TrimSpace(command)
+	if len(command) == 0 {
+		return fmt.Errorf("empty command")
+	}
+
+	// Handle slash commands
+	if strings.HasPrefix(command, "/") {
+		parts := strings.Fields(command[1:]) // Remove leading /
+		if len(parts) == 0 {
+			return fmt.Errorf("invalid command")
+		}
+
+		cmd := strings.ToUpper(parts[0])
+		switch cmd {
+		case "JOIN":
+			if len(parts) < 2 {
+				return fmt.Errorf("usage: /join #channel")
+			}
+			channelName := parts[1]
+			logger.Log.Info().Str("channel", channelName).Msg("Joining channel")
+			if err := client.JoinChannel(channelName); err != nil {
+				logger.Log.Error().Err(err).Str("channel", channelName).Msg("Error joining channel")
+				return err
+			}
+			logger.Log.Info().Str("channel", channelName).Msg("Successfully sent JOIN command")
+			return nil
+		case "PART":
+			if len(parts) < 2 {
+				return fmt.Errorf("usage: /part #channel")
+			}
+			return client.PartChannel(parts[1])
+		case "MSG", "PRIVMSG":
+			if len(parts) < 3 {
+				return fmt.Errorf("usage: /msg target message")
+			}
+			target := parts[1]
+			message := strings.Join(parts[2:], " ")
+			return client.SendMessage(target, message)
+		case "NICK":
+			if len(parts) < 2 {
+				return fmt.Errorf("usage: /nick newnick")
+			}
+			// Send raw NICK command
+			return client.SendRawCommand(fmt.Sprintf("NICK %s", parts[1]))
+		default:
+			// Unknown command, send as raw IRC command
+			return client.SendRawCommand(command[1:]) // Remove leading /
+		}
+	}
+
+	// Not a slash command, send as raw IRC command
+	return client.SendRawCommand(command)
+}
+
+// GetMessages retrieves messages for a network and channel
+// If channelID is nil, returns status window messages
+func (a *App) GetMessages(networkID int64, channelID *int64, limit int) ([]storage.Message, error) {
+	return a.storage.GetMessages(networkID, channelID, limit)
+}
+
+// GetConnectionStatus returns whether a network is connected
+func (a *App) GetConnectionStatus(networkID int64) (bool, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	client, exists := a.ircClients[networkID]
+	if !exists {
+		return false, nil
+	}
+
+	return client.IsConnected(), nil
+}
+
+// DisconnectNetwork disconnects from a network
+func (a *App) DisconnectNetwork(networkID int64) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	client, exists := a.ircClients[networkID]
+	if !exists {
+		return fmt.Errorf("network not connected")
+	}
+
+	if err := client.Disconnect(); err != nil {
+		return fmt.Errorf("failed to disconnect: %w", err)
+	}
+
+	// Remove from clients map
+	delete(a.ircClients, networkID)
+
+	return nil
+}
+
+// DeleteNetwork deletes a network configuration
+func (a *App) DeleteNetwork(networkID int64) error {
+	// Disconnect if connected
+	a.mu.Lock()
+	client, exists := a.ircClients[networkID]
+	if exists {
+		client.Disconnect()
+		delete(a.ircClients, networkID)
+	}
+	a.mu.Unlock()
+
+	// Delete from database
+	return a.storage.DeleteNetwork(networkID)
+}
+
+// GetNetworks retrieves all networks
+func (a *App) GetNetworks() ([]storage.Network, error) {
+	return a.storage.GetNetworks()
+}
+
+// GetChannels retrieves channels for a network
+func (a *App) GetChannels(networkID int64) ([]storage.Channel, error) {
+	return a.storage.GetChannels(networkID)
+}
+
+// GetChannelIDByName retrieves a channel ID by network ID and channel name
+func (a *App) GetChannelIDByName(networkID int64, channelName string) (*int64, error) {
+	channel, err := a.storage.GetChannelByName(networkID, channelName)
+	if err != nil {
+		return nil, err
+	}
+	return &channel.ID, nil
+}
+
+// ChannelInfo represents channel information with users
+type ChannelInfo struct {
+	Channel *storage.Channel      `json:"channel"`
+	Users   []storage.ChannelUser `json:"users"`
+}
+
+// GetChannelInfo retrieves channel information including topic and users
+func (a *App) GetChannelInfo(networkID int64, channelName string) (*ChannelInfo, error) {
+	channel, err := a.storage.GetChannelByName(networkID, channelName)
+	if err != nil {
+		return nil, err
+	}
+
+	// Only return users if the network is actually connected
+	// This prevents showing stale user lists when disconnected
+	var users []storage.ChannelUser
+	a.mu.RLock()
+	client, exists := a.ircClients[networkID]
+	isConnected := exists && client.IsConnected()
+	a.mu.RUnlock()
+
+	if isConnected {
+		users, err = a.storage.GetChannelUsers(channel.ID)
+		if err != nil {
+			users = []storage.ChannelUser{}
+		}
+	} else {
+		// Network is not connected, return empty user list
+		users = []storage.ChannelUser{}
+	}
+
+	return &ChannelInfo{
+		Channel: channel,
+		Users:   users,
+	}, nil
+}
+
+// ToggleChannelAutoJoin toggles the auto-join setting for a channel
+func (a *App) ToggleChannelAutoJoin(networkID int64, channelName string) error {
+	channel, err := a.storage.GetChannelByName(networkID, channelName)
+	if err != nil {
+		return fmt.Errorf("channel not found: %w", err)
+	}
+
+	newAutoJoin := !channel.AutoJoin
+	logger.Log.Info().
+		Str("channel", channelName).
+		Int64("network_id", networkID).
+		Bool("old_value", channel.AutoJoin).
+		Bool("new_value", newAutoJoin).
+		Msg("Toggling auto-join for channel")
+
+	if err := a.storage.UpdateChannelAutoJoin(channel.ID, newAutoJoin); err != nil {
+		return fmt.Errorf("failed to update auto-join: %w", err)
+	}
+
+	return nil
+}
+
+// LeaveChannel leaves an IRC channel
+func (a *App) LeaveChannel(networkID int64, channelName string) error {
+	a.mu.RLock()
+	client, exists := a.ircClients[networkID]
+	a.mu.RUnlock()
+
+	if !exists {
+		return fmt.Errorf("network not connected")
+	}
+
+	if !client.IsConnected() {
+		return fmt.Errorf("network not connected")
+	}
+
+	logger.Log.Info().Str("channel", channelName).Int64("network_id", networkID).Msg("Leaving channel")
+	if err := client.PartChannel(channelName); err != nil {
+		return fmt.Errorf("failed to leave channel: %w", err)
+	}
+
+	return nil
+}
+
+// ToggleNetworkAutoConnect toggles the auto-connect setting for a network
+func (a *App) ToggleNetworkAutoConnect(networkID int64) error {
+	networks, err := a.storage.GetNetworks()
+	if err != nil {
+		return fmt.Errorf("failed to get networks: %w", err)
+	}
+
+	var network *storage.Network
+	for i := range networks {
+		if networks[i].ID == networkID {
+			network = &networks[i]
+			break
+		}
+	}
+
+	if network == nil {
+		return fmt.Errorf("network not found")
+	}
+
+	newAutoConnect := !network.AutoConnect
+	logger.Log.Info().
+		Str("network", network.Name).
+		Int64("id", networkID).
+		Bool("old_value", network.AutoConnect).
+		Bool("new_value", newAutoConnect).
+		Msg("Toggling auto-connect for network")
+
+	if err := a.storage.UpdateNetworkAutoConnect(networkID, newAutoConnect); err != nil {
+		return fmt.Errorf("failed to update auto-connect: %w", err)
+	}
+
+	return nil
+}
+
+// GetServers retrieves server addresses for a network
+func (a *App) GetServers(networkID int64) ([]storage.Server, error) {
+	return a.storage.GetServers(networkID)
+}
+
+// ListPlugins returns information about all plugins
+func (a *App) ListPlugins() []*plugin.PluginInfo {
+	return a.pluginManager.ListPlugins()
+}
+
+// EnablePlugin enables a plugin
+func (a *App) EnablePlugin(name string) error {
+	// Would need to implement plugin enable/disable logic
+	return fmt.Errorf("not implemented")
+}
+
+// DisablePlugin disables a plugin
+func (a *App) DisablePlugin(name string) error {
+	return a.pluginManager.UnloadPlugin(name)
+}
+
+// Greet returns a greeting for the given name (kept for compatibility)
+func (a *App) Greet(name string) string {
+	return fmt.Sprintf("Hello %s, It's show time!", name)
+}
+
+// OpenSettings emits an event to open the settings modal
+func (a *App) OpenSettings() {
+	logger.Log.Debug().Msg("OpenSettings called")
+	if a.ctx != nil {
+		logger.Log.Debug().Msg("Emitting open-settings event")
+		runtime.EventsEmit(a.ctx, "open-settings")
+	} else {
+		logger.Log.Warn().Msg("OpenSettings: context is nil")
+	}
+}
