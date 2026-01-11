@@ -9,9 +9,10 @@ import {
   SelectValue,
 } from './ui/select';
 
-type SettingsSection = 'networks' | 'plugins';
+type SettingsSection = 'networks' | 'plugins' | 'display';
 
 const SETTINGS_LAST_PANE_KEY = 'cascade-chat-settings-last-pane';
+const CONSOLIDATE_JOIN_QUIT_KEY = 'cascade-chat-consolidate-join-quit';
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -23,8 +24,8 @@ export function SettingsModal({ onClose, onServerUpdate }: SettingsModalProps) {
   const loadLastPane = (): SettingsSection => {
     try {
       const saved = localStorage.getItem(SETTINGS_LAST_PANE_KEY);
-      if (saved === 'networks' || saved === 'plugins') {
-        return saved;
+      if (saved === 'networks' || saved === 'plugins' || saved === 'display') {
+        return saved as SettingsSection;
       }
     } catch (error) {
       console.error('Failed to load last pane preference:', error);
@@ -32,10 +33,22 @@ export function SettingsModal({ onClose, onServerUpdate }: SettingsModalProps) {
     return 'networks';
   };
 
+  // Load consolidate join/quit setting from localStorage
+  const loadConsolidateSetting = (): boolean => {
+    try {
+      const saved = localStorage.getItem(CONSOLIDATE_JOIN_QUIT_KEY);
+      return saved === 'true';
+    } catch (error) {
+      console.error('Failed to load consolidate setting:', error);
+      return false;
+    }
+  };
+
   const [selectedSection, setSelectedSection] = useState<SettingsSection>(loadLastPane);
   const [networks, setNetworks] = useState<storage.Network[]>([]);
   const [plugins, setPlugins] = useState<main.PluginInfo[]>([]);
   const [editingNetwork, setEditingNetwork] = useState<storage.Network | null>(null);
+  const [consolidateJoinQuit, setConsolidateJoinQuit] = useState<boolean>(loadConsolidateSetting);
   const [formData, setFormData] = useState<main.NetworkConfig>(main.NetworkConfig.createFrom({
     name: '',
     address: '',
@@ -64,6 +77,15 @@ export function SettingsModal({ onClose, onServerUpdate }: SettingsModalProps) {
       console.error('Failed to save last pane preference:', error);
     }
   }, [selectedSection]);
+
+  // Save consolidate setting to localStorage whenever it changes
+  useEffect(() => {
+    try {
+      localStorage.setItem(CONSOLIDATE_JOIN_QUIT_KEY, consolidateJoinQuit.toString());
+    } catch (error) {
+      console.error('Failed to save consolidate setting:', error);
+    }
+  }, [consolidateJoinQuit]);
 
   const loadPlugins = async () => {
     try {
@@ -834,6 +856,27 @@ export function SettingsModal({ onClose, onServerUpdate }: SettingsModalProps) {
             )}
           </div>
         );
+      case 'display':
+        return (
+          <div className="mb-6">
+            <h3 className="text-md font-semibold mb-4">Display Settings</h3>
+            <div className="space-y-4">
+              <div className="border border-border rounded p-4">
+                <label className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    checked={consolidateJoinQuit}
+                    onChange={(e) => setConsolidateJoinQuit(e.target.checked)}
+                  />
+                  <span className="text-sm font-medium">Consolidate join/quit messages</span>
+                </label>
+                <p className="text-xs text-muted-foreground mt-2 ml-6">
+                  When enabled, consecutive join, part, or quit messages of the same type will be combined into a single line (e.g., "A, B, C joins" instead of three separate lines).
+                </p>
+              </div>
+            </div>
+          </div>
+        );
       default:
         return null;
     }
@@ -879,6 +922,16 @@ export function SettingsModal({ onClose, onServerUpdate }: SettingsModalProps) {
                 }`}
               >
                 Plugins
+              </button>
+              <button
+                onClick={() => setSelectedSection('display')}
+                className={`w-full text-left px-3 py-2 rounded text-sm transition-colors ${
+                  selectedSection === 'display'
+                    ? 'bg-primary text-primary-foreground font-medium border-l-2 border-primary'
+                    : 'hover:bg-accent/50 text-foreground'
+                }`}
+              >
+                Display
               </button>
             </nav>
           </div>
