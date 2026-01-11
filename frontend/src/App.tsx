@@ -738,6 +738,17 @@ function App() {
           }
         }
         
+        // For /query command, track the nickname to switch to PM view after command
+        let queryTargetNickname: string | null = null;
+        if (trimmedMessage.toLowerCase().startsWith('/query ') || trimmedMessage.toLowerCase().startsWith('/q ')) {
+          const cmdLength = trimmedMessage.toLowerCase().startsWith('/query ') ? 7 : 3; // '/query ' = 7 chars, '/q ' = 3 chars
+          const rest = trimmedMessage.substring(cmdLength).trim();
+          const parts = rest ? rest.split(/\s+/) : [];
+          if (parts.length > 0) {
+            queryTargetNickname = parts[0];
+          }
+        }
+        
         await SendCommand(selectedNetwork, commandToSend);
         
         // If /close was used on the current channel, clear focus and switch to status window
@@ -761,6 +772,18 @@ function App() {
             await SetPaneFocus(selectedNetwork, 'status', 'status');
           } catch (error) {
             console.error('[App] Failed to set focus on status window:', error);
+          }
+        }
+        
+        // If /query was used, switch to PM view
+        if (queryTargetNickname) {
+          const pmKey = `pm:${queryTargetNickname}`;
+          setSelectedChannel(pmKey);
+          // Set focus using event-based method
+          try {
+            await SetPaneFocus(selectedNetwork, 'pm', queryTargetNickname);
+          } catch (error) {
+            console.error('[App] Failed to set focus on PM:', error);
           }
         }
         

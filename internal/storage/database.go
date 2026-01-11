@@ -610,8 +610,19 @@ func (s *Storage) GetPrivateMessageConversations(networkID int64, currentUser st
 	
 	if openOnly {
 		// Get only open PM conversations from the conversations table
+		// Join with messages to get the original case variant of the nickname
+		// Use the most recent message's user field to preserve original case
 		err := s.db.Select(&users,
-			`SELECT pmc.target_user
+			`SELECT COALESCE(
+				(SELECT m.user FROM messages m 
+				 WHERE m.network_id = pmc.network_id 
+				   AND m.channel_id IS NULL 
+				   AND LOWER(m.user) = pmc.target_user 
+				   AND m.message_type IN ('privmsg', 'action')
+				 ORDER BY m.timestamp DESC 
+				 LIMIT 1),
+				pmc.target_user
+			) as user
 			 FROM private_message_conversations pmc
 			 WHERE pmc.network_id = ? AND pmc.is_open = 1
 			 ORDER BY pmc.updated_at DESC, pmc.created_at DESC`,

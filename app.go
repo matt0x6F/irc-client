@@ -496,6 +496,19 @@ func (a *App) OnEvent(event events.Event) {
 			"key":        event.Data["key"],
 			"value":      event.Data["value"],
 		})
+		return
+	}
+
+	// Forward UI pane events (for PM/channel open/close)
+	if event.Type == events.EventUIPaneFocused || event.Type == events.EventUIPaneBlurred {
+		runtime.EventsEmit(a.ctx, "ui-pane-event", map[string]interface{}{
+			"type":      event.Type,
+			"networkId": event.Data["networkId"],
+			"paneType":  event.Data["type"],
+			"paneName":  event.Data["name"],
+			"timestamp": event.Timestamp.Format(time.RFC3339),
+		})
+		return
 	}
 }
 
@@ -1323,19 +1336,50 @@ func (a *App) SendCommand(networkID int64, command string) error {
 			message := strings.Join(parts[2:], " ")
 			return client.SendRawCommand(fmt.Sprintf("NOTICE %s :%s", target, message))
 		case "QUERY", "Q":
-			// Query opens a private message window - this is client-side only
-			// We'll just send a message to the user
+			// Query opens a private message window
 			if len(parts) < 2 {
 				return fmt.Errorf("usage: /query nickname [message]")
 			}
 			nickname := parts[1]
 			if len(parts) >= 3 {
+				// Message provided - send it
 				message := strings.Join(parts[2:], " ")
 				return client.SendMessage(nickname, message)
 			}
-			// Just opening query window - client should handle this
-			// For now, we'll just return success (client should switch to PM window)
-			return nil
+			// No message - just open the PM window
+			// Get network to access nickname
+			network, err := a.storage.GetNetwork(networkID)
+			if err != nil {
+				return fmt.Errorf("network not found: %w", err)
+			}
+			// Get or create PM conversation
+			_, err = a.storage.GetOrCreatePMConversation(networkID, nickname, network.Nickname)
+			if err != nil {
+				return fmt.Errorf("failed to create PM conversation: %w", err)
+			}
+			// If this is a newly created conversation (no messages exist yet), store a placeholder message
+			// with the original case nickname so GetPrivateMessageConversations can retrieve it
+			messages, err := a.storage.GetPrivateMessages(networkID, nickname, network.Nickname, 1)
+			if err == nil && len(messages) == 0 {
+				// No messages exist yet - store a placeholder message with original case nickname
+				// This ensures GetPrivateMessageConversations returns the correct case
+				// We use 'privmsg' type so it's found by the existing query
+				placeholderMsg := storage.Message{
+					NetworkID:   networkID,
+					ChannelID:   nil, // PM conversation
+					User:        nickname, // Original case nickname
+					Message:     "", // Empty message - this is just for case preservation
+					MessageType: "privmsg", // Use privmsg so it's found by GetPrivateMessageConversations
+					Timestamp:   time.Now(),
+					RawLine:     fmt.Sprintf("QUERY %s", nickname),
+				}
+				if err := a.storage.WriteMessageSync(placeholderMsg); err != nil {
+					logger.Log.Warn().Err(err).Str("nickname", nickname).Msg("Failed to store placeholder message for PM conversation")
+					// Don't fail the query command if this fails
+				}
+			}
+			// Set conversation as open (this also emits focus event)
+			return a.SetPrivateMessageOpen(networkID, nickname, true)
 		case "CLOSE":
 			// Close a channel/query window - this is client-side only
 			// We'll part if it's a channel
@@ -1422,10 +1466,31 @@ func (a *App) GetPrivateMessageConversations(networkID int64, openOnly bool) ([]
 }
 
 // SetPrivateMessageOpen sets the is_open state for a private message conversation
+// targetUser should be in the original case (not normalized) for proper event emission
 func (a *App) SetPrivateMessageOpen(networkID int64, targetUser string, isOpen bool) error {
+	// Preserve original case before normalization
+	originalCase := targetUser
+	
 	err := a.storage.UpdatePMConversationIsOpen(networkID, targetUser, isOpen)
 	if err != nil {
 		return err
+	}
+
+	// Try to get original case from messages if available
+	network, err := a.storage.GetNetwork(networkID)
+	if err == nil {
+		messages, err := a.storage.GetPrivateMessages(networkID, targetUser, network.Nickname, 10)
+		if err == nil && len(messages) > 0 {
+			// Find the first message that's from the target user (not from us)
+			for _, msg := range messages {
+				if !strings.EqualFold(msg.User, network.Nickname) {
+					originalCase = msg.User
+					break
+				}
+			}
+			// If all messages are from us, keep the originalCase from parameter
+		}
+		// If no messages exist yet, originalCase is already set to the provided targetUser (original case)
 	}
 
 	// Emit focus event
@@ -1435,7 +1500,7 @@ func (a *App) SetPrivateMessageOpen(networkID int64, targetUser string, isOpen b
 			Data: map[string]interface{}{
 				"networkId": networkID,
 				"type":      "pm",
-				"name":      targetUser,
+				"name":      originalCase,
 			},
 			Timestamp: time.Now(),
 			Source:    events.EventSourceUI,
@@ -1446,7 +1511,7 @@ func (a *App) SetPrivateMessageOpen(networkID int64, targetUser string, isOpen b
 			Data: map[string]interface{}{
 				"networkId": networkID,
 				"type":      "pm",
-				"name":      targetUser,
+				"name":      originalCase,
 			},
 			Timestamp: time.Now(),
 			Source:    events.EventSourceUI,
@@ -1782,6 +1847,85 @@ func (a *App) ToggleChannelAutoJoin(networkID int64, channelName string) error {
 
 // LeaveChannel leaves an IRC channel
 func (a *App) LeaveChannel(networkID int64, channelName string) error {
+	// Get network to find current nickname (needed for both joined check and event emission)
+	network, err := a.storage.GetNetwork(networkID)
+	if err != nil {
+		return fmt.Errorf("network not found: %w", err)
+	}
+
+	// Get the channel to check if we're actually joined
+	channel, err := a.storage.GetChannelByName(networkID, channelName)
+	if err != nil {
+		// Channel doesn't exist in database, but we should still try to close it
+		// This handles the case where a channel pane is open but the channel was never properly created
+		logger.Log.Debug().Str("channel", channelName).Int64("network_id", networkID).Msg("Channel not found in database, closing pane anyway")
+		// Try to close it, but if channel doesn't exist, SetChannelOpen will fail
+		// In that case, we still emit the event to refresh the UI
+		if err := a.SetChannelOpen(networkID, channelName, false); err != nil {
+			logger.Log.Debug().Err(err).Msg("Channel not found, but emitting channels-changed event anyway")
+		}
+		// Emit channels changed event so UI updates
+		a.eventBus.Emit(events.Event{
+			Type: irc.EventChannelsChanged,
+			Data: map[string]interface{}{
+				"network":   network.Address,
+				"networkId": networkID,
+			},
+			Timestamp: time.Now(),
+			Source:    events.EventSourceUI,
+		})
+		return nil
+	}
+
+	// Check if we're actually joined to the channel
+	channelUsers, err := a.storage.GetChannelUsers(channel.ID)
+	if err != nil {
+		logger.Log.Warn().Err(err).Str("channel", channelName).Msg("Failed to get channel users, assuming not joined")
+		// If we can't check, assume not joined and just close the pane
+		if err := a.SetChannelOpen(networkID, channelName, false); err != nil {
+			return err
+		}
+		// Emit channels changed event so UI updates
+		a.eventBus.Emit(events.Event{
+			Type: irc.EventChannelsChanged,
+			Data: map[string]interface{}{
+				"network":   network.Address,
+				"networkId": networkID,
+			},
+			Timestamp: time.Now(),
+			Source:    events.EventSourceUI,
+		})
+		return nil
+	}
+
+	isJoined := false
+	for _, user := range channelUsers {
+		if strings.EqualFold(user.Nickname, network.Nickname) {
+			isJoined = true
+			break
+		}
+	}
+
+	// If not joined, just close the channel pane directly
+	if !isJoined {
+		logger.Log.Info().Str("channel", channelName).Int64("network_id", networkID).Msg("Not joined to channel, closing pane directly")
+		if err := a.SetChannelOpen(networkID, channelName, false); err != nil {
+			return err
+		}
+		// Emit channels changed event so UI updates
+		a.eventBus.Emit(events.Event{
+			Type: irc.EventChannelsChanged,
+			Data: map[string]interface{}{
+				"network":   network.Address,
+				"networkId": networkID,
+			},
+			Timestamp: time.Now(),
+			Source:    events.EventSourceUI,
+		})
+		return nil
+	}
+
+	// We are joined, so send PART command
 	a.mu.RLock()
 	client, exists := a.ircClients[networkID]
 	a.mu.RUnlock()

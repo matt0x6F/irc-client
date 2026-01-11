@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { main, storage } from '../../wailsjs/go/models';
-import { GetChannels, GetJoinedChannels, GetOpenChannels, GetServers, LeaveChannel, ToggleChannelAutoJoin, ToggleNetworkAutoConnect, SetChannelOpen, GetPrivateMessageConversations, SendCommand } from '../../wailsjs/go/main/App';
+import { GetChannels, GetJoinedChannels, GetOpenChannels, GetServers, LeaveChannel, ToggleChannelAutoJoin, ToggleNetworkAutoConnect, SetChannelOpen, GetPrivateMessageConversations, SendCommand, SetPrivateMessageOpen, ClearPaneFocus } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 
 type Channel = storage.Channel;
@@ -272,6 +272,35 @@ export function ServerTree({
           }
         } catch (error) {
           console.error('Failed to refresh PM conversations:', error);
+        }
+      }
+    });
+    return () => unsubscribe();
+  }, [expandedServers]);
+
+  // Refresh PM conversations when UI pane events are received (PM opened/closed)
+  useEffect(() => {
+    const unsubscribe = EventsOn('ui-pane-event', async (data: any) => {
+      const networkId = data?.networkId;
+      const paneType = data?.paneType;
+      
+      // Only refresh if it's a PM pane event and the network is expanded
+      if (networkId && paneType === 'pm' && expandedServers.has(networkId)) {
+        try {
+          const pmList = await GetPrivateMessageConversations(networkId, true);
+          if (pmList && Array.isArray(pmList)) {
+            setPmConversations(prev => ({
+              ...prev,
+              [networkId]: pmList,
+            }));
+          } else {
+            setPmConversations(prev => ({
+              ...prev,
+              [networkId]: [],
+            }));
+          }
+        } catch (error) {
+          console.error('Failed to refresh PM conversations after pane event:', error);
         }
       }
     });
@@ -652,6 +681,46 @@ export function ServerTree({
               <div className="px-2 py-1 text-xs font-semibold text-muted-foreground uppercase">
                 Private Message
               </div>
+              <button
+                className="w-full text-left px-4 py-2 text-sm hover:bg-accent text-foreground"
+                onClick={async () => {
+                  if (contextMenu.serverId && contextMenu.user) {
+                    const serverId = contextMenu.serverId;
+                    const user = contextMenu.user;
+                    const pmKey = `pm:${user}`;
+                    try {
+                      // Close the PM conversation
+                      await SetPrivateMessageOpen(serverId, user, false);
+                      // Clear focus
+                      await ClearPaneFocus(serverId, 'pm', user);
+                      // If this PM is currently selected, switch to status
+                      if (selectedServer === serverId && selectedChannel === pmKey) {
+                        onSelectChannel(serverId, 'status');
+                      }
+                      // Refresh PM conversations list
+                      const pmList = await GetPrivateMessageConversations(serverId, true);
+                      if (pmList && Array.isArray(pmList)) {
+                        setPmConversations(prev => ({
+                          ...prev,
+                          [serverId]: pmList,
+                        }));
+                      } else {
+                        setPmConversations(prev => ({
+                          ...prev,
+                          [serverId]: [],
+                        }));
+                      }
+                    } catch (error) {
+                      console.error('Failed to close PM:', error);
+                      alert(`Failed to close PM: ${error}`);
+                    }
+                  }
+                  setContextMenu({ x: 0, y: 0, type: null });
+                }}
+              >
+                Close
+              </button>
+              <div className="border-t border-border my-1" />
               <button
                 className="w-full text-left px-4 py-2 text-sm hover:bg-accent text-foreground"
                 onClick={() => {
