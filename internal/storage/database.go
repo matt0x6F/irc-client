@@ -713,3 +713,119 @@ func (s *Storage) UpdatePMConversationIsOpen(networkID int64, targetUser string,
 	}
 	return nil
 }
+
+// LastOpenPane represents the last open pane (channel or PM conversation)
+// This is exported so it can be used by the app package
+type LastOpenPane struct {
+	NetworkID int64  `json:"network_id"`
+	Type      string `json:"type"` // "channel" or "pm"
+	Name      string `json:"name"` // Channel name or PM target user
+}
+
+// GetLastOpenPane retrieves the most recently updated open channel or PM conversation across all networks
+func (s *Storage) GetLastOpenPane() (*LastOpenPane, error) {
+	// Query for the most recently updated open channel
+	var channel struct {
+		NetworkID int64      `db:"network_id"`
+		Name      string     `db:"name"`
+		UpdatedAt *time.Time `db:"updated_at"`
+	}
+	channelQuery := `
+		SELECT network_id, name, updated_at
+		FROM channels
+		WHERE is_open = 1
+		ORDER BY COALESCE(updated_at, created_at) DESC, created_at DESC
+		LIMIT 1
+	`
+	err := s.db.Get(&channel, channelQuery)
+	channelFound := err == nil
+	if err != nil && !strings.Contains(err.Error(), "no rows") {
+		// Unexpected error, return it
+		return nil, fmt.Errorf("failed to query open channels: %w", err)
+	}
+	channelUpdatedAt := channel.UpdatedAt
+
+	// Query for the most recently updated open PM conversation
+	var pm struct {
+		NetworkID  int64      `db:"network_id"`
+		TargetUser string     `db:"target_user"`
+		UpdatedAt *time.Time `db:"updated_at"`
+	}
+	pmQuery := `
+		SELECT network_id, target_user, updated_at
+		FROM private_message_conversations
+		WHERE is_open = 1
+		ORDER BY COALESCE(updated_at, created_at) DESC, created_at DESC
+		LIMIT 1
+	`
+	err = s.db.Get(&pm, pmQuery)
+	pmFound := err == nil
+	if err != nil && !strings.Contains(err.Error(), "no rows") {
+		// Unexpected error, return it
+		return nil, fmt.Errorf("failed to query open PM conversations: %w", err)
+	}
+	pmUpdatedAt := pm.UpdatedAt
+
+	// Compare timestamps to determine which is more recent
+	if !channelFound && !pmFound {
+		return nil, nil // No open panes
+	}
+
+	if !channelFound {
+		// Only PM found
+		return &LastOpenPane{
+			NetworkID: pm.NetworkID,
+			Type:      "pm",
+			Name:      pm.TargetUser,
+		}, nil
+	}
+
+	if !pmFound {
+		// Only channel found
+		return &LastOpenPane{
+			NetworkID: channel.NetworkID,
+			Type:      "channel",
+			Name:      channel.Name,
+		}, nil
+	}
+
+	// Both found, compare timestamps
+	// Handle nil timestamps (shouldn't happen, but be safe)
+	if channelUpdatedAt == nil && pmUpdatedAt == nil {
+		// Both nil, prefer channel
+		return &LastOpenPane{
+			NetworkID: channel.NetworkID,
+			Type:      "channel",
+			Name:      channel.Name,
+		}, nil
+	}
+	if channelUpdatedAt == nil {
+		return &LastOpenPane{
+			NetworkID: pm.NetworkID,
+			Type:      "pm",
+			Name:      pm.TargetUser,
+		}, nil
+	}
+	if pmUpdatedAt == nil {
+		return &LastOpenPane{
+			NetworkID: channel.NetworkID,
+			Type:      "channel",
+			Name:      channel.Name,
+		}, nil
+	}
+
+	// Both have timestamps, compare them
+	if channelUpdatedAt.After(*pmUpdatedAt) || channelUpdatedAt.Equal(*pmUpdatedAt) {
+		return &LastOpenPane{
+			NetworkID: channel.NetworkID,
+			Type:      "channel",
+			Name:      channel.Name,
+		}, nil
+	}
+
+	return &LastOpenPane{
+		NetworkID: pm.NetworkID,
+		Type:      "pm",
+		Name:      pm.TargetUser,
+	}, nil
+}

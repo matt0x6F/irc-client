@@ -55,3 +55,13 @@ type PluginInfo struct {
 	Enabled     bool     `json:"enabled"`
 }
 
+// MetadataSetParams represents parameters for ui_metadata.set notification
+type MetadataSetParams struct {
+	Type      string      `json:"type"`
+	Key       string      `json:"key"`
+	Value     interface{} `json:"value"`
+	NetworkID *int64      `json:"network_id,omitempty"`
+	Channel   *string     `json:"channel,omitempty"`
+	Priority  int         `json:"priority,omitempty"`
+}
+

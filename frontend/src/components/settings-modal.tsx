@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { main, storage, plugin } from '../../wailsjs/go/models';
+import { main, storage } from '../../wailsjs/go/models';
 import { GetNetworks, SaveNetwork, ConnectNetwork, DeleteNetwork, DisconnectNetwork, GetConnectionStatus, GetServers, ListPlugins } from '../../wailsjs/go/main/App';
 import {
   Select,
@@ -11,15 +11,30 @@ import {
 
 type SettingsSection = 'networks' | 'plugins';
 
+const SETTINGS_LAST_PANE_KEY = 'cascade-chat-settings-last-pane';
+
 interface SettingsModalProps {
   onClose: () => void;
   onServerUpdate?: () => void;
 }
 
 export function SettingsModal({ onClose, onServerUpdate }: SettingsModalProps) {
-  const [selectedSection, setSelectedSection] = useState<SettingsSection>('networks');
+  // Load last selected pane from localStorage, default to 'networks'
+  const loadLastPane = (): SettingsSection => {
+    try {
+      const saved = localStorage.getItem(SETTINGS_LAST_PANE_KEY);
+      if (saved === 'networks' || saved === 'plugins') {
+        return saved;
+      }
+    } catch (error) {
+      console.error('Failed to load last pane preference:', error);
+    }
+    return 'networks';
+  };
+
+  const [selectedSection, setSelectedSection] = useState<SettingsSection>(loadLastPane);
   const [networks, setNetworks] = useState<storage.Network[]>([]);
-  const [plugins, setPlugins] = useState<plugin.PluginInfo[]>([]);
+  const [plugins, setPlugins] = useState<main.PluginInfo[]>([]);
   const [editingNetwork, setEditingNetwork] = useState<storage.Network | null>(null);
   const [formData, setFormData] = useState<main.NetworkConfig>(main.NetworkConfig.createFrom({
     name: '',
@@ -40,6 +55,15 @@ export function SettingsModal({ onClose, onServerUpdate }: SettingsModalProps) {
     loadNetworks();
     loadPlugins();
   }, []);
+
+  // Save selected pane to localStorage whenever it changes
+  useEffect(() => {
+    try {
+      localStorage.setItem(SETTINGS_LAST_PANE_KEY, selectedSection);
+    } catch (error) {
+      console.error('Failed to save last pane preference:', error);
+    }
+  }, [selectedSection]);
 
   const loadPlugins = async () => {
     try {
@@ -405,6 +429,8 @@ export function SettingsModal({ onClose, onServerUpdate }: SettingsModalProps) {
                               placeholder="irc.example.com"
                             />
                             <input
+                              title="Server Port"
+                              placeholder="6667"
                               type="number"
                               value={editingNetwork ? (srv as storage.Server).port : (srv as main.ServerConfig).port}
                               onChange={(e) => {

@@ -3,6 +3,7 @@ import { GetChannelInfo } from '../../wailsjs/go/main/App';
 import { main, storage } from '../../wailsjs/go/models';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import { UserInfo } from './user-info';
+import { useNicknameColors } from '../hooks/useNicknameColors';
 
 interface ChannelInfoProps {
   networkId: number | null;
@@ -32,6 +33,13 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
     networkIdRef.current = networkId;
     channelNameRef.current = channelName;
   }, [networkId, channelName]);
+
+  // Get users list for nickname colors (must be called before any conditional returns)
+  const users = (channelInfo?.users || []) as storage.ChannelUser[];
+  const nicknameColors = useNicknameColors(
+    networkId, 
+    users.map(u => u.nickname)
+  );
 
   const loadChannelInfo = useCallback(async () => {
     if (networkId === null || channelName === null || channelName === 'status') {
@@ -170,7 +178,7 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
   }
 
   const channel = channelInfo.channel;
-  const users = (channelInfo.users || []) as storage.ChannelUser[];
+  // users is already defined above for the hook
 
   // Group users by mode prefix
   const usersByMode: Record<string, storage.ChannelUser[]> = {
@@ -395,7 +403,7 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
   };
 
   return (
-    <div className="w-64 border-l border-border flex flex-col h-full bg-muted/30">
+    <div className="w-64 border-l border-border flex flex-col h-full bg-muted/30 flex-shrink-0">
       {/* Channel Header */}
       <div className="p-4 border-b border-border">
         <h3 className="font-semibold text-sm">{channel.name}</h3>
@@ -418,7 +426,13 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
                 onContextMenu={(e) => handleContextMenu(e, user)}
               >
                 <span className="text-purple-600">~</span>
-                <span className="ml-1">{user.nickname}</span>
+                <span 
+                  className="ml-1"
+                  style={{ color: nicknameColors.get(user.nickname) || undefined }}
+                  title={nicknameColors.get(user.nickname) ? `Color: ${nicknameColors.get(user.nickname)}` : 'No color'}
+                >
+                  {user.nickname}
+                </span>
               </div>
             ))}
           </div>
@@ -435,7 +449,13 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
                 onContextMenu={(e) => handleContextMenu(e, user)}
               >
                 <span className="text-red-600">&</span>
-                <span className="ml-1">{user.nickname}</span>
+                <span 
+                  className="ml-1"
+                  style={{ color: nicknameColors.get(user.nickname) || undefined }}
+                  title={nicknameColors.get(user.nickname) ? `Color: ${nicknameColors.get(user.nickname)}` : 'No color'}
+                >
+                  {user.nickname}
+                </span>
               </div>
             ))}
           </div>
@@ -452,7 +472,13 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
                 onContextMenu={(e) => handleContextMenu(e, user)}
               >
                 <span className="text-red-500">@</span>
-                <span className="ml-1">{user.nickname}</span>
+                <span 
+                  className="ml-1"
+                  style={{ color: nicknameColors.get(user.nickname) || undefined }}
+                  title={nicknameColors.get(user.nickname) ? `Color: ${nicknameColors.get(user.nickname)}` : 'No color'}
+                >
+                  {user.nickname}
+                </span>
               </div>
             ))}
           </div>
@@ -469,7 +495,13 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
                 onContextMenu={(e) => handleContextMenu(e, user)}
               >
                 <span className="text-orange-500">%</span>
-                <span className="ml-1">{user.nickname}</span>
+                <span 
+                  className="ml-1"
+                  style={{ color: nicknameColors.get(user.nickname) || undefined }}
+                  title={nicknameColors.get(user.nickname) ? `Color: ${nicknameColors.get(user.nickname)}` : 'No color'}
+                >
+                  {user.nickname}
+                </span>
               </div>
             ))}
           </div>
@@ -486,7 +518,13 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
                 onContextMenu={(e) => handleContextMenu(e, user)}
               >
                 <span className="text-blue-500">+</span>
-                <span className="ml-1">{user.nickname}</span>
+                <span 
+                  className="ml-1"
+                  style={{ color: nicknameColors.get(user.nickname) || undefined }}
+                  title={nicknameColors.get(user.nickname) ? `Color: ${nicknameColors.get(user.nickname)}` : 'No color'}
+                >
+                  {user.nickname}
+                </span>
               </div>
             ))}
           </div>
@@ -495,14 +533,19 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
         {/* Regular Users */}
         {usersByMode[''].length > 0 && (
           <div className="mb-3">
-            <div className="text-xs font-medium text-muted-foreground mb-1">Users</div>
+            <div className="text-xs font-medium text-muted-foreground mb-1">Regular Users</div>
             {usersByMode[''].map(user => (
               <div 
                 key={user.id} 
                 className="text-sm py-0.5 cursor-pointer hover:bg-accent rounded px-1"
                 onContextMenu={(e) => handleContextMenu(e, user)}
               >
-                {user.nickname}
+                <span
+                  style={{ color: nicknameColors.get(user.nickname) || undefined }}
+                  title={nicknameColors.get(user.nickname) ? `Color: ${nicknameColors.get(user.nickname)}` : 'No color'}
+                >
+                  {user.nickname}
+                </span>
               </div>
             ))}
           </div>

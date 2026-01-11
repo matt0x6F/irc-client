@@ -333,10 +333,11 @@ func (c *IRCClient) setupHandlers() {
 		c.eventBus.Emit(events.Event{
 			Type: EventMessageReceived,
 			Data: map[string]interface{}{
-				"network": c.network.Address,
-				"channel": channel,
-				"user":    user,
-				"message": message,
+				"network":   c.network.Address,
+				"networkId": c.networkID,
+				"channel":   channel,
+				"user":      user,
+				"message":   message,
 			},
 			Timestamp: time.Now(),
 			Source:    events.EventSourceIRC,
@@ -840,13 +841,28 @@ func (c *IRCClient) setupHandlers() {
 		delete(c.namesInProgress, channel)
 		c.namesMu.Unlock()
 
+		// Get the list of users in the channel to include in the event
+		ch, err := c.storage.GetChannelByName(c.networkID, channel)
+		var users []string
+		if err == nil {
+			channelUsers, err := c.storage.GetChannelUsers(ch.ID)
+			if err == nil {
+				users = make([]string, len(channelUsers))
+				for i, cu := range channelUsers {
+					users[i] = cu.Nickname
+				}
+			}
+		}
+
 		// Emit event when NAMES list is complete so frontend can refresh user list
+		// Include user list so plugins can process all users at once
 		c.eventBus.Emit(events.Event{
 			Type: "channel.names.complete",
 			Data: map[string]interface{}{
 				"network":   c.network.Address,
 				"networkId": c.networkID,
 				"channel":   channel,
+				"users":     users,
 			},
 			Timestamp: time.Now(),
 			Source:    events.EventSourceIRC,
@@ -1756,9 +1772,10 @@ func (c *IRCClient) SendMessage(target, message string) error {
 	c.eventBus.Emit(events.Event{
 		Type: EventMessageSent,
 		Data: map[string]interface{}{
-			"network": c.network.Address,
-			"target":  target,
-			"message": message,
+			"network":   c.network.Address,
+			"networkId": c.networkID,
+			"target":    target,
+			"message":   message,
 		},
 		Timestamp: time.Now(),
 		Source:    events.EventSourceIRC,

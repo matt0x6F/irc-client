@@ -1,16 +1,43 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import { storage } from '../../wailsjs/go/models';
 import { IRCFormattedText } from './irc-formatted-text';
+import { useNicknameColors } from '../hooks/useNicknameColors';
 
 interface MessageViewProps {
   messages: storage.Message[];
+  networkId: number | null;
 }
 
-export function MessageView({ messages }: MessageViewProps) {
+export function MessageView({ messages, networkId }: MessageViewProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [isNearBottom, setIsNearBottom] = useState(true);
   const prevMessagesLengthRef = useRef(0);
+
+  // Extract unique nicknames from messages (including join/part/quit for colored display)
+  const uniqueNicknames = useMemo(() => {
+    const nicks = new Set<string>();
+    messages.forEach(msg => {
+      if (msg.user && msg.user !== '*') {
+        nicks.add(msg.user);
+      }
+    });
+    return Array.from(nicks);
+  }, [messages]);
+
+  // Get nickname colors - this will fetch colors and listen for updates
+  const nicknameColors = useNicknameColors(networkId, uniqueNicknames);
+  
+  // Trigger color generation for users in messages by simulating message events
+  // This ensures colors are generated even for old messages
+  useEffect(() => {
+    if (!networkId || uniqueNicknames.length === 0) return;
+    
+    // The plugin generates colors when it receives message.received events
+    // We don't need to do anything here - the hook will fetch colors and
+    // the plugin will generate them when it sees users in channel.names.complete events
+    // Colors will be updated via metadata-updated events
+  }, [networkId, uniqueNicknames]);
 
   // Check if user is near bottom of scroll
   const checkIfNearBottom = () => {
@@ -87,18 +114,42 @@ export function MessageView({ messages }: MessageViewProps) {
                     {new Date(msg.timestamp).toLocaleTimeString()}
                   </span>
                   {msg.user !== '*' && !isSystemMessage && (
-                    <span className={`text-sm font-medium ${
-                      isStatus || isCommand ? 'text-muted-foreground italic' : 'text-primary'
-                    }`}>
+                    <span 
+                      className={`text-sm font-medium ${
+                        isStatus || isCommand ? 'text-muted-foreground italic' : 'text-primary'
+                      }`}
+                      style={{ 
+                        color: (isStatus || isCommand) ? undefined : (nicknameColors.get(msg.user) || undefined)
+                      }}
+                    >
                       {msg.user}
                     </span>
                   )}
-                  <IRCFormattedText 
-                    text={msg.message} 
-                    className={`text-sm flex-1 ${
-                      isStatus || isCommand ? 'text-muted-foreground italic' : ''
-                    }`} 
-                  />
+                  {isSystemMessage ? (
+                    <span className="text-sm flex-1 text-muted-foreground">
+                      {msg.user !== '*' && nicknameColors.get(msg.user) ? (
+                        // For system messages, color the nickname within the message text
+                        msg.message.split(new RegExp(`(${msg.user.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`)).map((part, i) => 
+                          part === msg.user ? (
+                            <span key={i} style={{ color: nicknameColors.get(msg.user) }} className="font-medium">
+                              {part}
+                            </span>
+                          ) : (
+                            <span key={i}>{part}</span>
+                          )
+                        )
+                      ) : (
+                        msg.message
+                      )}
+                    </span>
+                  ) : (
+                    <IRCFormattedText 
+                      text={msg.message} 
+                      className={`text-sm flex-1 ${
+                        isStatus || isCommand ? 'text-muted-foreground italic' : ''
+                      }`} 
+                    />
+                  )}
                 </>
               )}
             </div>

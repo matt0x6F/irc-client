@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { ConnectNetwork, GetNetworks, SendMessage, SendCommand, GetMessages, ListPlugins, GetConnectionStatus, DisconnectNetwork, DeleteNetwork, GetServers, GetChannelIDByName, GetChannelInfo, SetChannelOpen, GetPrivateMessages, GetPrivateMessageConversations, SetPrivateMessageOpen } from '../wailsjs/go/main/App';
+import { ConnectNetwork, GetNetworks, SendMessage, SendCommand, GetMessages, ListPlugins, GetConnectionStatus, DisconnectNetwork, DeleteNetwork, GetServers, GetChannelIDByName, GetChannelInfo, SetChannelOpen, GetPrivateMessages, GetPrivateMessageConversations, SetPrivateMessageOpen, GetLastOpenPane, SetPaneFocus, ClearPaneFocus, GetOpenChannels } from '../wailsjs/go/main/App';
 import { main, storage } from '../wailsjs/go/models';
 import { EventsOn } from '../wailsjs/runtime/runtime';
 import { ServerTree } from './components/server-tree';
@@ -25,6 +25,7 @@ function App() {
   const pendingJoinChannelRef = useRef<{ networkId: number; channel: string } | null>(null);
   // Track channels with unread activity (key: `${networkId}:${channelName}`)
   const [channelsWithActivity, setChannelsWithActivity] = useState<Set<string>>(new Set());
+  const hasRestoredPaneRef = useRef<boolean>(false);
 
   useEffect(() => {
     loadNetworks();
@@ -69,6 +70,7 @@ function App() {
         });
         setConnectionStatus(prev => ({ ...prev, ...statusMap }));
       }
+      
     } catch (error) {
       console.error('Failed to load networks:', error);
       setNetworks([]);
@@ -133,6 +135,177 @@ function App() {
       setChannelInfo(null);
     }
   }, [selectedNetwork, selectedChannel]);
+
+  // Restore last open pane after networks are loaded (only once on initial load)
+  useEffect(() => {
+    if (hasRestoredPaneRef.current || networks.length === 0) {
+      return;
+    }
+    
+    const restoreLastPane = async () => {
+      hasRestoredPaneRef.current = true;
+      try {
+        console.log('[App] Attempting to restore last open pane...');
+        const lastPane = await GetLastOpenPane();
+        console.log('[App] GetLastOpenPane result:', JSON.stringify(lastPane, null, 2));
+        
+        if (!lastPane) {
+          console.log('[App] No last open pane found - checking all networks for open channels...');
+          // Debug: Check all networks for open channels
+          for (const network of networks) {
+            try {
+              const openChannels = await GetOpenChannels(network.id);
+              console.log(`[App] Network ${network.id} (${network.name}) has ${openChannels.length} open channels:`, openChannels.map(c => c.name));
+            } catch (err) {
+              console.error(`[App] Failed to get open channels for network ${network.id}:`, err);
+            }
+          }
+        }
+        
+        if (lastPane) {
+          console.log('[App] Restoring last open pane:', JSON.stringify(lastPane, null, 2));
+          // Verify the network still exists
+          const networkExists = networks.some(n => n.id === lastPane.network_id);
+          console.log('[App] Network exists check:', networkExists, 'for network ID:', lastPane.network_id);
+          
+          if (networkExists) {
+            if (lastPane.type === 'channel') {
+              // Try to verify and restore the channel with retries
+              // Channels might not be loaded immediately on startup
+              let channelFound = false;
+              const maxRetries = 5;
+              const retryDelay = 300;
+              
+              for (let attempt = 0; attempt < maxRetries; attempt++) {
+                try {
+                  await GetChannelIDByName(lastPane.network_id, lastPane.name);
+                  console.log('[App] Channel verified, restoring:', lastPane.name, `(attempt ${attempt + 1})`);
+                  channelFound = true;
+                  
+                  // Use setTimeout to ensure state updates happen after render
+                  setTimeout(() => {
+                    setSelectedNetwork(lastPane.network_id);
+                    setSelectedChannel(lastPane.name);
+                  }, 0);
+                  
+                  // Set focus using event-based method
+                  try {
+                    await SetPaneFocus(lastPane.network_id, 'channel', lastPane.name);
+                  } catch (error) {
+                    console.error('[App] Failed to set focus on restored channel:', error);
+                  }
+                  break; // Success, exit retry loop
+                } catch (error) {
+                  if (attempt < maxRetries - 1) {
+                    console.log(`[App] Channel not found yet, retrying in ${retryDelay}ms (attempt ${attempt + 1}/${maxRetries}):`, lastPane.name);
+                    await new Promise(resolve => setTimeout(resolve, retryDelay));
+                  } else {
+                    console.log('[App] Last open channel not found after retries:', lastPane.name, error);
+                    // Try to find the channel by checking all open channels (case-insensitive fallback)
+                    try {
+                      const openChannels = await GetOpenChannels(lastPane.network_id);
+                      const normalizedTargetName = lastPane.name.toLowerCase();
+                      const matchingChannel = openChannels.find(ch => 
+                        ch.name.toLowerCase() === normalizedTargetName
+                      );
+                      
+                      if (matchingChannel) {
+                        console.log('[App] Found channel via case-insensitive match:', matchingChannel.name);
+                        setTimeout(() => {
+                          setSelectedNetwork(lastPane.network_id);
+                          setSelectedChannel(matchingChannel.name);
+                        }, 0);
+                        try {
+                          await SetPaneFocus(lastPane.network_id, 'channel', matchingChannel.name);
+                        } catch (err) {
+                          console.error('[App] Failed to set focus on matched channel:', err);
+                        }
+                        channelFound = true;
+                      }
+                    } catch (fallbackError) {
+                      console.log('[App] Fallback channel search failed:', fallbackError);
+                    }
+                    
+                    // If still not found, restore to status window
+                    if (!channelFound) {
+                      const network = networks.find(n => n.id === lastPane.network_id);
+                      if (network) {
+                        setTimeout(() => {
+                          setSelectedNetwork(lastPane.network_id);
+                          setSelectedChannel('status');
+                        }, 0);
+                        try {
+                          await SetPaneFocus(lastPane.network_id, 'status', 'status');
+                        } catch (err) {
+                          console.error('[App] Failed to set focus on fallback status:', err);
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            } else if (lastPane.type === 'pm') {
+              console.log('[App] Restoring PM conversation:', lastPane.name);
+              setTimeout(() => {
+                setSelectedNetwork(lastPane.network_id);
+                setSelectedChannel(`pm:${lastPane.name}`);
+              }, 0);
+              // Set focus using event-based method
+              try {
+                await SetPaneFocus(lastPane.network_id, 'pm', lastPane.name);
+              } catch (error) {
+                console.error('[App] Failed to set focus on restored PM:', error);
+              }
+            }
+          } else {
+            console.log('[App] Last open pane network not found, skipping restoration');
+            // Fallback: restore to first network's status window
+            if (networks.length > 0) {
+              setTimeout(() => {
+                setSelectedNetwork(networks[0].id);
+                setSelectedChannel('status');
+              }, 0);
+            }
+          }
+        } else {
+          console.log('[App] No last open pane found, restoring to first network status');
+          // Fallback: restore to first network's status window
+          if (networks.length > 0) {
+            setTimeout(() => {
+              setSelectedNetwork(networks[0].id);
+              setSelectedChannel('status');
+            }, 0);
+            try {
+              await SetPaneFocus(networks[0].id, 'status', 'status');
+            } catch (error) {
+              console.error('[App] Failed to set focus on fallback status window:', error);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('[App] Failed to restore last open pane:', error);
+        // Fallback: restore to first network's status window
+        if (networks.length > 0) {
+          setTimeout(() => {
+            setSelectedNetwork(networks[0].id);
+            setSelectedChannel('status');
+          }, 0);
+          try {
+            await SetPaneFocus(networks[0].id, 'status', 'status');
+          } catch (error) {
+            console.error('[App] Failed to set focus on fallback status window:', error);
+          }
+        }
+      }
+    };
+    
+    // Small delay to ensure networks state is fully set and component is rendered
+    const timeoutId = setTimeout(() => {
+      restoreLastPane();
+    }, 200);
+    
+    return () => clearTimeout(timeoutId);
+  }, [networks]);
 
   useEffect(() => {
     if (selectedNetwork !== null) {
@@ -279,14 +452,14 @@ function App() {
                     // Verify channel exists before switching
                     await GetChannelIDByName(networkId, channelName);
                     console.log('[App] Channel verified, switching now');
-                    // Mark channel as open (JOINED state)
-                    try {
-                      await SetChannelOpen(networkId, channelName, true);
-                    } catch (error) {
-                      console.error('[App] Failed to set channel open:', error);
-                    }
                     setSelectedNetwork(networkId);
                     setSelectedChannel(channelName);
+                    // Set focus using event-based method
+                    try {
+                      await SetPaneFocus(networkId, 'channel', channelName);
+                    } catch (error) {
+                      console.error('[App] Failed to set focus on joined channel:', error);
+                    }
                     pendingJoinChannelRef.current = null;
                   } catch (error) {
                     console.log('[App] Channel not ready yet, retrying in 500ms');
@@ -294,14 +467,14 @@ function App() {
                     setTimeout(async () => {
                       try {
                         await GetChannelIDByName(networkId, channelName);
-                        // Mark channel as open (JOINED state)
-                        try {
-                          await SetChannelOpen(networkId, channelName, true);
-                        } catch (error) {
-                          console.error('[App] Failed to set channel open:', error);
-                        }
                         setSelectedNetwork(networkId);
                         setSelectedChannel(channelName);
+                        // Set focus using event-based method
+                        try {
+                          await SetPaneFocus(networkId, 'channel', channelName);
+                        } catch (error) {
+                          console.error('[App] Failed to set focus on joined channel:', error);
+                        }
                         pendingJoinChannelRef.current = null;
                       } catch (err) {
                         console.error('[App] Failed to switch to channel after retry:', err);
@@ -517,6 +690,14 @@ function App() {
                 console.log('[App] Channel found via polling, switching now');
                 setSelectedNetwork(selectedNetwork);
                 setSelectedChannel(joinTargetChannel);
+                // Set focus using event-based method
+                if (joinTargetChannel) {
+                  try {
+                    await SetPaneFocus(selectedNetwork, 'channel', joinTargetChannel);
+                  } catch (error) {
+                    console.error('[App] Failed to set focus on joined channel:', error);
+                  }
+                }
                 pendingJoinChannelRef.current = null;
               } catch (error) {
                 // Channel not ready yet, try again
@@ -559,13 +740,13 @@ function App() {
         
         await SendCommand(selectedNetwork, commandToSend);
         
-        // If /close was used on the current channel, mark it as closed and switch to status window
+        // If /close was used on the current channel, clear focus and switch to status window
         if (closeTargetChannel && closeTargetChannel === selectedChannel) {
-          // Mark channel as closed (CLOSED state)
+          // Clear focus using event-based method
           try {
-            await SetChannelOpen(selectedNetwork, closeTargetChannel, false);
+            await ClearPaneFocus(selectedNetwork, 'channel', closeTargetChannel);
           } catch (error) {
-            console.error('[App] Failed to set channel closed:', error);
+            console.error('[App] Failed to clear focus from closed channel:', error);
           }
           // Clear activity indicator for closed channel
           const activityKey = `${selectedNetwork}:${closeTargetChannel}`;
@@ -575,6 +756,12 @@ function App() {
             return next;
           });
           setSelectedChannel('status');
+          // Set focus on status window
+          try {
+            await SetPaneFocus(selectedNetwork, 'status', 'status');
+          } catch (error) {
+            console.error('[App] Failed to set focus on status window:', error);
+          }
         }
         
         // Refresh messages after command
@@ -665,22 +852,10 @@ function App() {
           channelsWithActivity={channelsWithActivity}
           onShowUserInfo={(networkId, nickname) => setShowUserInfo({ networkId, nickname })}
           onSelectChannel={async (networkId, channel) => {
-            // When switching channels/PMs, update the state of the previous and new panes
-            if (selectedNetwork !== null && selectedChannel !== null && selectedChannel !== 'status') {
-              // Mark previous channel/PM as closed if we're switching away from it
-              try {
-                if (selectedChannel.startsWith('pm:')) {
-                  // It's a PM conversation
-                  const user = selectedChannel.substring(3); // Remove "pm:" prefix
-                  await SetPrivateMessageOpen(selectedNetwork, user, false);
-                } else {
-                  // It's a channel
-                  await SetChannelOpen(selectedNetwork, selectedChannel, false);
-                }
-              } catch (error) {
-                console.error('[App] Failed to close previous channel/PM:', error);
-              }
-            }
+            // When switching channels/PMs, use event-based focus tracking
+            // NOTE: We don't clear focus from the previous pane when switching - 
+            // we only clear focus when explicitly closing (e.g., /close command).
+            // This allows multiple panes to remain "open" and we track which was last focused.
             
             setSelectedNetwork(networkId);
             setSelectedChannel(channel);
@@ -695,19 +870,21 @@ function App() {
               });
             }
             
-            // Mark new channel/PM as open if it's not the status window
-            if (channel !== null && channel !== 'status') {
+            // Set focus on new pane using events (this updates the last_focused timestamp)
+            if (channel !== null) {
               try {
-                if (channel.startsWith('pm:')) {
+                if (channel === 'status') {
+                  await SetPaneFocus(networkId, 'status', 'status');
+                } else if (channel.startsWith('pm:')) {
                   // It's a PM conversation
                   const user = channel.substring(3); // Remove "pm:" prefix
-                  await SetPrivateMessageOpen(networkId, user, true);
+                  await SetPaneFocus(networkId, 'pm', user);
                 } else {
                   // It's a channel
-                  await SetChannelOpen(networkId, channel, true);
+                  await SetPaneFocus(networkId, 'channel', channel);
                 }
               } catch (error) {
-                console.error('[App] Failed to open channel/PM:', error);
+                console.error('[App] Failed to set focus on pane:', error);
               }
             }
           }}
@@ -772,7 +949,7 @@ function App() {
           {/* Message View */}
           <div className="flex-1 overflow-y-auto">
             {selectedNetwork !== null ? (
-              <MessageView messages={messages} />
+              <MessageView messages={messages} networkId={selectedNetwork} />
             ) : (
               <div className="flex items-center justify-center h-full text-muted-foreground">
                 Select a network to start chatting

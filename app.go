@@ -65,10 +65,10 @@ func NewApp() (*App, error) {
 	pluginDir := filepath.Join(homeDir, ".cascade-chat", "plugins")
 	pluginMgr := plugin.NewManager(eventBus, pluginDir)
 
-	// Discover and load plugins
-	if err := pluginMgr.DiscoverAndLoad(); err != nil {
-		logger.Log.Warn().Err(err).Msg("Failed to load plugins")
-	}
+	// Discover and load plugins (skip during Wails binding generation)
+	// Wails runs the app during binding generation, and plugin processes would keep it alive
+	// Check if we're being run by Wails for binding generation by checking if wails.Run will be called
+	// We'll load plugins in the startup() method instead, which is only called in actual app execution
 
 	app := &App{
 		storage:            stor,
@@ -95,6 +95,7 @@ func NewApp() (*App, error) {
 	eventBus.Subscribe(irc.EventUserNick, app)
 	// Subscribe to WHOIS events
 	eventBus.Subscribe(irc.EventWhoisReceived, app)
+	// Note: Plugin manager subscribes itself in NewManager, so no need to subscribe here
 
 	// Start processing plugin actions
 	go app.processPluginActions()
@@ -110,7 +111,24 @@ func (a *App) startup(ctx context.Context) {
 	a.startupCtx, a.startupCancel = context.WithCancel(context.Background())
 	logger.Log.Info().Msg("App startup function called")
 
+	// Load plugins now (not in NewApp) to avoid keeping the app alive during Wails binding generation
+	// Load plugins in background so it doesn't block auto-connect
+	go func() {
+		if err := a.pluginManager.DiscoverAndLoad(); err != nil {
+			logger.Log.Warn().Err(err).Msg("Failed to load plugins")
+		} else {
+			plugins := a.pluginManager.ListPlugins()
+			logger.Log.Info().Int("count", len(plugins)).Msg("Plugins loaded successfully")
+			for _, p := range plugins {
+				logger.Log.Info().Str("name", p.Name).Str("path", p.Path).Msg("Loaded plugin")
+			}
+		}
+	}()
+
+	logger.Log.Info().Msg("Plugin loading started in background, proceeding to auto-connect setup")
+
 	// Auto-connect networks that have auto_connect enabled
+	logger.Log.Info().Msg("Preparing to start auto-connect goroutine...")
 	a.startupWg.Add(1)
 	go func() {
 		defer a.startupWg.Done()
@@ -125,6 +143,11 @@ func (a *App) startup(ctx context.Context) {
 		time.Sleep(constants.AutoConnectDelay)
 		logger.Log.Info().Msg("Starting auto-connect process...")
 
+		if a.storage == nil {
+			logger.Log.Error().Msg("Storage is nil in auto-connect goroutine")
+			return
+		}
+
 		networks, err := a.storage.GetNetworks()
 		if err != nil {
 			logger.Log.Error().Err(err).Msg("Failed to load networks for auto-connect")
@@ -135,7 +158,7 @@ func (a *App) startup(ctx context.Context) {
 
 		// Log all networks and their auto-connect status
 		for _, n := range networks {
-			logger.Log.Debug().Str("network", n.Name).Int64("id", n.ID).Bool("auto_connect", n.AutoConnect).Msg("Network status")
+			logger.Log.Info().Str("network", n.Name).Int64("id", n.ID).Bool("auto_connect", n.AutoConnect).Msg("Network status")
 		}
 
 		// Count networks with auto-connect enabled for proper delay calculation
@@ -463,6 +486,17 @@ func (a *App) OnEvent(event events.Event) {
 			"timestamp": event.Timestamp.Format(time.RFC3339),
 		})
 	}
+
+	// Handle metadata updates
+	if event.Type == events.EventMetadataUpdated {
+		runtime.EventsEmit(a.ctx, "metadata-updated", map[string]interface{}{
+			"type":       event.Data["type"],
+			"network_id": event.Data["network_id"],
+			"channel":    event.Data["channel"],
+			"key":        event.Data["key"],
+			"value":      event.Data["value"],
+		})
+	}
 }
 
 // processPluginActions processes actions from plugins
@@ -622,6 +656,7 @@ func (a *App) SaveNetwork(config NetworkConfig) error {
 			SASLUsername:     stringPtr(config.SASLUsername),
 			SASLPassword:     stringPtr(config.SASLPassword),
 			SASLExternalCert: stringPtr(config.SASLExternalCert),
+			AutoConnect:      config.AutoConnect,
 			CreatedAt:        time.Now(),
 			UpdatedAt:        time.Now(),
 		}
@@ -741,6 +776,7 @@ func (a *App) ConnectNetwork(config NetworkConfig) error {
 			SASLUsername:     stringPtr(config.SASLUsername),
 			SASLPassword:     stringPtr(config.SASLPassword),
 			SASLExternalCert: stringPtr(config.SASLExternalCert),
+			AutoConnect:      config.AutoConnect,
 			CreatedAt:        time.Now(),
 			UpdatedAt:        time.Now(),
 		}
@@ -1387,7 +1423,122 @@ func (a *App) GetPrivateMessageConversations(networkID int64, openOnly bool) ([]
 
 // SetPrivateMessageOpen sets the is_open state for a private message conversation
 func (a *App) SetPrivateMessageOpen(networkID int64, targetUser string, isOpen bool) error {
-	return a.storage.UpdatePMConversationIsOpen(networkID, targetUser, isOpen)
+	err := a.storage.UpdatePMConversationIsOpen(networkID, targetUser, isOpen)
+	if err != nil {
+		return err
+	}
+
+	// Emit focus event
+	if isOpen {
+		a.eventBus.Emit(events.Event{
+			Type: events.EventUIPaneFocused,
+			Data: map[string]interface{}{
+				"networkId": networkID,
+				"type":      "pm",
+				"name":      targetUser,
+			},
+			Timestamp: time.Now(),
+			Source:    events.EventSourceUI,
+		})
+	} else {
+		a.eventBus.Emit(events.Event{
+			Type: events.EventUIPaneBlurred,
+			Data: map[string]interface{}{
+				"networkId": networkID,
+				"type":      "pm",
+				"name":      targetUser,
+			},
+			Timestamp: time.Now(),
+			Source:    events.EventSourceUI,
+		})
+	}
+
+	return nil
+}
+
+// LastOpenPane represents the last open pane (channel or PM conversation)
+type LastOpenPane struct {
+	NetworkID int64  `json:"network_id"`
+	Type      string `json:"type"` // "channel" or "pm"
+	Name      string `json:"name"` // Channel name or PM target user
+}
+
+// GetLastOpenPane retrieves the most recently updated open channel or PM conversation
+func (a *App) GetLastOpenPane() (*LastOpenPane, error) {
+	pane, err := a.storage.GetLastOpenPane()
+	if err != nil {
+		return nil, err
+	}
+	if pane == nil {
+		return nil, nil
+	}
+	// Convert storage.LastOpenPane to app.LastOpenPane
+	return &LastOpenPane{
+		NetworkID: pane.NetworkID,
+		Type:      pane.Type,
+		Name:      pane.Name,
+	}, nil
+}
+
+// SetPaneFocus sets focus on a pane (channel, PM, or status) and emits an event
+// This is the event-driven way to handle focus changes
+func (a *App) SetPaneFocus(networkID int64, paneType string, paneName string) error {
+	var err error
+	
+	// Update database based on pane type
+	if paneType == "channel" {
+		// Mark this channel as open and emit focus event
+		err = a.SetChannelOpen(networkID, paneName, true)
+	} else if paneType == "pm" {
+		// Mark this PM conversation as open and emit focus event
+		err = a.SetPrivateMessageOpen(networkID, paneName, true)
+	} else if paneType == "status" {
+		// Status window doesn't need database tracking, but emit event for consistency
+		a.eventBus.Emit(events.Event{
+			Type: events.EventUIPaneFocused,
+			Data: map[string]interface{}{
+				"networkId": networkID,
+				"type":      "status",
+				"name":      "status",
+			},
+			Timestamp: time.Now(),
+			Source:    events.EventSourceUI,
+		})
+	} else {
+		return fmt.Errorf("unknown pane type: %s", paneType)
+	}
+	
+	return err
+}
+
+// ClearPaneFocus clears focus from a pane and emits an event
+func (a *App) ClearPaneFocus(networkID int64, paneType string, paneName string) error {
+	var err error
+	
+	// Update database based on pane type
+	if paneType == "channel" {
+		// Mark this channel as closed and emit blur event
+		err = a.SetChannelOpen(networkID, paneName, false)
+	} else if paneType == "pm" {
+		// Mark this PM conversation as closed and emit blur event
+		err = a.SetPrivateMessageOpen(networkID, paneName, false)
+	} else if paneType == "status" {
+		// Status window doesn't need database tracking, but emit event for consistency
+		a.eventBus.Emit(events.Event{
+			Type: events.EventUIPaneBlurred,
+			Data: map[string]interface{}{
+				"networkId": networkID,
+				"type":      "status",
+				"name":      "status",
+			},
+			Timestamp: time.Now(),
+			Source:    events.EventSourceUI,
+		})
+	} else {
+		return fmt.Errorf("unknown pane type: %s", paneType)
+	}
+	
+	return err
 }
 
 // GetConnectionStatus returns whether a network is connected
@@ -1487,7 +1638,37 @@ func (a *App) SetChannelOpen(networkID int64, channelName string, isOpen bool) e
 		return fmt.Errorf("channel not found: %w", err)
 	}
 
-	return a.storage.UpdateChannelIsOpen(channel.ID, isOpen)
+	err = a.storage.UpdateChannelIsOpen(channel.ID, isOpen)
+	if err != nil {
+		return err
+	}
+
+	// Emit focus event
+	if isOpen {
+		a.eventBus.Emit(events.Event{
+			Type: events.EventUIPaneFocused,
+			Data: map[string]interface{}{
+				"networkId": networkID,
+				"type":      "channel",
+				"name":      channelName,
+			},
+			Timestamp: time.Now(),
+			Source:    events.EventSourceUI,
+		})
+	} else {
+		a.eventBus.Emit(events.Event{
+			Type: events.EventUIPaneBlurred,
+			Data: map[string]interface{}{
+				"networkId": networkID,
+				"type":      "channel",
+				"name":      channelName,
+			},
+			Timestamp: time.Now(),
+			Source:    events.EventSourceUI,
+		})
+	}
+
+	return nil
 }
 
 // GetChannelIDByName retrieves a channel ID by network ID and channel name
@@ -1660,9 +1841,36 @@ func (a *App) GetServers(networkID int64) ([]storage.Server, error) {
 	return a.storage.GetServers(networkID)
 }
 
+// PluginInfo represents plugin information for the frontend (without exposing plugin package types)
+type PluginInfo struct {
+	Name        string   `json:"name"`
+	Version     string   `json:"version"`
+	Description string   `json:"description,omitempty"`
+	Author      string   `json:"author,omitempty"`
+	Events      []string `json:"events,omitempty"`
+	Permissions []string `json:"permissions,omitempty"`
+	Path        string   `json:"path"`
+	Enabled     bool     `json:"enabled"`
+}
+
 // ListPlugins returns information about all plugins
-func (a *App) ListPlugins() []*plugin.PluginInfo {
-	return a.pluginManager.ListPlugins()
+// Note: Returns main.PluginInfo (not plugin.PluginInfo) to avoid Wails analyzing plugin package
+func (a *App) ListPlugins() []PluginInfo {
+	pluginInfos := a.pluginManager.ListPlugins()
+	result := make([]PluginInfo, len(pluginInfos))
+	for i, p := range pluginInfos {
+		result[i] = PluginInfo{
+			Name:        p.Name,
+			Version:     p.Version,
+			Description: p.Description,
+			Author:      p.Author,
+			Events:      p.Events,
+			Permissions: p.Permissions,
+			Path:        p.Path,
+			Enabled:     p.Enabled,
+		}
+	}
+	return result
 }
 
 // EnablePlugin enables a plugin
@@ -1690,4 +1898,14 @@ func (a *App) OpenSettings() {
 	} else {
 		logger.Log.Warn().Msg("OpenSettings: context is nil")
 	}
+}
+
+// GetNicknameColor gets color for a single nickname
+func (a *App) GetNicknameColor(networkID int64, nickname string) (string, error) {
+	return a.pluginManager.GetNicknameColor(networkID, nickname), nil
+}
+
+// GetNicknameColorsBatch gets colors for multiple nicknames efficiently
+func (a *App) GetNicknameColorsBatch(networkID int64, nicknames []string) (map[string]string, error) {
+	return a.pluginManager.GetNicknameColorsBatch(networkID, nicknames), nil
 }

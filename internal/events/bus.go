@@ -14,6 +14,17 @@ const (
 	EventSourceSystem  EventSource = "system"
 )
 
+// System event types
+const (
+	EventMetadataUpdated = "metadata.updated"
+)
+
+// UI event types
+const (
+	EventUIPaneFocused = "ui.pane.focused"   // When a pane (channel/PM/status) gains focus
+	EventUIPaneBlurred  = "ui.pane.blurred"  // When a pane loses focus
+)
+
 // Event represents a generic event
 type Event struct {
 	Type      string

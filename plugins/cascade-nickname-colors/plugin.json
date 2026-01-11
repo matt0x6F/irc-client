@@ -1,0 +1,8 @@
+{
+  "name": "nickname-colors",
+  "version": "1.0.0",
+  "description": "Assigns consistent colors to nicknames in sidebar and chat",
+  "author": "Cascade Chat",
+  "events": ["*"],
+  "enabled": true
+}

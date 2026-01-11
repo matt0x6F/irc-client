@@ -1,7 +1,7 @@
-import { plugin } from '../../wailsjs/go/models';
+import { main } from '../../wailsjs/go/models';
 
 interface PluginManagerProps {
-  plugins: plugin.PluginInfo[];
+  plugins: main.PluginInfo[];
   onClose: () => void;
 }
 

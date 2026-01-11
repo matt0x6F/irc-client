@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -141,24 +140,21 @@ func isExecutable(path string) bool {
 // ValidatePlugin validates that a plugin executable exists and is valid
 func ValidatePlugin(path string) error {
 	// Check if file exists
-	if _, err := os.Stat(path); os.IsNotExist(err) {
+	info, err := os.Stat(path)
+	if os.IsNotExist(err) {
 		return fmt.Errorf("plugin not found: %s", path)
 	}
-
-	// Try to execute with --version or similar to validate
-	cmd := exec.Command(path, "--version")
-	if err := cmd.Run(); err != nil {
-		// Not necessarily an error, plugin might not support --version
-		// Just check that the file is executable
-		info, err := os.Stat(path)
-		if err != nil {
-			return err
-		}
-		if info.Mode().Perm()&0111 == 0 {
-			return fmt.Errorf("plugin is not executable: %s", path)
-		}
+	if err != nil {
+		return fmt.Errorf("failed to stat plugin: %w", err)
 	}
 
+	// Check that the file is executable
+	if info.Mode().Perm()&0111 == 0 {
+		return fmt.Errorf("plugin is not executable: %s", path)
+	}
+
+	// Don't actually run the plugin here - it reads from stdin and will hang
+	// Just verify it exists and is executable
 	return nil
 }
 
