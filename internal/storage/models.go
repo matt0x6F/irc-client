@@ -70,3 +70,13 @@ type Message struct {
 	RawLine     string    `db:"raw_line" json:"raw_line"` // Original IRC line
 }
 
+// PrivateMessageConversation represents a private message conversation with a user
+type PrivateMessageConversation struct {
+	ID        int64      `db:"id" json:"id"`
+	NetworkID int64      `db:"network_id" json:"network_id"`
+	TargetUser string    `db:"target_user" json:"target_user"` // The other user in the conversation (lowercase for case-insensitive matching)
+	IsOpen    bool       `db:"is_open" json:"is_open"` // Dialog/pane is open
+	CreatedAt time.Time  `db:"created_at" json:"created_at"`
+	UpdatedAt *time.Time `db:"updated_at" json:"updated_at"`
+}
+

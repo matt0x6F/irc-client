@@ -54,8 +54,8 @@ export function GetOpenChannels(arg1) {
   return window['go']['main']['App']['GetOpenChannels'](arg1);
 }
 
-export function GetPrivateMessageConversations(arg1) {
-  return window['go']['main']['App']['GetPrivateMessageConversations'](arg1);
+export function GetPrivateMessageConversations(arg1, arg2) {
+  return window['go']['main']['App']['GetPrivateMessageConversations'](arg1, arg2);
 }
 
 export function GetPrivateMessages(arg1, arg2, arg3) {
@@ -104,6 +104,10 @@ export function SendMessage(arg1, arg2, arg3) {
 
 export function SetChannelOpen(arg1, arg2, arg3) {
   return window['go']['main']['App']['SetChannelOpen'](arg1, arg2, arg3);
+}
+
+export function SetPrivateMessageOpen(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SetPrivateMessageOpen'](arg1, arg2, arg3);
 }
 
 export function ToggleChannelAutoJoin(arg1, arg2) {

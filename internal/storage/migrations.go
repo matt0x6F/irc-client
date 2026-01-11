@@ -49,6 +49,11 @@ func Migrate(db *sqlx.DB) error {
 		return fmt.Errorf("channel is_open migration failed: %w", err)
 	}
 
+	// Handle private message conversations table migration
+	if err := migratePrivateMessageConversations(db); err != nil {
+		return fmt.Errorf("private message conversations migration failed: %w", err)
+	}
+
 	return nil
 }
 
@@ -312,3 +317,61 @@ func migrateChannelIsOpen(db *sqlx.DB) error {
 	return nil
 }
 
+const createPrivateMessageConversationsTable = `
+CREATE TABLE IF NOT EXISTS private_message_conversations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    network_id INTEGER NOT NULL,
+    target_user TEXT NOT NULL,
+    is_open BOOLEAN NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP,
+    FOREIGN KEY (network_id) REFERENCES networks(id) ON DELETE CASCADE,
+    UNIQUE(network_id, target_user)
+);
+`
+
+// migratePrivateMessageConversations creates the private_message_conversations table and populates it from existing messages
+func migratePrivateMessageConversations(db *sqlx.DB) error {
+	// Check if table exists
+	var tableExists int
+	err := db.Get(&tableExists,
+		"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='private_message_conversations'")
+	if err != nil {
+		return fmt.Errorf("failed to check for private_message_conversations table: %w", err)
+	}
+
+	if tableExists == 0 {
+		// Create the table
+		if _, err := db.Exec(createPrivateMessageConversationsTable); err != nil {
+			return fmt.Errorf("failed to create private_message_conversations table: %w", err)
+		}
+
+		// Populate from existing PM messages
+		// Extract unique user pairs from messages where channel_id IS NULL
+		// For each network, find all unique users (excluding the network's own nickname)
+		// We'll use a subquery to get the network nickname and exclude it
+		_, err = db.Exec(`
+			INSERT INTO private_message_conversations (network_id, target_user, is_open, created_at)
+			SELECT DISTINCT 
+				m.network_id,
+				LOWER(m.user) as target_user,
+				0 as is_open,
+				MIN(m.timestamp) as created_at
+			FROM messages m
+			INNER JOIN networks n ON m.network_id = n.id
+			WHERE m.channel_id IS NULL 
+				AND m.message_type IN ('privmsg', 'action')
+				AND m.user != '*'
+				AND LOWER(m.user) != LOWER(n.nickname)
+			GROUP BY m.network_id, LOWER(m.user)
+		`)
+		if err != nil {
+			// Ignore errors if there are no PM messages yet
+			if !strings.Contains(err.Error(), "no such table") && !strings.Contains(err.Error(), "no rows") {
+				return fmt.Errorf("failed to populate private_message_conversations: %w", err)
+			}
+		}
+	}
+
+	return nil
+}

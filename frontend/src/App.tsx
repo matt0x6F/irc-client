@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { ConnectNetwork, GetNetworks, SendMessage, SendCommand, GetMessages, ListPlugins, GetConnectionStatus, DisconnectNetwork, DeleteNetwork, GetServers, GetChannelIDByName, GetChannelInfo, SetChannelOpen, GetPrivateMessages, GetPrivateMessageConversations } from '../wailsjs/go/main/App';
+import { ConnectNetwork, GetNetworks, SendMessage, SendCommand, GetMessages, ListPlugins, GetConnectionStatus, DisconnectNetwork, DeleteNetwork, GetServers, GetChannelIDByName, GetChannelInfo, SetChannelOpen, GetPrivateMessages, GetPrivateMessageConversations, SetPrivateMessageOpen } from '../wailsjs/go/main/App';
 import { main, storage } from '../wailsjs/go/models';
 import { EventsOn } from '../wailsjs/runtime/runtime';
 import { ServerTree } from './components/server-tree';
@@ -665,20 +665,27 @@ function App() {
           channelsWithActivity={channelsWithActivity}
           onShowUserInfo={(networkId, nickname) => setShowUserInfo({ networkId, nickname })}
           onSelectChannel={async (networkId, channel) => {
-            // When switching channels, update the state of the previous and new channels
+            // When switching channels/PMs, update the state of the previous and new panes
             if (selectedNetwork !== null && selectedChannel !== null && selectedChannel !== 'status') {
-              // Mark previous channel as closed if we're switching away from it
+              // Mark previous channel/PM as closed if we're switching away from it
               try {
-                await SetChannelOpen(selectedNetwork, selectedChannel, false);
+                if (selectedChannel.startsWith('pm:')) {
+                  // It's a PM conversation
+                  const user = selectedChannel.substring(3); // Remove "pm:" prefix
+                  await SetPrivateMessageOpen(selectedNetwork, user, false);
+                } else {
+                  // It's a channel
+                  await SetChannelOpen(selectedNetwork, selectedChannel, false);
+                }
               } catch (error) {
-                console.error('[App] Failed to close previous channel:', error);
+                console.error('[App] Failed to close previous channel/PM:', error);
               }
             }
             
             setSelectedNetwork(networkId);
             setSelectedChannel(channel);
             
-            // Clear activity indicator for the selected channel
+            // Clear activity indicator for the selected channel/PM
             if (channel !== null && channel !== 'status') {
               const activityKey = `${networkId}:${channel}`;
               setChannelsWithActivity(prev => {
@@ -688,12 +695,19 @@ function App() {
               });
             }
             
-            // Mark new channel as open if it's not the status window
+            // Mark new channel/PM as open if it's not the status window
             if (channel !== null && channel !== 'status') {
               try {
-                await SetChannelOpen(networkId, channel, true);
+                if (channel.startsWith('pm:')) {
+                  // It's a PM conversation
+                  const user = channel.substring(3); // Remove "pm:" prefix
+                  await SetPrivateMessageOpen(networkId, user, true);
+                } else {
+                  // It's a channel
+                  await SetChannelOpen(networkId, channel, true);
+                }
               } catch (error) {
-                console.error('[App] Failed to open channel:', error);
+                console.error('[App] Failed to open channel/PM:', error);
               }
             }
           }}

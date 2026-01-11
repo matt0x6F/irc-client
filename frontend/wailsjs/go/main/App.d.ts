@@ -31,7 +31,7 @@ export function GetNetworks():Promise<Array<storage.Network>>;
 
 export function GetOpenChannels(arg1:number):Promise<Array<storage.Channel>>;
 
-export function GetPrivateMessageConversations(arg1:number):Promise<Array<string>>;
+export function GetPrivateMessageConversations(arg1:number,arg2:boolean):Promise<Array<string>>;
 
 export function GetPrivateMessages(arg1:number,arg2:string,arg3:number):Promise<Array<storage.Message>>;
 
@@ -56,6 +56,8 @@ export function SendCommand(arg1:number,arg2:string):Promise<void>;
 export function SendMessage(arg1:number,arg2:string,arg3:string):Promise<void>;
 
 export function SetChannelOpen(arg1:number,arg2:string,arg3:boolean):Promise<void>;
+
+export function SetPrivateMessageOpen(arg1:number,arg2:string,arg3:boolean):Promise<void>;
 
 export function ToggleChannelAutoJoin(arg1:number,arg2:string):Promise<void>;
 

@@ -603,9 +603,24 @@ func (s *Storage) GetPrivateMessages(networkID int64, targetUser string, current
 // GetPrivateMessageConversations retrieves a list of users with whom we have private message conversations
 // Excludes the current user's own nickname (only shows conversations with other people)
 // Uses case-insensitive grouping to consolidate conversations with different case variants of the same nickname
-func (s *Storage) GetPrivateMessageConversations(networkID int64, currentUser string) ([]string, error) {
+// If openOnly is true, only returns conversations where is_open = true
+func (s *Storage) GetPrivateMessageConversations(networkID int64, currentUser string, openOnly bool) ([]string, error) {
 	var users []string
 	currentUserLower := strings.ToLower(currentUser)
+	
+	if openOnly {
+		// Get only open PM conversations from the conversations table
+		err := s.db.Select(&users,
+			`SELECT pmc.target_user
+			 FROM private_message_conversations pmc
+			 WHERE pmc.network_id = ? AND pmc.is_open = 1
+			 ORDER BY pmc.updated_at DESC, pmc.created_at DESC`,
+			networkID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get open private message conversations: %w", err)
+		}
+		return users, nil
+	}
 	
 	// Group by lowercase username to consolidate case variants, but return the most recent case variant
 	// We use MAX(user) to get one representative case variant per lowercase username
@@ -622,4 +637,79 @@ func (s *Storage) GetPrivateMessageConversations(networkID int64, currentUser st
 	}
 
 	return users, nil
+}
+
+// GetOrCreatePMConversation gets or creates a PM conversation record
+// targetUser should be the other user in the conversation (normalized to lowercase)
+// currentUser is used to determine the target user from messages if needed
+func (s *Storage) GetOrCreatePMConversation(networkID int64, targetUser string, currentUser string) (*PrivateMessageConversation, error) {
+	// Normalize target user to lowercase for case-insensitive matching
+	targetUserLower := strings.ToLower(targetUser)
+	
+	var conv PrivateMessageConversation
+	err := s.db.Get(&conv, 
+		"SELECT * FROM private_message_conversations WHERE network_id = ? AND target_user = ?",
+		networkID, targetUserLower)
+	
+	if err == nil {
+		// Conversation exists, return it
+		return &conv, nil
+	}
+	
+	// Check if it's a "no rows" error (conversation doesn't exist)
+	if err != nil && !strings.Contains(err.Error(), "no rows") {
+		return nil, fmt.Errorf("failed to get PM conversation: %w", err)
+	}
+	
+	// Conversation doesn't exist, create it
+	now := time.Now()
+	conv = PrivateMessageConversation{
+		NetworkID:  networkID,
+		TargetUser: targetUserLower,
+		IsOpen:     true, // Auto-open new conversations
+		CreatedAt:  now,
+		UpdatedAt:  &now,
+	}
+	
+	query := `INSERT INTO private_message_conversations (network_id, target_user, is_open, created_at, updated_at)
+	          VALUES (:network_id, :target_user, :is_open, :created_at, :updated_at)`
+	
+	result, err := s.db.NamedExec(query, conv)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create PM conversation: %w", err)
+	}
+	
+	id, err := result.LastInsertId()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get PM conversation ID: %w", err)
+	}
+	
+	conv.ID = id
+	return &conv, nil
+}
+
+// GetOpenPMConversations retrieves PM conversations where is_open = true
+func (s *Storage) GetOpenPMConversations(networkID int64, currentUser string) ([]PrivateMessageConversation, error) {
+	var conversations []PrivateMessageConversation
+	err := s.db.Select(&conversations,
+		`SELECT * FROM private_message_conversations 
+		 WHERE network_id = ? AND is_open = 1
+		 ORDER BY updated_at DESC, created_at DESC`,
+		networkID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get open PM conversations: %w", err)
+	}
+	return conversations, nil
+}
+
+// UpdatePMConversationIsOpen updates the is_open status for a PM conversation
+func (s *Storage) UpdatePMConversationIsOpen(networkID int64, targetUser string, isOpen bool) error {
+	targetUserLower := strings.ToLower(targetUser)
+	_, err := s.db.Exec(
+		"UPDATE private_message_conversations SET is_open = ?, updated_at = CURRENT_TIMESTAMP WHERE network_id = ? AND target_user = ?",
+		isOpen, networkID, targetUserLower)
+	if err != nil {
+		return fmt.Errorf("failed to update PM conversation is_open: %w", err)
+	}
+	return nil
 }

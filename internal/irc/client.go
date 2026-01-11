@@ -249,6 +249,12 @@ func (c *IRCClient) setupHandlers() {
 						if err == nil {
 							channelID = &ch.ID
 						}
+					} else {
+						// Private message - create or get PM conversation
+						_, err := c.storage.GetOrCreatePMConversation(c.networkID, user, c.network.Nickname)
+						if err != nil {
+							logger.Log.Error().Err(err).Str("user", user).Msg("Failed to create/get PM conversation")
+						}
 					}
 
 					rawLine, _ := e.Line()
@@ -292,6 +298,12 @@ func (c *IRCClient) setupHandlers() {
 				// Channel not found in database - might be a channel we haven't joined yet
 				// Store with nil channel_id for now
 				logger.Log.Debug().Err(err).Str("channel", channel).Msg("Channel not found in database")
+			}
+		} else {
+			// Private message - create or get PM conversation
+			_, err := c.storage.GetOrCreatePMConversation(c.networkID, user, c.network.Nickname)
+			if err != nil {
+				logger.Log.Error().Err(err).Str("user", user).Msg("Failed to create/get PM conversation")
 			}
 		}
 
@@ -1715,6 +1727,12 @@ func (c *IRCClient) SendMessage(target, message string) error {
 			// Channel not found in database - might be a channel we haven't joined yet
 			// Store with nil channel_id for now
 			logger.Log.Debug().Err(err).Str("target", target).Msg("Channel not found in database")
+		}
+	} else {
+		// Private message - create or get PM conversation
+		_, err := c.storage.GetOrCreatePMConversation(c.networkID, target, c.network.Nickname)
+		if err != nil {
+			logger.Log.Error().Err(err).Str("target", target).Msg("Failed to create/get PM conversation")
 		}
 	}
 

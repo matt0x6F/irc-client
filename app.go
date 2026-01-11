@@ -1368,7 +1368,8 @@ func (a *App) GetPrivateMessages(networkID int64, targetUser string, limit int) 
 }
 
 // GetPrivateMessageConversations retrieves a list of users with private message conversations
-func (a *App) GetPrivateMessageConversations(networkID int64) ([]string, error) {
+// If openOnly is true, only returns conversations where is_open = true
+func (a *App) GetPrivateMessageConversations(networkID int64, openOnly bool) ([]string, error) {
 	// Get the current user's nickname from the network
 	network, err := a.storage.GetNetwork(networkID)
 	if err != nil {
@@ -1381,7 +1382,12 @@ func (a *App) GetPrivateMessageConversations(networkID int64) ([]string, error) 
 	}
 
 	currentUser := network.Nickname
-	return a.storage.GetPrivateMessageConversations(networkID, currentUser)
+	return a.storage.GetPrivateMessageConversations(networkID, currentUser, openOnly)
+}
+
+// SetPrivateMessageOpen sets the is_open state for a private message conversation
+func (a *App) SetPrivateMessageOpen(networkID int64, targetUser string, isOpen bool) error {
+	return a.storage.UpdatePMConversationIsOpen(networkID, targetUser, isOpen)
 }
 
 // GetConnectionStatus returns whether a network is connected

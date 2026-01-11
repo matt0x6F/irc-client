@@ -87,7 +87,7 @@ export function ServerTree({
 
       // Load PM conversations
       try {
-        const pmList = await GetPrivateMessageConversations(networkId);
+        const pmList = await GetPrivateMessageConversations(networkId, true);
         if (pmList && Array.isArray(pmList)) {
           setPmConversations(prev => ({
             ...prev,
@@ -263,7 +263,7 @@ export function ServerTree({
       const networkId = data?.networkId;
       if (networkId && expandedServers.has(networkId)) {
         try {
-          const pmList = await GetPrivateMessageConversations(networkId);
+          const pmList = await GetPrivateMessageConversations(networkId, true);
           if (pmList && Array.isArray(pmList)) {
             setPmConversations(prev => ({
               ...prev,
