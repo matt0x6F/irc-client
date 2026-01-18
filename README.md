@@ -107,6 +107,27 @@ cascade/
 └── plugins/               # Example plugins
 ```
 
+## Testing with Local IRC Server
+
+A Docker Compose setup is included for running a local Ergo IRC server for testing:
+
+1. **Generate TLS certificates** (one-time setup):
+   ```bash
+   ./docker/ergo/generate-certs.sh
+   ```
+
+2. **Start the test server**:
+   ```bash
+   docker-compose up -d
+   ```
+
+3. **Connect in Cascade Chat**:
+   - Address: `localhost`
+   - Port: `6667` (plaintext) or `6697` (TLS)
+   - Enable TLS if using port 6697
+
+See [docker/ergo/README.md](docker/ergo/README.md) for more details.
+
 ## Documentation
 
 - [Technical Documentation](agents.md) - Architecture, patterns, and workflows

@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/matt0x6f/irc-client/internal/events"
 	"github.com/matt0x6f/irc-client/internal/logger"
+	"github.com/matt0x6f/irc-client/internal/storage"
 )
 
 // Manager manages plugin lifecycle and event routing
@@ -18,6 +20,7 @@ type Manager struct {
 	eventBus    *events.EventBus
 	metadataReg *MetadataRegistry
 	pluginDir   string
+	storage     *storage.Storage
 	mu          sync.RWMutex
 	actionQueue chan Action
 }
@@ -118,6 +121,13 @@ func (pm *Manager) OnEvent(event events.Event) {
 	}
 }
 
+// SetStorage sets the storage instance for the plugin manager
+func (pm *Manager) SetStorage(stor *storage.Storage) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	pm.storage = stor
+}
+
 // DiscoverAndLoad discovers and loads all available plugins
 func (pm *Manager) DiscoverAndLoad() error {
 	plugins, err := DiscoverPlugins(pm.pluginDir)
@@ -127,12 +137,34 @@ func (pm *Manager) DiscoverAndLoad() error {
 
 	logger.Log.Info().Int("count", len(plugins)).Msg("Discovered plugins")
 
+	// Load plugin configs from database if storage is available
+	var dbConfigs map[string]*storage.PluginConfig
+	if pm.storage != nil {
+		dbConfigs, err = pm.storage.GetAllPluginConfigs()
+		if err != nil {
+			logger.Log.Warn().Err(err).Msg("Failed to load plugin configs from database, using defaults")
+			dbConfigs = make(map[string]*storage.PluginConfig)
+		}
+	} else {
+		dbConfigs = make(map[string]*storage.PluginConfig)
+	}
+
 	for _, info := range plugins {
+		// Apply database config (database takes precedence for enabled)
+		if dbConfig, exists := dbConfigs[info.Name]; exists {
+			info.Enabled = dbConfig.Enabled
+			logger.Log.Debug().
+				Str("name", info.Name).
+				Bool("enabled_from_db", dbConfig.Enabled).
+				Msg("Using enabled state from database")
+		}
+
 		logger.Log.Info().
 			Str("name", info.Name).
 			Str("path", info.Path).
 			Bool("enabled", info.Enabled).
 			Strs("events", info.Events).
+			Strs("metadata_types", info.MetadataTypes).
 			Msg("Found plugin")
 		
 		if info.Enabled {
@@ -199,10 +231,28 @@ func (pm *Manager) LoadPlugin(info *PluginInfo) error {
 		IPC:  ipc,
 	}
 
+	// Load user config from database
+	var userConfig map[string]interface{}
+	if pm.storage != nil {
+		dbConfig, err := pm.storage.GetPluginConfig(info.Name)
+		if err == nil && dbConfig.Config != nil {
+			userConfig = dbConfig.Config
+			logger.Log.Debug().
+				Str("plugin", info.Name).
+				Interface("config", userConfig).
+				Msg("Loaded user config from database")
+		} else {
+			userConfig = make(map[string]interface{})
+		}
+	} else {
+		userConfig = make(map[string]interface{})
+	}
+
 	// Initialize plugin
 	initParams := InitializeParams{
-		Version:     "1.0",
-		Capabilities: info.Events,
+		Version:      "1.0",
+		Capabilities: []string{}, // Events unknown until plugin responds
+		Config:       userConfig,
 	}
 
 	logger.Log.Info().
@@ -233,6 +283,46 @@ func (pm *Manager) LoadPlugin(info *PluginInfo) error {
 				Msg("Error closing plugin IPC after initialization error")
 		}
 		return fmt.Errorf("plugin initialization error: %s", resp.Error.Message)
+	}
+
+	// Parse metadata from initialize response
+	var initResult InitializeResult
+	if resp.Result != nil {
+		resultBytes, _ := json.Marshal(resp.Result)
+		if err := json.Unmarshal(resultBytes, &initResult); err == nil {
+			// Update plugin info with metadata from initialize response
+			if initResult.Name != "" {
+				info.Name = initResult.Name
+			}
+			if initResult.Version != "" {
+				info.Version = initResult.Version
+			}
+			info.Description = initResult.Description
+			info.Author = initResult.Author
+			info.Events = initResult.Events
+			info.MetadataTypes = initResult.MetadataTypes
+			info.ConfigSchema = initResult.ConfigSchema
+			// Update the plugin's Info
+			plugin.Info = info
+			// Store config_schema in database for later retrieval
+			if pm.storage != nil && initResult.ConfigSchema != nil {
+				if err := pm.storage.SetPluginConfigSchema(info.Name, initResult.ConfigSchema); err != nil {
+					logger.Log.Warn().Err(err).Str("plugin", info.Name).Msg("Failed to save plugin config_schema to database")
+				} else {
+					logger.Log.Debug().Str("plugin", info.Name).Msg("Saved plugin config_schema to database")
+				}
+			}
+			logger.Log.Info().
+				Str("plugin", info.Name).
+				Str("version", info.Version).
+				Strs("events", info.Events).
+				Msg("Updated plugin info from initialize response")
+		} else {
+			logger.Log.Warn().
+				Err(err).
+				Str("plugin", info.Name).
+				Msg("Failed to parse initialize result metadata")
+		}
 	}
 
 	logger.Log.Info().
@@ -266,14 +356,247 @@ func (pm *Manager) UnloadPlugin(name string) error {
 	return nil
 }
 
-// ListPlugins returns information about all plugins
-func (pm *Manager) ListPlugins() []*PluginInfo {
-	pm.mu.RLock()
-	defer pm.mu.RUnlock()
+// ReloadPlugin reloads a plugin by unloading it (if loaded) and loading it again
+func (pm *Manager) ReloadPlugin(name string) error {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
 
-	infos := make([]*PluginInfo, 0, len(pm.plugins))
-	for _, plugin := range pm.plugins {
-		infos = append(infos, plugin.Info)
+	// Discover the plugin to get its current info
+	plugins, err := DiscoverPlugins(pm.pluginDir)
+	if err != nil {
+		return fmt.Errorf("failed to discover plugins: %w", err)
+	}
+
+	var pluginInfo *PluginInfo
+	for _, p := range plugins {
+		if p.Name == name {
+			pluginInfo = p
+			break
+		}
+	}
+
+	if pluginInfo == nil {
+		return fmt.Errorf("plugin not found: %s", name)
+	}
+
+	// Unload if currently loaded
+	if _, exists := pm.plugins[name]; exists {
+		if err := pm.unloadPluginUnlocked(name); err != nil {
+			logger.Log.Warn().Err(err).Str("plugin", name).Msg("Failed to unload plugin during reload")
+			// Continue anyway - try to load the new version
+		}
+	}
+
+	// Load the plugin
+	// Get enabled state from database if available
+	if pm.storage != nil {
+		dbConfig, err := pm.storage.GetPluginConfig(name)
+		if err == nil {
+			pluginInfo.Enabled = dbConfig.Enabled
+		}
+	}
+
+	// Only load if enabled
+	if pluginInfo.Enabled {
+		return pm.loadPluginUnlocked(pluginInfo)
+	}
+
+	return nil
+}
+
+// unloadPluginUnlocked unloads a plugin without acquiring the lock (caller must hold lock)
+func (pm *Manager) unloadPluginUnlocked(name string) error {
+	plugin, exists := pm.plugins[name]
+	if !exists {
+		return fmt.Errorf("plugin not loaded: %s", name)
+	}
+
+	if err := plugin.IPC.Close(); err != nil {
+		return fmt.Errorf("failed to close plugin IPC: %w", err)
+	}
+
+	// Clear plugin metadata
+	pm.metadataReg.ClearPluginMetadata(name)
+
+	delete(pm.plugins, name)
+	return nil
+}
+
+// GetPluginMetadata initializes a plugin temporarily to get its metadata (including config_schema)
+// without fully loading it. This is used to discover plugin capabilities before enabling.
+func (pm *Manager) GetPluginMetadata(info *PluginInfo) (*PluginInfo, error) {
+	// Check if already loaded
+	pm.mu.RLock()
+	if plugin, exists := pm.plugins[info.Name]; exists {
+		pm.mu.RUnlock()
+		return plugin.Info, nil
+	}
+	pm.mu.RUnlock()
+
+	// Check database first
+	if pm.storage != nil {
+		dbConfig, err := pm.storage.GetPluginConfig(info.Name)
+		if err == nil && dbConfig.ConfigSchema != nil && len(dbConfig.ConfigSchema) > 0 {
+			// Return metadata from database
+			result := &PluginInfo{
+				Name:        info.Name,
+				Path:        info.Path,
+				Enabled:     dbConfig.Enabled,
+				ConfigSchema: dbConfig.ConfigSchema,
+			}
+			return result, nil
+		}
+	}
+
+	// Need to initialize plugin to get metadata
+	// Create temporary IPC connection
+	ipc, err := NewIPC(info.Path, info.Name, pm)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create IPC: %w", err)
+	}
+	defer ipc.Close()
+
+	// Initialize plugin with empty config
+	initParams := InitializeParams{
+		Version:      "1.0",
+		Capabilities: []string{},
+		Config:       make(map[string]interface{}),
+	}
+
+	resp, err := ipc.SendRequest("initialize", initParams)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize plugin: %w", err)
+	}
+
+	if resp.Error != nil {
+		return nil, fmt.Errorf("plugin initialization error: %s", resp.Error.Message)
+	}
+
+	// Parse metadata from initialize response
+	var initResult InitializeResult
+	if resp.Result != nil {
+		resultBytes, _ := json.Marshal(resp.Result)
+		if err := json.Unmarshal(resultBytes, &initResult); err != nil {
+			return nil, fmt.Errorf("failed to parse initialize result: %w", err)
+		}
+	}
+
+	// Build result
+	result := &PluginInfo{
+		Name:        initResult.Name,
+		Version:     initResult.Version,
+		Description: initResult.Description,
+		Author:      initResult.Author,
+		Events:      initResult.Events,
+		MetadataTypes: initResult.MetadataTypes,
+		ConfigSchema: initResult.ConfigSchema,
+		Path:        info.Path,
+		Enabled:     info.Enabled,
+	}
+
+	// Store config_schema in database for future use
+	if pm.storage != nil && initResult.ConfigSchema != nil {
+		if err := pm.storage.SetPluginConfigSchema(result.Name, initResult.ConfigSchema); err != nil {
+			logger.Log.Warn().Err(err).Str("plugin", result.Name).Msg("Failed to save plugin config_schema to database")
+		}
+	}
+
+	return result, nil
+}
+
+// ListPlugins returns information about all discovered plugins (not just loaded ones)
+// For loaded plugins, returns full metadata from initialize response.
+// For unloaded plugins, returns minimal info (name, path, enabled state).
+// If a plugin has config_schema in the database, it will be included.
+func (pm *Manager) ListPlugins() []*PluginInfo {
+	// Discover all plugins
+	plugins, err := DiscoverPlugins(pm.pluginDir)
+	if err != nil {
+		logger.Log.Warn().Err(err).Msg("Failed to discover plugins for list")
+		// Fall back to just loaded plugins
+		pm.mu.RLock()
+		defer pm.mu.RUnlock()
+		infos := make([]*PluginInfo, 0, len(pm.plugins))
+		for _, plugin := range pm.plugins {
+			infos = append(infos, plugin.Info)
+		}
+		return infos
+	}
+
+	// Load plugin configs from database if storage is available
+	var dbConfigs map[string]*storage.PluginConfig
+	if pm.storage != nil {
+		dbConfigs, err = pm.storage.GetAllPluginConfigs()
+		if err != nil {
+			logger.Log.Warn().Err(err).Msg("Failed to load plugin configs from database")
+			dbConfigs = make(map[string]*storage.PluginConfig)
+		}
+	} else {
+		dbConfigs = make(map[string]*storage.PluginConfig)
+	}
+
+	// Get loaded plugins with full metadata
+	pm.mu.RLock()
+	loadedPlugins := make(map[string]*PluginInfo)
+	for name, plugin := range pm.plugins {
+		// Create a copy to avoid race conditions
+		loadedInfo := *plugin.Info
+		loadedPlugins[name] = &loadedInfo
+	}
+	pm.mu.RUnlock()
+
+	infos := make([]*PluginInfo, 0, len(plugins))
+	for _, info := range plugins {
+		// If plugin is loaded, use its full metadata
+		if loadedInfo, exists := loadedPlugins[info.Name]; exists {
+			// Copy enabled state from database if available
+			if dbConfig, exists := dbConfigs[info.Name]; exists {
+				loadedInfo.Enabled = dbConfig.Enabled
+			} else {
+				loadedInfo.Enabled = true // Plugin is loaded, so it's enabled
+			}
+			infos = append(infos, loadedInfo)
+		} else {
+			// Unloaded plugin - use info from discovery, but merge with database
+			unloadedInfo := &PluginInfo{
+				Name:    info.Name,
+				Path:    info.Path,
+				Enabled: true, // Default
+			}
+			// Apply database config if available (including config_schema)
+			if dbConfig, exists := dbConfigs[info.Name]; exists {
+				unloadedInfo.Enabled = dbConfig.Enabled
+				// Include config_schema from database if available
+				if dbConfig.ConfigSchema != nil && len(dbConfig.ConfigSchema) > 0 {
+					unloadedInfo.ConfigSchema = dbConfig.ConfigSchema
+				}
+			}
+			
+			// If no config_schema in database, try to get it by initializing the plugin
+			if unloadedInfo.ConfigSchema == nil || len(unloadedInfo.ConfigSchema) == 0 {
+				logger.Log.Debug().Str("plugin", info.Name).Msg("No config_schema in database, fetching from plugin")
+				if metadata, err := pm.GetPluginMetadata(info); err == nil && metadata.ConfigSchema != nil {
+					logger.Log.Debug().Str("plugin", info.Name).Msg("Successfully fetched config_schema from plugin")
+					unloadedInfo.ConfigSchema = metadata.ConfigSchema
+					// Also update other metadata if available
+					if metadata.Description != "" {
+						unloadedInfo.Description = metadata.Description
+					}
+					if metadata.Version != "" {
+						unloadedInfo.Version = metadata.Version
+					}
+					if metadata.Author != "" {
+						unloadedInfo.Author = metadata.Author
+					}
+				} else if err != nil {
+					logger.Log.Warn().Err(err).Str("plugin", info.Name).Msg("Failed to get plugin metadata")
+				} else {
+					logger.Log.Debug().Str("plugin", info.Name).Msg("Plugin metadata fetched but no config_schema found")
+				}
+			}
+			
+			infos = append(infos, unloadedInfo)
+		}
 	}
 
 	return infos
@@ -410,6 +733,158 @@ func (pm *Manager) GetNicknameColorsBatch(networkID int64, nicknames []string) m
 		Int("found", len(result)).
 		Msg("GetNicknameColorsBatch")
 	return result
+}
+
+// SetPluginEnabled enables or disables a plugin and persists the state to the database
+func (pm *Manager) SetPluginEnabled(name string, enabled bool, stor *storage.Storage) error {
+	if stor == nil {
+		return fmt.Errorf("storage is required to set plugin enabled state")
+	}
+
+	// Save to database
+	if err := stor.SetPluginEnabled(name, enabled); err != nil {
+		return fmt.Errorf("failed to save plugin config: %w", err)
+	}
+
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	if enabled {
+		// Check if plugin is already loaded
+		if _, exists := pm.plugins[name]; exists {
+			logger.Log.Debug().Str("plugin", name).Msg("Plugin already loaded")
+			return nil
+		}
+
+		// Discover the plugin to get its info
+		plugins, err := DiscoverPlugins(pm.pluginDir)
+		if err != nil {
+			return fmt.Errorf("failed to discover plugins: %w", err)
+		}
+
+		// Find the plugin by name
+		var pluginInfo *PluginInfo
+		for _, p := range plugins {
+			if p.Name == name {
+				pluginInfo = p
+				break
+			}
+		}
+
+		if pluginInfo == nil {
+			return fmt.Errorf("plugin not found: %s", name)
+		}
+
+		// Set enabled state (database config takes precedence)
+		pluginInfo.Enabled = enabled
+
+		// Load the plugin
+		if err := pm.loadPluginUnlocked(pluginInfo); err != nil {
+			return fmt.Errorf("failed to load plugin: %w", err)
+		}
+
+		logger.Log.Info().Str("plugin", name).Msg("Plugin enabled and loaded")
+	} else {
+		// Disable: unload plugin and clear its metadata
+		if plugin, exists := pm.plugins[name]; exists {
+			if err := plugin.IPC.Close(); err != nil {
+				logger.Log.Warn().Err(err).Str("plugin", name).Msg("Error closing plugin IPC")
+			}
+			delete(pm.plugins, name)
+			pm.metadataReg.ClearPluginMetadata(name)
+			logger.Log.Info().Str("plugin", name).Msg("Plugin disabled and unloaded")
+		} else {
+			logger.Log.Debug().Str("plugin", name).Msg("Plugin not loaded, nothing to unload")
+		}
+	}
+
+	return nil
+}
+
+// loadPluginUnlocked loads a plugin without acquiring the lock (caller must hold lock)
+func (pm *Manager) loadPluginUnlocked(info *PluginInfo) error {
+	// Check if already loaded
+	if _, exists := pm.plugins[info.Name]; exists {
+		return fmt.Errorf("plugin already loaded: %s", info.Name)
+	}
+
+	// Validate plugin
+	if err := ValidatePlugin(info.Path); err != nil {
+		return fmt.Errorf("plugin validation failed: %w", err)
+	}
+
+	// Create IPC connection
+	ipc, err := NewIPC(info.Path, info.Name, pm)
+	if err != nil {
+		return fmt.Errorf("failed to create IPC: %w", err)
+	}
+
+	plugin := &Plugin{
+		Info: info,
+		IPC:  ipc,
+	}
+
+	// Load user config from database
+	var userConfig map[string]interface{}
+	if pm.storage != nil {
+		dbConfig, err := pm.storage.GetPluginConfig(info.Name)
+		if err == nil && dbConfig.Config != nil {
+			userConfig = dbConfig.Config
+		} else {
+			userConfig = make(map[string]interface{})
+		}
+	} else {
+		userConfig = make(map[string]interface{})
+	}
+
+	// Initialize plugin
+	initParams := InitializeParams{
+		Version:      "1.0",
+		Capabilities: []string{}, // Events unknown until plugin responds
+		Config:       userConfig,
+	}
+
+	resp, err := ipc.SendRequest("initialize", initParams)
+	if err != nil {
+		ipc.Close()
+		return fmt.Errorf("failed to initialize plugin: %w", err)
+	}
+
+	if resp.Error != nil {
+		ipc.Close()
+		return fmt.Errorf("plugin initialization error: %s", resp.Error.Message)
+	}
+
+	// Parse metadata from initialize response
+	var initResult InitializeResult
+	if resp.Result != nil {
+		resultBytes, _ := json.Marshal(resp.Result)
+		if err := json.Unmarshal(resultBytes, &initResult); err == nil {
+			// Update plugin info with metadata from initialize response
+			if initResult.Name != "" {
+				info.Name = initResult.Name
+			}
+			if initResult.Version != "" {
+				info.Version = initResult.Version
+			}
+			info.Description = initResult.Description
+			info.Author = initResult.Author
+			info.Events = initResult.Events
+			info.MetadataTypes = initResult.MetadataTypes
+			info.ConfigSchema = initResult.ConfigSchema
+			// Update the plugin's Info
+			plugin.Info = info
+			// Store config_schema in database for later retrieval
+			if pm.storage != nil && initResult.ConfigSchema != nil {
+				if err := pm.storage.SetPluginConfigSchema(info.Name, initResult.ConfigSchema); err != nil {
+					logger.Log.Warn().Err(err).Str("plugin", info.Name).Msg("Failed to save plugin config_schema to database")
+				}
+			}
+		}
+	}
+
+	pm.plugins[info.Name] = plugin
+	return nil
 }
 
 // Close closes all plugins

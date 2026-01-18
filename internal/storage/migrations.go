@@ -54,6 +54,16 @@ func Migrate(db *sqlx.DB) error {
 		return fmt.Errorf("private message conversations migration failed: %w", err)
 	}
 
+	// Handle plugin configs table migration
+	if err := migratePluginConfigs(db); err != nil {
+		return fmt.Errorf("plugin configs migration failed: %w", err)
+	}
+
+	// Handle plugin config column migration
+	if err := migratePluginConfigColumn(db); err != nil {
+		return fmt.Errorf("plugin config column migration failed: %w", err)
+	}
+
 	return nil
 }
 
@@ -369,6 +379,65 @@ func migratePrivateMessageConversations(db *sqlx.DB) error {
 			// Ignore errors if there are no PM messages yet
 			if !strings.Contains(err.Error(), "no such table") && !strings.Contains(err.Error(), "no rows") {
 				return fmt.Errorf("failed to populate private_message_conversations: %w", err)
+			}
+		}
+	}
+
+	return nil
+}
+
+const createPluginConfigsTable = `
+CREATE TABLE IF NOT EXISTS plugin_configs (
+    name TEXT PRIMARY KEY,
+    enabled BOOLEAN NOT NULL DEFAULT 1,
+    config TEXT,
+    config_schema TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+`
+
+// migratePluginConfigs creates the plugin_configs table if it doesn't exist
+func migratePluginConfigs(db *sqlx.DB) error {
+	// Check if table exists
+	var tableExists int
+	err := db.Get(&tableExists,
+		"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='plugin_configs'")
+	if err != nil {
+		return fmt.Errorf("failed to check for plugin_configs table: %w", err)
+	}
+
+	if tableExists == 0 {
+		// Create the table
+		if _, err := db.Exec(createPluginConfigsTable); err != nil {
+			return fmt.Errorf("failed to create plugin_configs table: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// migratePluginConfigColumn adds the config and config_schema JSON columns to plugin_configs table if they don't exist
+func migratePluginConfigColumn(db *sqlx.DB) error {
+	columnsToAdd := map[string]string{
+		"config":        "ALTER TABLE plugin_configs ADD COLUMN config TEXT",
+		"config_schema": "ALTER TABLE plugin_configs ADD COLUMN config_schema TEXT",
+	}
+
+	for columnName, alterSQL := range columnsToAdd {
+		var columnExists int
+		err := db.Get(&columnExists,
+			"SELECT COUNT(*) FROM pragma_table_info('plugin_configs') WHERE name=?", columnName)
+		if err != nil {
+			return fmt.Errorf("failed to check for %s column: %w", columnName, err)
+		}
+
+		if columnExists == 0 {
+			if _, err := db.Exec(alterSQL); err != nil {
+				// Ignore "duplicate column" errors
+				if !strings.Contains(err.Error(), "duplicate column") {
+					return fmt.Errorf("failed to add %s column: %w", columnName, err)
+				}
 			}
 		}
 	}

@@ -1,0 +1,21 @@
+services:
+  ergo:
+    image: ghcr.io/ergochat/ergo:stable
+    container_name: ergo-irc-test
+    volumes:
+      - ./docker/ergo/config/ircd.yaml:/etc/ergo/ircd.yaml:ro
+      - ./docker/ergo/certs:/etc/ergo/certs:ro
+      - ergo_data:/var/lib/ergo
+    ports:
+      - "6667:6667/tcp"     # plaintext IRC
+      - "6697:6697/tcp"     # TLS IRC
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "ergo", "healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  ergo_data:

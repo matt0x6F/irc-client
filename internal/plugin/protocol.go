@@ -20,15 +20,28 @@ type Response struct {
 
 // Error represents a JSON-RPC error
 type Error struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
+	Code    int         `json:"code"`
+	Message string      `json:"message"`
 	Data    interface{} `json:"data,omitempty"`
 }
 
 // InitializeParams represents parameters for plugin initialization
 type InitializeParams struct {
-	Version     string   `json:"version"`
-	Capabilities []string `json:"capabilities"`
+	Version      string                 `json:"version"`
+	Capabilities []string               `json:"capabilities"`     // Optional, typically empty - plugin declares capabilities in response
+	Config       map[string]interface{} `json:"config,omitempty"` // User configuration for the plugin
+}
+
+// InitializeResult represents the response from plugin initialization
+type InitializeResult struct {
+	Name          string                 `json:"name"`
+	Version       string                 `json:"version"`
+	Description   string                 `json:"description,omitempty"`
+	Author        string                 `json:"author,omitempty"`
+	Events        []string               `json:"events,omitempty"`
+	Permissions   []string               `json:"permissions,omitempty"`
+	MetadataTypes []string               `json:"metadata_types,omitempty"`
+	ConfigSchema  map[string]interface{} `json:"config_schema,omitempty"`
 }
 
 // EventParams represents parameters for event notification
@@ -45,14 +58,16 @@ type ActionParams struct {
 
 // PluginInfo represents metadata about a plugin
 type PluginInfo struct {
-	Name        string   `json:"name"`
-	Version     string   `json:"version"`
-	Description string   `json:"description,omitempty"`
-	Author      string   `json:"author,omitempty"`
-	Events      []string `json:"events,omitempty"`
-	Permissions []string `json:"permissions,omitempty"`
-	Path        string   `json:"path"`
-	Enabled     bool     `json:"enabled"`
+	Name          string                 `json:"name"`
+	Version       string                 `json:"version"`
+	Description   string                 `json:"description,omitempty"`
+	Author        string                 `json:"author,omitempty"`
+	Events        []string               `json:"events,omitempty"`
+	Permissions   []string               `json:"permissions,omitempty"`
+	MetadataTypes []string               `json:"metadata_types,omitempty"` // e.g., ["nickname_color", "nickname_badge"]
+	ConfigSchema  map[string]interface{} `json:"config_schema,omitempty"`  // JSON Schema for plugin configuration
+	Path          string                 `json:"path"`
+	Enabled       bool                   `json:"enabled"`
 }
 
 // MetadataSetParams represents parameters for ui_metadata.set notification
@@ -64,4 +79,3 @@ type MetadataSetParams struct {
 	Channel   *string     `json:"channel,omitempty"`
 	Priority  int         `json:"priority,omitempty"`
 }
-

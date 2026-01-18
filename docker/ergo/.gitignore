@@ -1,0 +1,7 @@
+# Ignore generated certificates
+certs/*.pem
+certs/*.key
+certs/*.crt
+
+# Keep the directory structure
+!certs/.gitkeep

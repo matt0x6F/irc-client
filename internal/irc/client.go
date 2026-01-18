@@ -25,6 +25,7 @@ type IRCClient struct {
 	network             *storage.Network
 	mu                  sync.RWMutex
 	connected           bool
+	lastMessageTime     time.Time // Last time we received any message from server (including PING)
 	saslEnabled         bool
 	saslMechanism       string
 	saslUsername        string
@@ -34,23 +35,57 @@ type IRCClient struct {
 	saslCapRequested    bool
 	saslCapAcknowledged bool
 	scramState          *SCRAMState
-	namesInProgress     map[string]bool // Track channels currently receiving NAMES list
-	namesMu             sync.Mutex      // Mutex for namesInProgress map
-	serverCapabilities  *ServerCapabilities // Server capabilities from ISUPPORT
+	namesInProgress     map[string]bool       // Track channels currently receiving NAMES list
+	namesMu             sync.Mutex            // Mutex for namesInProgress map
+	serverCapabilities  *ServerCapabilities   // Server capabilities from ISUPPORT
 	whoisInProgress     map[string]*WhoisInfo // Track WHOIS requests in progress (key: nickname)
-	whoisMu             sync.Mutex      // Mutex for whoisInProgress map
+	whoisMu             sync.Mutex            // Mutex for whoisInProgress map
 }
 
 // ServerCapabilities stores parsed ISUPPORT information
 type ServerCapabilities struct {
-	Prefix      map[rune]rune // Map prefix char to mode char (e.g., '@' -> 'o', '+' -> 'v')
-	PrefixString string       // Raw PREFIX string (e.g., "(ov)@+")
-	ChanModes   string       // Raw CHANMODES string
-	mu          sync.RWMutex // Mutex for thread-safe access
+	Prefix       map[rune]rune // Map prefix char to mode char (e.g., '@' -> 'o', '+' -> 'v')
+	PrefixString string        // Raw PREFIX string (e.g., "(ov)@+")
+	ChanModes    string        // Raw CHANMODES string
+	mu           sync.RWMutex  // Mutex for thread-safe access
 }
 
 // IsConnected returns whether the client is connected
+// Also checks if we've received messages recently (including PING from server) to detect dead connections
+// IRC servers send PING regularly, so if we haven't received any message in 5 minutes, the connection is likely dead
 func (c *IRCClient) IsConnected() bool {
+	c.mu.RLock()
+	connected := c.connected
+	lastMessage := c.lastMessageTime
+	c.mu.RUnlock()
+
+	if !connected {
+		return false
+	}
+
+	// If we haven't received a message (including PING) in 15 minutes, consider connection dead
+	// IRC servers typically send PING every 2-3 minutes, so 15 minutes indicates a dead connection
+	// This handles cases where disconnect callback wasn't triggered (e.g., network interruption, sleep/wake)
+	if !lastMessage.IsZero() {
+		timeSinceLastMessage := time.Since(lastMessage)
+		if timeSinceLastMessage > 15*time.Minute {
+			logger.Log.Warn().
+				Dur("time_since_last_message", timeSinceLastMessage).
+				Str("network", c.network.Address).
+				Msg("Connection appears dead (no messages including PING received recently)")
+			// Mark as disconnected and clean up
+			c.markConnectionDead()
+			return false
+		}
+	}
+
+	return true
+}
+
+// IsConnectedDirect returns whether the client is connected without checking for dead connections
+// This is used internally to avoid triggering markConnectionDead() which emits events
+// and can create feedback loops during connection state checks
+func (c *IRCClient) IsConnectedDirect() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.connected
@@ -83,10 +118,10 @@ func NewIRCClient(network *storage.Network, eventBus *events.EventBus, storage *
 		saslCapAcknowledged: false,
 		namesInProgress:     make(map[string]bool),
 		whoisInProgress:     make(map[string]*WhoisInfo),
-		serverCapabilities:   &ServerCapabilities{
-			Prefix:      make(map[rune]rune),
+		serverCapabilities: &ServerCapabilities{
+			Prefix:       make(map[rune]rune),
 			PrefixString: "",
-			ChanModes:   "",
+			ChanModes:    "",
 		},
 	}
 
@@ -121,7 +156,13 @@ func NewIRCClient(network *storage.Network, eventBus *events.EventBus, storage *
 // setupHandlers sets up IRC event handlers
 func (c *IRCClient) setupHandlers() {
 	// Add a raw message handler to see ALL incoming messages (for debugging)
+	// Also track last message time for connection health checking
 	c.conn.AddCallback("", func(e ircmsg.Message) {
+		// Update last message time for any message from server (indicates connection is alive)
+		c.mu.Lock()
+		c.lastMessageTime = time.Now()
+		c.mu.Unlock()
+
 		// Only log CAP and AUTHENTICATE messages to avoid spam
 		if len(e.Command) > 0 && (e.Command == "CAP" || e.Command == "AUTHENTICATE" || strings.HasPrefix(e.Command, "90")) {
 			rawLine, _ := e.Line()
@@ -133,6 +174,7 @@ func (c *IRCClient) setupHandlers() {
 	c.conn.AddConnectCallback(func(e ircmsg.Message) {
 		c.mu.Lock()
 		c.connected = true
+		c.lastMessageTime = time.Now()
 		c.mu.Unlock()
 
 		// Store connection message in status window
@@ -176,7 +218,7 @@ func (c *IRCClient) setupHandlers() {
 
 		c.eventBus.Emit(events.Event{
 			Type:      EventConnectionEstablished,
-			Data:      map[string]interface{}{"network": c.network.Address},
+			Data:      map[string]interface{}{"network": c.network.Address, "networkId": c.networkID},
 			Timestamp: time.Now(),
 			Source:    events.EventSourceIRC,
 		})
@@ -187,6 +229,65 @@ func (c *IRCClient) setupHandlers() {
 		c.mu.Lock()
 		c.connected = false
 		c.mu.Unlock()
+
+		// Write "Disconnected" messages to all open/joined channels BEFORE clearing users
+		// This ensures we can still identify which channels the user was in
+		// Do this SYNCHRONOUSLY so it completes before the process can exit
+		logger.Log.Info().Int64("network_id", c.networkID).Msg("Disconnect callback: writing messages to channels")
+
+		var channelsToNotify []storage.Channel
+		if c.network.Nickname != "" {
+			// Get channels that are open or where we're joined
+			openChannels, err := c.storage.GetOpenChannels(c.networkID, c.network.Nickname)
+			if err == nil && len(openChannels) > 0 {
+				channelsToNotify = openChannels
+				logger.Log.Debug().Int64("network_id", c.networkID).Int("open_channels", len(openChannels)).Msg("Disconnect callback: found open channels via GetOpenChannels")
+			} else if err != nil {
+				logger.Log.Debug().Err(err).Int64("network_id", c.networkID).Msg("Disconnect callback: error getting open channels")
+			}
+		}
+
+		// Fallback: if GetOpenChannels didn't work or returned nothing, get all channels
+		// and filter to those that are open
+		if len(channelsToNotify) == 0 {
+			allChannels, err := c.storage.GetChannels(c.networkID)
+			if err == nil {
+				for _, ch := range allChannels {
+					if ch.IsOpen {
+						channelsToNotify = append(channelsToNotify, ch)
+					}
+				}
+				logger.Log.Debug().Int64("network_id", c.networkID).Int("open_channels", len(channelsToNotify)).Int("total_channels", len(allChannels)).Msg("Disconnect callback: found open channels via fallback")
+			} else {
+				logger.Log.Debug().Err(err).Int64("network_id", c.networkID).Msg("Disconnect callback: error getting all channels")
+			}
+		}
+
+		// Write "Disconnected" message to each channel
+		if len(channelsToNotify) > 0 {
+			logger.Log.Info().Int64("network_id", c.networkID).Int("channel_count", len(channelsToNotify)).Msg("Disconnect callback: writing disconnect messages to channels")
+			for _, channel := range channelsToNotify {
+				disconnectMsg := storage.Message{
+					NetworkID:   c.networkID,
+					ChannelID:   &channel.ID,
+					User:        "*",
+					Message:     "Disconnected",
+					MessageType: "status",
+					Timestamp:   time.Now(),
+					RawLine:     "",
+				}
+				// Use WriteMessageDirect to ensure immediate persistence
+				if err := c.storage.WriteMessageDirect(disconnectMsg); err != nil {
+					if err.Error() != "storage is closed" {
+						logger.Log.Warn().Err(err).Int64("network_id", c.networkID).Str("channel", channel.Name).Msg("Disconnect callback: failed to write disconnect message to channel")
+					} else {
+						logger.Log.Debug().Int64("network_id", c.networkID).Str("channel", channel.Name).Msg("Disconnect callback: storage closed, skipping channel")
+					}
+				} else {
+					logger.Log.Debug().Int64("network_id", c.networkID).Str("channel", channel.Name).Int64("channel_id", channel.ID).Msg("Disconnect callback: wrote disconnect message to channel")
+				}
+			}
+		}
 
 		// Clear all channel user lists for this network since we're disconnected
 		// This prevents showing stale user lists when reconnecting
@@ -216,10 +317,12 @@ func (c *IRCClient) setupHandlers() {
 
 		c.eventBus.Emit(events.Event{
 			Type:      EventConnectionLost,
-			Data:      map[string]interface{}{"network": c.network.Address},
+			Data:      map[string]interface{}{"network": c.network.Address, "networkId": c.networkID},
 			Timestamp: time.Now(),
 			Source:    events.EventSourceIRC,
 		})
+
+		logger.Log.Debug().Int64("network_id", c.networkID).Msg("Disconnect callback: finished processing disconnect")
 	})
 
 	// PRIVMSG received
@@ -379,7 +482,7 @@ func (c *IRCClient) setupHandlers() {
 				channelCreated = true
 			}
 		}
-		
+
 		// If the current user joined, mark channel as open (JOINED state)
 		channelUpdated := false
 		if strings.EqualFold(user, c.network.Nickname) && ch != nil {
@@ -404,10 +507,17 @@ func (c *IRCClient) setupHandlers() {
 		// If the current user joined, request fresh NAMES list to update user list
 		// Don't clear channel users - keep ourselves in the list so GetJoinedChannels works immediately
 		if strings.EqualFold(user, c.network.Nickname) {
-			logger.Log.Debug().Msg("Our user joining, requesting NAMES list to update user list")
+			logger.Log.Info().
+				Str("channel", channel).
+				Int64("network_id", c.networkID).
+				Msg("Our user joining, requesting NAMES list to update user list")
 			// Request NAMES to get full user list - this will update the channel_users table
 			// We don't clear first because we want GetJoinedChannels to work immediately
-			c.conn.SendRaw(fmt.Sprintf("NAMES %s", channel))
+			if err := c.conn.SendRaw(fmt.Sprintf("NAMES %s", channel)); err != nil {
+				logger.Log.Error().Err(err).Str("channel", channel).Msg("Failed to send NAMES command")
+			} else {
+				logger.Log.Debug().Str("channel", channel).Msg("NAMES command sent successfully")
+			}
 		}
 
 		// Store join message in the channel (use sync write so it appears immediately)
@@ -444,13 +554,13 @@ func (c *IRCClient) setupHandlers() {
 			Timestamp: time.Now(),
 			Source:    events.EventSourceIRC,
 		})
-		
+
 		// Emit channels changed event if channel was created or updated
 		if channelCreated || (channelUpdated && strings.EqualFold(user, c.network.Nickname)) {
 			c.eventBus.Emit(events.Event{
 				Type: EventChannelsChanged,
 				Data: map[string]interface{}{
-					"network": c.network.Address,
+					"network":   c.network.Address,
 					"networkId": c.networkID,
 				},
 				Timestamp: time.Now(),
@@ -480,7 +590,7 @@ func (c *IRCClient) setupHandlers() {
 				// This ensures the user is immediately removed when the frontend queries
 				_, _ = c.storage.GetChannelUsers(ch.ID)
 			}
-			
+
 			// If the current user parted, mark channel as closed (CLOSED state)
 			if strings.EqualFold(user, c.network.Nickname) {
 				c.storage.UpdateChannelIsOpen(ch.ID, false)
@@ -525,13 +635,13 @@ func (c *IRCClient) setupHandlers() {
 			Timestamp: time.Now(),
 			Source:    events.EventSourceIRC,
 		})
-		
+
 		// Emit channels changed event if our own part updated the channel state
 		if channelUpdated {
 			c.eventBus.Emit(events.Event{
 				Type: EventChannelsChanged,
 				Data: map[string]interface{}{
-					"network": c.network.Address,
+					"network":   c.network.Address,
 					"networkId": c.networkID,
 				},
 				Timestamp: time.Now(),
@@ -788,22 +898,26 @@ func (c *IRCClient) setupHandlers() {
 		channel := e.Params[2]
 		namesList := e.Params[3]
 
-		// Get channel from database
+		// Get channel from database (case-insensitive lookup)
 		ch, err := c.storage.GetChannelByName(c.networkID, channel)
 		if err != nil {
+			logger.Log.Warn().Err(err).Str("channel", channel).Int64("network_id", c.networkID).Msg("Failed to find channel for NAMES response")
 			return
 		}
+
+		// Use lowercase channel name as key for namesInProgress to handle case variations
+		channelKey := strings.ToLower(channel)
 
 		// On first NAMES response for a channel, clear the existing user list
 		// This ensures we start fresh when receiving the NAMES list
 		c.namesMu.Lock()
-		if !c.namesInProgress[channel] {
-			c.namesInProgress[channel] = true
+		if !c.namesInProgress[channelKey] {
+			c.namesInProgress[channelKey] = true
 			c.namesMu.Unlock()
 			if err := c.storage.ClearChannelUsers(ch.ID); err != nil {
 				logger.Log.Error().Err(err).Str("channel", channel).Msg("Failed to clear users for channel")
 			} else {
-				logger.Log.Debug().Str("channel", channel).Msg("Cleared user list for channel before receiving NAMES")
+				logger.Log.Debug().Str("channel", channel).Int("names_count", len(strings.Fields(namesList))).Msg("Cleared user list for channel before receiving NAMES")
 			}
 		} else {
 			c.namesMu.Unlock()
@@ -811,6 +925,7 @@ func (c *IRCClient) setupHandlers() {
 
 		// Parse names (format: "@nick1 +nick2 nick3")
 		names := strings.Fields(namesList)
+		addedCount := 0
 		for _, nameWithMode := range names {
 			// Extract mode prefix (@, +, etc.) and nickname
 			nickname := nameWithMode
@@ -823,9 +938,14 @@ func (c *IRCClient) setupHandlers() {
 				}
 			}
 			if len(nickname) > 0 {
-				c.storage.AddChannelUser(ch.ID, nickname, modes)
+				if err := c.storage.AddChannelUser(ch.ID, nickname, modes); err != nil {
+					logger.Log.Warn().Err(err).Str("nickname", nickname).Str("channel", channel).Msg("Failed to add user from NAMES")
+				} else {
+					addedCount++
+				}
 			}
 		}
+		logger.Log.Debug().Str("channel", channel).Int("added", addedCount).Int("total_in_response", len(names)).Msg("Processed NAMES response")
 	})
 
 	// RPL_ENDOFNAMES (366) - end of NAMES list
@@ -834,11 +954,12 @@ func (c *IRCClient) setupHandlers() {
 			return
 		}
 		channel := e.Params[1]
+		channelKey := strings.ToLower(channel)
 		logger.Log.Debug().Str("channel", channel).Msg("Finished receiving user list for channel")
 
 		// Mark that we're done receiving NAMES for this channel
 		c.namesMu.Lock()
-		delete(c.namesInProgress, channel)
+		delete(c.namesInProgress, channelKey)
 		c.namesMu.Unlock()
 
 		// Get the list of users in the channel to include in the event
@@ -856,6 +977,11 @@ func (c *IRCClient) setupHandlers() {
 
 		// Emit event when NAMES list is complete so frontend can refresh user list
 		// Include user list so plugins can process all users at once
+		logger.Log.Info().
+			Str("channel", channel).
+			Int("user_count", len(users)).
+			Int64("network_id", c.networkID).
+			Msg("NAMES list complete, emitting channel.names.complete event")
 		c.eventBus.Emit(events.Event{
 			Type: "channel.names.complete",
 			Data: map[string]interface{}{
@@ -1714,9 +1840,112 @@ func (c *IRCClient) Disconnect() error {
 		return nil
 	}
 
-	c.conn.Quit()
+	// Send QUIT command with reason
+	if err := c.conn.SendRaw("QUIT :Disconnecting"); err != nil {
+		logger.Log.Warn().Err(err).Msg("Failed to send QUIT command, trying conn.Quit()")
+		// Fallback to conn.Quit() if SendRaw fails
+		c.conn.Quit()
+	}
 	c.connected = false
 	return nil
+}
+
+// markConnectionDead marks the connection as dead and clears user lists
+// This is called when we detect a dead connection (e.g., no messages received recently)
+func (c *IRCClient) markConnectionDead() {
+	c.mu.Lock()
+	wasConnected := c.connected
+	c.connected = false
+	c.mu.Unlock()
+
+	if !wasConnected {
+		// Already marked as disconnected
+		return
+	}
+
+	logger.Log.Warn().
+		Str("network", c.network.Address).
+		Int64("network_id", c.networkID).
+		Msg("Marking connection as dead (no messages received recently)")
+
+	// Write "Disconnected" messages to all open/joined channels BEFORE clearing users
+	var channelsToNotify []storage.Channel
+	if c.network.Nickname != "" {
+		// Get channels that are open or where we're joined
+		openChannels, err := c.storage.GetOpenChannels(c.networkID, c.network.Nickname)
+		if err == nil && len(openChannels) > 0 {
+			channelsToNotify = openChannels
+		}
+	}
+
+	// Fallback: if GetOpenChannels didn't work or returned nothing, get all channels
+	// and filter to those that are open
+	if len(channelsToNotify) == 0 {
+		allChannels, err := c.storage.GetChannels(c.networkID)
+		if err == nil {
+			for _, ch := range allChannels {
+				if ch.IsOpen {
+					channelsToNotify = append(channelsToNotify, ch)
+				}
+			}
+		}
+	}
+
+	// Write "Disconnected" message to each channel
+	if len(channelsToNotify) > 0 {
+		logger.Log.Info().Int64("network_id", c.networkID).Int("channel_count", len(channelsToNotify)).Msg("Writing disconnect messages to channels (dead connection)")
+		for _, channel := range channelsToNotify {
+			disconnectMsg := storage.Message{
+				NetworkID:   c.networkID,
+				ChannelID:   &channel.ID,
+				User:        "*",
+				Message:     "Disconnected",
+				MessageType: "status",
+				Timestamp:   time.Now(),
+				RawLine:     "",
+			}
+			// Use WriteMessageDirect to ensure immediate persistence
+			if err := c.storage.WriteMessageDirect(disconnectMsg); err != nil {
+				if err.Error() != "storage is closed" {
+					logger.Log.Warn().Err(err).Int64("network_id", c.networkID).Str("channel", channel.Name).Msg("Failed to write disconnect message to channel")
+				}
+			} else {
+				logger.Log.Debug().Int64("network_id", c.networkID).Str("channel", channel.Name).Msg("Wrote disconnect message to channel (dead connection)")
+			}
+		}
+	}
+
+	// Clear all channel user lists for this network since we're disconnected
+	// This prevents showing stale user lists when reconnecting
+	channels, err := c.storage.GetChannels(c.networkID)
+	if err == nil {
+		for _, ch := range channels {
+			if err := c.storage.ClearChannelUsers(ch.ID); err != nil {
+				logger.Log.Error().Err(err).Str("channel", ch.Name).Msg("Failed to clear users for channel")
+			} else {
+				logger.Log.Debug().Str("channel", ch.Name).Msg("Cleared user list for channel (dead connection)")
+			}
+		}
+	}
+
+	// Store disconnection message in status window
+	statusMsg := storage.Message{
+		NetworkID:   c.networkID,
+		ChannelID:   nil, // Status window
+		User:        "*",
+		Message:     "Connection lost (no messages received recently)",
+		MessageType: "status",
+		Timestamp:   time.Now(),
+		RawLine:     "",
+	}
+	c.storage.WriteMessage(statusMsg)
+
+	c.eventBus.Emit(events.Event{
+		Type:      EventConnectionLost,
+		Data:      map[string]interface{}{"network": c.network.Address, "networkId": c.networkID},
+		Timestamp: time.Now(),
+		Source:    events.EventSourceIRC,
+	})
 }
 
 // SendMessage sends a message to a channel or user
@@ -1934,9 +2163,9 @@ func (c *IRCClient) GetServerCapabilities() *ServerCapabilities {
 
 	// Return a copy to avoid race conditions
 	cap := &ServerCapabilities{
-		Prefix:      make(map[rune]rune),
+		Prefix:       make(map[rune]rune),
 		PrefixString: c.serverCapabilities.PrefixString,
-		ChanModes:   c.serverCapabilities.ChanModes,
+		ChanModes:    c.serverCapabilities.ChanModes,
 	}
 
 	// Copy the prefix map
@@ -1960,7 +2189,7 @@ func (c *IRCClient) handleCTCPRequest(from, command, args string) {
 	var response string
 	switch command {
 	case "VERSION":
-		response = fmt.Sprintf("Cascade IRC Client v1.0.0")
+		response = "Cascade IRC Client v1.0.0"
 	case "TIME":
 		response = time.Now().Format(time.RFC1123Z)
 	case "PING":

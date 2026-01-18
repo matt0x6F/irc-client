@@ -1,8 +1,13 @@
 package main
 
 import (
+	"context"
 	"embed"
+	"fmt"
+	"os"
+	"os/signal"
 	"runtime"
+	"syscall"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/menu"
@@ -20,6 +25,18 @@ func main() {
 		println("Error initializing app:", err.Error())
 		return
 	}
+
+	// Set up signal handling to ensure shutdown is called
+	// This is a backup in case OnShutdown doesn't get called
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		sig := <-sigChan
+		fmt.Printf("Received signal: %v, initiating shutdown\n", sig)
+		// Create a context for shutdown
+		ctx := context.Background()
+		app.shutdown(ctx)
+	}()
 
 	// Create application menu
 	appMenu := menu.NewMenu()

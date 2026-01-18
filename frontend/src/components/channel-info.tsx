@@ -27,6 +27,9 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
   // Use refs to avoid stale closures in event listener
   const networkIdRef = useRef<number | null>(networkId);
   const channelNameRef = useRef<string | null>(channelName);
+  // Track if we're waiting for NAMES response after a join
+  const waitingForNamesRef = useRef<boolean>(false);
+  const namesPollIntervalRef = useRef<number | null>(null);
   
   // Update refs when props change
   useEffect(() => {
@@ -102,19 +105,71 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
           return; // Not for this network
         }
         
+        // For channel.names.complete, always refresh if it's for this network
+        // The channel name matching might fail due to case differences, so we refresh anyway
+        if (eventType === 'channel.names.complete') {
+          console.log('[ChannelInfo] Refreshing on channel.names.complete', {
+            eventChannel: eventData.channel,
+            currentChannel: currentChannelName,
+            networkId: currentNetworkId
+          });
+          // Stop polling since we got the NAMES response
+          if (namesPollIntervalRef.current) {
+            clearInterval(namesPollIntervalRef.current);
+            namesPollIntervalRef.current = null;
+          }
+          waitingForNamesRef.current = false;
+          loadChannelInfo();
+          return;
+        }
+        
+        // If we joined and are waiting for NAMES, start polling
+        if (eventType === 'user.joined') {
+          const target = eventData.channel || eventData.target;
+          if (target) {
+            const eventChannelNormalized = normalizeChannel(target);
+            const currentChannelNormalized = normalizeChannel(currentChannelName);
+            // If it's a join to the current channel, refresh immediately and start polling
+            if (eventChannelNormalized === currentChannelNormalized) {
+              // Refresh immediately
+              loadChannelInfo();
+              // If it might be our own join, start polling for NAMES response
+              // We'll poll for up to 60 seconds, refreshing every 2 seconds
+              if (namesPollIntervalRef.current) {
+                clearInterval(namesPollIntervalRef.current);
+              }
+              waitingForNamesRef.current = true;
+              let pollCount = 0;
+              const maxPolls = 30; // 30 * 2 seconds = 60 seconds max
+              namesPollIntervalRef.current = setInterval(() => {
+                pollCount++;
+                if (!waitingForNamesRef.current || pollCount >= maxPolls) {
+                  if (namesPollIntervalRef.current) {
+                    clearInterval(namesPollIntervalRef.current);
+                    namesPollIntervalRef.current = null;
+                  }
+                  waitingForNamesRef.current = false;
+                  return;
+                }
+                console.log('[ChannelInfo] Polling for user list update after join (attempt', pollCount, ')');
+                loadChannelInfo();
+              }, 2000);
+            }
+          }
+        }
+        
         // For channel-specific events, check if it's for the current channel
         const target = eventData.channel || eventData.target;
         if (target) {
           const eventChannelNormalized = normalizeChannel(target);
           const currentChannelNormalized = normalizeChannel(currentChannelName);
           
-          // Only refresh if it's for the current channel (or NICK/NAMES which affect all channels)
-          if (eventType === 'user.nick' || eventType === 'channel.names.complete' || 
-              eventChannelNormalized === currentChannelNormalized) {
+          // Only refresh if it's for the current channel (or NICK which affects all channels)
+          if (eventType === 'user.nick' || eventChannelNormalized === currentChannelNormalized) {
             loadChannelInfo();
           }
-        } else if (eventType === 'user.nick' || eventType === 'channel.names.complete') {
-          // NICK and NAMES events affect all channels, so always refresh
+        } else if (eventType === 'user.nick') {
+          // NICK events affect all channels, so always refresh
           loadChannelInfo();
         }
       }
@@ -122,6 +177,12 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
     
     return () => {
       unsubscribe();
+      // Clean up polling interval
+      if (namesPollIntervalRef.current) {
+        clearInterval(namesPollIntervalRef.current);
+        namesPollIntervalRef.current = null;
+      }
+      waitingForNamesRef.current = false;
     };
   }, [networkId, channelName, loadChannelInfo]);
 

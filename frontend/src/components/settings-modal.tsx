@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { main, storage } from '../../wailsjs/go/models';
-import { GetNetworks, SaveNetwork, ConnectNetwork, DeleteNetwork, DisconnectNetwork, GetConnectionStatus, GetServers, ListPlugins } from '../../wailsjs/go/main/App';
+import { GetNetworks, SaveNetwork, ConnectNetwork, DeleteNetwork, DisconnectNetwork, GetConnectionStatus, GetServers, ListPlugins, EnablePlugin, DisablePlugin, ReloadPlugin } from '../../wailsjs/go/main/App';
+import { PluginConfigForm } from './plugin-config-form';
 import {
   Select,
   SelectContent,
@@ -49,6 +50,8 @@ export function SettingsModal({ onClose, onServerUpdate }: SettingsModalProps) {
   const [plugins, setPlugins] = useState<main.PluginInfo[]>([]);
   const [editingNetwork, setEditingNetwork] = useState<storage.Network | null>(null);
   const [consolidateJoinQuit, setConsolidateJoinQuit] = useState<boolean>(loadConsolidateSetting);
+  const [pluginLoading, setPluginLoading] = useState<Set<string>>(new Set());
+  const [expandedPlugins, setExpandedPlugins] = useState<Set<string>>(new Set());
   const [formData, setFormData] = useState<main.NetworkConfig>(main.NetworkConfig.createFrom({
     name: '',
     address: '',
@@ -90,10 +93,53 @@ export function SettingsModal({ onClose, onServerUpdate }: SettingsModalProps) {
   const loadPlugins = async () => {
     try {
       const pluginList = await ListPlugins();
+      console.log('Loaded plugins:', pluginList);
+      pluginList.forEach(p => {
+        console.log(`Plugin ${p.name}: has config_schema:`, !!p.config_schema, 'schema:', p.config_schema);
+      });
       setPlugins(pluginList || []);
     } catch (error) {
       console.error('Failed to load plugins:', error);
       setPlugins([]);
+    }
+  };
+
+  const handleTogglePlugin = async (pluginName: string, currentlyEnabled: boolean) => {
+    setPluginLoading(prev => new Set(prev).add(pluginName));
+    try {
+      if (currentlyEnabled) {
+        await DisablePlugin(pluginName);
+      } else {
+        await EnablePlugin(pluginName);
+      }
+      // Reload plugins to get updated state
+      await loadPlugins();
+    } catch (error) {
+      console.error(`Failed to ${currentlyEnabled ? 'disable' : 'enable'} plugin:`, error);
+      alert(`Failed to ${currentlyEnabled ? 'disable' : 'enable'} plugin: ${error}`);
+    } finally {
+      setPluginLoading(prev => {
+        const next = new Set(prev);
+        next.delete(pluginName);
+        return next;
+      });
+    }
+  };
+
+  const handleReloadPlugin = async (pluginName: string) => {
+    setPluginLoading(prev => new Set(prev).add(pluginName));
+    try {
+      await ReloadPlugin(pluginName);
+      await loadPlugins();
+    } catch (error) {
+      console.error(`Failed to reload plugin:`, error);
+      alert(`Failed to reload plugin: ${error}`);
+    } finally {
+      setPluginLoading(prev => {
+        const next = new Set(prev);
+        next.delete(pluginName);
+        return next;
+      });
     }
   };
 
@@ -832,26 +878,89 @@ export function SettingsModal({ onClose, onServerUpdate }: SettingsModalProps) {
               </div>
             ) : (
               <div className="space-y-4">
-                {plugins.map((plugin) => (
-                  <div key={plugin.name} className="border border-border rounded p-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <h4 className="font-semibold">{plugin.name}</h4>
-                      <span className={`px-2 py-1 text-xs rounded ${
-                        plugin.enabled ? 'bg-green-500/20 text-green-500' : 'bg-gray-500/20 text-gray-500'
-                      }`}>
-                        {plugin.enabled ? 'Enabled' : 'Disabled'}
-                      </span>
-                    </div>
-                    {plugin.description && (
-                      <p className="text-sm text-muted-foreground mb-2">{plugin.description}</p>
-                    )}
-                    <div className="text-xs text-muted-foreground">
-                      <div>Version: {plugin.version}</div>
-                      {plugin.author && <div>Author: {plugin.author}</div>}
+                {plugins.map((plugin) => {
+                  const isExpanded = expandedPlugins.has(plugin.name);
+                  const hasConfig = plugin.config_schema && Object.keys(plugin.config_schema).length > 0;
+                  console.log(`Plugin ${plugin.name}: hasConfig=${hasConfig}, config_schema:`, plugin.config_schema);
+                  
+                  return (
+                    <div key={plugin.name} className="border border-border rounded p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <h4 className="font-semibold">{plugin.name}</h4>
+                          {hasConfig && (
+                            <button
+                              onClick={() => {
+                                setExpandedPlugins(prev => {
+                                  const next = new Set(prev);
+                                  if (next.has(plugin.name)) {
+                                    next.delete(plugin.name);
+                                  } else {
+                                    next.add(plugin.name);
+                                  }
+                                  return next;
+                                });
+                              }}
+                              className="px-2 py-1 text-xs border border-border rounded hover:bg-accent"
+                            >
+                              {isExpanded ? 'Hide Config' : 'Configure'}
+                            </button>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {plugin.enabled && (
+                            <button
+                              onClick={() => handleReloadPlugin(plugin.name)}
+                              disabled={pluginLoading.has(plugin.name)}
+                              className="px-3 py-1 text-xs rounded border border-border hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
+                              title="Reload plugin"
+                            >
+                              {pluginLoading.has(plugin.name) ? '...' : 'Reload'}
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleTogglePlugin(plugin.name, plugin.enabled)}
+                            disabled={pluginLoading.has(plugin.name)}
+                            className={`px-3 py-1 text-xs rounded border transition-colors ${
+                              plugin.enabled
+                                ? 'bg-red-500/20 text-red-500 border-red-500/30 hover:bg-red-500/30'
+                                : 'bg-green-500/20 text-green-500 border-green-500/30 hover:bg-green-500/30'
+                            } disabled:opacity-50 disabled:cursor-not-allowed`}
+                          >
+                            {pluginLoading.has(plugin.name) ? '...' : (plugin.enabled ? 'Disable' : 'Enable')}
+                          </button>
+                          <span className={`px-2 py-1 text-xs rounded ${
+                            plugin.enabled ? 'bg-green-500/20 text-green-500' : 'bg-gray-500/20 text-gray-500'
+                          }`}>
+                            {plugin.enabled ? 'Enabled' : 'Disabled'}
+                          </span>
+                        </div>
+                      </div>
+                      {plugin.description && (
+                        <p className="text-sm text-muted-foreground mb-2">{plugin.description}</p>
+                      )}
+                      <div className="text-xs text-muted-foreground">
+                        <div>Version: {plugin.version}</div>
+                        {plugin.author && <div>Author: {plugin.author}</div>}
+                      {plugin.metadata_types && plugin.metadata_types.length > 0 && (
+                        <div>Metadata Types: {plugin.metadata_types.join(', ')}</div>
+                      )}
                       <div>Path: {plugin.path}</div>
                     </div>
-                  </div>
-                ))}
+                    {isExpanded && hasConfig && (
+                      <div className="mt-4 border-t border-border pt-4">
+                        <PluginConfigForm
+                          pluginName={plugin.name}
+                          schema={plugin.config_schema as any}
+                          onSave={() => {
+                            loadPlugins();
+                          }}
+                        />
+                      </div>
+                    )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>

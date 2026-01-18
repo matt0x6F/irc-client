@@ -38,6 +38,10 @@ export function GetNicknameColorsBatch(arg1:number,arg2:Array<string>):Promise<R
 
 export function GetOpenChannels(arg1:number):Promise<Array<storage.Channel>>;
 
+export function GetPluginConfig(arg1:string):Promise<Record<string, any>>;
+
+export function GetPluginConfigSchema(arg1:string):Promise<Record<string, any>>;
+
 export function GetPrivateMessageConversations(arg1:number,arg2:boolean):Promise<Array<string>>;
 
 export function GetPrivateMessages(arg1:number,arg2:string,arg3:number):Promise<Array<storage.Message>>;
@@ -56,6 +60,8 @@ export function OnEvent(arg1:events.Event):Promise<void>;
 
 export function OpenSettings():Promise<void>;
 
+export function ReloadPlugin(arg1:string):Promise<void>;
+
 export function SaveNetwork(arg1:main.NetworkConfig):Promise<void>;
 
 export function SendCommand(arg1:number,arg2:string):Promise<void>;
@@ -65,6 +71,8 @@ export function SendMessage(arg1:number,arg2:string,arg3:string):Promise<void>;
 export function SetChannelOpen(arg1:number,arg2:string,arg3:boolean):Promise<void>;
 
 export function SetPaneFocus(arg1:number,arg2:string,arg3:string):Promise<void>;
+
+export function SetPluginConfig(arg1:string,arg2:Record<string, any>):Promise<void>;
 
 export function SetPrivateMessageOpen(arg1:number,arg2:string,arg3:boolean):Promise<void>;
 

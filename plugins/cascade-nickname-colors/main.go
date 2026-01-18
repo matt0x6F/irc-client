@@ -26,13 +26,13 @@ type Response struct {
 }
 
 type RPCError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
+	Code    int         `json:"code"`
+	Message string      `json:"message"`
 	Data    interface{} `json:"data,omitempty"`
 }
 
 type InitializeParams struct {
-	Version     string   `json:"version"`
+	Version      string   `json:"version"`
 	Capabilities []string `json:"capabilities"`
 }
 
@@ -86,12 +86,12 @@ func sendNotification(method string, params interface{}) error {
 		Method:  method,
 		Params:  params,
 	}
-	
+
 	data, err := json.Marshal(req)
 	if err != nil {
 		return err
 	}
-	
+
 	// Write directly to stdout with newline
 	// Note: Sync() doesn't work on pipes, so we just write and let the OS buffer handle it
 	_, err = os.Stdout.Write(append(data, '\n'))
@@ -105,15 +105,15 @@ func sendResponse(id interface{}, result interface{}) error {
 		ID:      id,
 		Result:  result,
 	}
-	
+
 	data, err := json.Marshal(resp)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[nickname-colors] Error marshaling response: %v\n", err)
 		return err
 	}
-	
+
 	fmt.Fprintf(os.Stderr, "[nickname-colors] Sending response: %s\n", string(data))
-	
+
 	// Write directly to stdout with newline
 	// Note: Sync() doesn't work on pipes, so we just write and let the OS buffer handle it
 	_, err = os.Stdout.Write(append(data, '\n'))
@@ -121,7 +121,7 @@ func sendResponse(id interface{}, result interface{}) error {
 		fmt.Fprintf(os.Stderr, "[nickname-colors] Error writing to stdout: %v\n", err)
 		return err
 	}
-	
+
 	fmt.Fprintf(os.Stderr, "[nickname-colors] Successfully wrote response to stdout\n")
 	return nil
 }
@@ -136,12 +136,12 @@ func sendError(id interface{}, code int, message string) error {
 			Message: message,
 		},
 	}
-	
+
 	data, err := json.Marshal(resp)
 	if err != nil {
 		return err
 	}
-	
+
 	// Write directly to stdout with newline
 	// Note: Sync() doesn't work on pipes, so we just write and let the OS buffer handle it
 	_, err = os.Stdout.Write(append(data, '\n'))
@@ -152,13 +152,13 @@ func sendError(id interface{}, code int, message string) error {
 func setNicknameColor(nickname string, networkID interface{}) {
 	key := fmt.Sprintf("nickname:%s", nickname)
 	color := getColorForNickname(nickname)
-	
+
 	params := map[string]interface{}{
 		"type":  "nickname_color",
 		"key":   key,
 		"value": color,
 	}
-	
+
 	// Add network_id if available
 	if networkID != nil {
 		var id int64
@@ -176,7 +176,7 @@ func setNicknameColor(nickname string, networkID interface{}) {
 			params["network_id"] = id
 		}
 	}
-	
+
 	fmt.Fprintf(os.Stderr, "[nickname-colors] Setting color for %s: %s (networkID: %v)\n", nickname, color, networkID)
 	if err := sendNotification("ui_metadata.set", params); err != nil {
 		fmt.Fprintf(os.Stderr, "[nickname-colors] Error sending color metadata: %v\n", err)
@@ -190,7 +190,7 @@ func handleEvent(params EventParams) {
 	fmt.Fprintf(os.Stderr, "[nickname-colors] Received event: %s\n", params.Type)
 	fmt.Fprintf(os.Stderr, "[nickname-colors] Event data keys: %v\n", getMapKeys(params.Data))
 	fmt.Fprintf(os.Stderr, "[nickname-colors] Full event data: %+v\n", params.Data)
-	
+
 	// Extract networkID from event data (can be networkId or network_id)
 	var networkID interface{}
 	if id, ok := params.Data["networkId"]; ok {
@@ -202,7 +202,7 @@ func handleEvent(params EventParams) {
 	} else {
 		fmt.Fprintf(os.Stderr, "[nickname-colors] WARNING: No networkId or network_id in event data!\n")
 	}
-	
+
 	switch params.Type {
 	case "message.received":
 		// Extract nickname from message
@@ -267,44 +267,44 @@ func main() {
 	// This is critical when stderr is redirected to a pipe
 	// Note: Don't call Sync() on pipes - it can block if the pipe buffer is full
 	os.Stderr.Write([]byte("[nickname-colors] Plugin starting, waiting for input...\n"))
-	
+
 	// Use a buffered reader instead of Scanner to avoid blocking issues
 	// Set a reasonable buffer size to avoid blocking
 	reader := bufio.NewReaderSize(os.Stdin, 4096)
-	
+
 	// Set up a signal handler to exit gracefully
 	// Note: We can't easily handle signals in this simple plugin, but we can
 	// ensure we exit quickly when stdin closes
-	
+
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
-		if err == io.EOF {
-			fmt.Fprintf(os.Stderr, "[nickname-colors] EOF reached, exiting\n")
-			os.Exit(0)
+			if err == io.EOF {
+				fmt.Fprintf(os.Stderr, "[nickname-colors] EOF reached, exiting\n")
+				os.Exit(0)
+			}
+			fmt.Fprintf(os.Stderr, "[nickname-colors] Error reading from stdin: %v\n", err)
+			os.Exit(1)
 		}
-		fmt.Fprintf(os.Stderr, "[nickname-colors] Error reading from stdin: %v\n", err)
-		os.Exit(1)
-		}
-		
+
 		// Remove trailing newline
 		line = strings.TrimSuffix(line, "\n")
 		if line == "" {
 			continue
 		}
-		
+
 		// Write directly to stderr for immediate output
 		// Don't call Sync() on pipes - it can block
 		os.Stderr.Write([]byte(fmt.Sprintf("[nickname-colors] Received line from stdin: %s\n", line)))
-		
+
 		var req Request
 		if err := json.Unmarshal([]byte(line), &req); err != nil {
 			os.Stderr.Write([]byte(fmt.Sprintf("[nickname-colors] Error parsing request: %v\n", err)))
 			continue
 		}
-		
+
 		os.Stderr.Write([]byte(fmt.Sprintf("[nickname-colors] Parsed request: Method=%s, ID=%v\n", req.Method, req.ID)))
-		
+
 		// Handle initialize request
 		if req.Method == "initialize" {
 			os.Stderr.Write([]byte(fmt.Sprintf("[nickname-colors] Received initialize request, ID: %v\n", req.ID)))
@@ -312,11 +312,16 @@ func main() {
 			paramsBytes, _ := json.Marshal(req.Params)
 			var initParams InitializeParams
 			json.Unmarshal(paramsBytes, &initParams)
-			
+
 			os.Stderr.Write([]byte("[nickname-colors] Sending initialize response\n"))
-			// Send success response
+			// Send success response with plugin metadata
 			if err := sendResponse(req.ID, map[string]interface{}{
-				"initialized": true,
+				"name":           "nickname-colors",
+				"version":        "1.0.0",
+				"description":    "Assigns consistent colors to nicknames in sidebar and chat",
+				"author":         "Cascade Chat",
+				"events":         []string{"*"},
+				"metadata_types": []string{"nickname_color"},
 			}); err != nil {
 				os.Stderr.Write([]byte(fmt.Sprintf("[nickname-colors] Error sending initialize response: %v\n", err)))
 			} else {
@@ -324,7 +329,7 @@ func main() {
 			}
 			continue
 		}
-		
+
 		// Handle event notifications
 		if req.Method == "event" && req.ID == nil {
 			// Parse event params
@@ -337,7 +342,7 @@ func main() {
 			}
 			continue
 		}
-		
+
 		// Unknown method
 		if req.ID != nil {
 			sendError(req.ID, -32601, fmt.Sprintf("Method not found: %s", req.Method))

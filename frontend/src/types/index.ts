@@ -49,7 +49,27 @@ export interface PluginInfo {
   author?: string;
   events?: string[];
   permissions?: string[];
+  metadataTypes?: string[];
+  configSchema?: JSONSchema;
   path: string;
   enabled: boolean;
 }
 
+// JSON Schema types for plugin configuration
+export interface JSONSchema {
+  type?: string;
+  properties?: Record<string, JSONSchemaProperty>;
+  required?: string[];
+  [key: string]: any;
+}
+
+export interface JSONSchemaProperty {
+  type?: string;
+  enum?: any[];
+  default?: any;
+  description?: string;
+  title?: string;
+  minimum?: number;
+  maximum?: number;
+  [key: string]: any;
+}

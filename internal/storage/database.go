@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -252,6 +254,24 @@ func (s *Storage) WriteMessageSync(msg Message) error {
 	}
 }
 
+// WriteMessageDirect writes a message directly to the database, bypassing the buffer
+// Use this during shutdown to ensure messages are persisted
+func (s *Storage) WriteMessageDirect(msg Message) error {
+	// Check if storage is closed
+	s.closedMu.RLock()
+	if s.closed {
+		s.closedMu.RUnlock()
+		return fmt.Errorf("storage is closed")
+	}
+	s.closedMu.RUnlock()
+
+	// Direct insert to database
+	query := `INSERT INTO messages (network_id, channel_id, user, message, message_type, timestamp, raw_line)
+	          VALUES (:network_id, :channel_id, :user, :message, :message_type, :timestamp, :raw_line)`
+	_, err := s.db.NamedExec(query, msg)
+	return err
+}
+
 // GetMessages retrieves messages for a network and channel
 func (s *Storage) GetMessages(networkID int64, channelID *int64, limit int) ([]Message, error) {
 	var messages []Message
@@ -458,9 +478,12 @@ func (s *Storage) GetJoinedChannels(networkID int64, nickname string) ([]Channel
 }
 
 // GetChannelByName retrieves a channel by network ID and channel name
+// Channel names are case-insensitive for IRC channels (channels starting with # or &)
 func (s *Storage) GetChannelByName(networkID int64, channelName string) (*Channel, error) {
 	var channel Channel
-	err := s.db.Get(&channel, "SELECT * FROM channels WHERE network_id = ? AND name = ?", networkID, channelName)
+	// IRC channel names are case-insensitive, so use case-insensitive comparison
+	// SQLite's default collation is case-insensitive for ASCII, but we'll use LOWER() to be explicit
+	err := s.db.Get(&channel, "SELECT * FROM channels WHERE network_id = ? AND LOWER(name) = LOWER(?)", networkID, channelName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get channel: %w", err)
 	}
@@ -574,7 +597,7 @@ func (s *Storage) GetPrivateMessages(networkID int64, targetUser string, current
 	// Normalize usernames to lowercase for case-insensitive comparison
 	targetUserLower := strings.ToLower(targetUser)
 	currentUserLower := strings.ToLower(currentUser)
-	
+
 	// Get messages FROM targetUser (received) OR messages TO targetUser sent by currentUser (sent)
 	// For sent messages, we check the raw_line to identify the target (case-insensitive)
 	err := s.db.Select(&messages,
@@ -607,7 +630,7 @@ func (s *Storage) GetPrivateMessages(networkID int64, targetUser string, current
 func (s *Storage) GetPrivateMessageConversations(networkID int64, currentUser string, openOnly bool) ([]string, error) {
 	var users []string
 	currentUserLower := strings.ToLower(currentUser)
-	
+
 	if openOnly {
 		// Get only open PM conversations from the conversations table
 		// Join with messages to get the original case variant of the nickname
@@ -632,7 +655,7 @@ func (s *Storage) GetPrivateMessageConversations(networkID int64, currentUser st
 		}
 		return users, nil
 	}
-	
+
 	// Group by lowercase username to consolidate case variants, but return the most recent case variant
 	// We use MAX(user) to get one representative case variant per lowercase username
 	err := s.db.Select(&users,
@@ -656,22 +679,22 @@ func (s *Storage) GetPrivateMessageConversations(networkID int64, currentUser st
 func (s *Storage) GetOrCreatePMConversation(networkID int64, targetUser string, currentUser string) (*PrivateMessageConversation, error) {
 	// Normalize target user to lowercase for case-insensitive matching
 	targetUserLower := strings.ToLower(targetUser)
-	
+
 	var conv PrivateMessageConversation
-	err := s.db.Get(&conv, 
+	err := s.db.Get(&conv,
 		"SELECT * FROM private_message_conversations WHERE network_id = ? AND target_user = ?",
 		networkID, targetUserLower)
-	
+
 	if err == nil {
 		// Conversation exists, return it
 		return &conv, nil
 	}
-	
+
 	// Check if it's a "no rows" error (conversation doesn't exist)
 	if err != nil && !strings.Contains(err.Error(), "no rows") {
 		return nil, fmt.Errorf("failed to get PM conversation: %w", err)
 	}
-	
+
 	// Conversation doesn't exist, create it
 	now := time.Now()
 	conv = PrivateMessageConversation{
@@ -681,20 +704,20 @@ func (s *Storage) GetOrCreatePMConversation(networkID int64, targetUser string, 
 		CreatedAt:  now,
 		UpdatedAt:  &now,
 	}
-	
+
 	query := `INSERT INTO private_message_conversations (network_id, target_user, is_open, created_at, updated_at)
 	          VALUES (:network_id, :target_user, :is_open, :created_at, :updated_at)`
-	
+
 	result, err := s.db.NamedExec(query, conv)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create PM conversation: %w", err)
 	}
-	
+
 	id, err := result.LastInsertId()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get PM conversation ID: %w", err)
 	}
-	
+
 	conv.ID = id
 	return &conv, nil
 }
@@ -760,7 +783,7 @@ func (s *Storage) GetLastOpenPane() (*LastOpenPane, error) {
 	var pm struct {
 		NetworkID  int64      `db:"network_id"`
 		TargetUser string     `db:"target_user"`
-		UpdatedAt *time.Time `db:"updated_at"`
+		UpdatedAt  *time.Time `db:"updated_at"`
 	}
 	pmQuery := `
 		SELECT network_id, target_user, updated_at
@@ -839,4 +862,148 @@ func (s *Storage) GetLastOpenPane() (*LastOpenPane, error) {
 		Type:      "pm",
 		Name:      pm.TargetUser,
 	}, nil
+}
+
+// GetPluginConfig retrieves the configuration for a plugin
+func (s *Storage) GetPluginConfig(name string) (*PluginConfig, error) {
+	var config PluginConfig
+	var configJSON sql.NullString
+	var configSchemaJSON sql.NullString
+	err := s.db.QueryRow("SELECT name, enabled, config, config_schema, created_at, updated_at FROM plugin_configs WHERE name = ?", name).Scan(
+		&config.Name, &config.Enabled, &configJSON, &configSchemaJSON, &config.CreatedAt, &config.UpdatedAt)
+	if err != nil {
+		if strings.Contains(err.Error(), "no rows") {
+			// Return default config if not found
+			return &PluginConfig{
+				Name:         name,
+				Enabled:      true, // Default to enabled
+				Config:       make(map[string]interface{}),
+				ConfigSchema: make(map[string]interface{}),
+				CreatedAt:    time.Now(),
+				UpdatedAt:    time.Now(),
+			}, nil
+		}
+		return nil, fmt.Errorf("failed to get plugin config: %w", err)
+	}
+
+	// Decode JSON config
+	if configJSON.Valid && configJSON.String != "" {
+		if err := json.Unmarshal([]byte(configJSON.String), &config.Config); err != nil {
+			logger.Log.Warn().Err(err).Str("plugin", name).Msg("Failed to decode plugin config JSON, using empty config")
+			config.Config = make(map[string]interface{})
+		}
+	} else {
+		config.Config = make(map[string]interface{})
+	}
+
+	// Decode JSON config_schema
+	if configSchemaJSON.Valid && configSchemaJSON.String != "" {
+		if err := json.Unmarshal([]byte(configSchemaJSON.String), &config.ConfigSchema); err != nil {
+			logger.Log.Warn().Err(err).Str("plugin", name).Msg("Failed to decode plugin config_schema JSON, using empty schema")
+			config.ConfigSchema = make(map[string]interface{})
+		}
+	} else {
+		config.ConfigSchema = make(map[string]interface{})
+	}
+
+	return &config, nil
+}
+
+// SetPluginEnabled updates the enabled state for a plugin
+func (s *Storage) SetPluginEnabled(name string, enabled bool) error {
+	// Use INSERT OR REPLACE to handle both new and existing configs
+	_, err := s.db.Exec(
+		`INSERT INTO plugin_configs (name, enabled, created_at, updated_at)
+		 VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		 ON CONFLICT(name) DO UPDATE SET enabled = ?, updated_at = CURRENT_TIMESTAMP`,
+		name, enabled, enabled)
+	if err != nil {
+		return fmt.Errorf("failed to set plugin enabled state: %w", err)
+	}
+	return nil
+}
+
+// GetAllPluginConfigs retrieves all plugin configurations
+func (s *Storage) GetAllPluginConfigs() (map[string]*PluginConfig, error) {
+	rows, err := s.db.Query("SELECT name, enabled, config, config_schema, created_at, updated_at FROM plugin_configs")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get all plugin configs: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string]*PluginConfig)
+	for rows.Next() {
+		var config PluginConfig
+		var configJSON sql.NullString
+		var configSchemaJSON sql.NullString
+		if err := rows.Scan(&config.Name, &config.Enabled, &configJSON, &configSchemaJSON, &config.CreatedAt, &config.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan plugin config: %w", err)
+		}
+
+		// Decode JSON config
+		if configJSON.Valid && configJSON.String != "" {
+			if err := json.Unmarshal([]byte(configJSON.String), &config.Config); err != nil {
+				logger.Log.Warn().Err(err).Str("plugin", config.Name).Msg("Failed to decode plugin config JSON, using empty config")
+				config.Config = make(map[string]interface{})
+			}
+		} else {
+			config.Config = make(map[string]interface{})
+		}
+
+		// Decode JSON config_schema
+		if configSchemaJSON.Valid && configSchemaJSON.String != "" {
+			if err := json.Unmarshal([]byte(configSchemaJSON.String), &config.ConfigSchema); err != nil {
+				logger.Log.Warn().Err(err).Str("plugin", config.Name).Msg("Failed to decode plugin config_schema JSON, using empty schema")
+				config.ConfigSchema = make(map[string]interface{})
+			}
+		} else {
+			config.ConfigSchema = make(map[string]interface{})
+		}
+
+		result[config.Name] = &config
+	}
+
+	return result, nil
+}
+
+// SetPluginConfig updates the configuration for a plugin
+func (s *Storage) SetPluginConfig(name string, config map[string]interface{}) error {
+	// Encode config as JSON
+	configJSON, err := json.Marshal(config)
+	if err != nil {
+		return fmt.Errorf("failed to encode plugin config: %w", err)
+	}
+
+	// Use INSERT OR REPLACE to handle both new and existing configs
+	// Preserve existing enabled state and config_schema
+	_, err = s.db.Exec(
+		`INSERT INTO plugin_configs (name, enabled, config, created_at, updated_at)
+		 VALUES (?, 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		 ON CONFLICT(name) DO UPDATE SET config = ?, updated_at = CURRENT_TIMESTAMP`,
+		name, configJSON, configJSON)
+	if err != nil {
+		return fmt.Errorf("failed to set plugin config: %w", err)
+	}
+	return nil
+}
+
+// SetPluginConfigSchema stores the configuration schema for a plugin
+func (s *Storage) SetPluginConfigSchema(name string, schema map[string]interface{}) error {
+	// Encode config_schema as JSON
+	schemaJSON, err := json.Marshal(schema)
+	if err != nil {
+		return fmt.Errorf("failed to encode plugin config_schema: %w", err)
+	}
+
+	// Use INSERT OR REPLACE to handle both new and existing configs
+	// Preserve existing enabled state and config
+	_, err = s.db.Exec(
+		`INSERT INTO plugin_configs (name, enabled, config_schema, created_at, updated_at)
+		 VALUES (?, 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		 ON CONFLICT(name) DO UPDATE SET config_schema = ?, updated_at = CURRENT_TIMESTAMP`,
+		name, schemaJSON, schemaJSON)
+	if err != nil {
+		return fmt.Errorf("failed to set plugin config_schema: %w", err)
+	}
+	return nil
 }

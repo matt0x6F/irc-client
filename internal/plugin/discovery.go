@@ -1,7 +1,6 @@
 package plugin
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -48,6 +47,27 @@ func discoverInDirectory(dir string) ([]*PluginInfo, error) {
 
 	for _, entry := range entries {
 		if entry.IsDir() {
+			// Check if directory contains a cascade- executable
+			subDir := filepath.Join(dir, entry.Name())
+			subEntries, err := os.ReadDir(subDir)
+			if err != nil {
+				continue
+			}
+			for _, subEntry := range subEntries {
+				if subEntry.IsDir() {
+					continue
+				}
+				subPath := filepath.Join(subDir, subEntry.Name())
+				if strings.HasPrefix(subEntry.Name(), "cascade-") || isExecutable(subPath) {
+					info, err := getPluginInfo(subPath)
+					if err != nil {
+						logger.Log.Warn().Err(err).Str("path", subPath).Msg("Failed to get plugin info")
+						continue
+					}
+					plugins = append(plugins, info)
+					break // Only one plugin per directory
+				}
+			}
 			continue
 		}
 
@@ -99,30 +119,19 @@ func discoverInPATH() ([]*PluginInfo, error) {
 	return plugins, nil
 }
 
-// getPluginInfo retrieves plugin metadata
+// getPluginInfo creates minimal plugin info from executable path
+// Full metadata will be retrieved from the plugin's initialize response
 func getPluginInfo(path string) (*PluginInfo, error) {
+	// Derive name from filename
+	name := filepath.Base(path)
+	if strings.HasPrefix(name, "cascade-") {
+		name = strings.TrimPrefix(name, "cascade-")
+	}
+
 	info := &PluginInfo{
+		Name:    name,
 		Path:    path,
-		Enabled: true, // Default to enabled
-	}
-
-	// Try to read plugin.json in the same directory
-	dir := filepath.Dir(path)
-	metadataPath := filepath.Join(dir, "plugin.json")
-	if data, err := os.ReadFile(metadataPath); err == nil {
-		if err := json.Unmarshal(data, info); err == nil {
-			// Metadata loaded successfully
-		}
-	}
-
-	// If name not set, derive from filename
-	if info.Name == "" {
-		name := filepath.Base(path)
-		if strings.HasPrefix(name, "cascade-") {
-			info.Name = strings.TrimPrefix(name, "cascade-")
-		} else {
-			info.Name = name
-		}
+		Enabled: true, // Default to enabled, database will override
 	}
 
 	return info, nil
@@ -157,4 +166,3 @@ func ValidatePlugin(path string) error {
 	// Just verify it exists and is executable
 	return nil
 }
-

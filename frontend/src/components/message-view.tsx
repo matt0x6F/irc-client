@@ -6,9 +6,10 @@ import { useNicknameColors } from '../hooks/useNicknameColors';
 interface MessageViewProps {
   messages: storage.Message[];
   networkId: number | null;
+  selectedChannel?: string | null;
 }
 
-interface ConsolidatedMessage extends storage.Message {
+type ConsolidatedMessage = storage.Message & {
   _consolidated?: boolean;
   _originalMessages?: storage.Message[];
   _nicknames?: string[];
@@ -17,11 +18,12 @@ interface ConsolidatedMessage extends storage.Message {
 
 const CONSOLIDATE_JOIN_QUIT_KEY = 'cascade-chat-consolidate-join-quit';
 
-export function MessageView({ messages, networkId }: MessageViewProps) {
+export function MessageView({ messages, networkId, selectedChannel }: MessageViewProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [isNearBottom, setIsNearBottom] = useState(true);
   const prevMessagesLengthRef = useRef(0);
+  const prevChannelRef = useRef<string | null | undefined>(selectedChannel);
 
   // Load consolidate setting from localStorage and make it reactive
   const [consolidateEnabled, setConsolidateEnabled] = useState(() => {
@@ -132,7 +134,7 @@ export function MessageView({ messages, networkId }: MessageViewProps) {
           _originalMessages: [...currentGroup],
           _nicknames: allSameUser ? [nicknames[0]] : nicknames,
           _actionText: `${action}${suffix}`,
-        };
+        } as ConsolidatedMessage;
         result.push(consolidated);
       }
       currentGroup = [];
@@ -211,6 +213,25 @@ export function MessageView({ messages, networkId }: MessageViewProps) {
     container.addEventListener('scroll', checkIfNearBottom);
     return () => container.removeEventListener('scroll', checkIfNearBottom);
   }, []);
+
+  // Auto-scroll when channel changes - always scroll to bottom when switching channels
+  useEffect(() => {
+    if (selectedChannel !== undefined && selectedChannel !== prevChannelRef.current) {
+      prevChannelRef.current = selectedChannel;
+      // When channel changes, always scroll to bottom
+      // Use a small delay to ensure DOM is updated with new messages
+      setTimeout(() => {
+        if (messagesEndRef.current) {
+          messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+        } else if (scrollContainerRef.current) {
+          // Fallback: scroll container to bottom
+          scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
+        }
+      }, 100);
+      // Reset near-bottom state since we're scrolling to bottom
+      setIsNearBottom(true);
+    }
+  }, [selectedChannel, messages]);
 
   // Auto-scroll only if user is near bottom and there are new messages
   useEffect(() => {
@@ -316,7 +337,7 @@ export function MessageView({ messages, networkId }: MessageViewProps) {
                       {isConsolidated && consolidated._nicknames && consolidated._actionText ? (
                         // Render consolidated message with colored nicknames
                         (() => {
-                          const parts: (string | JSX.Element)[] = [];
+                          const parts: (string | React.ReactElement)[] = [];
                           const nicknames = consolidated._nicknames;
                           const actionText = consolidated._actionText;
                           

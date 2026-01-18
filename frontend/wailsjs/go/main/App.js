@@ -70,6 +70,14 @@ export function GetOpenChannels(arg1) {
   return window['go']['main']['App']['GetOpenChannels'](arg1);
 }
 
+export function GetPluginConfig(arg1) {
+  return window['go']['main']['App']['GetPluginConfig'](arg1);
+}
+
+export function GetPluginConfigSchema(arg1) {
+  return window['go']['main']['App']['GetPluginConfigSchema'](arg1);
+}
+
 export function GetPrivateMessageConversations(arg1, arg2) {
   return window['go']['main']['App']['GetPrivateMessageConversations'](arg1, arg2);
 }
@@ -106,6 +114,10 @@ export function OpenSettings() {
   return window['go']['main']['App']['OpenSettings']();
 }
 
+export function ReloadPlugin(arg1) {
+  return window['go']['main']['App']['ReloadPlugin'](arg1);
+}
+
 export function SaveNetwork(arg1) {
   return window['go']['main']['App']['SaveNetwork'](arg1);
 }
@@ -124,6 +136,10 @@ export function SetChannelOpen(arg1, arg2, arg3) {
 
 export function SetPaneFocus(arg1, arg2, arg3) {
   return window['go']['main']['App']['SetPaneFocus'](arg1, arg2, arg3);
+}
+
+export function SetPluginConfig(arg1, arg2) {
+  return window['go']['main']['App']['SetPluginConfig'](arg1, arg2);
 }
 
 export function SetPrivateMessageOpen(arg1, arg2, arg3) {

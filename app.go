@@ -22,17 +22,19 @@ import (
 
 // App struct
 type App struct {
-	ctx                context.Context
-	storage            *storage.Storage
-	eventBus           *events.EventBus
-	pluginManager      *plugin.Manager
-	keychain           *security.Keychain
-	ircClients         map[int64]*irc.IRCClient
-	connectingNetworks map[string]chan struct{} // Track networks currently connecting by "address:port"
-	mu                 sync.RWMutex
-	startupCtx         context.Context
-	startupCancel      context.CancelFunc
-	startupWg          sync.WaitGroup
+	ctx                  context.Context
+	storage              *storage.Storage
+	eventBus             *events.EventBus
+	pluginManager        *plugin.Manager
+	keychain             *security.Keychain
+	ircClients           map[int64]*irc.IRCClient
+	connectingNetworks   map[string]chan struct{} // Track networks currently connecting by "address:port"
+	reconnectingNetworks map[int64]bool           // Track networks currently reconnecting (by network ID)
+	mu                   sync.RWMutex
+	startupCtx           context.Context
+	startupCancel        context.CancelFunc
+	startupWg            sync.WaitGroup
+	shutdownOnce         sync.Once // Ensure shutdown only runs once
 }
 
 // NewApp creates a new App application struct
@@ -64,6 +66,8 @@ func NewApp() (*App, error) {
 	// Create plugin manager
 	pluginDir := filepath.Join(homeDir, ".cascade-chat", "plugins")
 	pluginMgr := plugin.NewManager(eventBus, pluginDir)
+	// Set storage reference for plugin configuration
+	pluginMgr.SetStorage(stor)
 
 	// Discover and load plugins (skip during Wails binding generation)
 	// Wails runs the app during binding generation, and plugin processes would keep it alive
@@ -71,12 +75,13 @@ func NewApp() (*App, error) {
 	// We'll load plugins in the startup() method instead, which is only called in actual app execution
 
 	app := &App{
-		storage:            stor,
-		eventBus:           eventBus,
-		pluginManager:      pluginMgr,
-		keychain:           keychain,
-		ircClients:         make(map[int64]*irc.IRCClient),
-		connectingNetworks: make(map[string]chan struct{}),
+		storage:              stor,
+		eventBus:             eventBus,
+		pluginManager:        pluginMgr,
+		keychain:             keychain,
+		ircClients:           make(map[int64]*irc.IRCClient),
+		connectingNetworks:   make(map[string]chan struct{}),
+		reconnectingNetworks: make(map[int64]bool),
 	}
 
 	// Subscribe to message events to forward to frontend
@@ -308,72 +313,235 @@ func (a *App) startup(ctx context.Context) {
 
 // shutdown is called when the app shuts down
 func (a *App) shutdown(ctx context.Context) {
-	logger.Log.Info().Msg("App shutdown initiated")
+	// Ensure shutdown only runs once (can be called from both OnShutdown and signal handler)
+	a.shutdownOnce.Do(func() {
+		logger.Log.Info().Msg("App shutdown initiated")
 
-	// Create a timeout context for shutdown operations
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+		// Create a timeout context for shutdown operations
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 
-	// Cancel startup context to stop any pending auto-connects
-	if a.startupCancel != nil {
-		a.startupCancel()
-	}
-
-	// Wait for startup goroutines to finish (with timeout)
-	startupDone := make(chan struct{})
-	go func() {
-		a.startupWg.Wait()
-		close(startupDone)
-	}()
-	select {
-	case <-startupDone:
-		// Startup goroutines finished
-	case <-shutdownCtx.Done():
-		logger.Log.Warn().Msg("Timeout waiting for startup goroutines, continuing shutdown")
-	}
-
-	// Send "Disconnected" message to each connected network's status window
-	a.mu.Lock()
-	for _, client := range a.ircClients {
-		if client.IsConnected() {
-			// Write disconnected message to status window
-			client.WriteStatusMessage("Disconnected from server")
+		// Cancel startup context to stop any pending auto-connects
+		if a.startupCancel != nil {
+			a.startupCancel()
 		}
-		client.Disconnect()
-	}
-	a.mu.Unlock()
 
-	// Close plugin manager (with timeout)
-	if a.pluginManager != nil {
-		pluginDone := make(chan struct{})
+		// Wait for startup goroutines to finish (with timeout)
+		logger.Log.Debug().Msg("Waiting for startup goroutines to finish")
+		startupDone := make(chan struct{})
 		go func() {
-			a.pluginManager.Close()
-			close(pluginDone)
+			a.startupWg.Wait()
+			close(startupDone)
 		}()
 		select {
-		case <-pluginDone:
-			// Plugin manager closed
+		case <-startupDone:
+			logger.Log.Debug().Msg("Startup goroutines finished")
 		case <-shutdownCtx.Done():
-			logger.Log.Warn().Msg("Timeout closing plugin manager, continuing shutdown")
+			logger.Log.Warn().Msg("Timeout waiting for startup goroutines, continuing shutdown")
 		}
-	}
 
-	// Close storage (with timeout)
-	if a.storage != nil {
-		storageDone := make(chan struct{})
-		go func() {
-			a.storage.Close()
-			close(storageDone)
-		}()
-		select {
-		case <-storageDone:
-			// Storage closed
-		case <-shutdownCtx.Done():
-			logger.Log.Warn().Msg("Timeout closing storage, continuing shutdown")
+		// Send "Disconnected" message to each connected network's status window and all joined channels
+		// Do this SYNCHRONOUSLY before closing anything to ensure messages are written
+		logger.Log.Info().Msg("Starting disconnect message writing")
+		a.mu.Lock()
+		clients := make(map[int64]*irc.IRCClient)
+		for networkID, client := range a.ircClients {
+			clients[networkID] = client
 		}
-	}
+		a.mu.Unlock()
 
-	logger.Log.Info().Msg("App shutdown complete")
+		logger.Log.Info().Int("client_count", len(clients)).Msg("Found IRC clients to check during shutdown")
+
+		for networkID, client := range clients {
+			// Use defer/recover to catch any panics during shutdown
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						logger.Log.Error().Interface("panic", r).Int64("network_id", networkID).Msg("Panic during shutdown for network")
+					}
+				}()
+
+				logger.Log.Debug().Int64("network_id", networkID).Msg("Checking network for disconnect messages")
+				// Use IsConnectedDirect to avoid dead connection check during shutdown
+				// We want to write messages even if the connection appears dead
+				isConnected := client.IsConnectedDirect()
+				logger.Log.Debug().Int64("network_id", networkID).Bool("is_connected", isConnected).Msg("Network connection status")
+
+				// Get network to retrieve nickname for getting channels
+
+				// Call GetNetwork in a goroutine with timeout to avoid hanging
+				networkChan := make(chan *storage.Network, 1)
+				errChan := make(chan error, 1)
+				go func() {
+					defer func() {
+						if r := recover(); r != nil {
+							errChan <- fmt.Errorf("panic in GetNetwork: %v", r)
+						}
+					}()
+					net, err := a.storage.GetNetwork(networkID)
+					if err != nil {
+						errChan <- err
+					} else {
+						networkChan <- net
+					}
+				}()
+
+				var network *storage.Network
+				var err error
+				select {
+				case network = <-networkChan:
+					err = nil
+					logger.Log.Debug().Int64("network_id", networkID).Msg("GetNetwork completed successfully")
+				case err = <-errChan:
+					network = nil
+					logger.Log.Debug().Err(err).Int64("network_id", networkID).Msg("GetNetwork returned error")
+				case <-time.After(1 * time.Second):
+					err = fmt.Errorf("timeout calling GetNetwork")
+					network = nil
+					logger.Log.Warn().Int64("network_id", networkID).Msg("GetNetwork timed out")
+				}
+
+				if err != nil {
+					logger.Log.Warn().Err(err).Int64("network_id", networkID).Msg("Failed to get network for disconnect message")
+				} else if network == nil {
+					logger.Log.Warn().Int64("network_id", networkID).Msg("Network not found for disconnect message")
+				} else {
+					logger.Log.Debug().Int64("network_id", networkID).Str("address", network.Address).Str("nickname", network.Nickname).Msg("Got network for disconnect message")
+
+					// Get all channels for this network - we'll write to all of them to ensure
+					// we catch any channel the user might have been viewing
+					allChannels, err := a.storage.GetChannels(networkID)
+					if err != nil {
+						logger.Log.Warn().Err(err).Int64("network_id", networkID).Msg("Failed to get channels for disconnect message")
+					} else {
+						logger.Log.Debug().Int64("network_id", networkID).Int("total_channels", len(allChannels)).Msg("Found channels for network")
+
+						var channelsToNotify []storage.Channel
+
+						// Filter to only channels that are open (is_open = true)
+						// These are the channels the user has open and would want to see disconnect messages
+						for _, ch := range allChannels {
+							if ch.IsOpen {
+								channelsToNotify = append(channelsToNotify, ch)
+							}
+						}
+						logger.Log.Debug().Int64("network_id", networkID).Int("open_channels", len(channelsToNotify)).Msg("Found open channels")
+
+						// Also include joined channels (in case is_open wasn't set but user is actually joined)
+						if network.Nickname != "" {
+							joinedChannels, err := a.storage.GetJoinedChannels(networkID, network.Nickname)
+							if err == nil {
+								logger.Log.Debug().Int64("network_id", networkID).Int("joined_channels", len(joinedChannels)).Msg("Found joined channels")
+								// Merge with open channels, avoiding duplicates
+								channelMap := make(map[int64]bool)
+								for _, ch := range channelsToNotify {
+									channelMap[ch.ID] = true
+								}
+								for _, ch := range joinedChannels {
+									if !channelMap[ch.ID] {
+										channelsToNotify = append(channelsToNotify, ch)
+										channelMap[ch.ID] = true
+									}
+								}
+							} else {
+								logger.Log.Debug().Err(err).Int64("network_id", networkID).Msg("Failed to get joined channels")
+							}
+						}
+
+						// If no channels found via open/joined, write to all channels as fallback
+						// This ensures we don't miss any channels the user might have been viewing
+						if len(channelsToNotify) == 0 && len(allChannels) > 0 {
+							logger.Log.Info().Int64("network_id", networkID).Int("total_channels", len(allChannels)).Msg("No open/joined channels found, writing disconnect messages to all channels as fallback")
+							channelsToNotify = allChannels
+						}
+
+						if len(channelsToNotify) > 0 {
+							logger.Log.Info().Int64("network_id", networkID).Int("channel_count", len(channelsToNotify)).Msg("Writing disconnect messages to channels")
+							// Write "Disconnected" message to each channel
+							for _, channel := range channelsToNotify {
+								disconnectMsg := storage.Message{
+									NetworkID:   networkID,
+									ChannelID:   &channel.ID,
+									User:        "*",
+									Message:     "Disconnected",
+									MessageType: "status",
+									Timestamp:   time.Now(),
+									RawLine:     "",
+								}
+								// Use WriteMessageDirect to bypass buffer and write directly to database during shutdown
+								if err := a.storage.WriteMessageDirect(disconnectMsg); err != nil {
+									// Gracefully handle errors (storage might be closing)
+									if err.Error() != "storage is closed" {
+										logger.Log.Warn().Err(err).Int64("network_id", networkID).Str("channel", channel.Name).Int64("channel_id", channel.ID).Msg("Failed to write disconnect message to channel")
+									} else {
+										logger.Log.Debug().Int64("network_id", networkID).Str("channel", channel.Name).Msg("Storage already closed, skipping disconnect message")
+									}
+								} else {
+									logger.Log.Debug().Int64("network_id", networkID).Str("channel", channel.Name).Int64("channel_id", channel.ID).Msg("Wrote disconnect message to channel")
+								}
+							}
+						} else {
+							logger.Log.Debug().Int64("network_id", networkID).Int("total_channels", len(allChannels)).Msg("No open or joined channels to notify for disconnect")
+						}
+					}
+				}
+
+				// Write disconnected message to status window (even if not connected, in case it was recently disconnected)
+				if isConnected {
+					client.WriteStatusMessage("Disconnected from server")
+				}
+
+				// Small delay to ensure messages are written before disconnecting
+				time.Sleep(100 * time.Millisecond)
+
+				// Disconnect from the server (sends QUIT command) if still connected
+				// This will trigger the disconnect callback which may also write messages
+				if isConnected {
+					logger.Log.Debug().Int64("network_id", networkID).Msg("Disconnecting from network (sending QUIT command)")
+					if err := client.Disconnect(); err != nil {
+						logger.Log.Warn().Err(err).Int64("network_id", networkID).Msg("Error disconnecting from network")
+					} else {
+						logger.Log.Info().Int64("network_id", networkID).Msg("Disconnected from network")
+					}
+				} else {
+					logger.Log.Debug().Int64("network_id", networkID).Msg("Network already disconnected, skipping Disconnect() call")
+				}
+			}()
+		}
+		logger.Log.Debug().Msg("Finished processing all networks during shutdown")
+
+		// Close plugin manager (with timeout)
+		if a.pluginManager != nil {
+			pluginDone := make(chan struct{})
+			go func() {
+				a.pluginManager.Close()
+				close(pluginDone)
+			}()
+			select {
+			case <-pluginDone:
+				// Plugin manager closed
+			case <-shutdownCtx.Done():
+				logger.Log.Warn().Msg("Timeout closing plugin manager, continuing shutdown")
+			}
+		}
+
+		// Close storage (with timeout)
+		if a.storage != nil {
+			storageDone := make(chan struct{})
+			go func() {
+				a.storage.Close()
+				close(storageDone)
+			}()
+			select {
+			case <-storageDone:
+				// Storage closed
+			case <-shutdownCtx.Done():
+				logger.Log.Warn().Msg("Timeout closing storage, continuing shutdown")
+			}
+		}
+
+		logger.Log.Info().Msg("App shutdown complete")
+	})
 }
 
 // OnEvent implements the events.Subscriber interface to forward events to frontend
@@ -386,39 +554,54 @@ func (a *App) OnEvent(event events.Event) {
 
 	// Handle connection status events separately to include network ID
 	if event.Type == irc.EventConnectionEstablished || event.Type == irc.EventConnectionLost {
-		// Extract network address from event data
-		networkAddress, ok := event.Data["network"].(string)
-		if !ok {
-			return
-		}
-
-		// Find the network ID by checking all networks and their servers
+		// Extract network ID directly from event data (preferred) or fall back to lookup
 		var networkID int64
 		found := false
 
-		networks, err := a.storage.GetNetworks()
-		if err == nil {
-			for _, n := range networks {
-				// Check primary address first (for backward compatibility)
-				if n.Address == networkAddress {
-					networkID = n.ID
-					found = true
-					break
-				}
+		// First try to get networkId directly from event data
+		if networkIDVal, ok := event.Data["networkId"]; ok {
+			switch v := networkIDVal.(type) {
+			case int64:
+				networkID = v
+				found = true
+			case int:
+				networkID = int64(v)
+				found = true
+			case float64:
+				networkID = int64(v)
+				found = true
+			}
+		}
 
-				// Check all servers for this network
-				servers, err := a.storage.GetServers(n.ID)
+		// Fall back to address-based lookup if networkId not found (backward compatibility)
+		if !found {
+			networkAddress, ok := event.Data["network"].(string)
+			if ok {
+				networks, err := a.storage.GetNetworks()
 				if err == nil {
-					for _, srv := range servers {
-						if srv.Address == networkAddress {
+					for _, n := range networks {
+						// Check primary address first (for backward compatibility)
+						if n.Address == networkAddress {
 							networkID = n.ID
 							found = true
 							break
 						}
+
+						// Check all servers for this network
+						servers, err := a.storage.GetServers(n.ID)
+						if err == nil {
+							for _, srv := range servers {
+								if srv.Address == networkAddress {
+									networkID = n.ID
+									found = true
+									break
+								}
+							}
+						}
+						if found {
+							break
+						}
 					}
-				}
-				if found {
-					break
 				}
 			}
 		}
@@ -431,6 +614,16 @@ func (a *App) OnEvent(event events.Event) {
 				"connected": isConnected,
 				"timestamp": event.Timestamp.Format(time.RFC3339),
 			})
+
+			// Handle auto-reconnect for lost connections
+			if !isConnected {
+				a.handleConnectionLost(networkID)
+			}
+		} else {
+			logger.Log.Warn().
+				Str("event_type", event.Type).
+				Interface("event_data", event.Data).
+				Msg("Could not determine network ID for connection event")
 		}
 		return
 	}
@@ -874,37 +1067,48 @@ func (a *App) ConnectNetwork(config NetworkConfig) error {
 
 	// Check if a connection is already in progress for this network
 	if _, inProgress := a.connectingNetworks[networkKey]; inProgress {
-		logger.Log.Warn().Str("network_key", networkKey).Msg("Connection already in progress, rejecting")
+		logger.Log.Warn().Str("network_key", networkKey).Str("network", config.Name).Int64("id", network.ID).Msg("Connection already in progress, rejecting duplicate connection")
 		a.mu.Unlock()
 		return fmt.Errorf("connection to %s already in progress", config.Name)
 	}
 
 	// Check if already connected to this network (by ID)
+	// Use direct check to avoid triggering markConnectionDead which emits events
 	if existingClient, exists := a.ircClients[network.ID]; exists {
-		if existingClient.IsConnected() {
-			logger.Log.Warn().Str("network", config.Name).Int64("id", network.ID).Msg("Already connected, rejecting")
+		if existingClient.IsConnectedDirect() {
+			logger.Log.Warn().Str("network", config.Name).Int64("id", network.ID).Msg("Already connected, rejecting duplicate connection")
 			a.mu.Unlock()
 			return fmt.Errorf("already connected to %s", config.Name)
 		}
-	}
-
-	// Mark that we're connecting to this network
-	connectDone := make(chan struct{})
-	a.connectingNetworks[networkKey] = connectDone
-	logger.Log.Debug().Str("network_key", networkKey).Msg("Marked as connecting")
-
-	// Disconnect if already connected to this network (by ID)
-	if existingClient, exists := a.ircClients[network.ID]; exists {
-		if existingClient.IsConnected() {
-			existingClient.Disconnect()
-		}
+		// Clean up disconnected client before reconnecting
+		logger.Log.Debug().Str("network", config.Name).Int64("id", network.ID).Msg("Cleaning up disconnected client before reconnecting")
 		delete(a.ircClients, network.ID)
 	}
+
+	// Mark that we're connecting to this network BEFORE releasing the lock
+	// This ensures no other connection attempt can proceed
+	connectDone := make(chan struct{})
+	a.connectingNetworks[networkKey] = connectDone
+	logger.Log.Debug().Str("network_key", networkKey).Str("network", config.Name).Int64("id", network.ID).Msg("Marked as connecting")
 
 	a.mu.Unlock()
 
 	// Wait a bit for any existing connection to clean up
 	time.Sleep(constants.ConnectionCleanupDelay)
+
+	// Double-check after cleanup delay - another connection might have completed
+	// Use direct check to avoid triggering markConnectionDead which emits events
+	a.mu.Lock()
+	if existingClient, exists := a.ircClients[network.ID]; exists {
+		if existingClient.IsConnectedDirect() {
+			logger.Log.Warn().Str("network", config.Name).Int64("id", network.ID).Msg("Connection completed during cleanup delay, cleaning up duplicate attempt")
+			delete(a.connectingNetworks, networkKey)
+			close(connectDone)
+			a.mu.Unlock()
+			return fmt.Errorf("already connected to %s (connection completed during setup)", config.Name)
+		}
+	}
+	a.mu.Unlock()
 
 	// Try connecting to servers in order
 	var lastErr error
@@ -996,8 +1200,23 @@ func (a *App) ConnectNetwork(config NetworkConfig) error {
 		// Success! Store client and clear connection-in-progress flag
 		logger.Log.Info().Str("server", serverKey).Int64("network_id", network.ID).Msg("Connection successful")
 		a.mu.Lock()
+
+		// Final check: if another connection completed and stored a client, disconnect this one
+		// Use direct check to avoid triggering markConnectionDead which emits events
+		if existingClient, exists := a.ircClients[network.ID]; exists && existingClient != ircClient {
+			if existingClient.IsConnectedDirect() {
+				logger.Log.Warn().Str("network", config.Name).Int64("id", network.ID).Msg("Another connection completed first, disconnecting duplicate")
+				ircClient.Disconnect()
+				delete(a.connectingNetworks, networkKey)
+				close(connectDone)
+				a.mu.Unlock()
+				return fmt.Errorf("connection to %s already established by another process", config.Name)
+			}
+		}
+
 		a.ircClients[network.ID] = ircClient
 		delete(a.connectingNetworks, networkKey)
+		delete(a.reconnectingNetworks, network.ID) // Clear reconnecting flag if set
 		close(connectDone)
 		a.mu.Unlock()
 
@@ -1036,6 +1255,241 @@ func (a *App) ConnectNetwork(config NetworkConfig) error {
 	a.storage.WriteMessage(errorMsg)
 
 	return fmt.Errorf("failed to connect to any server: %w", lastErr)
+}
+
+// handleConnectionLost handles auto-reconnect when a connection is lost
+func (a *App) handleConnectionLost(networkID int64) {
+	// Atomically check and set reconnecting flag to prevent race conditions
+	a.mu.Lock()
+	if a.reconnectingNetworks[networkID] {
+		logger.Log.Debug().Int64("network_id", networkID).Msg("Already reconnecting, skipping")
+		a.mu.Unlock()
+		return
+	}
+
+	// Check if already connected (another goroutine might have reconnected)
+	if existingClient, exists := a.ircClients[networkID]; exists {
+		// Use a safe check that doesn't trigger markConnectionDead
+		if existingClient.IsConnectedDirect() {
+			logger.Log.Debug().Int64("network_id", networkID).Msg("Already connected, skipping reconnect")
+			a.mu.Unlock()
+			return
+		}
+	}
+
+	// Mark as reconnecting BEFORE releasing lock to prevent race conditions
+	a.reconnectingNetworks[networkID] = true
+	a.mu.Unlock()
+
+	// Get network to check auto-connect setting (after setting flag to prevent races)
+	network, err := a.storage.GetNetwork(networkID)
+	if err != nil {
+		logger.Log.Debug().Err(err).Int64("network_id", networkID).Msg("Failed to get network for reconnect check")
+		// Clear reconnecting flag if we can't get network
+		a.mu.Lock()
+		delete(a.reconnectingNetworks, networkID)
+		a.mu.Unlock()
+		return
+	}
+
+	// Only auto-reconnect if auto-connect is enabled
+	if !network.AutoConnect {
+		logger.Log.Debug().Int64("network_id", networkID).Str("network", network.Name).Msg("Auto-connect disabled, skipping reconnect")
+		// Clear reconnecting flag
+		a.mu.Lock()
+		delete(a.reconnectingNetworks, networkID)
+		a.mu.Unlock()
+		return
+	}
+
+	// Start reconnection in background
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Log.Error().Interface("panic", r).Int64("network_id", networkID).Msg("PANIC in auto-reconnect")
+			}
+			// Clear reconnecting flag when done
+			a.mu.Lock()
+			delete(a.reconnectingNetworks, networkID)
+			a.mu.Unlock()
+		}()
+
+		logger.Log.Info().Int64("network_id", networkID).Str("network", network.Name).Msg("Starting auto-reconnect")
+
+		// Exponential backoff: start with 5 seconds, double each attempt, max 5 minutes
+		delay := 5 * time.Second
+		maxDelay := 5 * time.Minute
+		maxAttempts := 10
+
+		for attempt := 1; attempt <= maxAttempts; attempt++ {
+			// Wait before attempting (except first attempt which waits 5 seconds)
+			if attempt > 1 {
+				logger.Log.Info().
+					Int64("network_id", networkID).
+					Str("network", network.Name).
+					Int("attempt", attempt).
+					Dur("delay", delay).
+					Msg("Waiting before reconnect attempt")
+				time.Sleep(delay)
+
+				// Double the delay for next attempt (exponential backoff)
+				delay *= 2
+				if delay > maxDelay {
+					delay = maxDelay
+				}
+			}
+
+			// Check if network still exists and auto-connect is still enabled
+			network, err := a.storage.GetNetwork(networkID)
+			if err != nil || network == nil {
+				logger.Log.Warn().Err(err).Int64("network_id", networkID).Msg("Network not found, stopping reconnect")
+				return
+			}
+
+			if !network.AutoConnect {
+				logger.Log.Info().Int64("network_id", networkID).Str("network", network.Name).Msg("Auto-connect disabled, stopping reconnect")
+				return
+			}
+
+			// Check if already connected (another process might have reconnected)
+			// Use direct check to avoid triggering markConnectionDead and creating event loops
+			a.mu.RLock()
+			client, exists := a.ircClients[networkID]
+			isConnected := exists && client != nil && client.IsConnectedDirect()
+			a.mu.RUnlock()
+
+			if isConnected {
+				logger.Log.Info().Int64("network_id", networkID).Str("network", network.Name).Msg("Already connected, stopping reconnect")
+				return
+			}
+
+			// Build config from network
+			dbServers, err := a.storage.GetServers(networkID)
+			if err != nil || len(dbServers) == 0 {
+				logger.Log.Error().Err(err).Int64("network_id", networkID).Msg("Failed to load servers for reconnect")
+				continue
+			}
+
+			serverConfigs := make([]ServerConfig, len(dbServers))
+			for j, srv := range dbServers {
+				serverConfigs[j] = ServerConfig{
+					Address: srv.Address,
+					Port:    srv.Port,
+					TLS:     srv.TLS,
+					Order:   srv.Order,
+				}
+			}
+
+			config := NetworkConfig{
+				Name:        network.Name,
+				Nickname:    network.Nickname,
+				Username:    network.Username,
+				Realname:    network.Realname,
+				Password:    network.Password,
+				SASLEnabled: network.SASLEnabled,
+				AutoConnect: network.AutoConnect,
+				Servers:     serverConfigs,
+			}
+
+			if network.SASLMechanism != nil {
+				config.SASLMechanism = *network.SASLMechanism
+			}
+			if network.SASLUsername != nil {
+				config.SASLUsername = *network.SASLUsername
+			}
+			if network.SASLPassword != nil {
+				config.SASLPassword = *network.SASLPassword
+			}
+			if network.SASLExternalCert != nil {
+				config.SASLExternalCert = *network.SASLExternalCert
+			}
+
+			logger.Log.Info().
+				Int64("network_id", networkID).
+				Str("network", network.Name).
+				Int("attempt", attempt).
+				Msg("Attempting to reconnect")
+
+			// Write reconnection attempt message
+			reconnectMsg := storage.Message{
+				NetworkID:   networkID,
+				ChannelID:   nil,
+				User:        "*",
+				Message:     fmt.Sprintf("Attempting to reconnect (attempt %d/%d)...", attempt, maxAttempts),
+				MessageType: "status",
+				Timestamp:   time.Now(),
+				RawLine:     "",
+			}
+			a.storage.WriteMessage(reconnectMsg)
+
+			// Try to reconnect
+			err = a.ConnectNetwork(config)
+			if err != nil {
+				logger.Log.Warn().
+					Err(err).
+					Int64("network_id", networkID).
+					Str("network", network.Name).
+					Int("attempt", attempt).
+					Msg("Reconnect attempt failed")
+
+				// Write failure message
+				failMsg := storage.Message{
+					NetworkID:   networkID,
+					ChannelID:   nil,
+					User:        "*",
+					Message:     fmt.Sprintf("Reconnect attempt %d failed: %v", attempt, err),
+					MessageType: "status",
+					Timestamp:   time.Now(),
+					RawLine:     "",
+				}
+				a.storage.WriteMessage(failMsg)
+
+				// Continue to next attempt
+				continue
+			}
+
+			// Success!
+			logger.Log.Info().
+				Int64("network_id", networkID).
+				Str("network", network.Name).
+				Int("attempt", attempt).
+				Msg("Reconnected successfully")
+
+			// Write success message
+			successMsg := storage.Message{
+				NetworkID:   networkID,
+				ChannelID:   nil,
+				User:        "*",
+				Message:     fmt.Sprintf("Reconnected successfully after %d attempt(s)", attempt),
+				MessageType: "status",
+				Timestamp:   time.Now(),
+				RawLine:     "",
+			}
+			a.storage.WriteMessage(successMsg)
+
+			// Stop reconnecting
+			return
+		}
+
+		// Max attempts reached
+		logger.Log.Error().
+			Int64("network_id", networkID).
+			Str("network", network.Name).
+			Int("max_attempts", maxAttempts).
+			Msg("Max reconnect attempts reached, giving up")
+
+		// Write final failure message
+		finalMsg := storage.Message{
+			NetworkID:   networkID,
+			ChannelID:   nil,
+			User:        "*",
+			Message:     fmt.Sprintf("Failed to reconnect after %d attempts. Please reconnect manually.", maxAttempts),
+			MessageType: "status",
+			Timestamp:   time.Now(),
+			RawLine:     "",
+		}
+		a.storage.WriteMessage(finalMsg)
+	}()
 }
 
 // SendMessage sends a message to a channel or user
@@ -1366,9 +1820,9 @@ func (a *App) SendCommand(networkID int64, command string) error {
 				// We use 'privmsg' type so it's found by the existing query
 				placeholderMsg := storage.Message{
 					NetworkID:   networkID,
-					ChannelID:   nil, // PM conversation
-					User:        nickname, // Original case nickname
-					Message:     "", // Empty message - this is just for case preservation
+					ChannelID:   nil,       // PM conversation
+					User:        nickname,  // Original case nickname
+					Message:     "",        // Empty message - this is just for case preservation
 					MessageType: "privmsg", // Use privmsg so it's found by GetPrivateMessageConversations
 					Timestamp:   time.Now(),
 					RawLine:     fmt.Sprintf("QUERY %s", nickname),
@@ -1470,7 +1924,7 @@ func (a *App) GetPrivateMessageConversations(networkID int64, openOnly bool) ([]
 func (a *App) SetPrivateMessageOpen(networkID int64, targetUser string, isOpen bool) error {
 	// Preserve original case before normalization
 	originalCase := targetUser
-	
+
 	err := a.storage.UpdatePMConversationIsOpen(networkID, targetUser, isOpen)
 	if err != nil {
 		return err
@@ -1549,7 +2003,7 @@ func (a *App) GetLastOpenPane() (*LastOpenPane, error) {
 // This is the event-driven way to handle focus changes
 func (a *App) SetPaneFocus(networkID int64, paneType string, paneName string) error {
 	var err error
-	
+
 	// Update database based on pane type
 	if paneType == "channel" {
 		// Mark this channel as open and emit focus event
@@ -1572,14 +2026,14 @@ func (a *App) SetPaneFocus(networkID int64, paneType string, paneName string) er
 	} else {
 		return fmt.Errorf("unknown pane type: %s", paneType)
 	}
-	
+
 	return err
 }
 
 // ClearPaneFocus clears focus from a pane and emits an event
 func (a *App) ClearPaneFocus(networkID int64, paneType string, paneName string) error {
 	var err error
-	
+
 	// Update database based on pane type
 	if paneType == "channel" {
 		// Mark this channel as closed and emit blur event
@@ -1602,7 +2056,7 @@ func (a *App) ClearPaneFocus(networkID int64, paneType string, paneName string) 
 	} else {
 		return fmt.Errorf("unknown pane type: %s", paneType)
 	}
-	
+
 	return err
 }
 
@@ -1710,6 +2164,33 @@ func (a *App) SetChannelOpen(networkID int64, channelName string, isOpen bool) e
 
 	// Emit focus event
 	if isOpen {
+		// Request fresh NAMES list if user is already joined to the channel
+		// This ensures we have the latest user list when opening a channel
+		a.mu.RLock()
+		client, exists := a.ircClients[networkID]
+		isConnected := exists && client.IsConnected()
+		a.mu.RUnlock()
+
+		if isConnected {
+			// Check if we're joined to this channel
+			network, err := a.storage.GetNetwork(networkID)
+			if err == nil && network.Nickname != "" {
+				joinedChannels, err := a.storage.GetJoinedChannels(networkID, network.Nickname)
+				if err == nil {
+					for _, joinedChannel := range joinedChannels {
+						if strings.EqualFold(joinedChannel.Name, channelName) {
+							// We're joined, request fresh NAMES list
+							logger.Log.Debug().Str("channel", channelName).Int64("network_id", networkID).Msg("Requesting fresh NAMES list for opened channel")
+							if err := client.SendRawCommand(fmt.Sprintf("NAMES %s", channelName)); err != nil {
+								logger.Log.Warn().Err(err).Str("channel", channelName).Msg("Failed to request NAMES list")
+							}
+							break
+						}
+					}
+				}
+			}
+		}
+
 		a.eventBus.Emit(events.Event{
 			Type: events.EventUIPaneFocused,
 			Data: map[string]interface{}{
@@ -1987,14 +2468,16 @@ func (a *App) GetServers(networkID int64) ([]storage.Server, error) {
 
 // PluginInfo represents plugin information for the frontend (without exposing plugin package types)
 type PluginInfo struct {
-	Name        string   `json:"name"`
-	Version     string   `json:"version"`
-	Description string   `json:"description,omitempty"`
-	Author      string   `json:"author,omitempty"`
-	Events      []string `json:"events,omitempty"`
-	Permissions []string `json:"permissions,omitempty"`
-	Path        string   `json:"path"`
-	Enabled     bool     `json:"enabled"`
+	Name          string                 `json:"name"`
+	Version       string                 `json:"version"`
+	Description   string                 `json:"description,omitempty"`
+	Author        string                 `json:"author,omitempty"`
+	Events        []string               `json:"events,omitempty"`
+	Permissions   []string               `json:"permissions,omitempty"`
+	MetadataTypes []string               `json:"metadata_types,omitempty"`
+	ConfigSchema  map[string]interface{} `json:"config_schema,omitempty"`
+	Path          string                 `json:"path"`
+	Enabled       bool                   `json:"enabled"`
 }
 
 // ListPlugins returns information about all plugins
@@ -2004,14 +2487,16 @@ func (a *App) ListPlugins() []PluginInfo {
 	result := make([]PluginInfo, len(pluginInfos))
 	for i, p := range pluginInfos {
 		result[i] = PluginInfo{
-			Name:        p.Name,
-			Version:     p.Version,
-			Description: p.Description,
-			Author:      p.Author,
-			Events:      p.Events,
-			Permissions: p.Permissions,
-			Path:        p.Path,
-			Enabled:     p.Enabled,
+			Name:          p.Name,
+			Version:       p.Version,
+			Description:   p.Description,
+			Author:        p.Author,
+			Events:        p.Events,
+			Permissions:   p.Permissions,
+			MetadataTypes: p.MetadataTypes,
+			ConfigSchema:  p.ConfigSchema,
+			Path:          p.Path,
+			Enabled:       p.Enabled,
 		}
 	}
 	return result
@@ -2026,6 +2511,11 @@ func (a *App) EnablePlugin(name string) error {
 // DisablePlugin disables a plugin
 func (a *App) DisablePlugin(name string) error {
 	return a.pluginManager.UnloadPlugin(name)
+}
+
+// ReloadPlugin reloads a plugin
+func (a *App) ReloadPlugin(name string) error {
+	return a.pluginManager.ReloadPlugin(name)
 }
 
 // Greet returns a greeting for the given name (kept for compatibility)
@@ -2052,4 +2542,53 @@ func (a *App) GetNicknameColor(networkID int64, nickname string) (string, error)
 // GetNicknameColorsBatch gets colors for multiple nicknames efficiently
 func (a *App) GetNicknameColorsBatch(networkID int64, nicknames []string) (map[string]string, error) {
 	return a.pluginManager.GetNicknameColorsBatch(networkID, nicknames), nil
+}
+
+// GetPluginConfig gets the configuration for a plugin
+func (a *App) GetPluginConfig(pluginName string) (map[string]interface{}, error) {
+	config, err := a.storage.GetPluginConfig(pluginName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get plugin config: %w", err)
+	}
+	if config.Config == nil {
+		return make(map[string]interface{}), nil
+	}
+	return config.Config, nil
+}
+
+// SetPluginConfig saves the configuration for a plugin
+func (a *App) SetPluginConfig(pluginName string, config map[string]interface{}) error {
+	if err := a.storage.SetPluginConfig(pluginName, config); err != nil {
+		return fmt.Errorf("failed to set plugin config: %w", err)
+	}
+	// Reload the plugin if it's currently loaded to apply new config
+	plugins := a.pluginManager.ListPlugins()
+	for _, p := range plugins {
+		if p.Name == pluginName && p.Enabled {
+			// Unload and reload the plugin
+			if err := a.pluginManager.UnloadPlugin(pluginName); err != nil {
+				logger.Log.Warn().Err(err).Str("plugin", pluginName).Msg("Failed to unload plugin for config update")
+			}
+			// Reload the plugin - use the plugin info from discovery
+			if err := a.pluginManager.LoadPlugin(p); err != nil {
+				logger.Log.Warn().Err(err).Str("plugin", pluginName).Msg("Failed to reload plugin after config update")
+			}
+			break
+		}
+	}
+	return nil
+}
+
+// GetPluginConfigSchema gets the configuration schema for a plugin
+func (a *App) GetPluginConfigSchema(pluginName string) (map[string]interface{}, error) {
+	plugins := a.pluginManager.ListPlugins()
+	for _, p := range plugins {
+		if p.Name == pluginName {
+			if p.ConfigSchema != nil {
+				return p.ConfigSchema, nil
+			}
+			return make(map[string]interface{}), nil
+		}
+	}
+	return nil, fmt.Errorf("plugin not found: %s", pluginName)
 }

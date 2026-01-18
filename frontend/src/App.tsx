@@ -874,6 +874,7 @@ function App() {
           onSelectServer={setSelectedNetwork}
           channelsWithActivity={channelsWithActivity}
           onShowUserInfo={(networkId, nickname) => setShowUserInfo({ networkId, nickname })}
+          onNetworkUpdate={loadNetworks}
           onSelectChannel={async (networkId, channel) => {
             // When switching channels/PMs, use event-based focus tracking
             // NOTE: We don't clear focus from the previous pane when switching - 
@@ -933,7 +934,9 @@ function App() {
                     connectionStatus[selectedNetwork] ? 'bg-green-500' : 'bg-gray-400'
                   }`} title={connectionStatus[selectedNetwork] ? 'Connected' : 'Disconnected'} />
                   {selectedChannel && selectedChannel !== 'status' && !selectedChannel.startsWith('pm:') && (
-                    <span className="ml-2 text-muted-foreground">#{selectedChannel}</span>
+                    <span className="ml-2 text-muted-foreground">
+                      {selectedChannel.startsWith('#') || selectedChannel.startsWith('&') ? selectedChannel : `#${selectedChannel}`}
+                    </span>
                   )}
                   {selectedChannel && selectedChannel.startsWith('pm:') && (
                     <span className="ml-2 text-muted-foreground">PM: {selectedChannel.substring(3)}</span>
@@ -972,7 +975,7 @@ function App() {
           {/* Message View */}
           <div className="flex-1 overflow-y-auto">
             {selectedNetwork !== null ? (
-              <MessageView messages={messages} networkId={selectedNetwork} />
+              <MessageView messages={messages} networkId={selectedNetwork} selectedChannel={selectedChannel} />
             ) : (
               <div className="flex items-center justify-center h-full text-muted-foreground">
                 Select a network to start chatting
@@ -1009,6 +1012,8 @@ function App() {
           <InputArea 
             onSendMessage={handleSendMessage}
             placeholder={selectedChannel === 'status' ? 'Type a command (e.g., /join #channel, /msg user message) or raw IRC command...' : 'Type a message...'}
+            networkId={selectedNetwork}
+            channelName={selectedChannel}
           />
         )}
       </div>

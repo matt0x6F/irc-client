@@ -81,8 +81,9 @@ export function TopicEditModal({ networkId, channelName, currentTopic, onClose, 
     });
     
     try {
-      // Send TOPIC command: /TOPIC #channel :new topic
-      const command = `/TOPIC ${channelName} :${topic}`;
+      // Send TOPIC command: /TOPIC #channel new topic
+      // (backend will add the colon when formatting the IRC command)
+      const command = `/TOPIC ${channelName} ${topic}`;
       await SendCommand(networkId, command);
       
       // Wait up to 2 seconds for either error or topic change

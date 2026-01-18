@@ -191,6 +191,8 @@ export namespace main {
 	    author?: string;
 	    events?: string[];
 	    permissions?: string[];
+	    metadata_types?: string[];
+	    config_schema?: Record<string, any>;
 	    path: string;
 	    enabled: boolean;
 	
@@ -206,6 +208,8 @@ export namespace main {
 	        this.author = source["author"];
 	        this.events = source["events"];
 	        this.permissions = source["permissions"];
+	        this.metadata_types = source["metadata_types"];
+	        this.config_schema = source["config_schema"];
 	        this.path = source["path"];
 	        this.enabled = source["enabled"];
 	    }

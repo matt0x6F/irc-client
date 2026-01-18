@@ -1,0 +1,69 @@
+# Ergo IRC Server Configuration for Testing
+# This is a minimal configuration suitable for local testing
+
+# Server administrator information
+admin:
+  name: "Test Admin"
+  email: "admin@test.local"
+
+# Network information
+network:
+  name: "testnet"
+  description: "Ergo Test IRC Server for Cascade Chat"
+
+# Server listeners
+listeners:
+  # Plaintext IRC (port 6667)
+  - address: "0.0.0.0:6667"
+    tls: false
+  # TLS IRC (port 6697)
+  - address: "0.0.0.0:6697"
+    tls: true
+    cert: /etc/ergo/certs/fullchain.pem
+    key: /etc/ergo/certs/privkey.pem
+
+# No links to other networks (standalone test server)
+links: []
+
+# Services configuration
+services:
+  nickserv: true   # Nickname registration service
+  chanserv: true   # Channel registration service
+  hostserv: false  # Hostname service (disabled)
+
+# Message history
+history:
+  mode: memory
+  capacity_per_channel: 100
+  max_age: "24h"
+
+# SASL authentication
+sasl:
+  enabled: true
+  mechanisms:
+    - PLAIN
+    - EXTERNAL
+
+# Logging
+log:
+  level: info
+  file: ""  # Empty => stdout (visible in docker logs)
+
+# Limits
+limits:
+  nicklen: 32
+  channellen: 64
+  awaylen: 500
+  kicklen: 390
+  topiclen: 390
+  linelen: 512
+
+# Channel modes
+channels:
+  default-modes: "+nt"
+  registration:
+    enabled: true
+
+# Operator (admin) configuration
+# You can add operators here if needed for testing
+opers: {}

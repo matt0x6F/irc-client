@@ -31,6 +31,25 @@ Architecture and technical implementation details (located in project root).
 - Code organization
 - Development workflows
 
+### [Events System](./events.md)
+Comprehensive documentation of the event-driven architecture, event types, and how to use the EventBus.
+
+**Use this for:**
+- Understanding event types and structure
+- Subscribing to and emitting events
+- Implementing event subscribers
+- Event flow and architecture
+
+### [Plugin System](./plugin-system.md)
+Complete guide to the plugin architecture, protocol, and how to write plugins.
+
+**Use this for:**
+- Understanding plugin architecture
+- Writing plugins in any language
+- Plugin discovery and lifecycle
+- UI metadata system
+- JSON-RPC protocol details
+
 ## Quick Start
 
 1. **New to the project?** Start with the [Technical Documentation](../agents.md) to understand the architecture.
@@ -40,6 +59,10 @@ Architecture and technical implementation details (located in project root).
 3. **Breaking down work?** Use the [Planning Guide](./planning-guide.md) to create tasks.
 
 4. **Implementing a feature?** Check the user story acceptance criteria and follow the planning guide.
+
+5. **Working with events?** See the [Events System](./events.md) documentation.
+
+6. **Writing a plugin?** See the [Plugin System](./plugin-system.md) documentation.
 
 ## Contributing
 
@@ -65,4 +88,6 @@ Track story status using:
 - Check the [Technical Documentation](../agents.md) for implementation details
 - Review existing code patterns in the codebase
 - Check [User Stories](./user-stories.md) for feature requirements
+- See [Events System](./events.md) for event-related questions
+- See [Plugin System](./plugin-system.md) for plugin development questions
 

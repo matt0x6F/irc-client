@@ -87,5 +87,5 @@ type PluginConfig struct {
 	Config    map[string]interface{} `db:"config" json:"config,omitempty"` // JSON stored as TEXT
 	ConfigSchema map[string]interface{} `db:"config_schema" json:"config_schema,omitempty"` // JSON stored as TEXT
 		CreatedAt   time.Time              `db:"created_at" json:"created_at"`
-		UpdatedAt   time.Time              `db:"updated_at" json:"updated_at"`
+	UpdatedAt time.Time              `db:"updated_at" json:"updated_at"`
 }
