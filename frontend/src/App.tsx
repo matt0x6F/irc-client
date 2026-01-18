@@ -17,6 +17,7 @@ function App() {
   const [selectedChannel, setSelectedChannel] = useState<string | null>(null);
   const [messages, setMessages] = useState<storage.Message[]>([]);
   const [showSettings, setShowSettings] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<'networks' | 'plugins' | 'display' | undefined>(undefined);
   const [connectionStatus, setConnectionStatus] = useState<Record<number, boolean>>({});
   const [channelInfo, setChannelInfo] = useState<main.ChannelInfo | null>(null);
   const [showTopicModal, setShowTopicModal] = useState(false);
@@ -26,6 +27,16 @@ function App() {
   // Track channels with unread activity (key: `${networkId}:${channelName}`)
   const [channelsWithActivity, setChannelsWithActivity] = useState<Set<string>>(new Set());
   const hasRestoredPaneRef = useRef<boolean>(false);
+  
+  // Sidebar widths (in pixels)
+  const [leftSidebarWidth, setLeftSidebarWidth] = useState(256); // w-64 = 256px
+  const [rightSidebarWidth, setRightSidebarWidth] = useState(256); // w-64 = 256px
+  const [isResizingLeft, setIsResizingLeft] = useState(false);
+  const [isResizingRight, setIsResizingRight] = useState(false);
+  const resizeStartX = useRef<number>(0);
+  const resizeStartWidth = useRef<number>(0);
+  const isResizingLeftRef = useRef<boolean>(false);
+  const isResizingRightRef = useRef<boolean>(false);
 
   useEffect(() => {
     loadNetworks();
@@ -35,8 +46,13 @@ function App() {
     }, 5000);
     
     // Listen for menu events to open settings
-    const unsubscribe = EventsOn('open-settings', () => {
-      console.log('[App] Received open-settings event from menu');
+    const unsubscribe = EventsOn('open-settings', (section?: string) => {
+      console.log('[App] Received open-settings event from menu', section);
+      if (section === 'networks' || section === 'plugins' || section === 'display') {
+        setSettingsSection(section);
+      } else {
+        setSettingsSection(undefined);
+      }
       setShowSettings(true);
     });
     
@@ -863,10 +879,63 @@ function App() {
     }
   };
 
+  // Resize handlers for left sidebar
+  const handleLeftResizeMove = useCallback((e: MouseEvent) => {
+    if (!isResizingLeftRef.current) return;
+    const diff = e.clientX - resizeStartX.current;
+    const newWidth = Math.max(200, Math.min(400, resizeStartWidth.current + diff));
+    setLeftSidebarWidth(newWidth);
+  }, []);
+
+  const handleLeftResizeEnd = useCallback(() => {
+    setIsResizingLeft(false);
+    isResizingLeftRef.current = false;
+    document.removeEventListener('mousemove', handleLeftResizeMove);
+    document.removeEventListener('mouseup', handleLeftResizeEnd);
+  }, [handleLeftResizeMove]);
+
+  const handleLeftResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizingLeft(true);
+    isResizingLeftRef.current = true;
+    resizeStartX.current = e.clientX;
+    resizeStartWidth.current = leftSidebarWidth;
+    document.addEventListener('mousemove', handleLeftResizeMove);
+    document.addEventListener('mouseup', handleLeftResizeEnd);
+  }, [leftSidebarWidth, handleLeftResizeMove, handleLeftResizeEnd]);
+
+  // Resize handlers for right sidebar
+  const handleRightResizeMove = useCallback((e: MouseEvent) => {
+    if (!isResizingRightRef.current) return;
+    const diff = resizeStartX.current - e.clientX; // Inverted for right sidebar
+    const newWidth = Math.max(150, Math.min(400, resizeStartWidth.current + diff));
+    setRightSidebarWidth(newWidth);
+  }, []);
+
+  const handleRightResizeEnd = useCallback(() => {
+    setIsResizingRight(false);
+    isResizingRightRef.current = false;
+    document.removeEventListener('mousemove', handleRightResizeMove);
+    document.removeEventListener('mouseup', handleRightResizeEnd);
+  }, [handleRightResizeMove]);
+
+  const handleRightResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizingRight(true);
+    isResizingRightRef.current = true;
+    resizeStartX.current = e.clientX;
+    resizeStartWidth.current = rightSidebarWidth;
+    document.addEventListener('mousemove', handleRightResizeMove);
+    document.addEventListener('mouseup', handleRightResizeEnd);
+  }, [rightSidebarWidth, handleRightResizeMove, handleRightResizeEnd]);
+
   return (
     <div className="flex h-screen bg-background">
       {/* Network Tree Sidebar */}
-      <div className="w-64 border-r border-border resize-x overflow-auto min-w-[200px] max-w-[400px]">
+      <div 
+        className="border-r border-border overflow-auto flex-shrink-0 relative bg-card/30"
+        style={{ width: `${leftSidebarWidth}px` }}
+      >
         <ServerTree
           servers={networks}
           selectedServer={selectedNetwork}
@@ -917,43 +986,64 @@ function App() {
           onDelete={handleDelete}
           connectionStatus={connectionStatus}
         />
+        {/* Resize handle */}
+        <div
+          className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:w-2 hover:bg-primary/40 bg-border/50 z-10"
+          style={{ transition: 'var(--transition-base)' }}
+          onMouseDown={handleLeftResizeStart}
+          title="Drag to resize"
+        />
       </div>
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col">
         {/* Header */}
-        <div className="border-b border-border">
-          <div className="h-12 flex items-center justify-between px-4">
+        <div className="border-b border-border bg-card/50 backdrop-blur-sm">
+          <div className="h-14 flex items-center justify-between px-5">
             <div className="flex items-center gap-2">
               {selectedNetwork !== null && (
                 <>
-                  <span className="font-semibold">
+                  <span className="font-semibold text-lg">
                     {networks.find(n => n.id === selectedNetwork)?.name || 'Unknown'}
                   </span>
-                  <span className={`w-2 h-2 rounded-full ${
-                    connectionStatus[selectedNetwork] ? 'bg-green-500' : 'bg-gray-400'
-                  }`} title={connectionStatus[selectedNetwork] ? 'Connected' : 'Disconnected'} />
+                  <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
+                    connectionStatus[selectedNetwork] 
+                      ? 'bg-green-500/20 text-green-700 dark:text-green-400' 
+                      : 'bg-gray-500/20 text-gray-700 dark:text-gray-400'
+                  }`} title={connectionStatus[selectedNetwork] ? 'Connected' : 'Disconnected'}>
+                    {connectionStatus[selectedNetwork] ? '●' : '○'}
+                  </span>
                   {selectedChannel && selectedChannel !== 'status' && !selectedChannel.startsWith('pm:') && (
-                    <span className="ml-2 text-muted-foreground">
-                      {selectedChannel.startsWith('#') || selectedChannel.startsWith('&') ? selectedChannel : `#${selectedChannel}`}
-                    </span>
+                    <>
+                      <span className="text-muted-foreground/50">/</span>
+                      <span className="text-muted-foreground font-medium">
+                        {selectedChannel.startsWith('#') || selectedChannel.startsWith('&') ? selectedChannel : `#${selectedChannel}`}
+                      </span>
+                    </>
                   )}
                   {selectedChannel && selectedChannel.startsWith('pm:') && (
-                    <span className="ml-2 text-muted-foreground">PM: {selectedChannel.substring(3)}</span>
+                    <>
+                      <span className="text-muted-foreground/50">/</span>
+                      <span className="text-muted-foreground font-medium">PM: {selectedChannel.substring(3)}</span>
+                    </>
                   )}
                   {selectedChannel === 'status' && (
-                    <span className="ml-2 text-muted-foreground">Status</span>
+                    <>
+                      <span className="text-muted-foreground/50">/</span>
+                      <span className="text-muted-foreground font-medium">Status</span>
+                    </>
                   )}
                 </>
               )}
             </div>
           </div>
           {selectedChannel && selectedChannel !== 'status' && !selectedChannel.startsWith('pm:') && channelInfo?.channel && (
-            <div className="px-4 pb-2 flex items-center gap-4 text-sm">
+            <div className="px-5 pb-3 flex items-center gap-4 text-sm border-t border-border/50 pt-2">
               {channelInfo.channel.modes && (
                 <button
                   onClick={() => setShowModeModal(true)}
-                  className="text-muted-foreground hover:text-foreground cursor-pointer"
+                  className="text-muted-foreground hover:text-foreground cursor-pointer transition-all px-2 py-1 rounded-md hover:bg-accent/50"
+                  style={{ transition: 'var(--transition-base)' }}
                   title="Click to edit modes"
                 >
                   Modes: {channelInfo.channel.modes}
@@ -961,7 +1051,8 @@ function App() {
               )}
               <button
                 onClick={() => setShowTopicModal(true)}
-                className="text-muted-foreground hover:text-foreground cursor-pointer italic flex-1 text-left truncate"
+                className="text-muted-foreground hover:text-foreground cursor-pointer italic flex-1 text-left truncate px-2 py-1 rounded-md hover:bg-accent/50 transition-all"
+                style={{ transition: 'var(--transition-base)' }}
                 title="Click to edit topic"
               >
                 {channelInfo.channel.topic || 'No topic set'}
@@ -977,24 +1068,40 @@ function App() {
             {selectedNetwork !== null ? (
               <MessageView messages={messages} networkId={selectedNetwork} selectedChannel={selectedChannel} />
             ) : (
-              <div className="flex items-center justify-center h-full text-muted-foreground">
-                Select a network to start chatting
+              <div className="flex flex-col items-center justify-center h-full text-muted-foreground px-4">
+                <div className="text-5xl mb-4 opacity-40">💬</div>
+                <div className="text-xl font-medium mb-2">Welcome to Cascade Chat</div>
+                <div className="text-sm text-center max-w-md">
+                  Select a network from the sidebar to start chatting, or add a new network in Settings.
+                </div>
               </div>
             )}
           </div>
 
           {/* Channel Info Sidebar - only show for channels, not PMs or status */}
           {selectedChannel && selectedChannel !== 'status' && !selectedChannel.startsWith('pm:') && (
-            <ChannelInfo 
-              networkId={selectedNetwork} 
-              channelName={selectedChannel}
-              currentNickname={selectedNetwork !== null ? networks.find(n => n.id === selectedNetwork)?.nickname || null : null}
-              onSendCommand={async (command: string) => {
-                if (selectedNetwork !== null) {
-                  await SendCommand(selectedNetwork, command);
-                }
-              }}
-            />
+            <div 
+              className="border-l border-border overflow-auto flex-shrink-0 relative"
+              style={{ width: `${rightSidebarWidth}px` }}
+            >
+              {/* Resize handle */}
+              <div
+                className="absolute top-0 left-0 w-1 h-full cursor-col-resize hover:w-2 hover:bg-primary/40 bg-border/50 z-10"
+                style={{ transition: 'var(--transition-base)' }}
+                onMouseDown={handleRightResizeStart}
+                title="Drag to resize"
+              />
+              <ChannelInfo 
+                networkId={selectedNetwork} 
+                channelName={selectedChannel}
+                currentNickname={selectedNetwork !== null ? networks.find(n => n.id === selectedNetwork)?.nickname || null : null}
+                onSendCommand={async (command: string) => {
+                  if (selectedNetwork !== null) {
+                    await SendCommand(selectedNetwork, command);
+                  }
+                }}
+              />
+            </div>
           )}
 
           {/* User Info Panel - show when user info is requested */}
@@ -1021,7 +1128,11 @@ function App() {
       {/* Settings Modal */}
       {showSettings && (
         <SettingsModal
-          onClose={() => setShowSettings(false)}
+          onClose={() => {
+            setShowSettings(false);
+            setSettingsSection(undefined);
+          }}
+          initialSection={settingsSection}
           onServerUpdate={() => {
             loadNetworks();
             loadConnectionStatus();

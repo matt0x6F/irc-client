@@ -2534,6 +2534,39 @@ func (a *App) OpenSettings() {
 	}
 }
 
+// OpenSettingsNetworks emits an event to open the settings modal to the networks section
+func (a *App) OpenSettingsNetworks() {
+	logger.Log.Debug().Msg("OpenSettingsNetworks called")
+	if a.ctx != nil {
+		logger.Log.Debug().Msg("Emitting open-settings event with networks section")
+		runtime.EventsEmit(a.ctx, "open-settings", "networks")
+	} else {
+		logger.Log.Warn().Msg("OpenSettingsNetworks: context is nil")
+	}
+}
+
+// OpenSettingsPlugins emits an event to open the settings modal to the plugins section
+func (a *App) OpenSettingsPlugins() {
+	logger.Log.Debug().Msg("OpenSettingsPlugins called")
+	if a.ctx != nil {
+		logger.Log.Debug().Msg("Emitting open-settings event with plugins section")
+		runtime.EventsEmit(a.ctx, "open-settings", "plugins")
+	} else {
+		logger.Log.Warn().Msg("OpenSettingsPlugins: context is nil")
+	}
+}
+
+// OpenSettingsDisplay emits an event to open the settings modal to the display section
+func (a *App) OpenSettingsDisplay() {
+	logger.Log.Debug().Msg("OpenSettingsDisplay called")
+	if a.ctx != nil {
+		logger.Log.Debug().Msg("Emitting open-settings event with display section")
+		runtime.EventsEmit(a.ctx, "open-settings", "display")
+	} else {
+		logger.Log.Warn().Msg("OpenSettingsDisplay: context is nil")
+	}
+}
+
 // GetNicknameColor gets color for a single nickname
 func (a *App) GetNicknameColor(networkID int64, nickname string) (string, error) {
 	return a.pluginManager.GetNicknameColor(networkID, nickname), nil

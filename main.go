@@ -11,6 +11,7 @@ import (
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/menu"
+	"github.com/wailsapp/wails/v2/pkg/menu/keys"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 )
@@ -46,11 +47,27 @@ func main() {
 		appMenu.Append(menu.AppMenu())
 	}
 
-	// Add File menu with Settings
+	// Add File menu with Settings and shortcuts
 	fileMenu := menu.NewMenu()
-	fileMenu.AddText("Settings...", nil, func(_ *menu.CallbackData) {
+	// Parse the comma shortcut (Cmd+, is standard for Settings/Preferences)
+	settingsAccel, err := keys.Parse("CmdOrCtrl+,")
+	if err != nil {
+		// Fallback to CmdOrCtrl+S if comma doesn't work
+		settingsAccel = keys.CmdOrCtrl("S")
+	}
+	fileMenu.AddText("Settings...", settingsAccel, func(_ *menu.CallbackData) {
 		// Emit event to frontend to open settings
 		app.OpenSettings()
+	})
+	fileMenu.AddSeparator()
+	fileMenu.AddText("Networks...", keys.CmdOrCtrl("N"), func(_ *menu.CallbackData) {
+		app.OpenSettingsNetworks()
+	})
+	fileMenu.AddText("Plugins...", keys.CmdOrCtrl("P"), func(_ *menu.CallbackData) {
+		app.OpenSettingsPlugins()
+	})
+	fileMenu.AddText("Display...", keys.CmdOrCtrl("D"), func(_ *menu.CallbackData) {
+		app.OpenSettingsDisplay()
 	})
 	appMenu.Append(menu.SubMenu("File", fileMenu))
 

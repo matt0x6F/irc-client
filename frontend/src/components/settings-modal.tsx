@@ -18,9 +18,10 @@ const CONSOLIDATE_JOIN_QUIT_KEY = 'cascade-chat-consolidate-join-quit';
 interface SettingsModalProps {
   onClose: () => void;
   onServerUpdate?: () => void;
+  initialSection?: SettingsSection;
 }
 
-export function SettingsModal({ onClose, onServerUpdate }: SettingsModalProps) {
+export function SettingsModal({ onClose, onServerUpdate, initialSection }: SettingsModalProps) {
   // Load last selected pane from localStorage, default to 'networks'
   const loadLastPane = (): SettingsSection => {
     try {
@@ -45,7 +46,16 @@ export function SettingsModal({ onClose, onServerUpdate }: SettingsModalProps) {
     }
   };
 
-  const [selectedSection, setSelectedSection] = useState<SettingsSection>(loadLastPane);
+  const [selectedSection, setSelectedSection] = useState<SettingsSection>(
+    initialSection || loadLastPane()
+  );
+
+  // Update section if initialSection prop changes
+  useEffect(() => {
+    if (initialSection) {
+      setSelectedSection(initialSection);
+    }
+  }, [initialSection]);
   const [networks, setNetworks] = useState<storage.Network[]>([]);
   const [plugins, setPlugins] = useState<main.PluginInfo[]>([]);
   const [editingNetwork, setEditingNetwork] = useState<storage.Network | null>(null);
@@ -403,7 +413,8 @@ export function SettingsModal({ onClose, onServerUpdate }: SettingsModalProps) {
                   e.stopPropagation();
                   handleAdd();
                 }}
-                className="px-3 py-1 text-sm border border-border rounded hover:bg-accent"
+                className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-accent transition-all shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)] disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{ transition: 'var(--transition-base)' }}
                 disabled={showAddForm || editingNetwork !== null}
               >
                 + Add Network
@@ -412,19 +423,20 @@ export function SettingsModal({ onClose, onServerUpdate }: SettingsModalProps) {
 
             {/* Add/Edit Form */}
             {(showAddForm || editingNetwork) && (
-              <div className="mb-4 p-4 border border-border rounded bg-muted/50">
-                <h4 className="font-semibold mb-3">
+              <div className="mb-4 p-5 border border-border rounded-lg bg-card/50 shadow-[var(--shadow-sm)]">
+                <h4 className="font-semibold mb-4 text-lg">
                   {editingNetwork ? 'Edit Network' : 'Add Network'}
                 </h4>
-                <form onSubmit={handleSave} className="space-y-3">
+                <form onSubmit={handleSave} className="space-y-4">
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-sm font-medium mb-1">Name</label>
+                      <label className="block text-sm font-medium mb-1.5">Name</label>
                       <input
                         type="text"
                         value={formData.name || ''}
                         onChange={(e) => setFormData(main.NetworkConfig.createFrom({ ...formData, name: e.target.value }))}
-                        className="w-full px-2 py-1 text-sm border border-border rounded"
+                        className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all shadow-[var(--shadow-sm)] focus:shadow-[var(--shadow-md)]"
+                        style={{ transition: 'var(--transition-base)' }}
                         required
                         placeholder="My IRC Server"
                       />
@@ -493,7 +505,8 @@ export function SettingsModal({ onClose, onServerUpdate }: SettingsModalProps) {
                                   setFormData(main.NetworkConfig.createFrom({ ...formData, servers: updated }));
                                 }
                               }}
-                              className="px-2 py-1 text-sm border border-border rounded"
+                              className="px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all shadow-[var(--shadow-sm)] focus:shadow-[var(--shadow-md)]"
+                              style={{ transition: 'var(--transition-base)' }}
                               placeholder="irc.example.com"
                             />
                             <input
@@ -512,7 +525,8 @@ export function SettingsModal({ onClose, onServerUpdate }: SettingsModalProps) {
                                   setFormData(main.NetworkConfig.createFrom({ ...formData, servers: updated }));
                                 }
                               }}
-                              className="px-2 py-1 text-sm border border-border rounded"
+                              className="px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all shadow-[var(--shadow-sm)] focus:shadow-[var(--shadow-md)]"
+                              style={{ transition: 'var(--transition-base)' }}
                               min="1"
                               max="65535"
                             />
@@ -631,38 +645,42 @@ export function SettingsModal({ onClose, onServerUpdate }: SettingsModalProps) {
                         type="text"
                         value={formData.nickname}
                         onChange={(e) => setFormData(main.NetworkConfig.createFrom({ ...formData, nickname: e.target.value }))}
-                        className="w-full px-2 py-1 text-sm border border-border rounded"
+                        className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all shadow-[var(--shadow-sm)] focus:shadow-[var(--shadow-md)]"
+                        style={{ transition: 'var(--transition-base)' }}
                         required
                         placeholder="MyNick"
                       />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium mb-1">Username</label>
+                      <label className="block text-sm font-medium mb-1.5">Username</label>
                       <input
                         type="text"
                         value={formData.username}
                         onChange={(e) => setFormData(main.NetworkConfig.createFrom({ ...formData, username: e.target.value }))}
-                        className="w-full px-2 py-1 text-sm border border-border rounded"
+                        className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all shadow-[var(--shadow-sm)] focus:shadow-[var(--shadow-md)]"
+                        style={{ transition: 'var(--transition-base)' }}
                         placeholder="username"
                       />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium mb-1">Realname</label>
+                      <label className="block text-sm font-medium mb-1.5">Realname</label>
                       <input
                         type="text"
                         value={formData.realname}
                         onChange={(e) => setFormData(main.NetworkConfig.createFrom({ ...formData, realname: e.target.value }))}
-                        className="w-full px-2 py-1 text-sm border border-border rounded"
+                        className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all shadow-[var(--shadow-sm)] focus:shadow-[var(--shadow-md)]"
+                        style={{ transition: 'var(--transition-base)' }}
                         placeholder="Real Name"
                       />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium mb-1">Password (optional)</label>
+                      <label className="block text-sm font-medium mb-1.5">Password (optional)</label>
                       <input
                         type="password"
                         value={formData.password}
                         onChange={(e) => setFormData(main.NetworkConfig.createFrom({ ...formData, password: e.target.value }))}
-                        className="w-full px-2 py-1 text-sm border border-border rounded"
+                        className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all shadow-[var(--shadow-sm)] focus:shadow-[var(--shadow-md)]"
+                        style={{ transition: 'var(--transition-base)' }}
                         placeholder="Server password"
                       />
                     </div>
@@ -767,17 +785,19 @@ export function SettingsModal({ onClose, onServerUpdate }: SettingsModalProps) {
                     )}
                   </div>
 
-                  <div className="flex gap-2 justify-end mt-4">
+                  <div className="flex gap-3 justify-end mt-6">
                     <button
                       type="button"
                       onClick={handleCancel}
-                      className="px-4 py-2 text-sm border border-border rounded hover:bg-accent"
+                      className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-accent transition-all shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)]"
+                      style={{ transition: 'var(--transition-base)' }}
                     >
                       Cancel
                     </button>
                     <button
                       type="submit"
-                      className="px-4 py-2 text-sm bg-primary text-primary-foreground rounded hover:bg-primary/90"
+                      className="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-all shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)] font-medium"
+                      style={{ transition: 'var(--transition-base)' }}
                     >
                       {editingNetwork ? 'Update' : 'Add'} Network
                     </button>
@@ -800,9 +820,10 @@ export function SettingsModal({ onClose, onServerUpdate }: SettingsModalProps) {
                   return (
                     <div
                       key={network.id}
-                      className={`border border-border rounded p-4 ${
-                        isEditing ? 'bg-accent' : ''
+                      className={`border border-border rounded-lg p-4 shadow-[var(--shadow-sm)] transition-all ${
+                        isEditing ? 'bg-primary/10 border-primary' : 'hover:shadow-[var(--shadow-md)]'
                       }`}
+                      style={{ transition: 'var(--transition-base)' }}
                     >
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
@@ -833,28 +854,32 @@ export function SettingsModal({ onClose, onServerUpdate }: SettingsModalProps) {
                           {isConnected ? (
                             <button
                               onClick={() => handleDisconnect(network.id)}
-                              className="px-3 py-1 text-xs border border-border rounded hover:bg-destructive hover:text-destructive-foreground"
+                              className="px-3 py-1.5 text-xs border border-border rounded-lg hover:bg-destructive hover:text-destructive-foreground transition-all shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)]"
+                              style={{ transition: 'var(--transition-base)' }}
                             >
                               Disconnect
                             </button>
                           ) : (
                             <button
                               onClick={() => handleConnect(network)}
-                              className="px-3 py-1 text-xs border border-border rounded hover:bg-primary hover:text-primary-foreground"
+                              className="px-3 py-1.5 text-xs border border-border rounded-lg hover:bg-primary hover:text-primary-foreground transition-all shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)]"
+                              style={{ transition: 'var(--transition-base)' }}
                             >
                               Connect
                             </button>
                           )}
                           <button
                             onClick={() => handleEdit(network)}
-                            className="px-3 py-1 text-xs border border-border rounded hover:bg-accent"
+                            className="px-3 py-1.5 text-xs border border-border rounded-lg hover:bg-accent transition-all shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)] disabled:opacity-50 disabled:cursor-not-allowed"
+                            style={{ transition: 'var(--transition-base)' }}
                             disabled={showAddForm}
                           >
                             Edit
                           </button>
                           <button
                             onClick={() => handleDelete(network.id)}
-                            className="px-3 py-1 text-xs border border-border rounded hover:bg-destructive hover:text-destructive-foreground"
+                            className="px-3 py-1.5 text-xs border border-border rounded-lg hover:bg-destructive hover:text-destructive-foreground transition-all shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)] disabled:opacity-50 disabled:cursor-not-allowed"
+                            style={{ transition: 'var(--transition-base)' }}
                             disabled={isConnected || isEditing}
                           >
                             Delete
@@ -992,17 +1017,18 @@ export function SettingsModal({ onClose, onServerUpdate }: SettingsModalProps) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50" onClick={onClose}>
       <div 
-        className="bg-background border border-border rounded-lg w-full max-w-5xl max-h-[85vh] flex flex-col overflow-hidden"
-        style={{ backgroundColor: 'var(--background)' }}
+        className="bg-card border border-border rounded-lg shadow-[var(--shadow-xl)] w-full max-w-5xl max-h-[85vh] flex flex-col overflow-hidden"
+        style={{ backgroundColor: 'var(--card)' }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="p-4 border-b border-border flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Settings</h2>
+        <div className="p-4 border-b border-border flex items-center justify-between bg-card/50">
+          <h2 className="text-xl font-semibold">Settings</h2>
           <button
             onClick={onClose}
-            className="px-3 py-1 text-sm border border-border rounded hover:bg-accent"
+            className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-accent transition-all shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)]"
+            style={{ transition: 'var(--transition-base)' }}
           >
             Close
           </button>
@@ -1010,35 +1036,38 @@ export function SettingsModal({ onClose, onServerUpdate }: SettingsModalProps) {
         
         <div className="flex-1 flex overflow-hidden">
           {/* Left Sidebar Navigation */}
-          <div className="w-48 border-r border-border flex-shrink-0 rounded-bl-lg" style={{ backgroundColor: 'var(--background)' }}>
+          <div className="w-48 border-r border-border flex-shrink-0 rounded-bl-lg bg-card/30" style={{ backgroundColor: 'var(--card)' }}>
             <nav className="p-2">
               <button
                 onClick={() => setSelectedSection('networks')}
-                className={`w-full text-left px-3 py-2 rounded text-sm transition-colors ${
+                className={`w-full text-left px-3 py-2.5 rounded-md text-sm transition-all ${
                   selectedSection === 'networks'
-                    ? 'bg-primary text-primary-foreground font-medium border-l-2 border-primary'
-                    : 'hover:bg-accent/50 text-foreground'
+                    ? 'bg-primary/10 text-primary font-medium border-l-2 border-primary shadow-[var(--shadow-sm)]'
+                    : 'hover:bg-accent/70 text-foreground'
                 }`}
+                style={{ transition: 'var(--transition-base)' }}
               >
                 Networks
               </button>
               <button
                 onClick={() => setSelectedSection('plugins')}
-                className={`w-full text-left px-3 py-2 rounded text-sm transition-colors ${
+                className={`w-full text-left px-3 py-2.5 rounded-md text-sm transition-all ${
                   selectedSection === 'plugins'
-                    ? 'bg-primary text-primary-foreground font-medium border-l-2 border-primary'
-                    : 'hover:bg-accent/50 text-foreground'
+                    ? 'bg-primary/10 text-primary font-medium border-l-2 border-primary shadow-[var(--shadow-sm)]'
+                    : 'hover:bg-accent/70 text-foreground'
                 }`}
+                style={{ transition: 'var(--transition-base)' }}
               >
                 Plugins
               </button>
               <button
                 onClick={() => setSelectedSection('display')}
-                className={`w-full text-left px-3 py-2 rounded text-sm transition-colors ${
+                className={`w-full text-left px-3 py-2.5 rounded-md text-sm transition-all ${
                   selectedSection === 'display'
-                    ? 'bg-primary text-primary-foreground font-medium border-l-2 border-primary'
-                    : 'hover:bg-accent/50 text-foreground'
+                    ? 'bg-primary/10 text-primary font-medium border-l-2 border-primary shadow-[var(--shadow-sm)]'
+                    : 'hover:bg-accent/70 text-foreground'
                 }`}
+                style={{ transition: 'var(--transition-base)' }}
               >
                 Display
               </button>

@@ -114,6 +114,18 @@ export function OpenSettings() {
   return window['go']['main']['App']['OpenSettings']();
 }
 
+export function OpenSettingsDisplay() {
+  return window['go']['main']['App']['OpenSettingsDisplay']();
+}
+
+export function OpenSettingsNetworks() {
+  return window['go']['main']['App']['OpenSettingsNetworks']();
+}
+
+export function OpenSettingsPlugins() {
+  return window['go']['main']['App']['OpenSettingsPlugins']();
+}
+
 export function ReloadPlugin(arg1) {
   return window['go']['main']['App']['ReloadPlugin'](arg1);
 }

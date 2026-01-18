@@ -146,8 +146,8 @@ export function InputArea({ onSendMessage, placeholder = 'Type a message...', ne
   };
 
   return (
-    <div className="border-t border-border p-4">
-      <form onSubmit={handleSubmit} className="flex space-x-2">
+    <div className="border-t border-border p-4 bg-card/50 backdrop-blur-sm">
+      <form onSubmit={handleSubmit} className="flex space-x-3">
         <input
           ref={inputRef}
           type="text"
@@ -155,11 +155,14 @@ export function InputArea({ onSendMessage, placeholder = 'Type a message...', ne
           onChange={(e) => setMessage(e.target.value)}
           onKeyDown={performTabCompletion}
           placeholder={placeholder}
-          className="flex-1 px-4 py-2 border border-border rounded focus:outline-none focus:ring-2 focus:ring-primary"
+          className="flex-1 px-4 py-2.5 border border-border rounded-lg bg-background text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all shadow-[var(--shadow-sm)] focus:shadow-[var(--shadow-md)]"
+          style={{ transition: 'var(--transition-base)' }}
         />
         <button
           type="submit"
-          className="px-6 py-2 bg-primary text-primary-foreground rounded hover:bg-primary/90"
+          className="px-6 py-2.5 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 active:scale-[0.98] font-medium shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          style={{ transition: 'var(--transition-base)' }}
+          disabled={!message.trim()}
         >
           Send
         </button>

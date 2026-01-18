@@ -60,6 +60,12 @@ export function OnEvent(arg1:events.Event):Promise<void>;
 
 export function OpenSettings():Promise<void>;
 
+export function OpenSettingsDisplay():Promise<void>;
+
+export function OpenSettingsNetworks():Promise<void>;
+
+export function OpenSettingsPlugins():Promise<void>;
+
 export function ReloadPlugin(arg1:string):Promise<void>;
 
 export function SaveNetwork(arg1:main.NetworkConfig):Promise<void>;

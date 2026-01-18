@@ -4,6 +4,7 @@ import { main, storage } from '../../wailsjs/go/models';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import { UserInfo } from './user-info';
 import { useNicknameColors } from '../hooks/useNicknameColors';
+import { Shield, Crown, Star, Mic, ShieldCheck } from 'lucide-react';
 
 interface ChannelInfoProps {
   networkId: number | null;
@@ -160,6 +161,7 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
         
         // For channel-specific events, check if it's for the current channel
         const target = eventData.channel || eventData.target;
+        
         if (target) {
           const eventChannelNormalized = normalizeChannel(target);
           const currentChannelNormalized = normalizeChannel(currentChannelName);
@@ -168,8 +170,8 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
           if (eventType === 'user.nick' || eventChannelNormalized === currentChannelNormalized) {
             loadChannelInfo();
           }
-        } else if (eventType === 'user.nick') {
-          // NICK events affect all channels, so always refresh
+        } else if (eventType === 'user.nick' || eventType === 'user.quit') {
+          // NICK and QUIT events affect all channels, so always refresh
           loadChannelInfo();
         }
       }
@@ -464,15 +466,15 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
   };
 
   return (
-    <div className="w-64 border-l border-border flex flex-col h-full bg-muted/30 flex-shrink-0">
+    <div className="w-full flex flex-col h-full bg-card/30">
       {/* Channel Header */}
-      <div className="p-4 border-b border-border">
-        <h3 className="font-semibold text-sm">{channel.name}</h3>
+      <div className="p-4 border-b border-border bg-card/50">
+        <h3 className="font-semibold text-base">{channel.name}</h3>
       </div>
 
       {/* Users List */}
       <div className="flex-1 overflow-y-auto p-4">
-        <div className="text-xs font-semibold text-muted-foreground mb-2 uppercase">
+        <div className="text-xs font-semibold text-muted-foreground mb-3 uppercase tracking-wider">
           Users ({users.length})
         </div>
         
@@ -483,12 +485,13 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
             {usersByMode['~'].map(user => (
               <div 
                 key={user.id} 
-                className="text-sm py-0.5 cursor-pointer hover:bg-accent rounded px-1"
+                className="text-sm py-1.5 px-2 cursor-pointer hover:bg-accent/70 rounded-md transition-all"
+                style={{ transition: 'var(--transition-base)' }}
                 onContextMenu={(e) => handleContextMenu(e, user)}
               >
-                <span className="text-purple-600">~</span>
+                <Crown className="inline w-3.5 h-3.5 text-purple-600" />
                 <span 
-                  className="ml-1"
+                  className="ml-1.5 font-medium"
                   style={{ color: nicknameColors.get(user.nickname) || undefined }}
                   title={nicknameColors.get(user.nickname) ? `Color: ${nicknameColors.get(user.nickname)}` : 'No color'}
                 >
@@ -506,12 +509,13 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
             {usersByMode['&'].map(user => (
               <div 
                 key={user.id} 
-                className="text-sm py-0.5 cursor-pointer hover:bg-accent rounded px-1"
+                className="text-sm py-1.5 px-2 cursor-pointer hover:bg-accent/70 rounded-md transition-all"
+                style={{ transition: 'var(--transition-base)' }}
                 onContextMenu={(e) => handleContextMenu(e, user)}
               >
-                <span className="text-red-600">&</span>
+                <ShieldCheck className="inline w-3.5 h-3.5 text-red-600" />
                 <span 
-                  className="ml-1"
+                  className="ml-1.5 font-medium"
                   style={{ color: nicknameColors.get(user.nickname) || undefined }}
                   title={nicknameColors.get(user.nickname) ? `Color: ${nicknameColors.get(user.nickname)}` : 'No color'}
                 >
@@ -529,12 +533,13 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
             {usersByMode['@'].map(user => (
               <div 
                 key={user.id} 
-                className="text-sm py-0.5 cursor-pointer hover:bg-accent rounded px-1"
+                className="text-sm py-1.5 px-2 cursor-pointer hover:bg-accent/70 rounded-md transition-all"
+                style={{ transition: 'var(--transition-base)' }}
                 onContextMenu={(e) => handleContextMenu(e, user)}
               >
-                <span className="text-red-500">@</span>
+                <Shield className="inline w-3.5 h-3.5 text-red-500" />
                 <span 
-                  className="ml-1"
+                  className="ml-1.5 font-medium"
                   style={{ color: nicknameColors.get(user.nickname) || undefined }}
                   title={nicknameColors.get(user.nickname) ? `Color: ${nicknameColors.get(user.nickname)}` : 'No color'}
                 >
@@ -552,12 +557,13 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
             {usersByMode['%'].map(user => (
               <div 
                 key={user.id} 
-                className="text-sm py-0.5 cursor-pointer hover:bg-accent rounded px-1"
+                className="text-sm py-1.5 px-2 cursor-pointer hover:bg-accent/70 rounded-md transition-all"
+                style={{ transition: 'var(--transition-base)' }}
                 onContextMenu={(e) => handleContextMenu(e, user)}
               >
-                <span className="text-orange-500">%</span>
+                <Star className="inline w-3.5 h-3.5 text-orange-500" />
                 <span 
-                  className="ml-1"
+                  className="ml-1.5 font-medium"
                   style={{ color: nicknameColors.get(user.nickname) || undefined }}
                   title={nicknameColors.get(user.nickname) ? `Color: ${nicknameColors.get(user.nickname)}` : 'No color'}
                 >
@@ -575,12 +581,13 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
             {usersByMode['+'].map(user => (
               <div 
                 key={user.id} 
-                className="text-sm py-0.5 cursor-pointer hover:bg-accent rounded px-1"
+                className="text-sm py-1.5 px-2 cursor-pointer hover:bg-accent/70 rounded-md transition-all"
+                style={{ transition: 'var(--transition-base)' }}
                 onContextMenu={(e) => handleContextMenu(e, user)}
               >
-                <span className="text-blue-500">+</span>
+                <Mic className="inline w-3.5 h-3.5 text-blue-500" />
                 <span 
-                  className="ml-1"
+                  className="ml-1.5 font-medium"
                   style={{ color: nicknameColors.get(user.nickname) || undefined }}
                   title={nicknameColors.get(user.nickname) ? `Color: ${nicknameColors.get(user.nickname)}` : 'No color'}
                 >
@@ -598,10 +605,12 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
             {usersByMode[''].map(user => (
               <div 
                 key={user.id} 
-                className="text-sm py-0.5 cursor-pointer hover:bg-accent rounded px-1"
+                className="text-sm py-1.5 px-2 cursor-pointer hover:bg-accent/70 rounded-md transition-all"
+                style={{ transition: 'var(--transition-base)' }}
                 onContextMenu={(e) => handleContextMenu(e, user)}
               >
                 <span
+                  className="font-medium"
                   style={{ color: nicknameColors.get(user.nickname) || undefined }}
                   title={nicknameColors.get(user.nickname) ? `Color: ${nicknameColors.get(user.nickname)}` : 'No color'}
                 >
@@ -621,11 +630,12 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
       {contextMenu && contextMenu.user && (
         <div
           ref={contextMenuRef}
-          className="fixed z-50 bg-background border border-border rounded-md shadow-lg min-w-[180px]"
+          className="fixed z-50 bg-card border border-border rounded-lg shadow-[var(--shadow-lg)] min-w-[180px] backdrop-blur-md"
           style={{
             left: `${contextMenu.x}px`,
             top: `${contextMenu.y}px`,
-            backgroundColor: 'var(--background)',
+            backgroundColor: 'var(--card)',
+            transition: 'var(--transition-base)',
           }}
           onClick={(e) => e.stopPropagation()}
         >
@@ -637,13 +647,15 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
                 {canKick() && (
                   <>
                     <button
-                      className="w-full text-left px-4 py-2 text-sm hover:bg-accent text-foreground"
+                      className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
+                      style={{ transition: 'var(--transition-base)' }}
                       onClick={() => handleKick(contextMenu.user!.nickname)}
                     >
                       Kick
                     </button>
                     <button
-                      className="w-full text-left px-4 py-2 text-sm hover:bg-accent text-foreground"
+                      className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
+                      style={{ transition: 'var(--transition-base)' }}
                       onClick={() => handleKickBan(contextMenu.user!.nickname)}
                     >
                       Kick & Ban
@@ -656,13 +668,15 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
                 {canBan() && (
                   <>
                     <button
-                      className="w-full text-left px-4 py-2 text-sm hover:bg-accent text-foreground"
+                      className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
+                      style={{ transition: 'var(--transition-base)' }}
                       onClick={() => handleBan(contextMenu.user!.nickname)}
                     >
                       Ban
                     </button>
                     <button
-                      className="w-full text-left px-4 py-2 text-sm hover:bg-accent text-foreground"
+                      className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
+                      style={{ transition: 'var(--transition-base)' }}
                       onClick={() => handleUnban(contextMenu.user!.nickname)}
                     >
                       Unban
@@ -675,13 +689,15 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
                 {canOp() && (
                   <>
                     <button
-                      className="w-full text-left px-4 py-2 text-sm hover:bg-accent text-foreground"
+                      className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
+                      style={{ transition: 'var(--transition-base)' }}
                       onClick={() => handleOp(contextMenu.user!.nickname)}
                     >
                       Op
                     </button>
                     <button
-                      className="w-full text-left px-4 py-2 text-sm hover:bg-accent text-foreground"
+                      className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
+                      style={{ transition: 'var(--transition-base)' }}
                       onClick={() => handleDeop(contextMenu.user!.nickname)}
                     >
                       Deop
@@ -692,13 +708,15 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
                 {canVoice() && (
                   <>
                     <button
-                      className="w-full text-left px-4 py-2 text-sm hover:bg-accent text-foreground"
+                      className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
+                      style={{ transition: 'var(--transition-base)' }}
                       onClick={() => handleVoice(contextMenu.user!.nickname)}
                     >
                       Voice
                     </button>
                     <button
-                      className="w-full text-left px-4 py-2 text-sm hover:bg-accent text-foreground"
+                      className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
+                      style={{ transition: 'var(--transition-base)' }}
                       onClick={() => handleDevoice(contextMenu.user!.nickname)}
                     >
                       Devoice
@@ -711,7 +729,8 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
                   <>
                     {(canOp() || canVoice()) && <div className="border-t border-border my-1" />}
                     <button
-                      className="w-full text-left px-4 py-2 text-sm hover:bg-accent text-foreground"
+                      className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
+                      style={{ transition: 'var(--transition-base)' }}
                       onClick={() => handleInvite(contextMenu.user!.nickname)}
                     >
                       Invite
@@ -738,7 +757,8 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
             {/* User Info & CTCP options - available for all users */}
             <div className="border-t border-border my-1" />
             <button
-              className="w-full text-left px-4 py-2 text-sm hover:bg-accent text-foreground"
+              className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
+              style={{ transition: 'var(--transition-base)' }}
               onClick={() => {
                 if (contextMenu.user) {
                   setShowUserInfo({ nickname: contextMenu.user.nickname });
@@ -753,7 +773,8 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
               CTCP
             </div>
             <button
-              className="w-full text-left px-4 py-2 text-sm hover:bg-accent text-foreground"
+              className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
+              style={{ transition: 'var(--transition-base)' }}
               onClick={() => {
                 if (contextMenu.user && networkId !== null) {
                   onSendCommand(`/version ${contextMenu.user.nickname}`);
@@ -764,7 +785,8 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
               CTCP Version
             </button>
             <button
-              className="w-full text-left px-4 py-2 text-sm hover:bg-accent text-foreground"
+              className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
+              style={{ transition: 'var(--transition-base)' }}
               onClick={() => {
                 if (contextMenu.user && networkId !== null) {
                   onSendCommand(`/time ${contextMenu.user.nickname}`);
@@ -775,7 +797,8 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
               CTCP Time
             </button>
             <button
-              className="w-full text-left px-4 py-2 text-sm hover:bg-accent text-foreground"
+              className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
+              style={{ transition: 'var(--transition-base)' }}
               onClick={() => {
                 if (contextMenu.user && networkId !== null) {
                   onSendCommand(`/ping ${contextMenu.user.nickname}`);
@@ -786,7 +809,8 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
               CTCP Ping
             </button>
             <button
-              className="w-full text-left px-4 py-2 text-sm hover:bg-accent text-foreground"
+              className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
+              style={{ transition: 'var(--transition-base)' }}
               onClick={() => {
                 if (contextMenu.user && networkId !== null) {
                   onSendCommand(`/clientinfo ${contextMenu.user.nickname}`);

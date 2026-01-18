@@ -316,9 +316,9 @@ export function ServerTree({
   }, [expandedServers]);
 
   return (
-    <div className="h-full flex flex-col relative">
-        <div className="p-4 border-b border-border">
-        <h2 className="font-semibold">Networks</h2>
+    <div className="h-full flex flex-col relative bg-card/30">
+        <div className="p-4 border-b border-border bg-card/50">
+        <h2 className="font-semibold text-lg">Networks</h2>
       </div>
 
       <div className="flex-1 overflow-y-auto">
@@ -333,9 +333,12 @@ export function ServerTree({
               return (
                 <div key={network.id}>
                   <div
-                    className={`flex items-center p-2 cursor-pointer hover:bg-accent select-none ${
-                      isSelected ? 'bg-accent border-l-2 border-primary' : ''
+                    className={`flex items-center p-2.5 cursor-pointer select-none transition-all ${
+                      isSelected 
+                        ? 'bg-primary/10 border-l-4 border-primary' 
+                        : 'hover:bg-accent/70'
                     }`}
+                    style={{ transition: 'var(--transition-base)' }}
                     onClick={() => handleServerClick(network.id)}
                     onContextMenu={(e) => handleContextMenu(e, 'server', network.id)}
                     onMouseDown={(e) => {
@@ -345,11 +348,11 @@ export function ServerTree({
                       }
                     }}
                   >
-                    <span className="mr-2 text-xs">
+                    <span className="mr-2 text-xs opacity-60">
                       {isExpanded ? '▼' : '▶'}
                     </span>
-                    <span className={`w-2 h-2 rounded-full mr-2 ${
-                      isConnected ? 'bg-green-500' : 'bg-gray-400'
+                    <span className={`w-2 h-2 rounded-full mr-2 shadow-sm ${
+                      isConnected ? 'bg-green-500 animate-pulse' : 'bg-gray-400'
                     }`} title={isConnected ? 'Connected' : 'Disconnected'} />
                     <span className="flex-1 font-medium">{network.name}</span>
                   </div>
@@ -357,9 +360,12 @@ export function ServerTree({
                     <div className="pl-6">
                       {/* Status channel */}
                       <div
-                        className={`p-2 cursor-pointer hover:bg-accent select-none ${
-                          isSelected && selectedChannel === 'status' ? 'bg-accent border-l-2 border-primary' : ''
+                        className={`p-2 cursor-pointer select-none transition-all ${
+                          isSelected && selectedChannel === 'status' 
+                            ? 'bg-primary/10 border-l-4 border-primary' 
+                            : 'hover:bg-accent/70'
                         }`}
+                        style={{ transition: 'var(--transition-base)' }}
                         onClick={() => handleChannelClick(network.id, 'status')}
                         onMouseDown={(e) => {
                           if (e.button === 2) {
@@ -376,9 +382,12 @@ export function ServerTree({
                         return (
                           <div
                             key={channel}
-                            className={`p-2 cursor-pointer hover:bg-accent select-none flex items-center justify-between ${
-                              isSelected && selectedChannel === channel ? 'bg-accent border-l-2 border-primary' : ''
+                            className={`p-2 cursor-pointer select-none flex items-center justify-between transition-all ${
+                              isSelected && selectedChannel === channel 
+                                ? 'bg-primary/10 border-l-4 border-primary' 
+                                : 'hover:bg-accent/70'
                             }`}
+                            style={{ transition: 'var(--transition-base)' }}
                             onClick={() => handleChannelClick(network.id, channel)}
                             onContextMenu={(e) => handleContextMenu(e, 'channel', network.id, channel)}
                             onMouseDown={(e) => {
@@ -389,7 +398,7 @@ export function ServerTree({
                           >
                             <span className={`text-sm ${hasActivity ? 'font-semibold' : ''}`}>{channel}</span>
                             {hasActivity && (
-                              <span className="w-2 h-2 rounded-full bg-primary ml-2" title="Unread activity" />
+                              <span className="w-2 h-2 rounded-full bg-primary ml-2 animate-pulse shadow-sm" title="Unread activity" />
                             )}
                           </div>
                         );
@@ -407,9 +416,12 @@ export function ServerTree({
                             return (
                               <div
                                 key={pmKey}
-                                className={`p-2 cursor-pointer hover:bg-accent select-none flex items-center justify-between ${
-                                  isSelected && selectedChannel === pmKey ? 'bg-accent border-l-2 border-primary' : ''
+                                className={`p-2 cursor-pointer select-none flex items-center justify-between transition-all ${
+                                  isSelected && selectedChannel === pmKey 
+                                    ? 'bg-primary/10 border-l-4 border-primary' 
+                                    : 'hover:bg-accent/70'
                                 }`}
+                                style={{ transition: 'var(--transition-base)' }}
                                 onClick={() => handleChannelClick(network.id, pmKey)}
                                 onContextMenu={(e) => handleContextMenu(e, 'pm', network.id, undefined, user)}
                                 onMouseDown={(e) => {
@@ -420,7 +432,7 @@ export function ServerTree({
                               >
                                 <span className={`text-sm ${hasActivity ? 'font-semibold' : ''}`}>💬 {user}</span>
                                 {hasActivity && (
-                                  <span className="w-2 h-2 rounded-full bg-primary ml-2" title="Unread activity" />
+                                  <span className="w-2 h-2 rounded-full bg-primary ml-2 animate-pulse shadow-sm" title="Unread activity" />
                                 )}
                               </div>
                             );
@@ -444,14 +456,14 @@ export function ServerTree({
       {contextMenu.type && (
         <div
           ref={contextMenuRef}
-          className="fixed border border-border rounded shadow-lg z-50 w-auto py-1"
+          className="fixed border border-border rounded-lg shadow-[var(--shadow-lg)] z-50 w-auto py-1 bg-card/95 backdrop-blur-md"
           style={{ 
             left: contextMenu.x, 
             top: contextMenu.y,
-            backgroundColor: 'var(--background)',
-            backdropFilter: 'blur(8px)',
+            backgroundColor: 'var(--card)',
             minWidth: '140px',
             maxWidth: '200px',
+            transition: 'var(--transition-base)',
           }}
         >
           {contextMenu.type === 'server' && contextMenu.serverId && (
@@ -460,18 +472,20 @@ export function ServerTree({
                 Network
               </div>
               {connectionStatus[contextMenu.serverId] ? (
-                <button
-                  className="w-full text-left px-4 py-2 text-sm hover:bg-accent text-foreground"
-                  onClick={() => {
-                    onDisconnect(contextMenu.serverId!);
-                    setContextMenu({ x: 0, y: 0, type: null });
-                  }}
-                >
-                  Disconnect
-                </button>
+              <button
+                className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
+                style={{ transition: 'var(--transition-base)' }}
+                onClick={() => {
+                  onDisconnect(contextMenu.serverId!);
+                  setContextMenu({ x: 0, y: 0, type: null });
+                }}
+              >
+                Disconnect
+              </button>
               ) : (
                 <button
-                  className="w-full text-left px-4 py-2 text-sm hover:bg-accent text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground disabled:opacity-50 disabled:cursor-not-allowed "
+                  style={{ transition: 'var(--transition-base)' }}
                   disabled={contextMenu.serverId !== undefined && contextMenu.serverId in connectionStatus && connectionStatus[contextMenu.serverId]}
                   onClick={async () => {
                     if (!contextMenu.serverId) return;
@@ -528,7 +542,8 @@ export function ServerTree({
               )}
               <div className="border-t border-border my-1" />
               <button
-                className="w-full text-left px-4 py-2 text-sm hover:bg-accent text-foreground"
+                className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
+                style={{ transition: 'var(--transition-base)' }}
                 onClick={async () => {
                   if (!contextMenu.serverId) return;
                   const serverId = contextMenu.serverId;
@@ -558,7 +573,8 @@ export function ServerTree({
               </button>
               <div className="border-t border-border my-1" />
               <button
-                className="w-full text-left px-4 py-2 text-sm hover:bg-destructive hover:text-destructive-foreground text-foreground"
+                className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-destructive hover:text-destructive-foreground text-foreground "
+                style={{ transition: 'var(--transition-base)' }}
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
@@ -579,7 +595,8 @@ export function ServerTree({
                 Channel
               </div>
               <button
-                className="w-full text-left px-4 py-2 text-sm hover:bg-accent text-foreground"
+                className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
+                style={{ transition: 'var(--transition-base)' }}
                 onClick={async () => {
                   if (!contextMenu.serverId || !contextMenu.channel) return;
                   const serverId = contextMenu.serverId;
@@ -624,7 +641,8 @@ export function ServerTree({
               </button>
               {contextMenuIsJoined ? (
                 <button
-                  className="w-full text-left px-4 py-2 text-sm hover:bg-accent text-foreground"
+                  className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
+                  style={{ transition: 'var(--transition-base)' }}
                   onClick={async () => {
                     if (contextMenu.serverId && contextMenu.channel) {
                       const serverId = contextMenu.serverId; // Capture for TypeScript
@@ -690,7 +708,7 @@ export function ServerTree({
               ) : (
                 <>
                   <button
-                    className="w-full text-left px-4 py-2 text-sm hover:bg-accent text-foreground"
+                    className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground"
                     onClick={async () => {
                       if (contextMenu.serverId && contextMenu.channel) {
                         const serverId = contextMenu.serverId;
@@ -728,7 +746,7 @@ export function ServerTree({
                     Close Channel
                   </button>
                   <button
-                    className="w-full text-left px-4 py-2 text-sm hover:bg-accent text-foreground"
+                    className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground"
                     onClick={async () => {
                       if (contextMenu.serverId && contextMenu.channel) {
                         const serverId = contextMenu.serverId;
@@ -771,7 +789,8 @@ export function ServerTree({
                 Private Message
               </div>
               <button
-                className="w-full text-left px-4 py-2 text-sm hover:bg-accent text-foreground"
+                className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
+                style={{ transition: 'var(--transition-base)' }}
                 onClick={async () => {
                   if (contextMenu.serverId && contextMenu.user) {
                     const serverId = contextMenu.serverId;
@@ -811,7 +830,8 @@ export function ServerTree({
               </button>
               <div className="border-t border-border my-1" />
               <button
-                className="w-full text-left px-4 py-2 text-sm hover:bg-accent text-foreground"
+                className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
+                style={{ transition: 'var(--transition-base)' }}
                 onClick={() => {
                   if (contextMenu.serverId && contextMenu.user) {
                     onShowUserInfo(contextMenu.serverId, contextMenu.user);
@@ -826,7 +846,8 @@ export function ServerTree({
                 CTCP
               </div>
               <button
-                className="w-full text-left px-4 py-2 text-sm hover:bg-accent text-foreground"
+                className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
+                style={{ transition: 'var(--transition-base)' }}
                 onClick={async () => {
                   if (contextMenu.serverId && contextMenu.user) {
                     try {
@@ -841,7 +862,8 @@ export function ServerTree({
                 CTCP Version
               </button>
               <button
-                className="w-full text-left px-4 py-2 text-sm hover:bg-accent text-foreground"
+                className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
+                style={{ transition: 'var(--transition-base)' }}
                 onClick={async () => {
                   if (contextMenu.serverId && contextMenu.user) {
                     try {
@@ -856,7 +878,8 @@ export function ServerTree({
                 CTCP Time
               </button>
               <button
-                className="w-full text-left px-4 py-2 text-sm hover:bg-accent text-foreground"
+                className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
+                style={{ transition: 'var(--transition-base)' }}
                 onClick={async () => {
                   if (contextMenu.serverId && contextMenu.user) {
                     try {
@@ -871,7 +894,8 @@ export function ServerTree({
                 CTCP Ping
               </button>
               <button
-                className="w-full text-left px-4 py-2 text-sm hover:bg-accent text-foreground"
+                className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
+                style={{ transition: 'var(--transition-base)' }}
                 onClick={async () => {
                   if (contextMenu.serverId && contextMenu.user) {
                     try {
@@ -898,9 +922,9 @@ export function ServerTree({
           style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)' }}
         >
           <div 
-            className="bg-background border border-border rounded-lg shadow-xl p-6 max-w-md w-full mx-4"
+            className="bg-card border border-border rounded-lg shadow-[var(--shadow-xl)] p-6 max-w-md w-full mx-4"
             onClick={(e) => e.stopPropagation()}
-            style={{ backgroundColor: 'var(--background)' }}
+            style={{ backgroundColor: 'var(--card)' }}
           >
             <h3 className="text-lg font-semibold mb-2 text-foreground">Delete Network</h3>
             <p className="text-muted-foreground mb-6">
@@ -908,7 +932,7 @@ export function ServerTree({
             </p>
             <div className="flex gap-3 justify-end">
               <button
-                className="px-4 py-2 text-sm border border-border rounded hover:bg-accent text-foreground"
+                className="px-4 py-2 text-sm border border-border cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground"
                 onClick={() => setShowDeleteConfirm(null)}
               >
                 Cancel

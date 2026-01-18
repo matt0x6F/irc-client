@@ -54,7 +54,16 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
       } else {
         // Create consolidated message
         const firstMsg = currentGroup[0];
-        const nicknames = currentGroup.map(msg => msg.user).filter(user => user && user !== '*');
+        // Extract unique nicknames, preserving order (first occurrence)
+        const allNicknames = currentGroup.map(msg => msg.user).filter(user => user && user !== '*');
+        const seen = new Set<string>();
+        const nicknames = allNicknames.filter(nick => {
+          if (seen.has(nick)) {
+            return false;
+          }
+          seen.add(nick);
+          return true;
+        });
         
         // Check if all messages are from the same user
         const allSameUser = nicknames.length > 0 && nicknames.every(nick => nick === nicknames[0]);
@@ -278,37 +287,43 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
   return (
     <div 
       ref={scrollContainerRef}
-      className="h-full overflow-y-auto p-4 space-y-2"
+      className="h-full overflow-y-auto p-4 space-y-1"
       onScroll={checkIfNearBottom}
+      style={{ scrollBehavior: 'smooth' }}
     >
       {processedMessages.length === 0 ? (
-        <div className="text-center text-muted-foreground py-8">
-          No messages yet. Start chatting!
+        <div className="text-center text-muted-foreground py-12 px-4">
+          <div className="text-4xl mb-3 opacity-50">💬</div>
+          <div className="text-lg font-medium mb-1">No messages yet</div>
+          <div className="text-sm">Start chatting to see messages here!</div>
         </div>
       ) : (
-        processedMessages.map((msg) => {
+        processedMessages.map((msg, index) => {
           const consolidated = msg as ConsolidatedMessage;
           const isConsolidated = consolidated._consolidated === true;
           const isError = msg.message_type === 'error';
           const isStatus = msg.message_type === 'status';
           const isCommand = msg.message_type === 'command';
           const isSystemMessage = msg.message_type === 'join' || msg.message_type === 'part' || msg.message_type === 'quit';
+          const isEven = index % 2 === 0;
           
           return (
             <div 
               key={msg.id} 
-              className={`flex space-x-2 ${
+              className={`flex space-x-3 py-1 px-2 rounded transition-colors ${
                 isError 
-                  ? 'p-2 rounded bg-destructive/10 border-l-2 border-destructive' 
+                  ? 'bg-destructive/10 border-l-2 border-destructive shadow-[var(--shadow-sm)]' 
                   : isStatus || isCommand
-                  ? 'opacity-75'
+                  ? 'opacity-70'
+                  : isEven
+                  ? 'bg-muted/20'
                   : ''
-              }`}
+              } hover:bg-muted/30`}
             >
               {isError ? (
                 <>
-                  <span className="text-sm text-destructive font-semibold">⚠</span>
-                  <span className="text-sm text-muted-foreground">
+                  <span className="text-sm text-destructive font-semibold flex-shrink-0">⚠</span>
+                  <span className="text-xs text-muted-foreground/70 flex-shrink-0 font-mono">
                     {new Date(msg.timestamp).toLocaleTimeString()}
                   </span>
                   <span className="text-sm text-destructive flex-1 font-medium">
@@ -317,7 +332,7 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
                 </>
               ) : (
                 <>
-                  <span className="text-sm text-muted-foreground">
+                  <span className="text-xs text-muted-foreground/60 flex-shrink-0 font-mono">
                     {new Date(msg.timestamp).toLocaleTimeString()}
                   </span>
                   {msg.user !== '*' && !isSystemMessage && (
