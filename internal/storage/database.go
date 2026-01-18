@@ -466,7 +466,7 @@ func (s *Storage) GetJoinedChannels(networkID int64, nickname string) ([]Channel
 		SELECT DISTINCT c.* 
 		FROM channels c
 		INNER JOIN channel_users cu ON c.id = cu.channel_id
-		WHERE c.network_id = ? AND cu.nickname = ?
+		WHERE c.network_id = ? AND LOWER(cu.nickname) = LOWER(?)
 		ORDER BY c.name
 	`
 	var channels []Channel
@@ -519,7 +519,7 @@ func (s *Storage) GetOpenChannels(networkID int64, nickname string) ([]Channel, 
 	query := `
 		SELECT DISTINCT c.* 
 		FROM channels c
-		LEFT JOIN channel_users cu ON c.id = cu.channel_id AND cu.nickname = ?
+		LEFT JOIN channel_users cu ON c.id = cu.channel_id AND LOWER(cu.nickname) = LOWER(?)
 		WHERE c.network_id = ? AND (c.is_open = 1 OR cu.nickname IS NOT NULL)
 		ORDER BY c.name
 	`
@@ -558,7 +558,7 @@ func (s *Storage) AddChannelUser(channelID int64, nickname string, modes string)
 
 // RemoveChannelUser removes a user from a channel
 func (s *Storage) RemoveChannelUser(channelID int64, nickname string) error {
-	_, err := s.db.Exec("DELETE FROM channel_users WHERE channel_id = ? AND nickname = ?", channelID, nickname)
+	_, err := s.db.Exec("DELETE FROM channel_users WHERE channel_id = ? AND LOWER(nickname) = LOWER(?)", channelID, nickname)
 	return err
 }
 
@@ -582,7 +582,7 @@ func (s *Storage) UpdateChannelUserNickname(networkID int64, oldNickname string,
 	_, err := s.db.Exec(`
 		UPDATE channel_users 
 		SET nickname = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE nickname = ? 
+		WHERE LOWER(nickname) = LOWER(?) 
 		AND channel_id IN (SELECT id FROM channels WHERE network_id = ?)
 	`, newNickname, oldNickname, networkID)
 	return err
