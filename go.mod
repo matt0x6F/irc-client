@@ -2,6 +2,8 @@ module github.com/matt0x6f/irc-client
 
 go 1.24.0
 
+toolchain go1.24.6
+
 require (
 	github.com/ergochat/irc-go v0.4.0
 	github.com/gen2brain/beeep v0.11.2
@@ -10,7 +12,7 @@ require (
 	github.com/rs/zerolog v1.34.0
 	github.com/wailsapp/wails/v2 v2.10.2
 	github.com/zalando/go-keyring v0.2.6
-	golang.org/x/crypto v0.45.0
+	golang.org/x/crypto v0.44.0
 )
 
 require (
