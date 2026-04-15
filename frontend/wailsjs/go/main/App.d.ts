@@ -68,7 +68,11 @@ export function OpenSettingsPlugins():Promise<void>;
 
 export function ReloadPlugin(arg1:string):Promise<void>;
 
+export function RequestChannelList(arg1:number):Promise<void>;
+
 export function SaveNetwork(arg1:main.NetworkConfig):Promise<void>;
+
+export function SearchMessages(arg1:string,arg2:any,arg3:number):Promise<Array<storage.SearchResult>>;
 
 export function SendCommand(arg1:number,arg2:string):Promise<void>;
 

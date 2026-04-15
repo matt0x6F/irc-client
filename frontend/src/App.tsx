@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { ConnectNetwork, GetNetworks, SendMessage, SendCommand, GetMessages, ListPlugins, GetConnectionStatus, DisconnectNetwork, DeleteNetwork, GetServers, GetChannelIDByName, GetChannelInfo, SetChannelOpen, GetPrivateMessages, GetPrivateMessageConversations, SetPrivateMessageOpen, GetLastOpenPane, SetPaneFocus, ClearPaneFocus, GetOpenChannels } from '../wailsjs/go/main/App';
-import { main, storage } from '../wailsjs/go/models';
+import { useEffect, useCallback, useRef } from 'react';
+import { SendCommand } from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime/runtime';
+import { useNetworkStore } from './stores/network';
+import { useUIStore } from './stores/ui';
 import { ServerTree } from './components/server-tree';
 import { MessageView } from './components/message-view';
 import { InputArea } from './components/input-area';
@@ -10,319 +11,211 @@ import { ChannelInfo } from './components/channel-info';
 import { TopicEditModal } from './components/topic-edit-modal';
 import { ModeEditModal } from './components/mode-edit-modal';
 import { UserInfo } from './components/user-info';
+import { SearchModal } from './components/search-modal';
+import { ChannelListModal } from './components/channel-list-modal';
+import { KeyboardShortcutsModal } from './components/keyboard-shortcuts-modal';
 
 function App() {
-  const [networks, setNetworks] = useState<storage.Network[]>([]);
-  const [selectedNetwork, setSelectedNetwork] = useState<number | null>(null);
-  const [selectedChannel, setSelectedChannel] = useState<string | null>(null);
-  const [messages, setMessages] = useState<storage.Message[]>([]);
-  const [showSettings, setShowSettings] = useState(false);
-  const [settingsSection, setSettingsSection] = useState<'networks' | 'plugins' | 'display' | undefined>(undefined);
-  const [connectionStatus, setConnectionStatus] = useState<Record<number, boolean>>({});
-  const [channelInfo, setChannelInfo] = useState<main.ChannelInfo | null>(null);
-  const [showTopicModal, setShowTopicModal] = useState(false);
-  const [showModeModal, setShowModeModal] = useState(false);
-  const [showUserInfo, setShowUserInfo] = useState<{ networkId: number; nickname: string } | null>(null);
-  const pendingJoinChannelRef = useRef<{ networkId: number; channel: string } | null>(null);
-  // Track channels with unread activity (key: `${networkId}:${channelName}`)
-  const [channelsWithActivity, setChannelsWithActivity] = useState<Set<string>>(new Set());
-  const hasRestoredPaneRef = useRef<boolean>(false);
-  
-  // Sidebar widths (in pixels)
-  const [leftSidebarWidth, setLeftSidebarWidth] = useState(256); // w-64 = 256px
-  const [rightSidebarWidth, setRightSidebarWidth] = useState(256); // w-64 = 256px
-  const [isResizingLeft, setIsResizingLeft] = useState(false);
-  const [isResizingRight, setIsResizingRight] = useState(false);
-  const resizeStartX = useRef<number>(0);
-  const resizeStartWidth = useRef<number>(0);
-  const isResizingLeftRef = useRef<boolean>(false);
-  const isResizingRightRef = useRef<boolean>(false);
+  // Network store
+  const networks = useNetworkStore((s) => s.networks);
+  const selectedNetwork = useNetworkStore((s) => s.selectedNetwork);
+  const selectedChannel = useNetworkStore((s) => s.selectedChannel);
+  const messages = useNetworkStore((s) => s.messages);
+  const connectionStatus = useNetworkStore((s) => s.connectionStatus);
+  const channelInfo = useNetworkStore((s) => s.channelInfo);
+  const unreadCounts = useNetworkStore((s) => s.unreadCounts);
+  const loadNetworks = useNetworkStore((s) => s.loadNetworks);
+  const loadMessages = useNetworkStore((s) => s.loadMessages);
+  const loadChannelInfo = useNetworkStore((s) => s.loadChannelInfo);
+  const loadConnectionStatus = useNetworkStore((s) => s.loadConnectionStatus);
+  const selectPane = useNetworkStore((s) => s.selectPane);
+  const connectNetwork = useNetworkStore((s) => s.connectNetwork);
+  const disconnectNetwork = useNetworkStore((s) => s.disconnectNetwork);
+  const deleteNetwork = useNetworkStore((s) => s.deleteNetwork);
+  const sendMessage = useNetworkStore((s) => s.sendMessage);
+  const setConnectionStatus = useNetworkStore((s) => s.setConnectionStatus);
+  const markActivity = useNetworkStore((s) => s.markActivity);
+  const restoreLastPane = useNetworkStore((s) => s.restoreLastPane);
 
+  // UI store
+  const showSettings = useUIStore((s) => s.showSettings);
+  const settingsSection = useUIStore((s) => s.settingsSection);
+  const openSettings = useUIStore((s) => s.openSettings);
+  const closeSettings = useUIStore((s) => s.closeSettings);
+  const showTopicModal = useUIStore((s) => s.showTopicModal);
+  const setShowTopicModal = useUIStore((s) => s.setShowTopicModal);
+  const showModeModal = useUIStore((s) => s.showModeModal);
+  const setShowModeModal = useUIStore((s) => s.setShowModeModal);
+  const showUserInfo = useUIStore((s) => s.showUserInfo);
+  const setShowUserInfo = useUIStore((s) => s.setShowUserInfo);
+  const showSearch = useUIStore((s) => s.showSearch);
+  const openSearch = useUIStore((s) => s.openSearch);
+  const closeSearch = useUIStore((s) => s.closeSearch);
+  const showChannelList = useUIStore((s) => s.showChannelList);
+  const closeChannelList = useUIStore((s) => s.closeChannelList);
+  const showKeyboardShortcuts = useUIStore((s) => s.showKeyboardShortcuts);
+  const toggleKeyboardShortcuts = useUIStore((s) => s.toggleKeyboardShortcuts);
+  const closeKeyboardShortcuts = useUIStore((s) => s.closeKeyboardShortcuts);
+  const leftSidebarWidth = useUIStore((s) => s.leftSidebarWidth);
+  const rightSidebarWidth = useUIStore((s) => s.rightSidebarWidth);
+  const setLeftSidebarWidth = useUIStore((s) => s.setLeftSidebarWidth);
+  const setRightSidebarWidth = useUIStore((s) => s.setRightSidebarWidth);
+  const leftSidebarCollapsed = useUIStore((s) => s.leftSidebarCollapsed);
+  const rightSidebarCollapsed = useUIStore((s) => s.rightSidebarCollapsed);
+  const toggleLeftSidebar = useUIStore((s) => s.toggleLeftSidebar);
+  const toggleRightSidebar = useUIStore((s) => s.toggleRightSidebar);
+  const setLeftSidebarCollapsed = useUIStore((s) => s.setLeftSidebarCollapsed);
+  const setRightSidebarCollapsed = useUIStore((s) => s.setRightSidebarCollapsed);
+
+  // Refs
+  const hasRestoredPaneRef = useRef(false);
+  const pendingJoinChannelRef = useRef<{ networkId: number; channel: string } | null>(null);
+  const resizeStartX = useRef(0);
+  const resizeStartWidth = useRef(0);
+  const isResizingLeftRef = useRef(false);
+  const isResizingRightRef = useRef(false);
+
+  // Ref for the server tree sidebar (for keyboard focus)
+  const serverTreeRef = useRef<HTMLDivElement>(null);
+
+  // --- Effects ---
+
+  // Global keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey;
+
+      // Cmd/Ctrl+K — Search
+      if (mod && e.key === 'k') {
+        e.preventDefault();
+        openSearch();
+        return;
+      }
+
+      // Cmd/Ctrl+, — Open settings
+      if (mod && e.key === ',') {
+        e.preventDefault();
+        openSettings(undefined);
+        return;
+      }
+
+      // Cmd/Ctrl+/ — Toggle keyboard shortcuts
+      if (mod && e.key === '/') {
+        e.preventDefault();
+        toggleKeyboardShortcuts();
+        return;
+      }
+
+      // Cmd/Ctrl+B — Toggle left sidebar
+      if (mod && !e.shiftKey && (e.key === 'b' || e.key === 'B')) {
+        e.preventDefault();
+        toggleLeftSidebar();
+        return;
+      }
+
+      // Cmd/Ctrl+Shift+B — Toggle right sidebar
+      if (mod && e.shiftKey && (e.key === 'b' || e.key === 'B')) {
+        e.preventDefault();
+        toggleRightSidebar();
+        return;
+      }
+
+      // Cmd/Ctrl+Shift+N — Focus network/channel tree
+      if (mod && e.shiftKey && (e.key === 'N' || e.key === 'n')) {
+        e.preventDefault();
+        // Focus the first focusable element in the server tree sidebar
+        const sidebar = serverTreeRef.current;
+        if (sidebar) {
+          const focusable = sidebar.querySelector<HTMLElement>(
+            'button, [tabindex]:not([tabindex="-1"]), a'
+          );
+          if (focusable) {
+            focusable.focus();
+          } else {
+            sidebar.focus();
+          }
+        }
+        return;
+      }
+
+      // Escape — Close any open modal
+      if (e.key === 'Escape') {
+        if (showKeyboardShortcuts) {
+          closeKeyboardShortcuts();
+          return;
+        }
+        if (showSearch) {
+          closeSearch();
+          return;
+        }
+        if (showSettings) {
+          closeSettings();
+          return;
+        }
+        if (showTopicModal) {
+          setShowTopicModal(false);
+          return;
+        }
+        if (showModeModal) {
+          setShowModeModal(false);
+          return;
+        }
+        if (showUserInfo) {
+          setShowUserInfo(null);
+          return;
+        }
+        if (showChannelList) {
+          closeChannelList();
+          return;
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [openSearch, openSettings, toggleKeyboardShortcuts, closeKeyboardShortcuts, showKeyboardShortcuts, showSearch, closeSearch, showSettings, closeSettings, showTopicModal, setShowTopicModal, showModeModal, setShowModeModal, showUserInfo, setShowUserInfo, showChannelList, closeChannelList, toggleLeftSidebar, toggleRightSidebar]);
+
+  // Responsive sidebar collapse on small windows
+  useEffect(() => {
+    const BREAKPOINT = 768;
+    const handleResize = () => {
+      const narrow = window.innerWidth < BREAKPOINT;
+      setLeftSidebarCollapsed(narrow);
+      setRightSidebarCollapsed(narrow);
+    };
+    // Check on mount
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // Initial load + periodic refresh
   useEffect(() => {
     loadNetworks();
-    // Refresh networks periodically to catch changes from other instances
-    const interval = setInterval(() => {
-      loadNetworks();
-    }, 5000);
-    
-    // Listen for menu events to open settings
+    const interval = setInterval(loadNetworks, 5000);
+
     const unsubscribe = EventsOn('open-settings', (section?: string) => {
-      console.log('[App] Received open-settings event from menu', section);
       if (section === 'networks' || section === 'plugins' || section === 'display') {
-        setSettingsSection(section);
+        openSettings(section);
       } else {
-        setSettingsSection(undefined);
+        openSettings(undefined);
       }
-      setShowSettings(true);
     });
-    
+
     return () => {
       clearInterval(interval);
       unsubscribe();
     };
   }, []);
 
-  const loadNetworks = async () => {
-    try {
-      const networkList = await GetNetworks();
-      setNetworks(networkList || []);
-      
-      // Load connection status for all networks
-      if (networkList && networkList.length > 0) {
-        const statusPromises = networkList.map(async (network) => {
-          try {
-            const connected = await GetConnectionStatus(network.id);
-            return { networkId: network.id, connected };
-          } catch (error) {
-            console.error(`Failed to load connection status for network ${network.id}:`, error);
-            return { networkId: network.id, connected: false };
-          }
-        });
-        
-        const statuses = await Promise.all(statusPromises);
-        const statusMap: Record<number, boolean> = {};
-        statuses.forEach(({ networkId, connected }) => {
-          statusMap[networkId] = connected;
-        });
-        setConnectionStatus(prev => ({ ...prev, ...statusMap }));
-      }
-      
-    } catch (error) {
-      console.error('Failed to load networks:', error);
-      setNetworks([]);
-    }
-  };
-
-  const loadMessages = useCallback(async () => {
-    if (selectedNetwork === null) return;
-    try {
-      // If selectedChannel is "status" (string), pass null to get status messages
-      // If selectedChannel starts with "pm:", it's a private message conversation
-      // Otherwise, look up channel ID by name
-      let channelId: number | null = null;
-      if (selectedChannel !== 'status' && selectedChannel !== null) {
-        if (selectedChannel.startsWith('pm:')) {
-          // Private message conversation
-          const user = selectedChannel.substring(3); // Remove "pm:" prefix
-          const msgs = await GetPrivateMessages(selectedNetwork, user, 100);
-          setMessages(msgs || []);
-          return;
-        } else {
-          try {
-            const id = await GetChannelIDByName(selectedNetwork, selectedChannel);
-            // GetChannelIDByName returns a number (the channel ID) or throws if not found
-            channelId = id as number;
-          } catch (error) {
-            console.error('Failed to get channel ID:', error);
-            // If channel not found, show empty messages
-            setMessages([]);
-            return;
-          }
-        }
-      }
-      const msgs = await GetMessages(selectedNetwork, channelId, 100);
-      setMessages(msgs || []);
-    } catch (error) {
-      console.error('Failed to load messages:', error);
-      setMessages([]);
-    }
-  }, [selectedNetwork, selectedChannel]);
-
-  const loadConnectionStatus = async () => {
-    if (selectedNetwork === null) return;
-    try {
-      const connected = await GetConnectionStatus(selectedNetwork);
-      setConnectionStatus(prev => ({ ...prev, [selectedNetwork]: connected }));
-    } catch (error) {
-      console.error('Failed to load connection status:', error);
-    }
-  };
-
-  const loadChannelInfo = useCallback(async () => {
-    if (selectedNetwork === null || selectedChannel === null || selectedChannel === 'status') {
-      setChannelInfo(null);
-      return;
-    }
-    try {
-      const info = await GetChannelInfo(selectedNetwork, selectedChannel);
-      setChannelInfo(info);
-    } catch (error) {
-      console.error('Failed to load channel info:', error);
-      setChannelInfo(null);
-    }
-  }, [selectedNetwork, selectedChannel]);
-
-  // Restore last open pane after networks are loaded (only once on initial load)
+  // Restore last pane on initial load
   useEffect(() => {
-    if (hasRestoredPaneRef.current || networks.length === 0) {
-      return;
-    }
-    
-    const restoreLastPane = async () => {
-      hasRestoredPaneRef.current = true;
-      try {
-        console.log('[App] Attempting to restore last open pane...');
-        const lastPane = await GetLastOpenPane();
-        console.log('[App] GetLastOpenPane result:', JSON.stringify(lastPane, null, 2));
-        
-        if (!lastPane) {
-          console.log('[App] No last open pane found - checking all networks for open channels...');
-          // Debug: Check all networks for open channels
-          for (const network of networks) {
-            try {
-              const openChannels = await GetOpenChannels(network.id);
-              console.log(`[App] Network ${network.id} (${network.name}) has ${openChannels.length} open channels:`, openChannels.map(c => c.name));
-            } catch (err) {
-              console.error(`[App] Failed to get open channels for network ${network.id}:`, err);
-            }
-          }
-        }
-        
-        if (lastPane) {
-          console.log('[App] Restoring last open pane:', JSON.stringify(lastPane, null, 2));
-          // Verify the network still exists
-          const networkExists = networks.some(n => n.id === lastPane.network_id);
-          console.log('[App] Network exists check:', networkExists, 'for network ID:', lastPane.network_id);
-          
-          if (networkExists) {
-            if (lastPane.type === 'channel') {
-              // Try to verify and restore the channel with retries
-              // Channels might not be loaded immediately on startup
-              let channelFound = false;
-              const maxRetries = 5;
-              const retryDelay = 300;
-              
-              for (let attempt = 0; attempt < maxRetries; attempt++) {
-                try {
-                  await GetChannelIDByName(lastPane.network_id, lastPane.name);
-                  console.log('[App] Channel verified, restoring:', lastPane.name, `(attempt ${attempt + 1})`);
-                  channelFound = true;
-                  
-                  // Use setTimeout to ensure state updates happen after render
-                  setTimeout(() => {
-                    setSelectedNetwork(lastPane.network_id);
-                    setSelectedChannel(lastPane.name);
-                  }, 0);
-                  
-                  // Set focus using event-based method
-                  try {
-                    await SetPaneFocus(lastPane.network_id, 'channel', lastPane.name);
-                  } catch (error) {
-                    console.error('[App] Failed to set focus on restored channel:', error);
-                  }
-                  break; // Success, exit retry loop
-                } catch (error) {
-                  if (attempt < maxRetries - 1) {
-                    console.log(`[App] Channel not found yet, retrying in ${retryDelay}ms (attempt ${attempt + 1}/${maxRetries}):`, lastPane.name);
-                    await new Promise(resolve => setTimeout(resolve, retryDelay));
-                  } else {
-                    console.log('[App] Last open channel not found after retries:', lastPane.name, error);
-                    // Try to find the channel by checking all open channels (case-insensitive fallback)
-                    try {
-                      const openChannels = await GetOpenChannels(lastPane.network_id);
-                      const normalizedTargetName = lastPane.name.toLowerCase();
-                      const matchingChannel = openChannels.find(ch => 
-                        ch.name.toLowerCase() === normalizedTargetName
-                      );
-                      
-                      if (matchingChannel) {
-                        console.log('[App] Found channel via case-insensitive match:', matchingChannel.name);
-                        setTimeout(() => {
-                          setSelectedNetwork(lastPane.network_id);
-                          setSelectedChannel(matchingChannel.name);
-                        }, 0);
-                        try {
-                          await SetPaneFocus(lastPane.network_id, 'channel', matchingChannel.name);
-                        } catch (err) {
-                          console.error('[App] Failed to set focus on matched channel:', err);
-                        }
-                        channelFound = true;
-                      }
-                    } catch (fallbackError) {
-                      console.log('[App] Fallback channel search failed:', fallbackError);
-                    }
-                    
-                    // If still not found, restore to status window
-                    if (!channelFound) {
-                      const network = networks.find(n => n.id === lastPane.network_id);
-                      if (network) {
-                        setTimeout(() => {
-                          setSelectedNetwork(lastPane.network_id);
-                          setSelectedChannel('status');
-                        }, 0);
-                        try {
-                          await SetPaneFocus(lastPane.network_id, 'status', 'status');
-                        } catch (err) {
-                          console.error('[App] Failed to set focus on fallback status:', err);
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            } else if (lastPane.type === 'pm') {
-              console.log('[App] Restoring PM conversation:', lastPane.name);
-              setTimeout(() => {
-                setSelectedNetwork(lastPane.network_id);
-                setSelectedChannel(`pm:${lastPane.name}`);
-              }, 0);
-              // Set focus using event-based method
-              try {
-                await SetPaneFocus(lastPane.network_id, 'pm', lastPane.name);
-              } catch (error) {
-                console.error('[App] Failed to set focus on restored PM:', error);
-              }
-            }
-          } else {
-            console.log('[App] Last open pane network not found, skipping restoration');
-            // Fallback: restore to first network's status window
-            if (networks.length > 0) {
-              setTimeout(() => {
-                setSelectedNetwork(networks[0].id);
-                setSelectedChannel('status');
-              }, 0);
-            }
-          }
-        } else {
-          console.log('[App] No last open pane found, restoring to first network status');
-          // Fallback: restore to first network's status window
-          if (networks.length > 0) {
-            setTimeout(() => {
-              setSelectedNetwork(networks[0].id);
-              setSelectedChannel('status');
-            }, 0);
-            try {
-              await SetPaneFocus(networks[0].id, 'status', 'status');
-            } catch (error) {
-              console.error('[App] Failed to set focus on fallback status window:', error);
-            }
-          }
-        }
-      } catch (error) {
-        console.error('[App] Failed to restore last open pane:', error);
-        // Fallback: restore to first network's status window
-        if (networks.length > 0) {
-          setTimeout(() => {
-            setSelectedNetwork(networks[0].id);
-            setSelectedChannel('status');
-          }, 0);
-          try {
-            await SetPaneFocus(networks[0].id, 'status', 'status');
-          } catch (error) {
-            console.error('[App] Failed to set focus on fallback status window:', error);
-          }
-        }
-      }
-    };
-    
-    // Small delay to ensure networks state is fully set and component is rendered
-    const timeoutId = setTimeout(() => {
-      restoreLastPane();
-    }, 200);
-    
+    if (hasRestoredPaneRef.current || networks.length === 0) return;
+    hasRestoredPaneRef.current = true;
+    const timeoutId = setTimeout(() => restoreLastPane(), 200);
     return () => clearTimeout(timeoutId);
   }, [networks]);
 
+  // Load data when selection changes
   useEffect(() => {
     if (selectedNetwork !== null) {
       loadMessages();
@@ -335,305 +228,144 @@ function App() {
       }, 2000);
       return () => clearInterval(interval);
     }
-  }, [selectedNetwork, selectedChannel, loadMessages, loadChannelInfo]);
+  }, [selectedNetwork, selectedChannel]);
 
-  // Listen for connection status events
+  // Connection status events
   useEffect(() => {
     const unsubscribe = EventsOn('connection-status', (data: any) => {
       const networkId = data?.networkId;
       const connected = data?.connected;
-      
       if (networkId !== undefined && typeof connected === 'boolean') {
-        console.log('[App] Received connection status event:', { networkId, connected });
-        setConnectionStatus(prev => ({ ...prev, [networkId]: connected }));
+        setConnectionStatus(networkId, connected);
       }
     });
-    
     return () => unsubscribe();
   }, []);
 
-  // Listen for message events for real-time updates
+  // Message events for real-time updates and activity tracking
   useEffect(() => {
     const unsubscribe = EventsOn('message-event', (data: any) => {
       const eventType = data?.type;
       const eventData = data?.data || {};
       const network = eventData.network;
       const target = eventData.target || eventData.channel;
-      
-      // Track activity for channels and PM conversations that aren't currently focused
+
+      // Track activity for unfocused channels/PMs
       if (eventType === 'message.received' || eventType === 'message.sent') {
-        // Find the network by address
-        const networkObj = networks.find(n => n.address === network);
+        const networkObj = networks.find((n) => n.address === network);
         if (networkObj && target && target !== 'status') {
-          // Check if target is a channel (starts with # or &) or a user (PM)
           const isChannel = target.startsWith('#') || target.startsWith('&');
-          
-          // For received PMs, the target is your nickname, but we need the sender's nickname
-          // For sent PMs, the target is the recipient's nickname
           let pmUser: string | null = null;
           if (!isChannel) {
-            if (eventType === 'message.received') {
-              // For received PMs, use the sender (user field) as the PM conversation key
-              pmUser = eventData.user || null;
-            } else if (eventType === 'message.sent') {
-              // For sent PMs, the target is the recipient
-              pmUser = target;
-            }
+            pmUser = eventType === 'message.received' ? eventData.user || null : target;
           }
-          
           const pmKey = pmUser ? `pm:${pmUser}` : null;
-          const activityKey = isChannel 
-            ? `${networkObj.id}:${target}` 
-            : pmKey ? `${networkObj.id}:${pmKey}` : null;
-          
+          const activityKey = isChannel
+            ? `${networkObj.id}:${target}`
+            : pmKey
+            ? `${networkObj.id}:${pmKey}`
+            : null;
+
           if (activityKey) {
-            // Check if this channel/PM is currently focused
-            const isFocused = selectedNetwork === networkObj.id && 
+            const isFocused =
+              selectedNetwork === networkObj.id &&
               (isChannel ? selectedChannel === target : selectedChannel === pmKey);
-            
             if (!isFocused) {
-              // Mark this channel/PM as having activity
-              setChannelsWithActivity(prev => new Set(prev).add(activityKey));
+              markActivity(activityKey);
             }
           }
         }
       }
-      
-      // Handle channel join/part events for pending join channel switching
-      if (eventType === 'user.joined' || eventType === 'user.parted') {
-        // Find the network by address (check both primary address and server addresses)
-        let networkObj = networks.find(n => n.address === network);
-        
-        // If not found by primary address, check server addresses
-        if (!networkObj) {
-          // We'll need to check server addresses, but for now just try to find by any matching
-          // The network address in events should match the primary address or one of the server addresses
-          networkObj = networks.find(n => {
-            // Check if network address matches
-            if (n.address === network) return true;
-            // In the future, we could also check server addresses here
-            return false;
-          });
-        }
-        
+
+      // Handle pending join channel switching
+      if (eventType === 'user.joined') {
+        const networkObj = networks.find((n) => n.address === network);
         if (networkObj) {
-          // Check if this is our own join/part by comparing user to network nickname
           const user = eventData.user;
           const channel = eventData.channel || target;
-          
-          console.log('[App] Join/part event received:', {
-            eventType,
-            user,
-            channel,
-            network: networkObj.address,
-            networkId: networkObj.id,
-            ourNickname: networkObj.nickname,
-            pendingJoinChannel: pendingJoinChannelRef.current
-          });
-          
-          // Note: Channel sidebar updates are now handled by the channels-changed event
-          // We only need to handle pending join channel switching here
-          if (user && networkObj.nickname && user.toLowerCase() === networkObj.nickname.toLowerCase()) {
-            
-            // If this is a join event and we have a pending join for this channel, switch to it
-            const pendingJoin = pendingJoinChannelRef.current;
-            if (eventType === 'user.joined' && channel && pendingJoin) {
-              console.log('[App] Checking if we should switch to joined channel:', {
-                pendingNetworkId: pendingJoin.networkId,
-                currentNetworkId: networkObj.id,
-                networkMatch: pendingJoin.networkId === networkObj.id,
-                pendingChannel: pendingJoin.channel,
-                eventChannel: channel,
-                channelMatch: pendingJoin.channel.toLowerCase() === channel.toLowerCase()
-              });
-              
-              // Normalize channel names for comparison (ensure both have # prefix)
-              const normalizeChannel = (ch: string) => {
-                if (!ch) return '';
-                return ch.startsWith('#') || ch.startsWith('&') ? ch.toLowerCase() : '#' + ch.toLowerCase();
-              };
-              
-              const pendingChannelNormalized = normalizeChannel(pendingJoin.channel);
-              const eventChannelNormalized = normalizeChannel(channel);
-              
-              if (pendingJoin.networkId === networkObj.id && 
-                  pendingChannelNormalized === eventChannelNormalized) {
-                console.log('[App] Successful join detected, switching to channel:', channel);
-                // Capture values before setTimeout to avoid TypeScript errors
-                const networkId = networkObj.id;
-                const channelName = channel;
-                // Wait a bit longer to ensure channel is in database and sidebar is updated
-                setTimeout(async () => {
-                  try {
-                    // Verify channel exists before switching
-                    await GetChannelIDByName(networkId, channelName);
-                    console.log('[App] Channel verified, switching now');
-                    setSelectedNetwork(networkId);
-                    setSelectedChannel(channelName);
-                    // Set focus using event-based method
-                    try {
-                      await SetPaneFocus(networkId, 'channel', channelName);
-                    } catch (error) {
-                      console.error('[App] Failed to set focus on joined channel:', error);
-                    }
-                    pendingJoinChannelRef.current = null;
-                  } catch (error) {
-                    console.log('[App] Channel not ready yet, retrying in 500ms');
-                    // Retry once more after a longer delay
-                    setTimeout(async () => {
-                      try {
-                        await GetChannelIDByName(networkId, channelName);
-                        setSelectedNetwork(networkId);
-                        setSelectedChannel(channelName);
-                        // Set focus using event-based method
-                        try {
-                          await SetPaneFocus(networkId, 'channel', channelName);
-                        } catch (error) {
-                          console.error('[App] Failed to set focus on joined channel:', error);
-                        }
-                        pendingJoinChannelRef.current = null;
-                      } catch (err) {
-                        console.error('[App] Failed to switch to channel after retry:', err);
-                        pendingJoinChannelRef.current = null;
-                      }
-                    }, 500);
-                  }
-                }, 300);
-              } else {
-                console.log('[App] Join event but conditions not met - not switching', {
-                  networkMatch: pendingJoin.networkId === networkObj.id,
-                  channelMatch: pendingChannelNormalized === eventChannelNormalized,
-                  pendingNormalized: pendingChannelNormalized,
-                  eventNormalized: eventChannelNormalized
-                });
-              }
+          const pending = pendingJoinChannelRef.current;
+
+          if (
+            user &&
+            networkObj.nickname &&
+            user.toLowerCase() === networkObj.nickname.toLowerCase() &&
+            pending &&
+            pending.networkId === networkObj.id
+          ) {
+            const norm = (ch: string) =>
+              ch.startsWith('#') || ch.startsWith('&') ? ch.toLowerCase() : '#' + ch.toLowerCase();
+            if (norm(pending.channel) === norm(channel)) {
+              const nId = networkObj.id;
+              const chName = channel;
+              setTimeout(() => {
+                selectPane(nId, chName);
+                pendingJoinChannelRef.current = null;
+              }, 300);
             }
           }
         }
       }
-      
-      // Only refresh messages if the event is for the currently selected network/channel
+
+      // Refresh messages if event matches current view
       if (selectedNetwork === null) return;
-      
-      // Check if this event is relevant to the current view
-      const currentNetwork = networks.find(n => n.id === selectedNetwork);
+      const currentNetwork = networks.find((n) => n.id === selectedNetwork);
       if (currentNetwork && network === currentNetwork.address) {
-        // Handle message received events
-        if (eventType === 'message.received') {
-          // For received messages, check if we're viewing that channel
-          if (target && selectedChannel === target) {
-            console.log('[App] Received message event for current channel, refreshing messages');
-            loadMessages();
-          }
-        } else if (eventType === 'message.sent') {
-          // For sent messages, check if we're viewing that channel
-          if (target && selectedChannel === target) {
-            console.log('[App] Received sent message event for current channel, refreshing messages');
-            loadMessages();
-          }
-        } else if (target && selectedChannel === target) {
-          // For other events (join/part/quit), refresh messages
+        if (
+          (eventType === 'message.received' || eventType === 'message.sent') &&
+          target &&
+          selectedChannel === target
+        ) {
           loadMessages();
-          // For user join/part events, also trigger a channel info refresh
-          if (eventType === 'user.joined' || eventType === 'user.parted' || eventType === 'user.quit') {
-            // Channel info will auto-refresh via its own polling, but we can force it
-            // by triggering a re-render or state change
-          }
+        } else if (target && selectedChannel === target) {
+          loadMessages();
         } else if (eventData.channel === null && selectedChannel === 'status') {
-          // Status message
           loadMessages();
         }
       }
     });
-    
     return () => unsubscribe();
-  }, [selectedNetwork, selectedChannel, networks, loadMessages]);
+  }, [selectedNetwork, selectedChannel, networks]);
 
-  // Listen for topic and mode change events
+  // Topic/mode change events
   useEffect(() => {
     const unsubscribe = EventsOn('message-event', (data: any) => {
       if (selectedNetwork === null || selectedChannel === null || selectedChannel === 'status') return;
-      
       const eventType = data?.type;
       const eventData = data?.data || {};
       const network = eventData.network;
       const channel = eventData.channel;
-      
-      // Check if this event is relevant to the current view
-      const currentNetwork = networks.find(n => n.id === selectedNetwork);
+      const currentNetwork = networks.find((n) => n.id === selectedNetwork);
       if (currentNetwork && network === currentNetwork.address && channel === selectedChannel) {
         if (eventType === 'channel.topic' || eventType === 'channel.mode') {
-          console.log('[App] Received topic/mode change event, refreshing channel info');
           loadChannelInfo();
         }
       }
     });
-    
     return () => unsubscribe();
-  }, [selectedNetwork, selectedChannel, networks, loadChannelInfo]);
+  }, [selectedNetwork, selectedChannel, networks]);
 
-  const handleConnect = async (config: main.NetworkConfig) => {
-    console.log('[handleConnect] Called with config:', config);
-    // Check if already connected to this network
-    const existingNetwork = networks.find(n => 
-      (n.address === config.address && n.port === config.port) || n.name === config.name
-    );
-    if (existingNetwork && connectionStatus[existingNetwork.id]) {
-      console.log('[handleConnect] Already connected to this network, skipping');
-      return;
-    }
-    
+  // --- Event handlers ---
+
+  const handleConnect = async (config: any) => {
     try {
-      console.log('[handleConnect] Calling ConnectNetwork...');
-      await ConnectNetwork(config);
-      console.log('[handleConnect] ConnectNetwork completed, loading networks...');
-      await loadNetworks();
-      // Refresh connection status after connecting
-      if (existingNetwork) {
-        await loadConnectionStatus();
-      }
+      await connectNetwork(config);
     } catch (error) {
-      console.error('[handleConnect] Failed to connect:', error);
       alert(`Failed to connect: ${error}`);
     }
   };
 
   const handleDisconnect = async (networkId: number) => {
     try {
-      await DisconnectNetwork(networkId);
-      await loadNetworks();
-      await loadConnectionStatus();
+      await disconnectNetwork(networkId);
     } catch (error) {
-      console.error('Failed to disconnect:', error);
       alert(`Failed to disconnect: ${error}`);
     }
   };
 
   const handleDelete = async (networkId: number) => {
-    console.log('handleDelete called with networkId:', networkId);
     try {
-      console.log('Calling DeleteNetwork API with networkId:', networkId);
-      await DeleteNetwork(networkId);
-      console.log('DeleteNetwork API call completed');
-      await loadNetworks();
-      console.log('Networks reloaded');
-      if (selectedNetwork === networkId) {
-        setSelectedNetwork(null);
-        setSelectedChannel(null);
-      }
-      // Clear activity indicators for all channels in this network
-      setChannelsWithActivity(prev => {
-        const next = new Set(prev);
-        for (const key of prev) {
-          if (key.startsWith(`${networkId}:`)) {
-            next.delete(key);
-          }
-        }
-        return next;
-      });
-      console.log('Delete operation completed successfully');
+      await deleteNetwork(networkId);
     } catch (error) {
-      console.error('Failed to delete:', error);
       alert(`Failed to delete: ${error}`);
       throw error;
     }
@@ -641,390 +373,184 @@ function App() {
 
   const handleSendMessage = async (message: string) => {
     if (selectedNetwork === null || selectedChannel === null) return;
-    
-    // Check if this is a slash command - if so, route to SendCommand regardless of channel or DM
-    const trimmedMessage = message.trim();
-    if (trimmedMessage.startsWith('/')) {
-      try {
-        let commandToSend = trimmedMessage;
-        
-        // For /me command, prepend channel or user context
-        if (trimmedMessage.toLowerCase().startsWith('/me ') && selectedChannel && selectedChannel !== 'status') {
-          const parts = trimmedMessage.substring(4).trim();
-          // If it's a private message, use the username; otherwise use the channel
-          if (selectedChannel.startsWith('pm:')) {
-            const user = selectedChannel.substring(3); // Remove "pm:" prefix
-            commandToSend = `/me ${user} ${parts}`;
-          } else {
-            // Encode channel in command: /me #channel action text
-            commandToSend = `/me ${selectedChannel} ${parts}`;
-          }
-        }
-        // For /part and /leave commands, inject current channel if not specified
-        else if ((trimmedMessage.toLowerCase().startsWith('/part') || trimmedMessage.toLowerCase().startsWith('/leave')) && selectedChannel && selectedChannel !== 'status') {
-          const isPart = trimmedMessage.toLowerCase().startsWith('/part');
-          const cmdLength = isPart ? 5 : 6; // '/part' or '/leave'
-          const rest = trimmedMessage.substring(cmdLength).trim();
-          const parts = rest ? rest.split(/\s+/) : [];
-          
-          // If no args or first arg doesn't look like a channel (doesn't start with # or &), inject current channel
-          if (parts.length === 0 || (!parts[0].startsWith('#') && !parts[0].startsWith('&'))) {
-            // No channel specified, use current channel
-            const cmd = isPart ? '/part' : '/leave';
-            if (parts.length === 0) {
-              // Just /part or /leave - part from current channel
-              commandToSend = `${cmd} ${selectedChannel}`;
-            } else {
-              // /part reason or /leave reason - part from current channel with reason
-              const reason = parts.join(' ');
-              commandToSend = `${cmd} ${selectedChannel} ${reason}`;
-            }
-          }
-          // Otherwise, channel is specified, use as-is
-        }
-        // For /join command, track the channel to switch to after successful join
-        let joinTargetChannel: string | null = null;
-        if (trimmedMessage.toLowerCase().startsWith('/join ') || trimmedMessage.toLowerCase() === '/join') {
-          const rest = trimmedMessage.substring(5).trim(); // '/join' = 5 chars
-          const parts = rest ? rest.split(/\s+/) : [];
-          if (parts.length > 0 && (parts[0].startsWith('#') || parts[0].startsWith('&'))) {
-            joinTargetChannel = parts[0];
-            // Store pending join to switch after successful join
-            console.log('[App] Setting pending join:', { networkId: selectedNetwork, channel: joinTargetChannel });
-            pendingJoinChannelRef.current = { networkId: selectedNetwork, channel: joinTargetChannel };
-            
-            // Also try a fallback approach: poll for the channel to appear and switch
-            const pollForChannel = async (attempts = 0) => {
-              if (attempts > 10) {
-                console.log('[App] Polling timeout - channel did not appear');
-                pendingJoinChannelRef.current = null;
-                return;
-              }
-              
-              try {
-                await GetChannelIDByName(selectedNetwork, joinTargetChannel!);
-                console.log('[App] Channel found via polling, switching now');
-                setSelectedNetwork(selectedNetwork);
-                setSelectedChannel(joinTargetChannel);
-                // Set focus using event-based method
-                if (joinTargetChannel) {
-                  try {
-                    await SetPaneFocus(selectedNetwork, 'channel', joinTargetChannel);
-                  } catch (error) {
-                    console.error('[App] Failed to set focus on joined channel:', error);
-                  }
-                }
-                pendingJoinChannelRef.current = null;
-              } catch (error) {
-                // Channel not ready yet, try again
-                setTimeout(() => pollForChannel(attempts + 1), 300);
-              }
-            };
-            
-            // Start polling after a short delay
-            setTimeout(() => pollForChannel(), 500);
-            
-            // Clear pending join after 5 seconds if join doesn't complete (timeout/failure)
-            setTimeout(() => {
-              if (pendingJoinChannelRef.current && 
-                  pendingJoinChannelRef.current.networkId === selectedNetwork && 
-                  pendingJoinChannelRef.current.channel === joinTargetChannel) {
-                console.log('[App] Clearing pending join due to timeout');
-                pendingJoinChannelRef.current = null;
-              }
-            }, 5000);
-          }
-        }
-        
-        // For /close command, inject current channel if not specified and switch to status after closing
-        let closeTargetChannel: string | null = null;
-        if (trimmedMessage.toLowerCase().startsWith('/close') && selectedChannel && selectedChannel !== 'status') {
-          const rest = trimmedMessage.substring(6).trim(); // '/close' = 6 chars
-          const parts = rest ? rest.split(/\s+/) : [];
-          
-          // Determine target channel
-          if (parts.length === 0 || (!parts[0].startsWith('#') && !parts[0].startsWith('&'))) {
-            // No channel specified, use current channel
-            closeTargetChannel = selectedChannel;
-            commandToSend = `/close ${selectedChannel}`;
-          } else {
-            // Channel is specified
-            closeTargetChannel = parts[0];
-            // Use as-is
-          }
-        }
-        
-        // For /query command, track the nickname to switch to PM view after command
-        let queryTargetNickname: string | null = null;
-        if (trimmedMessage.toLowerCase().startsWith('/query ') || trimmedMessage.toLowerCase().startsWith('/q ')) {
-          const cmdLength = trimmedMessage.toLowerCase().startsWith('/query ') ? 7 : 3; // '/query ' = 7 chars, '/q ' = 3 chars
-          const rest = trimmedMessage.substring(cmdLength).trim();
-          const parts = rest ? rest.split(/\s+/) : [];
-          if (parts.length > 0) {
-            queryTargetNickname = parts[0];
-          }
-        }
-        
-        await SendCommand(selectedNetwork, commandToSend);
-        
-        // If /close was used on the current channel, clear focus and switch to status window
-        if (closeTargetChannel && closeTargetChannel === selectedChannel) {
-          // Clear focus using event-based method
-          try {
-            await ClearPaneFocus(selectedNetwork, 'channel', closeTargetChannel);
-          } catch (error) {
-            console.error('[App] Failed to clear focus from closed channel:', error);
-          }
-          // Clear activity indicator for closed channel
-          const activityKey = `${selectedNetwork}:${closeTargetChannel}`;
-          setChannelsWithActivity(prev => {
-            const next = new Set(prev);
-            next.delete(activityKey);
-            return next;
-          });
-          setSelectedChannel('status');
-          // Set focus on status window
-          try {
-            await SetPaneFocus(selectedNetwork, 'status', 'status');
-          } catch (error) {
-            console.error('[App] Failed to set focus on status window:', error);
-          }
-        }
-        
-        // If /query was used, switch to PM view
-        if (queryTargetNickname) {
-          const pmKey = `pm:${queryTargetNickname}`;
-          setSelectedChannel(pmKey);
-          // Set focus using event-based method
-          try {
-            await SetPaneFocus(selectedNetwork, 'pm', queryTargetNickname);
-          } catch (error) {
-            console.error('[App] Failed to set focus on PM:', error);
-          }
-        }
-        
-        // Refresh messages after command
-        await loadMessages();
-      } catch (error) {
-        console.error('Failed to send command:', error);
-        await loadMessages();
-      }
-      return;
-    }
-    
-    // Check if this is a private message conversation
-    if (selectedChannel.startsWith('pm:')) {
-      const user = selectedChannel.substring(3); // Remove "pm:" prefix
-      // Send message to user
-      try {
-        await SendMessage(selectedNetwork, user, message);
-        // Refresh messages after sending
+
+    const trimmed = message.trim();
+
+    // Track /join for channel switching
+    if (trimmed.toLowerCase().startsWith('/join ')) {
+      const rest = trimmed.substring(5).trim();
+      const parts = rest ? rest.split(/\s+/) : [];
+      if (parts.length > 0 && (parts[0].startsWith('#') || parts[0].startsWith('&'))) {
+        pendingJoinChannelRef.current = { networkId: selectedNetwork, channel: parts[0] };
         setTimeout(() => {
-          loadMessages();
-        }, 100);
-      } catch (error) {
-        console.error('Failed to send private message:', error);
+          if (
+            pendingJoinChannelRef.current &&
+            pendingJoinChannelRef.current.channel === parts[0]
+          ) {
+            pendingJoinChannelRef.current = null;
+          }
+        }, 5000);
       }
-      return;
     }
-    
-    // Optimistic UI update: show the message immediately
-    const currentNetwork = networks.find(n => n.id === selectedNetwork);
-    if (currentNetwork && selectedChannel !== 'status') {
-      let channelId: number | undefined = undefined;
-      
-      // Try to get channel ID for optimistic message
-      try {
-        const id = await GetChannelIDByName(selectedNetwork, selectedChannel);
-        channelId = id as number;
-      } catch (error) {
-        // Channel ID lookup failed, will be corrected on refresh
-      }
-      
-      // Create optimistic message using the proper factory method
-      const optimisticMessage = storage.Message.createFrom({
-        id: Date.now(), // Temporary ID
-        network_id: selectedNetwork,
-        channel_id: channelId,
-        user: currentNetwork.nickname || 'You',
-        message: message,
-        message_type: 'privmsg',
-        timestamp: new Date().toISOString(),
-        raw_line: '',
-      });
-      
-      // Add optimistic message to the list immediately
-      setMessages(prev => [...prev, optimisticMessage]);
-    }
-    
-    try {
-      // If status window, use SendCommand instead
-      if (selectedChannel === 'status') {
-        await SendCommand(selectedNetwork, message);
-        // For status, refresh immediately since we don't have optimistic UI
-        await loadMessages();
-      } else {
-        await SendMessage(selectedNetwork, selectedChannel, message);
-        // Don't refresh immediately - optimistic message is already showing
-        // The event system will trigger a refresh once the message is in the database
-        // Use a small delay to allow the buffer to flush, then refresh
-        setTimeout(() => {
-          loadMessages();
-        }, 100);
-      }
-    } catch (error) {
-      console.error('Failed to send message:', error);
-      // On error, remove the optimistic message and refresh
-      await loadMessages();
-    }
+
+    await sendMessage(message);
   };
 
-  // Resize handlers for left sidebar
+  // --- Resize handlers ---
+
   const handleLeftResizeMove = useCallback((e: MouseEvent) => {
     if (!isResizingLeftRef.current) return;
     const diff = e.clientX - resizeStartX.current;
-    const newWidth = Math.max(200, Math.min(400, resizeStartWidth.current + diff));
-    setLeftSidebarWidth(newWidth);
+    setLeftSidebarWidth(Math.max(200, Math.min(400, resizeStartWidth.current + diff)));
   }, []);
 
   const handleLeftResizeEnd = useCallback(() => {
-    setIsResizingLeft(false);
     isResizingLeftRef.current = false;
     document.removeEventListener('mousemove', handleLeftResizeMove);
     document.removeEventListener('mouseup', handleLeftResizeEnd);
   }, [handleLeftResizeMove]);
 
-  const handleLeftResizeStart = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    setIsResizingLeft(true);
-    isResizingLeftRef.current = true;
-    resizeStartX.current = e.clientX;
-    resizeStartWidth.current = leftSidebarWidth;
-    document.addEventListener('mousemove', handleLeftResizeMove);
-    document.addEventListener('mouseup', handleLeftResizeEnd);
-  }, [leftSidebarWidth, handleLeftResizeMove, handleLeftResizeEnd]);
+  const handleLeftResizeStart = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      isResizingLeftRef.current = true;
+      resizeStartX.current = e.clientX;
+      resizeStartWidth.current = leftSidebarWidth;
+      document.addEventListener('mousemove', handleLeftResizeMove);
+      document.addEventListener('mouseup', handleLeftResizeEnd);
+    },
+    [leftSidebarWidth, handleLeftResizeMove, handleLeftResizeEnd]
+  );
 
-  // Resize handlers for right sidebar
   const handleRightResizeMove = useCallback((e: MouseEvent) => {
     if (!isResizingRightRef.current) return;
-    const diff = resizeStartX.current - e.clientX; // Inverted for right sidebar
-    const newWidth = Math.max(150, Math.min(400, resizeStartWidth.current + diff));
-    setRightSidebarWidth(newWidth);
+    const diff = resizeStartX.current - e.clientX;
+    setRightSidebarWidth(Math.max(150, Math.min(400, resizeStartWidth.current + diff)));
   }, []);
 
   const handleRightResizeEnd = useCallback(() => {
-    setIsResizingRight(false);
     isResizingRightRef.current = false;
     document.removeEventListener('mousemove', handleRightResizeMove);
     document.removeEventListener('mouseup', handleRightResizeEnd);
   }, [handleRightResizeMove]);
 
-  const handleRightResizeStart = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    setIsResizingRight(true);
-    isResizingRightRef.current = true;
-    resizeStartX.current = e.clientX;
-    resizeStartWidth.current = rightSidebarWidth;
-    document.addEventListener('mousemove', handleRightResizeMove);
-    document.addEventListener('mouseup', handleRightResizeEnd);
-  }, [rightSidebarWidth, handleRightResizeMove, handleRightResizeEnd]);
+  const handleRightResizeStart = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      isResizingRightRef.current = true;
+      resizeStartX.current = e.clientX;
+      resizeStartWidth.current = rightSidebarWidth;
+      document.addEventListener('mousemove', handleRightResizeMove);
+      document.addEventListener('mouseup', handleRightResizeEnd);
+    },
+    [rightSidebarWidth, handleRightResizeMove, handleRightResizeEnd]
+  );
+
+  // --- Render ---
 
   return (
     <div className="flex h-screen bg-background">
       {/* Network Tree Sidebar */}
-      <div 
+      <div
+        ref={serverTreeRef}
         className="border-r border-border overflow-auto flex-shrink-0 relative bg-card/30"
-        style={{ width: `${leftSidebarWidth}px` }}
+        style={{
+          width: leftSidebarCollapsed ? '0px' : `${leftSidebarWidth}px`,
+          minWidth: leftSidebarCollapsed ? '0px' : undefined,
+          overflow: leftSidebarCollapsed ? 'hidden' : undefined,
+          transition: 'width 0.2s ease',
+        }}
+        tabIndex={-1}
       >
         <ServerTree
           servers={networks}
           selectedServer={selectedNetwork}
           selectedChannel={selectedChannel}
-          onSelectServer={setSelectedNetwork}
-          channelsWithActivity={channelsWithActivity}
+          onSelectServer={useNetworkStore.getState().setSelectedNetwork}
+          unreadCounts={unreadCounts}
           onShowUserInfo={(networkId, nickname) => setShowUserInfo({ networkId, nickname })}
           onNetworkUpdate={loadNetworks}
-          onSelectChannel={async (networkId, channel) => {
-            // When switching channels/PMs, use event-based focus tracking
-            // NOTE: We don't clear focus from the previous pane when switching - 
-            // we only clear focus when explicitly closing (e.g., /close command).
-            // This allows multiple panes to remain "open" and we track which was last focused.
-            
-            setSelectedNetwork(networkId);
-            setSelectedChannel(channel);
-            
-            // Clear activity indicator for the selected channel/PM
-            if (channel !== null && channel !== 'status') {
-              const activityKey = `${networkId}:${channel}`;
-              setChannelsWithActivity(prev => {
-                const next = new Set(prev);
-                next.delete(activityKey);
-                return next;
-              });
-            }
-            
-            // Set focus on new pane using events (this updates the last_focused timestamp)
-            if (channel !== null) {
-              try {
-                if (channel === 'status') {
-                  await SetPaneFocus(networkId, 'status', 'status');
-                } else if (channel.startsWith('pm:')) {
-                  // It's a PM conversation
-                  const user = channel.substring(3); // Remove "pm:" prefix
-                  await SetPaneFocus(networkId, 'pm', user);
-                } else {
-                  // It's a channel
-                  await SetPaneFocus(networkId, 'channel', channel);
-                }
-              } catch (error) {
-                console.error('[App] Failed to set focus on pane:', error);
-              }
-            }
-          }}
+          onSelectChannel={(networkId, channel) => selectPane(networkId, channel)}
           onConnect={handleConnect}
           onDisconnect={handleDisconnect}
           onDelete={handleDelete}
           connectionStatus={connectionStatus}
         />
-        {/* Resize handle */}
-        <div
-          className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:w-2 hover:bg-primary/40 bg-border/50 z-10"
-          style={{ transition: 'var(--transition-base)' }}
-          onMouseDown={handleLeftResizeStart}
-          title="Drag to resize"
-        />
+        {!leftSidebarCollapsed && (
+          <div
+            className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:w-2 hover:bg-primary/40 bg-border/50 z-10"
+            style={{ transition: 'var(--transition-base)' }}
+            onMouseDown={handleLeftResizeStart}
+            title="Drag to resize"
+          />
+        )}
       </div>
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col">
         {/* Header */}
         <div className="border-b border-border bg-card/50 backdrop-blur-sm">
-          <div className="h-14 flex items-center justify-between px-5">
-            <div className="flex items-center gap-2">
+          <div className="h-14 flex items-center justify-between px-3 sm:px-5">
+            <div className="flex items-center gap-2 min-w-0">
+              {/* Hamburger toggle for left sidebar */}
+              {leftSidebarCollapsed && (
+                <button
+                  onClick={toggleLeftSidebar}
+                  className="flex-shrink-0 p-1.5 rounded-md hover:bg-accent/50 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                  title="Show sidebar"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="3" y1="6" x2="21" y2="6" />
+                    <line x1="3" y1="12" x2="21" y2="12" />
+                    <line x1="3" y1="18" x2="21" y2="18" />
+                  </svg>
+                </button>
+              )}
+              {!leftSidebarCollapsed && (
+                <button
+                  onClick={toggleLeftSidebar}
+                  className="flex-shrink-0 p-1.5 rounded-md hover:bg-accent/50 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                  title="Hide sidebar"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="2" />
+                    <line x1="9" y1="3" x2="9" y2="21" />
+                  </svg>
+                </button>
+              )}
               {selectedNetwork !== null && (
                 <>
-                  <span className="font-semibold text-lg">
-                    {networks.find(n => n.id === selectedNetwork)?.name || 'Unknown'}
+                  <span className="font-semibold text-lg truncate">
+                    {networks.find((n) => n.id === selectedNetwork)?.name || 'Unknown'}
                   </span>
-                  <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
-                    connectionStatus[selectedNetwork] 
-                      ? 'bg-green-500/20 text-green-700 dark:text-green-400' 
-                      : 'bg-gray-500/20 text-gray-700 dark:text-gray-400'
-                  }`} title={connectionStatus[selectedNetwork] ? 'Connected' : 'Disconnected'}>
+                  <span
+                    className={`text-xs font-medium px-1.5 py-0.5 rounded ${
+                      connectionStatus[selectedNetwork]
+                        ? 'bg-green-500/20 text-green-700 dark:text-green-400'
+                        : 'bg-gray-500/20 text-gray-700 dark:text-gray-400'
+                    }`}
+                    title={connectionStatus[selectedNetwork] ? 'Connected' : 'Disconnected'}
+                  >
                     {connectionStatus[selectedNetwork] ? '●' : '○'}
                   </span>
-                  {selectedChannel && selectedChannel !== 'status' && !selectedChannel.startsWith('pm:') && (
-                    <>
-                      <span className="text-muted-foreground/50">/</span>
-                      <span className="text-muted-foreground font-medium">
-                        {selectedChannel.startsWith('#') || selectedChannel.startsWith('&') ? selectedChannel : `#${selectedChannel}`}
-                      </span>
-                    </>
-                  )}
+                  {selectedChannel &&
+                    selectedChannel !== 'status' &&
+                    !selectedChannel.startsWith('pm:') && (
+                      <>
+                        <span className="text-muted-foreground/50">/</span>
+                        <span className="text-muted-foreground font-medium">
+                          {selectedChannel.startsWith('#') || selectedChannel.startsWith('&')
+                            ? selectedChannel
+                            : `#${selectedChannel}`}
+                        </span>
+                      </>
+                    )}
                   {selectedChannel && selectedChannel.startsWith('pm:') && (
                     <>
                       <span className="text-muted-foreground/50">/</span>
-                      <span className="text-muted-foreground font-medium">PM: {selectedChannel.substring(3)}</span>
+                      <span className="text-muted-foreground font-medium">
+                        PM: {selectedChannel.substring(3)}
+                      </span>
                     </>
                   )}
                   {selectedChannel === 'status' && (
@@ -1036,75 +562,132 @@ function App() {
                 </>
               )}
             </div>
-          </div>
-          {selectedChannel && selectedChannel !== 'status' && !selectedChannel.startsWith('pm:') && channelInfo?.channel && (
-            <div className="px-5 pb-3 flex items-center gap-4 text-sm border-t border-border/50 pt-2">
-              {channelInfo.channel.modes && (
-                <button
-                  onClick={() => setShowModeModal(true)}
-                  className="text-muted-foreground hover:text-foreground cursor-pointer transition-all px-2 py-1 rounded-md hover:bg-accent/50"
-                  style={{ transition: 'var(--transition-base)' }}
-                  title="Click to edit modes"
+            <div className="flex items-center gap-1 flex-shrink-0">
+              <button
+                onClick={openSearch}
+                className="flex items-center gap-2 px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground rounded-md hover:bg-accent/50 transition-colors cursor-pointer"
+                title="Search messages (Ctrl+K)"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
                 >
-                  Modes: {channelInfo.channel.modes}
+                  <circle cx="11" cy="11" r="8" />
+                  <path d="m21 21-4.3-4.3" />
+                </svg>
+                <kbd className="hidden sm:inline-flex h-5 select-none items-center gap-1 rounded border border-border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-60">
+                  {navigator.platform?.includes('Mac') ? '\u2318' : 'Ctrl+'}K
+                </kbd>
+              </button>
+              {/* Right sidebar toggle — only show when a channel is selected */}
+              {selectedChannel && selectedChannel !== 'status' && !selectedChannel.startsWith('pm:') && (
+                <button
+                  onClick={toggleRightSidebar}
+                  className="p-1.5 rounded-md hover:bg-accent/50 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                  title={rightSidebarCollapsed ? 'Show channel info' : 'Hide channel info'}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="2" />
+                    <line x1="15" y1="3" x2="15" y2="21" />
+                  </svg>
                 </button>
               )}
-              <button
-                onClick={() => setShowTopicModal(true)}
-                className="text-muted-foreground hover:text-foreground cursor-pointer italic flex-1 text-left truncate px-2 py-1 rounded-md hover:bg-accent/50 transition-all"
-                style={{ transition: 'var(--transition-base)' }}
-                title="Click to edit topic"
-              >
-                {channelInfo.channel.topic || 'No topic set'}
-              </button>
             </div>
-          )}
+          </div>
+          {selectedChannel &&
+            selectedChannel !== 'status' &&
+            !selectedChannel.startsWith('pm:') &&
+            channelInfo?.channel && (
+              <div className="px-5 pb-3 flex items-center gap-4 text-sm border-t border-border/50 pt-2">
+                {channelInfo.channel.modes && (
+                  <button
+                    onClick={() => setShowModeModal(true)}
+                    className="text-muted-foreground hover:text-foreground cursor-pointer transition-all px-2 py-1 rounded-md hover:bg-accent/50"
+                    style={{ transition: 'var(--transition-base)' }}
+                    title="Click to edit modes"
+                  >
+                    Modes: {channelInfo.channel.modes}
+                  </button>
+                )}
+                <button
+                  onClick={() => setShowTopicModal(true)}
+                  className="text-muted-foreground hover:text-foreground cursor-pointer italic flex-1 text-left truncate px-2 py-1 rounded-md hover:bg-accent/50 transition-all"
+                  style={{ transition: 'var(--transition-base)' }}
+                  title="Click to edit topic"
+                >
+                  {channelInfo.channel.topic || 'No topic set'}
+                </button>
+              </div>
+            )}
         </div>
 
-        {/* Content Area with Messages and Channel Info */}
+        {/* Content Area */}
         <div className="flex-1 flex overflow-hidden">
-          {/* Message View */}
           <div className="flex-1 overflow-y-auto">
             {selectedNetwork !== null ? (
-              <MessageView messages={messages} networkId={selectedNetwork} selectedChannel={selectedChannel} />
+              <MessageView
+                messages={messages}
+                networkId={selectedNetwork}
+                selectedChannel={selectedChannel}
+              />
             ) : (
               <div className="flex flex-col items-center justify-center h-full text-muted-foreground px-4">
                 <div className="text-5xl mb-4 opacity-40">💬</div>
                 <div className="text-xl font-medium mb-2">Welcome to Cascade Chat</div>
                 <div className="text-sm text-center max-w-md">
-                  Select a network from the sidebar to start chatting, or add a new network in Settings.
+                  Select a network from the sidebar to start chatting, or add a new network in
+                  Settings.
                 </div>
               </div>
             )}
           </div>
 
-          {/* Channel Info Sidebar - only show for channels, not PMs or status */}
-          {selectedChannel && selectedChannel !== 'status' && !selectedChannel.startsWith('pm:') && (
-            <div 
-              className="border-l border-border overflow-auto flex-shrink-0 relative"
-              style={{ width: `${rightSidebarWidth}px` }}
-            >
-              {/* Resize handle */}
+          {/* Channel Info Sidebar */}
+          {selectedChannel &&
+            selectedChannel !== 'status' &&
+            !selectedChannel.startsWith('pm:') && (
               <div
-                className="absolute top-0 left-0 w-1 h-full cursor-col-resize hover:w-2 hover:bg-primary/40 bg-border/50 z-10"
-                style={{ transition: 'var(--transition-base)' }}
-                onMouseDown={handleRightResizeStart}
-                title="Drag to resize"
-              />
-              <ChannelInfo 
-                networkId={selectedNetwork} 
-                channelName={selectedChannel}
-                currentNickname={selectedNetwork !== null ? networks.find(n => n.id === selectedNetwork)?.nickname || null : null}
-                onSendCommand={async (command: string) => {
-                  if (selectedNetwork !== null) {
-                    await SendCommand(selectedNetwork, command);
-                  }
+                className="border-l border-border overflow-auto flex-shrink-0 relative"
+                style={{
+                  width: rightSidebarCollapsed ? '0px' : `${rightSidebarWidth}px`,
+                  minWidth: rightSidebarCollapsed ? '0px' : undefined,
+                  overflow: rightSidebarCollapsed ? 'hidden' : undefined,
+                  transition: 'width 0.2s ease',
+                  borderLeftWidth: rightSidebarCollapsed ? '0px' : undefined,
                 }}
-              />
-            </div>
-          )}
+              >
+                {!rightSidebarCollapsed && (
+                  <div
+                    className="absolute top-0 left-0 w-1 h-full cursor-col-resize hover:w-2 hover:bg-primary/40 bg-border/50 z-10"
+                    style={{ transition: 'var(--transition-base)' }}
+                    onMouseDown={handleRightResizeStart}
+                    title="Drag to resize"
+                  />
+                )}
+                <ChannelInfo
+                  networkId={selectedNetwork}
+                  channelName={selectedChannel}
+                  currentNickname={
+                    selectedNetwork !== null
+                      ? networks.find((n) => n.id === selectedNetwork)?.nickname || null
+                      : null
+                  }
+                  onSendCommand={async (command: string) => {
+                    if (selectedNetwork !== null) {
+                      await SendCommand(selectedNetwork, command);
+                    }
+                  }}
+                />
+              </div>
+            )}
 
-          {/* User Info Panel - show when user info is requested */}
           {showUserInfo && (
             <UserInfo
               networkId={showUserInfo.networkId}
@@ -1116,22 +699,23 @@ function App() {
 
         {/* Input Area */}
         {selectedNetwork !== null && selectedChannel !== null && (
-          <InputArea 
+          <InputArea
             onSendMessage={handleSendMessage}
-            placeholder={selectedChannel === 'status' ? 'Type a command (e.g., /join #channel, /msg user message) or raw IRC command...' : 'Type a message...'}
+            placeholder={
+              selectedChannel === 'status'
+                ? 'Type a command (e.g., /join #channel, /msg user message) or raw IRC command...'
+                : 'Type a message...'
+            }
             networkId={selectedNetwork}
             channelName={selectedChannel}
           />
         )}
       </div>
 
-      {/* Settings Modal */}
+      {/* Modals */}
       {showSettings && (
         <SettingsModal
-          onClose={() => {
-            setShowSettings(false);
-            setSettingsSection(undefined);
-          }}
+          onClose={closeSettings}
           initialSection={settingsSection}
           onServerUpdate={() => {
             loadNetworks();
@@ -1140,26 +724,45 @@ function App() {
         />
       )}
 
-      {/* Topic Edit Modal */}
-      {showTopicModal && selectedNetwork !== null && selectedChannel !== null && selectedChannel !== 'status' && channelInfo?.channel && (
-        <TopicEditModal
-          networkId={selectedNetwork}
-          channelName={selectedChannel}
-          currentTopic={channelInfo.channel.topic || ''}
-          onClose={() => setShowTopicModal(false)}
-          onUpdate={loadChannelInfo}
+      {showTopicModal &&
+        selectedNetwork !== null &&
+        selectedChannel !== null &&
+        selectedChannel !== 'status' &&
+        channelInfo?.channel && (
+          <TopicEditModal
+            networkId={selectedNetwork}
+            channelName={selectedChannel}
+            currentTopic={channelInfo.channel.topic || ''}
+            onClose={() => setShowTopicModal(false)}
+            onUpdate={loadChannelInfo}
+          />
+        )}
+
+      {showModeModal &&
+        selectedNetwork !== null &&
+        selectedChannel !== null &&
+        selectedChannel !== 'status' &&
+        channelInfo?.channel && (
+          <ModeEditModal
+            networkId={selectedNetwork}
+            channelName={selectedChannel}
+            currentModes={channelInfo.channel.modes || ''}
+            onClose={() => setShowModeModal(false)}
+            onUpdate={loadChannelInfo}
+          />
+        )}
+
+      {showSearch && <SearchModal onClose={closeSearch} />}
+
+      {showChannelList && (
+        <ChannelListModal
+          networkId={showChannelList.networkId}
+          onClose={closeChannelList}
         />
       )}
 
-      {/* Mode Edit Modal */}
-      {showModeModal && selectedNetwork !== null && selectedChannel !== null && selectedChannel !== 'status' && channelInfo?.channel && (
-        <ModeEditModal
-          networkId={selectedNetwork}
-          channelName={selectedChannel}
-          currentModes={channelInfo.channel.modes || ''}
-          onClose={() => setShowModeModal(false)}
-          onUpdate={loadChannelInfo}
-        />
+      {showKeyboardShortcuts && (
+        <KeyboardShortcutsModal onClose={closeKeyboardShortcuts} />
       )}
     </div>
   );

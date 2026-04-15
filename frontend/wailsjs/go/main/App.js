@@ -130,8 +130,16 @@ export function ReloadPlugin(arg1) {
   return window['go']['main']['App']['ReloadPlugin'](arg1);
 }
 
+export function RequestChannelList(arg1) {
+  return window['go']['main']['App']['RequestChannelList'](arg1);
+}
+
 export function SaveNetwork(arg1) {
   return window['go']['main']['App']['SaveNetwork'](arg1);
+}
+
+export function SearchMessages(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SearchMessages'](arg1, arg2, arg3);
 }
 
 export function SendCommand(arg1, arg2) {
