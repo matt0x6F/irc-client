@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { main, storage } from '../../wailsjs/go/models';
 import { GetChannels, GetJoinedChannels, GetOpenChannels, GetServers, LeaveChannel, ToggleChannelAutoJoin, ToggleNetworkAutoConnect, SetChannelOpen, GetPrivateMessageConversations, SendCommand, SetPrivateMessageOpen, ClearPaneFocus } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
+import { useUIStore } from '../stores/ui';
 
 type Channel = storage.Channel;
 
@@ -15,7 +16,7 @@ interface ServerTreeProps {
   onDisconnect: (id: number) => Promise<void>;
   onDelete: (id: number) => Promise<void>;
   connectionStatus: Record<number, boolean>;
-  channelsWithActivity: Set<string>;
+  unreadCounts: Map<string, number>;
   onShowUserInfo: (networkId: number, nickname: string) => void;
   onNetworkUpdate?: () => Promise<void>;
 }
@@ -39,7 +40,7 @@ export function ServerTree({
   onDisconnect,
   onDelete,
   connectionStatus,
-  channelsWithActivity,
+  unreadCounts,
   onShowUserInfo,
   onNetworkUpdate,
 }: ServerTreeProps) {
@@ -378,13 +379,13 @@ export function ServerTree({
                       {/* Regular channels */}
                       {networkChannels.map((channel) => {
                         const activityKey = `${network.id}:${channel}`;
-                        const hasActivity = channelsWithActivity.has(activityKey);
+                        const unreadCount = unreadCounts.get(activityKey) || 0;
                         return (
                           <div
                             key={channel}
                             className={`p-2 cursor-pointer select-none flex items-center justify-between transition-all ${
-                              isSelected && selectedChannel === channel 
-                                ? 'bg-primary/10 border-l-4 border-primary' 
+                              isSelected && selectedChannel === channel
+                                ? 'bg-primary/10 border-l-4 border-primary'
                                 : 'hover:bg-accent/70'
                             }`}
                             style={{ transition: 'var(--transition-base)' }}
@@ -396,9 +397,11 @@ export function ServerTree({
                               }
                             }}
                           >
-                            <span className={`text-sm ${hasActivity ? 'font-semibold' : ''}`}>{channel}</span>
-                            {hasActivity && (
-                              <span className="w-2 h-2 rounded-full bg-primary ml-2 animate-pulse shadow-sm" title="Unread activity" />
+                            <span className={`text-sm ${unreadCount > 0 ? 'font-semibold' : ''}`}>{channel}</span>
+                            {unreadCount > 0 && (
+                              <span className="bg-primary text-primary-foreground text-xs px-1.5 min-w-[1.25rem] text-center rounded-full ml-2" title="Unread messages">
+                                {unreadCount > 99 ? '99+' : unreadCount}
+                              </span>
                             )}
                           </div>
                         );
@@ -412,13 +415,13 @@ export function ServerTree({
                           {(pmConversations[network.id] || []).map((user) => {
                             const pmKey = `pm:${user}`;
                             const activityKey = `${network.id}:${pmKey}`;
-                            const hasActivity = channelsWithActivity.has(activityKey);
+                            const unreadCount = unreadCounts.get(activityKey) || 0;
                             return (
                               <div
                                 key={pmKey}
                                 className={`p-2 cursor-pointer select-none flex items-center justify-between transition-all ${
-                                  isSelected && selectedChannel === pmKey 
-                                    ? 'bg-primary/10 border-l-4 border-primary' 
+                                  isSelected && selectedChannel === pmKey
+                                    ? 'bg-primary/10 border-l-4 border-primary'
                                     : 'hover:bg-accent/70'
                                 }`}
                                 style={{ transition: 'var(--transition-base)' }}
@@ -430,9 +433,11 @@ export function ServerTree({
                                   }
                                 }}
                               >
-                                <span className={`text-sm ${hasActivity ? 'font-semibold' : ''}`}>💬 {user}</span>
-                                {hasActivity && (
-                                  <span className="w-2 h-2 rounded-full bg-primary ml-2 animate-pulse shadow-sm" title="Unread activity" />
+                                <span className={`text-sm ${unreadCount > 0 ? 'font-semibold' : ''}`}>💬 {user}</span>
+                                {unreadCount > 0 && (
+                                  <span className="bg-primary text-primary-foreground text-xs px-1.5 min-w-[1.25rem] text-center rounded-full ml-2" title="Unread messages">
+                                    {unreadCount > 99 ? '99+' : unreadCount}
+                                  </span>
                                 )}
                               </div>
                             );
@@ -539,6 +544,19 @@ export function ServerTree({
                 >
                   Connect
                 </button>
+              )}
+              {connectionStatus[contextMenu.serverId] && (
+              <button
+                className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
+                style={{ transition: 'var(--transition-base)' }}
+                onClick={() => {
+                  if (!contextMenu.serverId) return;
+                  useUIStore.getState().openChannelList(contextMenu.serverId);
+                  setContextMenu({ x: 0, y: 0, type: null });
+                }}
+              >
+                Browse Channels
+              </button>
               )}
               <div className="border-t border-border my-1" />
               <button

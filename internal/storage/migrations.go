@@ -64,6 +64,11 @@ func Migrate(db *sqlx.DB) error {
 		return fmt.Errorf("plugin config column migration failed: %w", err)
 	}
 
+	// Handle FTS5 full-text search migration
+	if err := migrateFTS5(db); err != nil {
+		return fmt.Errorf("FTS5 migration failed: %w", err)
+	}
+
 	return nil
 }
 
@@ -439,6 +444,66 @@ func migratePluginConfigColumn(db *sqlx.DB) error {
 					return fmt.Errorf("failed to add %s column: %w", columnName, err)
 				}
 			}
+		}
+	}
+
+	return nil
+}
+
+// migrateFTS5 creates the FTS5 virtual table and triggers for full-text message search
+func migrateFTS5(db *sqlx.DB) error {
+	// Check if FTS5 table already exists
+	var tableExists int
+	err := db.Get(&tableExists,
+		"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='messages_fts'")
+	if err != nil {
+		return fmt.Errorf("failed to check for messages_fts table: %w", err)
+	}
+
+	if tableExists == 0 {
+		// Create the FTS5 virtual table
+		_, err = db.Exec(`
+			CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+				message,
+				user,
+				content='messages',
+				content_rowid='id'
+			)
+		`)
+		if err != nil {
+			return fmt.Errorf("failed to create messages_fts table: %w", err)
+		}
+
+		// Populate FTS5 table from existing messages
+		_, err = db.Exec(`
+			INSERT INTO messages_fts(rowid, message, user)
+			SELECT id, message, user FROM messages
+		`)
+		if err != nil {
+			// Non-fatal: if there are no messages yet, this is fine
+			if !strings.Contains(err.Error(), "no such table") {
+				return fmt.Errorf("failed to populate messages_fts: %w", err)
+			}
+		}
+	}
+
+	// Create triggers (IF NOT EXISTS handles idempotency)
+	triggers := []string{
+		`CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
+			INSERT INTO messages_fts(rowid, message, user) VALUES (new.id, new.message, new.user);
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
+			INSERT INTO messages_fts(messages_fts, rowid, message, user) VALUES('delete', old.id, old.message, old.user);
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
+			INSERT INTO messages_fts(messages_fts, rowid, message, user) VALUES('delete', old.id, old.message, old.user);
+			INSERT INTO messages_fts(rowid, message, user) VALUES (new.id, new.message, new.user);
+		END`,
+	}
+
+	for i, trigger := range triggers {
+		if _, err := db.Exec(trigger); err != nil {
+			return fmt.Errorf("FTS5 trigger %d failed: %w", i+1, err)
 		}
 	}
 

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -10,12 +11,14 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/matt0x6f/irc-client/internal/logger"
+	db "github.com/matt0x6f/irc-client/internal/storage/generated"
 	_ "github.com/mattn/go-sqlite3"
 )
 
 // Storage handles database operations
 type Storage struct {
-	db            *sqlx.DB
+	db            *sqlx.DB // Keep for migrations and batch operations
+	queries       *db.Queries
 	writeBuffer   chan Message
 	bufferSize    int
 	flushInterval time.Duration
@@ -29,18 +32,22 @@ type Storage struct {
 // NewStorage creates a new storage instance
 func NewStorage(dbPath string, bufferSize int, flushInterval time.Duration) (*Storage, error) {
 	// Enable WAL mode for better concurrent writes
-	db, err := sqlx.Connect("sqlite3", dbPath+"?_journal_mode=WAL")
+	sqlxDB, err := sqlx.Connect("sqlite3", dbPath+"?_journal_mode=WAL")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
 	// Set connection pool settings
-	db.SetMaxOpenConns(1) // SQLite works best with single connection in WAL mode
-	db.SetMaxIdleConns(1)
-	db.SetConnMaxLifetime(time.Hour)
+	sqlxDB.SetMaxOpenConns(1) // SQLite works best with single connection in WAL mode
+	sqlxDB.SetMaxIdleConns(1)
+	sqlxDB.SetConnMaxLifetime(time.Hour)
+
+	// Create SQLC queries instance
+	queries := db.New(sqlxDB.DB)
 
 	storage := &Storage{
-		db:            db,
+		db:            sqlxDB,
+		queries:       queries,
 		writeBuffer:   make(chan Message, bufferSize),
 		bufferSize:    bufferSize,
 		flushInterval: flushInterval,
@@ -48,7 +55,7 @@ func NewStorage(dbPath string, bufferSize int, flushInterval time.Duration) (*St
 	}
 
 	// Run migrations
-	if err := Migrate(db); err != nil {
+	if err := Migrate(sqlxDB); err != nil {
 		return nil, fmt.Errorf("migration failed: %w", err)
 	}
 
@@ -246,10 +253,9 @@ func (s *Storage) WriteMessageSync(msg Message) error {
 		s.flushBuffer()
 		return nil
 	default:
-		// Buffer still full after flush, try direct insert
-		query := `INSERT INTO messages (network_id, channel_id, user, message, message_type, timestamp, raw_line)
-		          VALUES (:network_id, :channel_id, :user, :message, :message_type, :timestamp, :raw_line)`
-		_, err := s.db.NamedExec(query, msg)
+		// Buffer still full after flush, try direct insert using SQLC
+		params := convertMessageToDBCreateParams(msg)
+		_, err := s.queries.CreateMessage(context.Background(), params)
 		return err
 	}
 }
@@ -265,36 +271,39 @@ func (s *Storage) WriteMessageDirect(msg Message) error {
 	}
 	s.closedMu.RUnlock()
 
-	// Direct insert to database
-	query := `INSERT INTO messages (network_id, channel_id, user, message, message_type, timestamp, raw_line)
-	          VALUES (:network_id, :channel_id, :user, :message, :message_type, :timestamp, :raw_line)`
-	_, err := s.db.NamedExec(query, msg)
+	// Direct insert to database using SQLC
+	params := convertMessageToDBCreateParams(msg)
+	_, err := s.queries.CreateMessage(context.Background(), params)
 	return err
 }
 
 // GetMessages retrieves messages for a network and channel
 func (s *Storage) GetMessages(networkID int64, channelID *int64, limit int) ([]Message, error) {
-	var messages []Message
+	var dbMessages []db.Message
 	var err error
 
 	if channelID != nil {
-		err = s.db.Select(&messages,
-			`SELECT * FROM messages 
-			 WHERE network_id = ? AND channel_id = ? 
-			 ORDER BY timestamp DESC 
-			 LIMIT ?`,
-			networkID, *channelID, limit)
+		var channelIDNull sql.NullInt64
+		channelIDNull = sql.NullInt64{Int64: *channelID, Valid: true}
+		dbMessages, err = s.queries.GetMessagesWithChannel(context.Background(), db.GetMessagesWithChannelParams{
+			NetworkID: networkID,
+			ChannelID: channelIDNull,
+			Limit:     int64(limit),
+		})
 	} else {
-		err = s.db.Select(&messages,
-			`SELECT * FROM messages 
-			 WHERE network_id = ? AND channel_id IS NULL 
-			 ORDER BY timestamp DESC 
-			 LIMIT ?`,
-			networkID, limit)
+		dbMessages, err = s.queries.GetMessagesWithoutChannel(context.Background(), db.GetMessagesWithoutChannelParams{
+			NetworkID: networkID,
+			Limit:     int64(limit),
+		})
 	}
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to get messages: %w", err)
+	}
+
+	messages := make([]Message, len(dbMessages))
+	for i, m := range dbMessages {
+		messages[i] = convertMessageFromDB(m)
 	}
 
 	// Reverse to get chronological order
@@ -307,54 +316,42 @@ func (s *Storage) GetMessages(networkID int64, channelID *int64, limit int) ([]M
 
 // CreateNetwork creates a new network configuration
 func (s *Storage) CreateNetwork(network *Network) error {
-	query := `INSERT INTO networks (name, address, port, tls, nickname, username, realname, password, sasl_enabled, sasl_mechanism, sasl_username, sasl_password, sasl_external_cert, auto_connect, created_at, updated_at)
-	          VALUES (:name, :address, :port, :tls, :nickname, :username, :realname, :password, :sasl_enabled, :sasl_mechanism, :sasl_username, :sasl_password, :sasl_external_cert, :auto_connect, :created_at, :updated_at)`
-
-	result, err := s.db.NamedExec(query, network)
+	params := convertNetworkToDBCreateParams(network)
+	dbNetwork, err := s.queries.CreateNetwork(context.Background(), params)
 	if err != nil {
 		return fmt.Errorf("failed to create network: %w", err)
 	}
-
-	id, err := result.LastInsertId()
-	if err != nil {
-		return fmt.Errorf("failed to get network ID: %w", err)
-	}
-
-	network.ID = id
+	network.ID = dbNetwork.ID
 	return nil
 }
 
 // GetNetworks retrieves all networks
 func (s *Storage) GetNetworks() ([]Network, error) {
-	var networks []Network
-	err := s.db.Select(&networks, "SELECT * FROM networks ORDER BY name")
+	dbNetworks, err := s.queries.GetNetworks(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("failed to get networks: %w", err)
+	}
+	networks := make([]Network, len(dbNetworks))
+	for i, n := range dbNetworks {
+		networks[i] = convertNetworkFromDB(n)
 	}
 	return networks, nil
 }
 
 // GetNetwork retrieves a network by ID
 func (s *Storage) GetNetwork(networkID int64) (*Network, error) {
-	var network Network
-	err := s.db.Get(&network, "SELECT * FROM networks WHERE id = ?", networkID)
+	dbNetwork, err := s.queries.GetNetwork(context.Background(), networkID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get network: %w", err)
 	}
+	network := convertNetworkFromDB(dbNetwork)
 	return &network, nil
 }
 
 // UpdateNetwork updates a network configuration
 func (s *Storage) UpdateNetwork(network *Network) error {
-	query := `UPDATE networks 
-	          SET name = :name, address = :address, port = :port, tls = :tls, 
-	              nickname = :nickname, username = :username, realname = :realname, 
-	              password = :password, sasl_enabled = :sasl_enabled, sasl_mechanism = :sasl_mechanism,
-	              sasl_username = :sasl_username, sasl_password = :sasl_password, sasl_external_cert = :sasl_external_cert,
-	              auto_connect = :auto_connect, updated_at = :updated_at
-	          WHERE id = :id`
-
-	_, err := s.db.NamedExec(query, network)
+	params := convertNetworkToDBUpdateParams(network)
+	err := s.queries.UpdateNetwork(context.Background(), params)
 	if err != nil {
 		return fmt.Errorf("failed to update network: %w", err)
 	}
@@ -363,56 +360,47 @@ func (s *Storage) UpdateNetwork(network *Network) error {
 
 // UpdateNetworkAutoConnect updates the auto-connect setting for a network
 func (s *Storage) UpdateNetworkAutoConnect(networkID int64, autoConnect bool) error {
-	_, err := s.db.Exec("UPDATE networks SET auto_connect = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", autoConnect, networkID)
+	err := s.queries.UpdateNetworkAutoConnect(context.Background(), db.UpdateNetworkAutoConnectParams{
+		AutoConnect: autoConnect,
+		ID:          networkID,
+	})
 	return err
 }
 
 // DeleteNetwork deletes a network (cascade will delete servers)
 func (s *Storage) DeleteNetwork(networkID int64) error {
-	_, err := s.db.Exec("DELETE FROM networks WHERE id = ?", networkID)
+	err := s.queries.DeleteNetwork(context.Background(), networkID)
 	return err
 }
 
 // GetServers retrieves all server addresses for a network, ordered by priority
 func (s *Storage) GetServers(networkID int64) ([]Server, error) {
-	var servers []Server
-	err := s.db.Select(&servers,
-		`SELECT * FROM servers 
-		 WHERE network_id = ? 
-		 ORDER BY "order" ASC, id ASC`,
-		networkID)
+	dbServers, err := s.queries.GetServers(context.Background(), networkID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get servers: %w", err)
+	}
+	servers := make([]Server, len(dbServers))
+	for i, srv := range dbServers {
+		servers[i] = convertServerFromDB(srv)
 	}
 	return servers, nil
 }
 
 // CreateServer creates a new server address
 func (s *Storage) CreateServer(server *Server) error {
-	query := `INSERT INTO servers (network_id, address, port, tls, "order", created_at)
-	          VALUES (:network_id, :address, :port, :tls, :order, :created_at)`
-
-	result, err := s.db.NamedExec(query, server)
+	params := convertServerToDBCreateParams(server)
+	dbServer, err := s.queries.CreateServer(context.Background(), params)
 	if err != nil {
 		return fmt.Errorf("failed to create server: %w", err)
 	}
-
-	id, err := result.LastInsertId()
-	if err != nil {
-		return fmt.Errorf("failed to get server ID: %w", err)
-	}
-
-	server.ID = id
+	server.ID = dbServer.ID
 	return nil
 }
 
 // UpdateServer updates a server address
 func (s *Storage) UpdateServer(server *Server) error {
-	query := `UPDATE servers 
-	          SET address = :address, port = :port, tls = :tls, "order" = :order
-	          WHERE id = :id`
-
-	_, err := s.db.NamedExec(query, server)
+	params := convertServerToDBUpdateParams(server)
+	err := s.queries.UpdateServer(context.Background(), params)
 	if err != nil {
 		return fmt.Errorf("failed to update server: %w", err)
 	}
@@ -421,58 +409,52 @@ func (s *Storage) UpdateServer(server *Server) error {
 
 // DeleteServer deletes a server address
 func (s *Storage) DeleteServer(serverID int64) error {
-	_, err := s.db.Exec("DELETE FROM servers WHERE id = ?", serverID)
+	err := s.queries.DeleteServer(context.Background(), serverID)
 	return err
 }
 
 // DeleteAllServers deletes all server addresses for a network
 func (s *Storage) DeleteAllServers(networkID int64) error {
-	_, err := s.db.Exec("DELETE FROM servers WHERE network_id = ?", networkID)
+	err := s.queries.DeleteAllServers(context.Background(), networkID)
 	return err
 }
 
 // CreateChannel creates a new channel
 func (s *Storage) CreateChannel(channel *Channel) error {
-	query := `INSERT INTO channels (network_id, name, auto_join, is_open, created_at)
-	          VALUES (:network_id, :name, :auto_join, :is_open, :created_at)`
-
-	result, err := s.db.NamedExec(query, channel)
+	params := convertChannelToDBCreateParams(channel)
+	dbChannel, err := s.queries.CreateChannel(context.Background(), params)
 	if err != nil {
 		return fmt.Errorf("failed to create channel: %w", err)
 	}
-
-	id, err := result.LastInsertId()
-	if err != nil {
-		return fmt.Errorf("failed to get channel ID: %w", err)
-	}
-
-	channel.ID = id
+	channel.ID = dbChannel.ID
 	return nil
 }
 
 // GetChannels retrieves channels for a network
 func (s *Storage) GetChannels(networkID int64) ([]Channel, error) {
-	var channels []Channel
-	err := s.db.Select(&channels, "SELECT * FROM channels WHERE network_id = ? ORDER BY name", networkID)
+	dbChannels, err := s.queries.GetChannels(context.Background(), networkID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get channels: %w", err)
+	}
+	channels := make([]Channel, len(dbChannels))
+	for i, c := range dbChannels {
+		channels[i] = convertChannelFromDB(c)
 	}
 	return channels, nil
 }
 
 // GetJoinedChannels retrieves channels for a network where the specified nickname is a member
 func (s *Storage) GetJoinedChannels(networkID int64, nickname string) ([]Channel, error) {
-	query := `
-		SELECT DISTINCT c.* 
-		FROM channels c
-		INNER JOIN channel_users cu ON c.id = cu.channel_id
-		WHERE c.network_id = ? AND LOWER(cu.nickname) = LOWER(?)
-		ORDER BY c.name
-	`
-	var channels []Channel
-	err := s.db.Select(&channels, query, networkID, nickname)
+	dbChannels, err := s.queries.GetJoinedChannels(context.Background(), db.GetJoinedChannelsParams{
+		NetworkID: networkID,
+		LOWER:     nickname,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get joined channels: %w", err)
+	}
+	channels := make([]Channel, len(dbChannels))
+	for i, c := range dbChannels {
+		channels[i] = convertChannelFromDB(c)
 	}
 	return channels, nil
 }
@@ -480,111 +462,120 @@ func (s *Storage) GetJoinedChannels(networkID int64, nickname string) ([]Channel
 // GetChannelByName retrieves a channel by network ID and channel name
 // Channel names are case-insensitive for IRC channels (channels starting with # or &)
 func (s *Storage) GetChannelByName(networkID int64, channelName string) (*Channel, error) {
-	var channel Channel
-	// IRC channel names are case-insensitive, so use case-insensitive comparison
-	// SQLite's default collation is case-insensitive for ASCII, but we'll use LOWER() to be explicit
-	err := s.db.Get(&channel, "SELECT * FROM channels WHERE network_id = ? AND LOWER(name) = LOWER(?)", networkID, channelName)
+	dbChannel, err := s.queries.GetChannelByName(context.Background(), db.GetChannelByNameParams{
+		NetworkID: networkID,
+		LOWER:     channelName,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get channel: %w", err)
 	}
+	channel := convertChannelFromDB(dbChannel)
 	return &channel, nil
 }
 
 // UpdateChannelTopic updates the topic for a channel
 func (s *Storage) UpdateChannelTopic(channelID int64, topic string) error {
-	_, err := s.db.Exec("UPDATE channels SET topic = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", topic, channelID)
+	err := s.queries.UpdateChannelTopic(context.Background(), db.UpdateChannelTopicParams{
+		Topic: convertToNullString(topic),
+		ID:    channelID,
+	})
 	return err
 }
 
 // UpdateChannelModes updates the modes for a channel
 func (s *Storage) UpdateChannelModes(channelID int64, modes string) error {
-	_, err := s.db.Exec("UPDATE channels SET modes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", modes, channelID)
+	err := s.queries.UpdateChannelModes(context.Background(), db.UpdateChannelModesParams{
+		Modes: convertToNullString(modes),
+		ID:    channelID,
+	})
 	return err
 }
 
 // UpdateChannelAutoJoin updates the auto-join setting for a channel
 func (s *Storage) UpdateChannelAutoJoin(channelID int64, autoJoin bool) error {
-	_, err := s.db.Exec("UPDATE channels SET auto_join = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", autoJoin, channelID)
+	err := s.queries.UpdateChannelAutoJoin(context.Background(), db.UpdateChannelAutoJoinParams{
+		AutoJoin: autoJoin,
+		ID:       channelID,
+	})
 	return err
 }
 
 // UpdateChannelIsOpen updates the is_open state for a channel
 func (s *Storage) UpdateChannelIsOpen(channelID int64, isOpen bool) error {
-	_, err := s.db.Exec("UPDATE channels SET is_open = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", isOpen, channelID)
+	err := s.queries.UpdateChannelIsOpen(context.Background(), db.UpdateChannelIsOpenParams{
+		IsOpen: isOpen,
+		ID:     channelID,
+	})
 	return err
 }
 
 // GetOpenChannels retrieves channels for a network where the dialog is open (is_open=true) or where the user is joined
 func (s *Storage) GetOpenChannels(networkID int64, nickname string) ([]Channel, error) {
-	query := `
-		SELECT DISTINCT c.* 
-		FROM channels c
-		LEFT JOIN channel_users cu ON c.id = cu.channel_id AND LOWER(cu.nickname) = LOWER(?)
-		WHERE c.network_id = ? AND (c.is_open = 1 OR cu.nickname IS NOT NULL)
-		ORDER BY c.name
-	`
-	var channels []Channel
-	err := s.db.Select(&channels, query, nickname, networkID)
+	dbChannels, err := s.queries.GetOpenChannels(context.Background(), db.GetOpenChannelsParams{
+		LOWER:     nickname,
+		NetworkID: networkID,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get open channels: %w", err)
+	}
+	channels := make([]Channel, len(dbChannels))
+	for i, c := range dbChannels {
+		channels[i] = convertChannelFromDB(c)
 	}
 	return channels, nil
 }
 
 // GetChannelUsers retrieves all users for a channel
 func (s *Storage) GetChannelUsers(channelID int64) ([]ChannelUser, error) {
-	var users []ChannelUser
-	err := s.db.Select(&users, "SELECT * FROM channel_users WHERE channel_id = ? ORDER BY nickname", channelID)
+	dbUsers, err := s.queries.GetChannelUsers(context.Background(), channelID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get channel users: %w", err)
+	}
+	users := make([]ChannelUser, len(dbUsers))
+	for i, u := range dbUsers {
+		users[i] = convertChannelUserFromDB(u)
 	}
 	return users, nil
 }
 
 // AddChannelUser adds or updates a user in a channel
 func (s *Storage) AddChannelUser(channelID int64, nickname string, modes string) error {
-	query := `INSERT INTO channel_users (channel_id, nickname, modes, created_at, updated_at)
-	          VALUES (:channel_id, :nickname, :modes, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-	          ON CONFLICT(channel_id, nickname) DO UPDATE SET modes = :modes, updated_at = CURRENT_TIMESTAMP`
-
-	user := ChannelUser{
+	err := s.queries.AddChannelUser(context.Background(), db.AddChannelUserParams{
 		ChannelID: channelID,
 		Nickname:  nickname,
-		Modes:     modes,
-	}
-	_, err := s.db.NamedExec(query, user)
+		Modes:     convertToNullString(modes),
+	})
 	return err
 }
 
 // RemoveChannelUser removes a user from a channel
 func (s *Storage) RemoveChannelUser(channelID int64, nickname string) error {
-	_, err := s.db.Exec("DELETE FROM channel_users WHERE channel_id = ? AND LOWER(nickname) = LOWER(?)", channelID, nickname)
+	err := s.queries.RemoveChannelUser(context.Background(), db.RemoveChannelUserParams{
+		ChannelID: channelID,
+		LOWER:     nickname,
+	})
 	return err
 }
 
 // ClearChannelUsers removes all users from a channel
 func (s *Storage) ClearChannelUsers(channelID int64) error {
-	_, err := s.db.Exec("DELETE FROM channel_users WHERE channel_id = ?", channelID)
+	err := s.queries.ClearChannelUsers(context.Background(), channelID)
 	return err
 }
 
 // ClearNetworkChannelUsers removes all channel users for all channels in a network
 func (s *Storage) ClearNetworkChannelUsers(networkID int64) error {
-	_, err := s.db.Exec(`
-		DELETE FROM channel_users 
-		WHERE channel_id IN (SELECT id FROM channels WHERE network_id = ?)
-	`, networkID)
+	err := s.queries.ClearNetworkChannelUsers(context.Background(), networkID)
 	return err
 }
 
 // UpdateChannelUserNickname updates a user's nickname across all channels in a network
 func (s *Storage) UpdateChannelUserNickname(networkID int64, oldNickname string, newNickname string) error {
-	_, err := s.db.Exec(`
-		UPDATE channel_users 
-		SET nickname = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE LOWER(nickname) = LOWER(?) 
-		AND channel_id IN (SELECT id FROM channels WHERE network_id = ?)
-	`, newNickname, oldNickname, networkID)
+	err := s.queries.UpdateChannelUserNickname(context.Background(), db.UpdateChannelUserNicknameParams{
+		Nickname:  newNickname,
+		LOWER:     oldNickname,
+		NetworkID: networkID,
+	})
 	return err
 }
 
@@ -593,26 +584,27 @@ func (s *Storage) UpdateChannelUserNickname(networkID int64, oldNickname string,
 // Returns both messages FROM the target user (received) and messages TO the target user (sent by currentUser)
 // Uses case-insensitive matching for IRC nicknames
 func (s *Storage) GetPrivateMessages(networkID int64, targetUser string, currentUser string, limit int) ([]Message, error) {
-	var messages []Message
 	// Normalize usernames to lowercase for case-insensitive comparison
 	targetUserLower := strings.ToLower(targetUser)
 	currentUserLower := strings.ToLower(currentUser)
 
 	// Get messages FROM targetUser (received) OR messages TO targetUser sent by currentUser (sent)
 	// For sent messages, we check the raw_line to identify the target (case-insensitive)
-	err := s.db.Select(&messages,
-		`SELECT * FROM messages 
-		 WHERE network_id = ? AND channel_id IS NULL AND message_type IN ('privmsg', 'action')
-		 AND (
-		   LOWER(user) = ? OR 
-		   (LOWER(user) = ? AND LOWER(raw_line) LIKE ?)
-		 )
-		 ORDER BY timestamp DESC 
-		 LIMIT ?`,
-		networkID, targetUserLower, currentUserLower, fmt.Sprintf("privmsg %s%%", targetUserLower), limit)
+	dbMessages, err := s.queries.GetPrivateMessages(context.Background(), db.GetPrivateMessagesParams{
+		NetworkID: networkID,
+		User:      targetUserLower,
+		User_2:    currentUserLower,
+		RawLine:   sql.NullString{String: fmt.Sprintf("privmsg %s%%", targetUserLower), Valid: true},
+		Limit:     int64(limit),
+	})
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to get private messages: %w", err)
+	}
+
+	messages := make([]Message, len(dbMessages))
+	for i, m := range dbMessages {
+		messages[i] = convertMessageFromDB(m)
 	}
 
 	// Reverse to get chronological order
@@ -628,28 +620,11 @@ func (s *Storage) GetPrivateMessages(networkID int64, targetUser string, current
 // Uses case-insensitive grouping to consolidate conversations with different case variants of the same nickname
 // If openOnly is true, only returns conversations where is_open = true
 func (s *Storage) GetPrivateMessageConversations(networkID int64, currentUser string, openOnly bool) ([]string, error) {
-	var users []string
 	currentUserLower := strings.ToLower(currentUser)
 
 	if openOnly {
 		// Get only open PM conversations from the conversations table
-		// Join with messages to get the original case variant of the nickname
-		// Use the most recent message's user field to preserve original case
-		err := s.db.Select(&users,
-			`SELECT COALESCE(
-				(SELECT m.user FROM messages m 
-				 WHERE m.network_id = pmc.network_id 
-				   AND m.channel_id IS NULL 
-				   AND LOWER(m.user) = pmc.target_user 
-				   AND m.message_type IN ('privmsg', 'action')
-				 ORDER BY m.timestamp DESC 
-				 LIMIT 1),
-				pmc.target_user
-			) as user
-			 FROM private_message_conversations pmc
-			 WHERE pmc.network_id = ? AND pmc.is_open = 1
-			 ORDER BY pmc.updated_at DESC, pmc.created_at DESC`,
-			networkID)
+		users, err := s.queries.GetPrivateMessageConversationsOpen(context.Background(), networkID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get open private message conversations: %w", err)
 		}
@@ -658,16 +633,21 @@ func (s *Storage) GetPrivateMessageConversations(networkID int64, currentUser st
 
 	// Group by lowercase username to consolidate case variants, but return the most recent case variant
 	// We use MAX(user) to get one representative case variant per lowercase username
-	err := s.db.Select(&users,
-		`SELECT MAX(user) as user
-		 FROM messages 
-		 WHERE network_id = ? AND channel_id IS NULL AND user != '*' AND LOWER(user) != ? AND message_type IN ('privmsg', 'action')
-		 GROUP BY LOWER(user)
-		 ORDER BY MAX(timestamp) DESC`,
-		networkID, currentUserLower)
-
+	dbUsers, err := s.queries.GetPrivateMessageConversationsAll(context.Background(), db.GetPrivateMessageConversationsAllParams{
+		NetworkID: networkID,
+		User:      currentUserLower,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get private message conversations: %w", err)
+	}
+
+	users := make([]string, len(dbUsers))
+	for i, u := range dbUsers {
+		if userStr, ok := u.(string); ok {
+			users[i] = userStr
+		} else {
+			return nil, fmt.Errorf("unexpected type in GetPrivateMessageConversationsAll result")
+		}
 	}
 
 	return users, nil
@@ -680,13 +660,14 @@ func (s *Storage) GetOrCreatePMConversation(networkID int64, targetUser string, 
 	// Normalize target user to lowercase for case-insensitive matching
 	targetUserLower := strings.ToLower(targetUser)
 
-	var conv PrivateMessageConversation
-	err := s.db.Get(&conv,
-		"SELECT * FROM private_message_conversations WHERE network_id = ? AND target_user = ?",
-		networkID, targetUserLower)
+	dbConv, err := s.queries.GetPMConversation(context.Background(), db.GetPMConversationParams{
+		NetworkID:  networkID,
+		TargetUser: targetUserLower,
+	})
 
 	if err == nil {
 		// Conversation exists, return it
+		conv := convertPMConversationFromDB(dbConv)
 		return &conv, nil
 	}
 
@@ -697,7 +678,7 @@ func (s *Storage) GetOrCreatePMConversation(networkID int64, targetUser string, 
 
 	// Conversation doesn't exist, create it
 	now := time.Now()
-	conv = PrivateMessageConversation{
+	conv := PrivateMessageConversation{
 		NetworkID:  networkID,
 		TargetUser: targetUserLower,
 		IsOpen:     true, // Auto-open new conversations
@@ -705,33 +686,25 @@ func (s *Storage) GetOrCreatePMConversation(networkID int64, targetUser string, 
 		UpdatedAt:  &now,
 	}
 
-	query := `INSERT INTO private_message_conversations (network_id, target_user, is_open, created_at, updated_at)
-	          VALUES (:network_id, :target_user, :is_open, :created_at, :updated_at)`
-
-	result, err := s.db.NamedExec(query, conv)
+	params := convertPMConversationToDBCreateParams(&conv)
+	dbConv, err = s.queries.CreatePMConversation(context.Background(), params)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create PM conversation: %w", err)
 	}
 
-	id, err := result.LastInsertId()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get PM conversation ID: %w", err)
-	}
-
-	conv.ID = id
+	conv = convertPMConversationFromDB(dbConv)
 	return &conv, nil
 }
 
 // GetOpenPMConversations retrieves PM conversations where is_open = true
 func (s *Storage) GetOpenPMConversations(networkID int64, currentUser string) ([]PrivateMessageConversation, error) {
-	var conversations []PrivateMessageConversation
-	err := s.db.Select(&conversations,
-		`SELECT * FROM private_message_conversations 
-		 WHERE network_id = ? AND is_open = 1
-		 ORDER BY updated_at DESC, created_at DESC`,
-		networkID)
+	dbConversations, err := s.queries.GetOpenPMConversations(context.Background(), networkID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get open PM conversations: %w", err)
+	}
+	conversations := make([]PrivateMessageConversation, len(dbConversations))
+	for i, c := range dbConversations {
+		conversations[i] = convertPMConversationFromDB(c)
 	}
 	return conversations, nil
 }
@@ -739,9 +712,11 @@ func (s *Storage) GetOpenPMConversations(networkID int64, currentUser string) ([
 // UpdatePMConversationIsOpen updates the is_open status for a PM conversation
 func (s *Storage) UpdatePMConversationIsOpen(networkID int64, targetUser string, isOpen bool) error {
 	targetUserLower := strings.ToLower(targetUser)
-	_, err := s.db.Exec(
-		"UPDATE private_message_conversations SET is_open = ?, updated_at = CURRENT_TIMESTAMP WHERE network_id = ? AND target_user = ?",
-		isOpen, networkID, targetUserLower)
+	err := s.queries.UpdatePMConversationIsOpen(context.Background(), db.UpdatePMConversationIsOpenParams{
+		IsOpen:     isOpen,
+		NetworkID:  networkID,
+		TargetUser: targetUserLower,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to update PM conversation is_open: %w", err)
 	}
@@ -759,46 +734,28 @@ type LastOpenPane struct {
 // GetLastOpenPane retrieves the most recently updated open channel or PM conversation across all networks
 func (s *Storage) GetLastOpenPane() (*LastOpenPane, error) {
 	// Query for the most recently updated open channel
-	var channel struct {
-		NetworkID int64      `db:"network_id"`
-		Name      string     `db:"name"`
-		UpdatedAt *time.Time `db:"updated_at"`
-	}
-	channelQuery := `
-		SELECT network_id, name, updated_at
-		FROM channels
-		WHERE is_open = 1
-		ORDER BY COALESCE(updated_at, created_at) DESC, created_at DESC
-		LIMIT 1
-	`
-	err := s.db.Get(&channel, channelQuery)
+	channel, err := s.queries.GetLastOpenChannel(context.Background())
 	channelFound := err == nil
 	if err != nil && !strings.Contains(err.Error(), "no rows") {
 		// Unexpected error, return it
 		return nil, fmt.Errorf("failed to query open channels: %w", err)
 	}
-	channelUpdatedAt := channel.UpdatedAt
+	var channelUpdatedAt *time.Time
+	if channelFound && channel.UpdatedAt.Valid {
+		channelUpdatedAt = &channel.UpdatedAt.Time
+	}
 
 	// Query for the most recently updated open PM conversation
-	var pm struct {
-		NetworkID  int64      `db:"network_id"`
-		TargetUser string     `db:"target_user"`
-		UpdatedAt  *time.Time `db:"updated_at"`
-	}
-	pmQuery := `
-		SELECT network_id, target_user, updated_at
-		FROM private_message_conversations
-		WHERE is_open = 1
-		ORDER BY COALESCE(updated_at, created_at) DESC, created_at DESC
-		LIMIT 1
-	`
-	err = s.db.Get(&pm, pmQuery)
+	pm, err := s.queries.GetLastOpenPM(context.Background())
 	pmFound := err == nil
 	if err != nil && !strings.Contains(err.Error(), "no rows") {
 		// Unexpected error, return it
 		return nil, fmt.Errorf("failed to query open PM conversations: %w", err)
 	}
-	pmUpdatedAt := pm.UpdatedAt
+	var pmUpdatedAt *time.Time
+	if pmFound && pm.UpdatedAt.Valid {
+		pmUpdatedAt = &pm.UpdatedAt.Time
+	}
 
 	// Compare timestamps to determine which is more recent
 	if !channelFound && !pmFound {
@@ -864,13 +821,90 @@ func (s *Storage) GetLastOpenPane() (*LastOpenPane, error) {
 	}, nil
 }
 
+// SearchResult extends Message with additional context for search results
+type SearchResult struct {
+	Message
+	ChannelName string `db:"channel_name" json:"channel_name"`
+	NetworkName string `db:"network_name" json:"network_name"`
+}
+
+// SearchMessages performs full-text search across messages using FTS5
+func (s *Storage) SearchMessages(query string, networkID *int64, limit int) ([]SearchResult, error) {
+	if query == "" {
+		return []SearchResult{}, nil
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+
+	// Sanitize the query for FTS5: wrap terms in quotes to avoid syntax errors
+	// from special characters, and add * for prefix matching
+	sanitized := sanitizeFTS5Query(query)
+
+	var results []SearchResult
+	var err error
+
+	if networkID != nil {
+		err = s.db.Select(&results, `
+			SELECT m.id, m.network_id, m.channel_id, m.user, m.message, m.message_type, m.timestamp, m.raw_line,
+				COALESCE(c.name, '') as channel_name,
+				COALESCE(n.name, '') as network_name
+			FROM messages m
+			JOIN messages_fts ON messages_fts.rowid = m.id
+			LEFT JOIN channels c ON m.channel_id = c.id
+			LEFT JOIN networks n ON m.network_id = n.id
+			WHERE messages_fts MATCH ?
+			AND m.network_id = ?
+			ORDER BY m.timestamp DESC
+			LIMIT ?
+		`, sanitized, *networkID, limit)
+	} else {
+		err = s.db.Select(&results, `
+			SELECT m.id, m.network_id, m.channel_id, m.user, m.message, m.message_type, m.timestamp, m.raw_line,
+				COALESCE(c.name, '') as channel_name,
+				COALESCE(n.name, '') as network_name
+			FROM messages m
+			JOIN messages_fts ON messages_fts.rowid = m.id
+			LEFT JOIN channels c ON m.channel_id = c.id
+			LEFT JOIN networks n ON m.network_id = n.id
+			WHERE messages_fts MATCH ?
+			ORDER BY m.timestamp DESC
+			LIMIT ?
+		`, sanitized, limit)
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to search messages: %w", err)
+	}
+
+	return results, nil
+}
+
+// sanitizeFTS5Query sanitizes a user query for FTS5 MATCH syntax
+func sanitizeFTS5Query(query string) string {
+	// Trim whitespace
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return query
+	}
+
+	// Split into words and wrap each in quotes, adding * for prefix matching
+	words := strings.Fields(query)
+	quoted := make([]string, 0, len(words))
+	for _, word := range words {
+		// Remove any existing quotes to avoid injection
+		clean := strings.ReplaceAll(word, "\"", "")
+		if clean != "" {
+			quoted = append(quoted, "\""+clean+"\"")
+		}
+	}
+
+	return strings.Join(quoted, " ")
+}
+
 // GetPluginConfig retrieves the configuration for a plugin
 func (s *Storage) GetPluginConfig(name string) (*PluginConfig, error) {
-	var config PluginConfig
-	var configJSON sql.NullString
-	var configSchemaJSON sql.NullString
-	err := s.db.QueryRow("SELECT name, enabled, config, config_schema, created_at, updated_at FROM plugin_configs WHERE name = ?", name).Scan(
-		&config.Name, &config.Enabled, &configJSON, &configSchemaJSON, &config.CreatedAt, &config.UpdatedAt)
+	dbConfig, err := s.queries.GetPluginConfig(context.Background(), name)
 	if err != nil {
 		if strings.Contains(err.Error(), "no rows") {
 			// Return default config if not found
@@ -886,37 +920,15 @@ func (s *Storage) GetPluginConfig(name string) (*PluginConfig, error) {
 		return nil, fmt.Errorf("failed to get plugin config: %w", err)
 	}
 
-	// Decode JSON config
-	if configJSON.Valid && configJSON.String != "" {
-		if err := json.Unmarshal([]byte(configJSON.String), &config.Config); err != nil {
-			logger.Log.Warn().Err(err).Str("plugin", name).Msg("Failed to decode plugin config JSON, using empty config")
-			config.Config = make(map[string]interface{})
-		}
-	} else {
-		config.Config = make(map[string]interface{})
-	}
-
-	// Decode JSON config_schema
-	if configSchemaJSON.Valid && configSchemaJSON.String != "" {
-		if err := json.Unmarshal([]byte(configSchemaJSON.String), &config.ConfigSchema); err != nil {
-			logger.Log.Warn().Err(err).Str("plugin", name).Msg("Failed to decode plugin config_schema JSON, using empty schema")
-			config.ConfigSchema = make(map[string]interface{})
-		}
-	} else {
-		config.ConfigSchema = make(map[string]interface{})
-	}
-
-	return &config, nil
+	return convertPluginConfigFromDB(dbConfig)
 }
 
 // SetPluginEnabled updates the enabled state for a plugin
 func (s *Storage) SetPluginEnabled(name string, enabled bool) error {
-	// Use INSERT OR REPLACE to handle both new and existing configs
-	_, err := s.db.Exec(
-		`INSERT INTO plugin_configs (name, enabled, created_at, updated_at)
-		 VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-		 ON CONFLICT(name) DO UPDATE SET enabled = ?, updated_at = CURRENT_TIMESTAMP`,
-		name, enabled, enabled)
+	err := s.queries.SetPluginEnabled(context.Background(), db.SetPluginEnabledParams{
+		Name:    name,
+		Enabled: enabled,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to set plugin enabled state: %w", err)
 	}
@@ -925,42 +937,19 @@ func (s *Storage) SetPluginEnabled(name string, enabled bool) error {
 
 // GetAllPluginConfigs retrieves all plugin configurations
 func (s *Storage) GetAllPluginConfigs() (map[string]*PluginConfig, error) {
-	rows, err := s.db.Query("SELECT name, enabled, config, config_schema, created_at, updated_at FROM plugin_configs")
+	dbConfigs, err := s.queries.GetAllPluginConfigs(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("failed to get all plugin configs: %w", err)
 	}
-	defer rows.Close()
 
 	result := make(map[string]*PluginConfig)
-	for rows.Next() {
-		var config PluginConfig
-		var configJSON sql.NullString
-		var configSchemaJSON sql.NullString
-		if err := rows.Scan(&config.Name, &config.Enabled, &configJSON, &configSchemaJSON, &config.CreatedAt, &config.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("failed to scan plugin config: %w", err)
+	for _, dbConfig := range dbConfigs {
+		config, err := convertPluginConfigFromDB(dbConfig)
+		if err != nil {
+			logger.Log.Warn().Err(err).Str("plugin", dbConfig.Name).Msg("Failed to convert plugin config, skipping")
+			continue
 		}
-
-		// Decode JSON config
-		if configJSON.Valid && configJSON.String != "" {
-			if err := json.Unmarshal([]byte(configJSON.String), &config.Config); err != nil {
-				logger.Log.Warn().Err(err).Str("plugin", config.Name).Msg("Failed to decode plugin config JSON, using empty config")
-				config.Config = make(map[string]interface{})
-			}
-		} else {
-			config.Config = make(map[string]interface{})
-		}
-
-		// Decode JSON config_schema
-		if configSchemaJSON.Valid && configSchemaJSON.String != "" {
-			if err := json.Unmarshal([]byte(configSchemaJSON.String), &config.ConfigSchema); err != nil {
-				logger.Log.Warn().Err(err).Str("plugin", config.Name).Msg("Failed to decode plugin config_schema JSON, using empty schema")
-				config.ConfigSchema = make(map[string]interface{})
-			}
-		} else {
-			config.ConfigSchema = make(map[string]interface{})
-		}
-
-		result[config.Name] = &config
+		result[config.Name] = config
 	}
 
 	return result, nil
@@ -974,13 +963,10 @@ func (s *Storage) SetPluginConfig(name string, config map[string]interface{}) er
 		return fmt.Errorf("failed to encode plugin config: %w", err)
 	}
 
-	// Use INSERT OR REPLACE to handle both new and existing configs
-	// Preserve existing enabled state and config_schema
-	_, err = s.db.Exec(
-		`INSERT INTO plugin_configs (name, enabled, config, created_at, updated_at)
-		 VALUES (?, 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-		 ON CONFLICT(name) DO UPDATE SET config = ?, updated_at = CURRENT_TIMESTAMP`,
-		name, configJSON, configJSON)
+	err = s.queries.SetPluginConfig(context.Background(), db.SetPluginConfigParams{
+		Name:   name,
+		Config: configJSON,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to set plugin config: %w", err)
 	}
@@ -995,13 +981,10 @@ func (s *Storage) SetPluginConfigSchema(name string, schema map[string]interface
 		return fmt.Errorf("failed to encode plugin config_schema: %w", err)
 	}
 
-	// Use INSERT OR REPLACE to handle both new and existing configs
-	// Preserve existing enabled state and config
-	_, err = s.db.Exec(
-		`INSERT INTO plugin_configs (name, enabled, config_schema, created_at, updated_at)
-		 VALUES (?, 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-		 ON CONFLICT(name) DO UPDATE SET config_schema = ?, updated_at = CURRENT_TIMESTAMP`,
-		name, schemaJSON, schemaJSON)
+	err = s.queries.SetPluginConfigSchema(context.Background(), db.SetPluginConfigSchemaParams{
+		Name:         name,
+		ConfigSchema: schemaJSON,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to set plugin config_schema: %w", err)
 	}

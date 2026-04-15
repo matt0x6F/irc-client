@@ -16,6 +16,11 @@ export function InputArea({ onSendMessage, placeholder = 'Type a message...', ne
   const [lastCompletionPrefix, setLastCompletionPrefix] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Command history state (global, per-session)
+  const historyRef = useRef<string[]>([]);
+  const historyIndexRef = useRef(-1);
+  const draftRef = useRef('');
+
   // Reset completion state when message changes (but not during completion)
   useEffect(() => {
     if (completionIndex === -1) {
@@ -27,11 +32,63 @@ export function InputArea({ onSendMessage, placeholder = 'Type a message...', ne
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (message.trim()) {
-      await onSendMessage(message.trim());
+      const trimmed = message.trim();
+      await onSendMessage(trimmed);
+
+      // Add to history if not a duplicate of the last entry
+      const history = historyRef.current;
+      if (history.length === 0 || history[history.length - 1] !== trimmed) {
+        history.push(trimmed);
+        if (history.length > 100) {
+          history.shift();
+        }
+      }
+      historyIndexRef.current = -1;
+      draftRef.current = '';
+
       setMessage('');
       setCompletionIndex(-1);
       setCompletions([]);
       setLastCompletionPrefix('');
+    }
+  };
+
+  const handleHistoryNavigation = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    const history = historyRef.current;
+    if (history.length === 0) return;
+
+    if (e.key === 'ArrowUp') {
+      const input = e.currentTarget;
+      const cursorPos = input.selectionStart || 0;
+      // Only navigate history when cursor is at position 0 or input is empty
+      if (cursorPos !== 0 && message.length > 0) return;
+
+      e.preventDefault();
+
+      if (historyIndexRef.current === -1) {
+        // Starting history navigation — save current draft
+        draftRef.current = message;
+        historyIndexRef.current = history.length - 1;
+      } else if (historyIndexRef.current > 0) {
+        historyIndexRef.current--;
+      } else {
+        return; // Already at oldest entry
+      }
+
+      setMessage(history[historyIndexRef.current]);
+    } else if (e.key === 'ArrowDown') {
+      if (historyIndexRef.current === -1) return; // Not in history mode
+
+      e.preventDefault();
+
+      if (historyIndexRef.current < history.length - 1) {
+        historyIndexRef.current++;
+        setMessage(history[historyIndexRef.current]);
+      } else {
+        // Past newest entry — restore draft
+        historyIndexRef.current = -1;
+        setMessage(draftRef.current);
+      }
     }
   };
 
@@ -153,7 +210,7 @@ export function InputArea({ onSendMessage, placeholder = 'Type a message...', ne
           type="text"
           value={message}
           onChange={(e) => setMessage(e.target.value)}
-          onKeyDown={performTabCompletion}
+          onKeyDown={(e) => { handleHistoryNavigation(e); performTabCompletion(e); }}
           placeholder={placeholder}
           className="flex-1 px-4 py-2.5 border border-border rounded-lg bg-background text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all shadow-[var(--shadow-sm)] focus:shadow-[var(--shadow-md)]"
           style={{ transition: 'var(--transition-base)' }}

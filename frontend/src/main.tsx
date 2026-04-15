@@ -1,5 +1,6 @@
 import React from 'react'
 import {createRoot} from 'react-dom/client'
+import {EventsEmit} from '../wailsjs/runtime/runtime'
 import './style.css'
 import App from './App'
 
@@ -35,6 +36,14 @@ window.addEventListener('unhandledrejection', (event) => {
     event.preventDefault()
     return
   }
+})
+
+// Track window focus/blur for desktop notification suppression
+window.addEventListener('focus', () => {
+  EventsEmit('window-focused')
+})
+window.addEventListener('blur', () => {
+  EventsEmit('window-blurred')
 })
 
 const container = document.getElementById('root')

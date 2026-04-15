@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState, useMemo } from 'react';
+import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { storage } from '../../wailsjs/go/models';
 import { IRCFormattedText } from './irc-formatted-text';
 import { useNicknameColors } from '../hooks/useNicknameColors';
+import { useNetworkStore } from '../stores/network';
 
 interface MessageViewProps {
   messages: storage.Message[];
@@ -193,7 +194,25 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
 
   // Get nickname colors - this will fetch colors and listen for updates
   const nicknameColors = useNicknameColors(networkId, uniqueNicknames);
-  
+
+  // Get the current user's nickname for mention highlighting
+  const currentNickname = useNetworkStore((state) => {
+    if (networkId === null) return null;
+    const network = state.networks.find((n) => n.id === networkId);
+    return network?.nickname || null;
+  });
+
+  // Check if a message text contains the user's nickname as a whole word (case-insensitive)
+  const isMention = useCallback(
+    (text: string): boolean => {
+      if (!currentNickname) return false;
+      const escaped = currentNickname.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const pattern = new RegExp(`(?:^|[^a-zA-Z0-9_])${escaped}(?:[^a-zA-Z0-9_]|$)`, 'i');
+      return pattern.test(text);
+    },
+    [currentNickname]
+  );
+
   // Trigger color generation for users in messages by simulating message events
   // This ensures colors are generated even for old messages
   useEffect(() => {
@@ -306,13 +325,17 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
           const isCommand = msg.message_type === 'command';
           const isSystemMessage = msg.message_type === 'join' || msg.message_type === 'part' || msg.message_type === 'quit';
           const isEven = index % 2 === 0;
-          
+          const isRegularMessage = !isError && !isStatus && !isCommand && !isSystemMessage;
+          const hasMention = isRegularMessage && isMention(msg.message);
+
           return (
-            <div 
-              key={msg.id} 
+            <div
+              key={msg.id}
               className={`flex space-x-3 py-1 px-2 rounded transition-colors ${
-                isError 
-                  ? 'bg-destructive/10 border-l-2 border-destructive shadow-[var(--shadow-sm)]' 
+                hasMention
+                  ? 'bg-yellow-500/10 dark:bg-yellow-400/10 border-l-2 border-yellow-500/50'
+                  : isError
+                  ? 'bg-destructive/10 border-l-2 border-destructive shadow-[var(--shadow-sm)]'
                   : isStatus || isCommand
                   ? 'opacity-70'
                   : isEven
@@ -323,7 +346,7 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
               {isError ? (
                 <>
                   <span className="text-sm text-destructive font-semibold flex-shrink-0">⚠</span>
-                  <span className="text-xs text-muted-foreground/70 flex-shrink-0 font-mono">
+                  <span className="hidden sm:inline text-xs text-muted-foreground/70 flex-shrink-0 font-mono">
                     {new Date(msg.timestamp).toLocaleTimeString()}
                   </span>
                   <span className="text-sm text-destructive flex-1 font-medium">
@@ -332,7 +355,7 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
                 </>
               ) : (
                 <>
-                  <span className="text-xs text-muted-foreground/60 flex-shrink-0 font-mono">
+                  <span className="hidden sm:inline text-xs text-muted-foreground/60 flex-shrink-0 font-mono">
                     {new Date(msg.timestamp).toLocaleTimeString()}
                   </span>
                   {msg.user !== '*' && !isSystemMessage && (
