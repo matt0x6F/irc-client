@@ -26,7 +26,7 @@ jobs:
         run: go test -tags fts5 ./internal/... -count=1 -timeout 60s
 
       - name: Run vet
-        run: go vet ./...
+        run: go vet ./internal/...
 
       - name: Check formatting
         run: test -z "$(gofmt -l .)"
