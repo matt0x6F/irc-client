@@ -159,6 +159,71 @@ function parseIRCFormatting(text: string): FormattedSegment[] {
   return segments;
 }
 
+// URL regex pattern to detect http and https URLs in text
+const URL_REGEX = /https?:\/\/[^\s<>"{}|\\^`\[\]]+/g;
+
+// Renders a text string, replacing URLs with clickable <a> tags.
+// Returns an array of React nodes (strings and <a> elements).
+function renderTextWithLinks(text: string, keyPrefix: string): React.ReactNode[] {
+  const nodes: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  // Reset regex state
+  URL_REGEX.lastIndex = 0;
+
+  while ((match = URL_REGEX.exec(text)) !== null) {
+    // Add text before the URL
+    if (match.index > lastIndex) {
+      nodes.push(text.slice(lastIndex, match.index));
+    }
+
+    const url = match[0];
+    // Strip trailing punctuation that's likely not part of the URL
+    let cleanUrl = url;
+    const trailingPunct = /[),.:;!?]+$/;
+    const trailingMatch = cleanUrl.match(trailingPunct);
+    let suffix = '';
+    if (trailingMatch) {
+      const stripped = trailingMatch[0];
+      // Count open/close parens to handle URLs like https://en.wikipedia.org/wiki/Example_(disambiguation)
+      const openParens = (cleanUrl.match(/\(/g) || []).length;
+      const closeParens = (cleanUrl.match(/\)/g) || []).length;
+      if (stripped === ')' && openParens >= closeParens) {
+        // Parens are balanced, keep the URL as is
+      } else {
+        cleanUrl = cleanUrl.slice(0, cleanUrl.length - stripped.length);
+        suffix = stripped;
+      }
+    }
+
+    nodes.push(
+      <a
+        key={`${keyPrefix}-link-${match.index}`}
+        href={cleanUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-primary underline hover:text-primary/80"
+      >
+        {cleanUrl}
+      </a>
+    );
+
+    if (suffix) {
+      nodes.push(suffix);
+    }
+
+    lastIndex = match.index + url.length;
+  }
+
+  // Add remaining text after the last URL
+  if (lastIndex < text.length) {
+    nodes.push(text.slice(lastIndex));
+  }
+
+  return nodes.length > 0 ? nodes : [text];
+}
+
 interface IRCFormattedTextProps {
   text: string;
   className?: string;
@@ -211,7 +276,7 @@ export function IRCFormattedText({ text, className = '' }: IRCFormattedTextProps
 
         return (
           <span key={index} className={classes.join(' ')} style={style}>
-            {segment.text}
+            {renderTextWithLinks(segment.text, `seg-${index}`)}
           </span>
         );
       })}

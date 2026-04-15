@@ -16,6 +16,9 @@ import (
 	"github.com/matt0x6f/irc-client/internal/validation"
 )
 
+// requestedCaps is the list of IRCv3 capabilities this client wants to negotiate.
+var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags"}
+
 // IRCClient manages IRC connections
 type IRCClient struct {
 	conn                *ircevent.Connection
@@ -40,6 +43,13 @@ type IRCClient struct {
 	serverCapabilities  *ServerCapabilities   // Server capabilities from ISUPPORT
 	whoisInProgress     map[string]*WhoisInfo // Track WHOIS requests in progress (key: nickname)
 	whoisMu             sync.Mutex            // Mutex for whoisInProgress map
+	enabledCaps         map[string]bool       // IRCv3 capabilities granted by the server
+	capNegotiationDone  bool                  // Whether CAP negotiation has finished
+	channelListItems    []ChannelListItem     // Temporary storage for LIST response
+	channelListMu       sync.Mutex            // Mutex for channelListItems
+	rateLimiter         *RateLimiter          // Rate limiter for outgoing messages
+	desiredNick         string                // The original nickname the user wanted
+	nickAttempt         int                   // Current nick collision retry attempt (0 = first try with underscore)
 }
 
 // ServerCapabilities stores parsed ISUPPORT information
@@ -118,11 +128,13 @@ func NewIRCClient(network *storage.Network, eventBus *events.EventBus, storage *
 		saslCapAcknowledged: false,
 		namesInProgress:     make(map[string]bool),
 		whoisInProgress:     make(map[string]*WhoisInfo),
+		enabledCaps:         make(map[string]bool),
 		serverCapabilities: &ServerCapabilities{
 			Prefix:       make(map[rune]rune),
 			PrefixString: "",
 			ChanModes:    "",
 		},
+		rateLimiter: NewRateLimiter(4, 2*time.Second),
 	}
 
 	// Debug: Log SASL configuration
@@ -190,23 +202,16 @@ func (c *IRCClient) setupHandlers() {
 		}
 		c.storage.WriteMessage(statusMsg)
 
-		// If SASL is enabled, start capability negotiation
-		// Note: This might be too late - CAP should be sent before connection
-		// But we'll try here first and add logging
-		if c.saslEnabled {
-			statusMsg := storage.Message{
-				NetworkID:   c.networkID,
-				ChannelID:   nil,
-				User:        "*",
-				Message:     fmt.Sprintf("SASL enabled, sending CAP LS (mechanism: %s)", c.saslMechanism),
-				MessageType: "status",
-				Timestamp:   time.Now(),
-				RawLine:     "",
-			}
-			c.storage.WriteMessage(statusMsg)
-			// Request capability list
-			c.conn.SendRaw("CAP LS 302")
-		}
+		// Always start IRCv3 capability negotiation
+		c.storage.WriteMessage(storage.Message{
+			NetworkID:   c.networkID,
+			ChannelID:   nil,
+			User:        "*",
+			Message:     "Starting IRCv3 capability negotiation (CAP LS 302)",
+			MessageType: "status",
+			Timestamp:   time.Now(),
+		})
+		c.conn.SendRaw("CAP LS 302")
 
 		// On connection established, restore channel state after restart
 		// Clear all channel_users entries since we're not actually joined anymore
@@ -367,7 +372,7 @@ func (c *IRCClient) setupHandlers() {
 						User:        user,
 						Message:     fmt.Sprintf("* %s %s", user, ctcpArgs),
 						MessageType: "action",
-						Timestamp:   time.Now(),
+						Timestamp:   c.getMessageTime(e),
 						RawLine:     rawLine,
 					}
 					c.storage.WriteMessageSync(msg)
@@ -382,12 +387,17 @@ func (c *IRCClient) setupHandlers() {
 		}
 
 		// Regular PRIVMSG (not CTCP)
-		// Check if this is an echo of our own message (some servers echo back sent messages)
-		// If the sender is us and the target is our nickname, it's an echo - skip it
-		if strings.EqualFold(user, c.network.Nickname) && strings.EqualFold(channel, c.network.Nickname) {
-			// This is an echo of our own sent message - don't store it again
-			// The message was already stored when we sent it
-			return
+		// Handle echo-message: when the cap is enabled, the server echoes back our
+		// sent messages as the canonical copy. We store them here and skip storage
+		// in SendMessage. When echo-message is NOT enabled, drop self-to-self echoes.
+		if strings.EqualFold(user, c.network.Nickname) {
+			if !c.isEchoMessage(e) {
+				// echo-message not enabled; this is a legacy self-echo - skip it
+				if strings.EqualFold(channel, c.network.Nickname) {
+					return
+				}
+			}
+			// With echo-message enabled, fall through to store the server echo
 		}
 
 		// Determine if it's a channel or private message
@@ -418,7 +428,7 @@ func (c *IRCClient) setupHandlers() {
 			User:        user,
 			Message:     message,
 			MessageType: "privmsg",
-			Timestamp:   time.Now(),
+			Timestamp:   c.getMessageTime(e),
 			RawLine:     rawLine,
 		}
 
@@ -1204,7 +1214,7 @@ func (c *IRCClient) setupHandlers() {
 					User:        user,
 					Message:     fmt.Sprintf("CTCP %s reply from %s: %s", ctcpCommand, user, ctcpResponse),
 					MessageType: "ctcp",
-					Timestamp:   time.Now(),
+					Timestamp:   c.getMessageTime(e),
 					RawLine:     rawLine,
 				}
 				c.storage.WriteMessage(statusMsg)
@@ -1223,7 +1233,7 @@ func (c *IRCClient) setupHandlers() {
 				User:        user,
 				Message:     notice,
 				MessageType: "notice",
-				Timestamp:   time.Now(),
+				Timestamp:   c.getMessageTime(e),
 				RawLine:     rawLine,
 			}
 			c.storage.WriteMessage(statusMsg)
@@ -1444,213 +1454,359 @@ func (c *IRCClient) setupHandlers() {
 		}
 	})
 
-	// SASL capability negotiation
-	if c.saslEnabled {
-		// Track CAP LS responses (may be multi-line)
-		var capLSBuffer strings.Builder
+	// RPL_LISTSTART (321) - Beginning of LIST response
+	c.conn.AddCallback("321", func(e ircmsg.Message) {
+		c.channelListMu.Lock()
+		c.channelListItems = nil // Reset list
+		c.channelListMu.Unlock()
+		logger.Log.Debug().Int64("network_id", c.networkID).Msg("Channel LIST started")
+	})
 
-		// Handle CAP LS (list capabilities)
-		c.conn.AddCallback("CAP", func(e ircmsg.Message) {
-			// Log all CAP messages for debugging
-			rawLine, _ := e.Line()
-			statusMsg := storage.Message{
-				NetworkID:   c.networkID,
-				ChannelID:   nil,
-				User:        "*",
-				Message:     fmt.Sprintf("CAP received: %s", rawLine),
-				MessageType: "status",
-				Timestamp:   time.Now(),
-				RawLine:     rawLine,
+	// RPL_LIST (322) - Channel list entry: <channel> <visible> :<topic>
+	c.conn.AddCallback("322", func(e ircmsg.Message) {
+		if len(e.Params) < 3 {
+			return
+		}
+		channelName := e.Params[1]
+		usersCount := 0
+		fmt.Sscanf(e.Params[2], "%d", &usersCount)
+		topic := ""
+		if len(e.Params) >= 4 {
+			topic = e.Params[3]
+		}
+
+		item := ChannelListItem{
+			Channel:   channelName,
+			Users:     usersCount,
+			Topic:     topic,
+			NetworkID: c.networkID,
+		}
+
+		c.channelListMu.Lock()
+		c.channelListItems = append(c.channelListItems, item)
+		c.channelListMu.Unlock()
+	})
+
+	// RPL_LISTEND (323) - End of LIST response
+	c.conn.AddCallback("323", func(e ircmsg.Message) {
+		c.channelListMu.Lock()
+		items := make([]ChannelListItem, len(c.channelListItems))
+		copy(items, c.channelListItems)
+		c.channelListItems = nil
+		c.channelListMu.Unlock()
+
+		logger.Log.Debug().Int64("network_id", c.networkID).Int("count", len(items)).Msg("Channel LIST completed")
+
+		// Convert items to interface slice for event data
+		itemsData := make([]interface{}, len(items))
+		for i, item := range items {
+			itemsData[i] = map[string]interface{}{
+				"channel":   item.Channel,
+				"users":     item.Users,
+				"topic":     item.Topic,
+				"networkId": item.NetworkID,
 			}
-			c.storage.WriteMessage(statusMsg)
+		}
 
-			if len(e.Params) < 2 {
-				return
-			}
-			subcommand := e.Params[1]
+		c.eventBus.Emit(events.Event{
+			Type: EventChannelListEnd,
+			Data: map[string]interface{}{
+				"networkId": c.networkID,
+				"channels":  itemsData,
+			},
+			Timestamp: time.Now(),
+			Source:    events.EventSourceIRC,
+		})
+	})
 
-			switch subcommand {
-			case "LS":
-				// Server is listing capabilities (may be multi-line)
-				// Format: :server CAP * LS :cap1 cap2 cap3
-				// Or continuation: :server CAP * LS * :cap4 cap5
-				if len(e.Params) >= 3 {
-					capabilities := e.Params[2]
+	// IRCv3 capability negotiation (always enabled, not just for SASL)
+	var capLSBuffer strings.Builder
 
-					// Check if this is a continuation line (has "*" as third param)
-					// Format: CAP * LS * :more caps (continuation)
-					// Format: CAP * LS :caps (last line)
-					isContinuation := len(e.Params) > 3 && e.Params[2] == "*"
+	c.conn.AddCallback("CAP", func(e ircmsg.Message) {
+		rawLine, _ := e.Line()
+		c.storage.WriteMessage(storage.Message{
+			NetworkID:   c.networkID,
+			ChannelID:   nil,
+			User:        "*",
+			Message:     fmt.Sprintf("CAP received: %s", rawLine),
+			MessageType: "status",
+			Timestamp:   time.Now(),
+			RawLine:     rawLine,
+		})
 
-					if isContinuation {
-						// This is a continuation, append to buffer
-						capLSBuffer.WriteString(capabilities)
-						capLSBuffer.WriteString(" ")
-					} else {
-						// This is the last line (or single line response)
-						capLSBuffer.WriteString(capabilities)
-						allCaps := capLSBuffer.String()
-						capLSBuffer.Reset()
+		if len(e.Params) < 2 {
+			return
+		}
+		subcommand := e.Params[1]
 
-						statusMsg := storage.Message{
+		switch subcommand {
+		case "LS":
+			if len(e.Params) >= 3 {
+				capabilities := e.Params[2]
+				isContinuation := len(e.Params) > 3 && e.Params[2] == "*"
+
+				if isContinuation {
+					capLSBuffer.WriteString(capabilities)
+					capLSBuffer.WriteString(" ")
+				} else {
+					capLSBuffer.WriteString(capabilities)
+					allCaps := capLSBuffer.String()
+					capLSBuffer.Reset()
+
+					c.storage.WriteMessage(storage.Message{
+						NetworkID:   c.networkID,
+						ChannelID:   nil,
+						User:        "*",
+						Message:     fmt.Sprintf("CAP LS response: %s", allCaps),
+						MessageType: "status",
+						Timestamp:   time.Now(),
+					})
+
+					// Build list of caps to request: only those both wanted and offered
+					var toRequest []string
+					for _, wantedCap := range requestedCaps {
+						if wantedCap == "sasl" && !c.saslEnabled {
+							continue
+						}
+						if contains(allCaps, wantedCap) {
+							toRequest = append(toRequest, wantedCap)
+						}
+					}
+
+					if len(toRequest) > 0 {
+						reqStr := strings.Join(toRequest, " ")
+						c.storage.WriteMessage(storage.Message{
 							NetworkID:   c.networkID,
 							ChannelID:   nil,
 							User:        "*",
-							Message:     fmt.Sprintf("CAP LS response: %s", allCaps),
+							Message:     fmt.Sprintf("Requesting capabilities: %s", reqStr),
 							MessageType: "status",
 							Timestamp:   time.Now(),
-							RawLine:     "",
-						}
-						c.storage.WriteMessage(statusMsg)
-
-						// Check if server supports SASL
-						if contains(allCaps, "sasl") && !c.saslCapRequested {
-							statusMsg = storage.Message{
-								NetworkID:   c.networkID,
-								ChannelID:   nil,
-								User:        "*",
-								Message:     "Server supports SASL, requesting capability",
-								MessageType: "status",
-								Timestamp:   time.Now(),
-								RawLine:     "",
-							}
-							c.storage.WriteMessage(statusMsg)
-							// Request SASL capability
-							c.conn.SendRaw("CAP REQ sasl")
+						})
+						c.conn.SendRaw("CAP REQ :" + reqStr)
+						if c.saslEnabled && contains(allCaps, "sasl") {
 							c.saslCapRequested = true
-						} else if !contains(allCaps, "sasl") {
-							statusMsg = storage.Message{
-								NetworkID:   c.networkID,
-								ChannelID:   nil,
-								User:        "*",
-								Message:     "Server does not support SASL, ending CAP negotiation",
-								MessageType: "status",
-								Timestamp:   time.Now(),
-								RawLine:     "",
-							}
-							c.storage.WriteMessage(statusMsg)
-							// SASL not supported, end capability negotiation
-							c.conn.SendRaw("CAP END")
 						}
-					}
-				}
-			case "ACK":
-				// Server acknowledged our capability request
-				if len(e.Params) >= 3 {
-					capabilities := e.Params[2]
-					if contains(capabilities, "sasl") {
-						c.saslCapAcknowledged = true
-						// Start SASL authentication
-						c.startSASLAuth()
 					} else {
-						// SASL not in ACK, end capability negotiation
+						c.storage.WriteMessage(storage.Message{
+							NetworkID:   c.networkID,
+							ChannelID:   nil,
+							User:        "*",
+							Message:     "No requested capabilities supported, ending CAP negotiation",
+							MessageType: "status",
+							Timestamp:   time.Now(),
+						})
 						c.conn.SendRaw("CAP END")
 					}
 				}
-			case "NAK":
-				// Server rejected our capability request
-				if len(e.Params) >= 3 {
-					capabilities := e.Params[2]
-					if contains(capabilities, "sasl") {
-						// SASL not available, continue without it
-						c.conn.SendRaw("CAP END")
-					}
+			}
+		case "ACK":
+			if len(e.Params) >= 3 {
+				acked := e.Params[2]
+				c.mu.Lock()
+				for _, ackedCap := range strings.Fields(acked) {
+					c.enabledCaps[ackedCap] = true
+				}
+				c.mu.Unlock()
+
+				c.storage.WriteMessage(storage.Message{
+					NetworkID:   c.networkID,
+					ChannelID:   nil,
+					User:        "*",
+					Message:     fmt.Sprintf("Capabilities enabled: %s", acked),
+					MessageType: "status",
+					Timestamp:   time.Now(),
+				})
+
+				if contains(acked, "sasl") && c.saslEnabled {
+					c.saslCapAcknowledged = true
+					c.startSASLAuth()
+				} else {
+					c.conn.SendRaw("CAP END")
 				}
 			}
-		})
-
-		// Handle AUTHENTICATE responses
-		c.conn.AddCallback("AUTHENTICATE", func(e ircmsg.Message) {
-			c.handleAUTHENTICATE(e)
-		})
-
-		// Handle SASL numeric replies
-		// 900 RPL_LOGGEDIN - SASL authentication successful
-		c.conn.AddCallback("900", func(e ircmsg.Message) {
-			c.mu.Lock()
-			c.saslAuthenticated = true
-			c.saslInProgress = false
-			c.mu.Unlock()
-
-			statusMsg := storage.Message{
+		case "NAK":
+			c.storage.WriteMessage(storage.Message{
 				NetworkID:   c.networkID,
 				ChannelID:   nil,
 				User:        "*",
-				Message:     "SASL authentication successful",
+				Message:     "Capability request rejected (NAK), ending CAP negotiation",
 				MessageType: "status",
 				Timestamp:   time.Now(),
-				RawLine:     "",
-			}
-			c.storage.WriteMessage(statusMsg)
-
-			// End capability negotiation
-			c.conn.SendRaw("CAP END")
-
-			c.eventBus.Emit(events.Event{
-				Type:      EventSASLSuccess,
-				Data:      map[string]interface{}{"network": c.network.Address},
-				Timestamp: time.Now(),
-				Source:    events.EventSourceIRC,
 			})
+			c.conn.SendRaw("CAP END")
+		}
+	})
+
+	// SASL-specific handlers (always registered; no-op if SASL isn't in use)
+	c.conn.AddCallback("AUTHENTICATE", func(e ircmsg.Message) {
+		if !c.saslEnabled {
+			return
+		}
+		c.handleAUTHENTICATE(e)
+	})
+
+	c.conn.AddCallback("900", func(e ircmsg.Message) {
+		if !c.saslEnabled {
+			return
+		}
+		c.mu.Lock()
+		c.saslAuthenticated = true
+		c.saslInProgress = false
+		c.mu.Unlock()
+		c.storage.WriteMessage(storage.Message{
+			NetworkID:   c.networkID,
+			ChannelID:   nil,
+			User:        "*",
+			Message:     "SASL authentication successful",
+			MessageType: "status",
+			Timestamp:   time.Now(),
 		})
+		c.conn.SendRaw("CAP END")
+		c.eventBus.Emit(events.Event{
+			Type:      EventSASLSuccess,
+			Data:      map[string]interface{}{"network": c.network.Address},
+			Timestamp: time.Now(),
+			Source:    events.EventSourceIRC,
+		})
+	})
 
-		// 901 RPL_LOGGEDOUT - SASL authentication failed
-		c.conn.AddCallback("901", func(e ircmsg.Message) {
-			c.mu.Lock()
-			c.saslInProgress = false
-			c.mu.Unlock()
+	c.conn.AddCallback("901", func(e ircmsg.Message) {
+		if !c.saslEnabled {
+			return
+		}
+		c.mu.Lock()
+		c.saslInProgress = false
+		c.mu.Unlock()
+		c.storage.WriteMessage(storage.Message{
+			NetworkID:   c.networkID,
+			ChannelID:   nil,
+			User:        "*",
+			Message:     "SASL authentication failed",
+			MessageType: "status",
+			Timestamp:   time.Now(),
+		})
+		c.conn.SendRaw("CAP END")
+		c.eventBus.Emit(events.Event{
+			Type:      EventSASLFailed,
+			Data:      map[string]interface{}{"network": c.network.Address, "error": "Authentication failed"},
+			Timestamp: time.Now(),
+			Source:    events.EventSourceIRC,
+		})
+	})
 
-			statusMsg := storage.Message{
+	c.conn.AddCallback("904", func(e ircmsg.Message) {
+		if !c.saslEnabled {
+			return
+		}
+		c.mu.Lock()
+		c.saslInProgress = false
+		c.mu.Unlock()
+		c.storage.WriteMessage(storage.Message{
+			NetworkID:   c.networkID,
+			ChannelID:   nil,
+			User:        "*",
+			Message:     "SASL authentication failed",
+			MessageType: "status",
+			Timestamp:   time.Now(),
+		})
+		c.conn.SendRaw("CAP END")
+		c.eventBus.Emit(events.Event{
+			Type:      EventSASLFailed,
+			Data:      map[string]interface{}{"network": c.network.Address, "error": "SASL authentication failed"},
+			Timestamp: time.Now(),
+			Source:    events.EventSourceIRC,
+		})
+	})
+
+	// ERR_NICKNAMEINUSE (433) - nick collision handling
+	c.conn.AddCallback("433", func(e ircmsg.Message) {
+		c.mu.Lock()
+		// On first collision, record the desired nick
+		if c.desiredNick == "" {
+			c.desiredNick = c.conn.Nick
+		}
+		attempt := c.nickAttempt
+		c.nickAttempt++
+		c.mu.Unlock()
+
+		const maxAttempts = 5
+
+		if attempt >= maxAttempts {
+			c.storage.WriteMessage(storage.Message{
 				NetworkID:   c.networkID,
 				ChannelID:   nil,
 				User:        "*",
-				Message:     "SASL authentication failed",
+				Message:     fmt.Sprintf("Nick %q is in use and all %d alternatives failed. Please change your nick manually.", c.desiredNick, maxAttempts),
 				MessageType: "status",
 				Timestamp:   time.Now(),
-				RawLine:     "",
-			}
-			c.storage.WriteMessage(statusMsg)
-
-			c.conn.SendRaw("CAP END")
-
-			c.eventBus.Emit(events.Event{
-				Type:      EventSASLFailed,
-				Data:      map[string]interface{}{"network": c.network.Address, "error": "Authentication failed"},
-				Timestamp: time.Now(),
-				Source:    events.EventSourceIRC,
 			})
+			return
+		}
+
+		var newNick string
+		if attempt == 0 {
+			// First attempt: append underscore
+			newNick = c.desiredNick + "_"
+		} else {
+			// Subsequent attempts: append a number
+			newNick = fmt.Sprintf("%s%d", c.desiredNick, attempt)
+		}
+
+		logger.Log.Info().
+			Str("desired", c.desiredNick).
+			Str("trying", newNick).
+			Int("attempt", attempt+1).
+			Msg("Nickname in use, trying alternative")
+
+		c.storage.WriteMessage(storage.Message{
+			NetworkID:   c.networkID,
+			ChannelID:   nil,
+			User:        "*",
+			Message:     fmt.Sprintf("Nick %q is already in use, trying %q...", c.conn.Nick, newNick),
+			MessageType: "status",
+			Timestamp:   time.Now(),
 		})
 
-		// 904 ERR_SASLFAIL - SASL authentication failed
-		c.conn.AddCallback("904", func(e ircmsg.Message) {
-			c.mu.Lock()
-			c.saslInProgress = false
-			c.mu.Unlock()
-
-			statusMsg := storage.Message{
-				NetworkID:   c.networkID,
-				ChannelID:   nil,
-				User:        "*",
-				Message:     "SASL authentication failed",
-				MessageType: "status",
-				Timestamp:   time.Now(),
-				RawLine:     "",
-			}
-			c.storage.WriteMessage(statusMsg)
-
-			c.conn.SendRaw("CAP END")
-
-			c.eventBus.Emit(events.Event{
-				Type:      EventSASLFailed,
-				Data:      map[string]interface{}{"network": c.network.Address, "error": "SASL authentication failed"},
-				Timestamp: time.Now(),
-				Source:    events.EventSourceIRC,
-			})
-		})
-	}
+		c.conn.SendRaw(fmt.Sprintf("NICK %s", newNick))
+	})
 }
 
 // contains checks if a capability string contains the given capability
+// getMessageTime returns the server-time from the message's IRCv3 tags if available,
+// otherwise returns time.Now(). Requires the server-time capability to be enabled.
+func (c *IRCClient) getMessageTime(e ircmsg.Message) time.Time {
+	c.mu.RLock()
+	hasServerTime := c.enabledCaps["server-time"]
+	c.mu.RUnlock()
+
+	if hasServerTime {
+		if present, timeTag := e.GetTag("time"); present && timeTag != "" {
+			if t, err := time.Parse(time.RFC3339Nano, timeTag); err == nil {
+				return t
+			}
+			// Also try without fractional seconds
+			if t, err := time.Parse("2006-01-02T15:04:05Z", timeTag); err == nil {
+				return t
+			}
+		}
+	}
+	return time.Now()
+}
+
+// isEchoMessage returns true if the message is an echo of our own message
+// (sent back by the server because the echo-message capability is enabled).
+func (c *IRCClient) isEchoMessage(e ircmsg.Message) bool {
+	c.mu.RLock()
+	hasEcho := c.enabledCaps["echo-message"]
+	c.mu.RUnlock()
+
+	if !hasEcho {
+		return false
+	}
+	return strings.EqualFold(e.Nick(), c.network.Nickname)
+}
+
 func contains(capabilities, cap string) bool {
 	// Split by space and check each capability
 	// Capabilities can be in the form "cap" or "cap=value" or "cap=value1,value2"
@@ -1760,14 +1916,7 @@ func (c *IRCClient) handleEXTERNALAuth(response string) {
 
 // Connect connects to the IRC server
 func (c *IRCClient) Connect() error {
-	// If SASL is enabled, send CAP LS immediately after TCP connection
-	// This needs to happen before the server sends the welcome message
-	if c.saslEnabled {
-		// We'll send it in a goroutine right after Connect() to catch it early
-		// But first, let's try sending it before Connect() if possible
-		// Actually, we need the connection to be established first
-		// So we'll send it right after Connect() succeeds but before Loop()
-	}
+	// CAP LS 302 is sent after Connect() succeeds but before Loop()
 
 	if err := c.conn.Connect(); err != nil {
 		c.eventBus.Emit(events.Event{
@@ -1779,21 +1928,16 @@ func (c *IRCClient) Connect() error {
 		return fmt.Errorf("failed to connect: %w", err)
 	}
 
-	// If SASL is enabled, send CAP LS immediately
-	// This should happen before the server sends welcome messages
-	if c.saslEnabled {
-		c.conn.SendRaw("CAP LS 302")
-		statusMsg := storage.Message{
-			NetworkID:   c.networkID,
-			ChannelID:   nil,
-			User:        "*",
-			Message:     "Sent CAP LS 302 for SASL negotiation",
-			MessageType: "status",
-			Timestamp:   time.Now(),
-			RawLine:     "",
-		}
-		c.storage.WriteMessage(statusMsg)
-	}
+	// Always send CAP LS 302 for IRCv3 capability negotiation
+	c.conn.SendRaw("CAP LS 302")
+	c.storage.WriteMessage(storage.Message{
+		NetworkID:   c.networkID,
+		ChannelID:   nil,
+		User:        "*",
+		Message:     "Sent CAP LS 302 for IRCv3 capability negotiation",
+		MessageType: "status",
+		Timestamp:   time.Now(),
+	})
 
 	// Start the connection loop in a goroutine
 	go c.conn.Loop()
@@ -1957,6 +2101,9 @@ func (c *IRCClient) SendMessage(target, message string) error {
 	}
 	c.mu.RUnlock()
 
+	// Wait for rate limiter before sending
+	c.rateLimiter.Wait()
+
 	if err := c.conn.Privmsg(target, message); err != nil {
 		return fmt.Errorf("failed to send message: %w", err)
 	}
@@ -1981,20 +2128,26 @@ func (c *IRCClient) SendMessage(target, message string) error {
 		}
 	}
 
-	// Store sent message
-	msg := storage.Message{
-		NetworkID:   c.networkID,
-		ChannelID:   channelID,
-		User:        c.network.Nickname,
-		Message:     message,
-		MessageType: "privmsg",
-		Timestamp:   time.Now(),
-		RawLine:     fmt.Sprintf("PRIVMSG %s :%s", target, message),
-	}
+	// When echo-message is enabled, the server will echo our message back and
+	// we store it in the PRIVMSG handler (canonical copy with server timestamp).
+	// Otherwise, store it immediately ourselves.
+	c.mu.RLock()
+	hasEcho := c.enabledCaps["echo-message"]
+	c.mu.RUnlock()
 
-	// Use WriteMessageSync for sent messages so they're immediately available
-	if err := c.storage.WriteMessageSync(msg); err != nil {
-		return fmt.Errorf("failed to store message: %w", err)
+	if !hasEcho {
+		msg := storage.Message{
+			NetworkID:   c.networkID,
+			ChannelID:   channelID,
+			User:        c.network.Nickname,
+			Message:     message,
+			MessageType: "privmsg",
+			Timestamp:   time.Now(),
+			RawLine:     fmt.Sprintf("PRIVMSG %s :%s", target, message),
+		}
+		if err := c.storage.WriteMessageSync(msg); err != nil {
+			return fmt.Errorf("failed to store message: %w", err)
+		}
 	}
 
 	// Emit event
@@ -2080,6 +2233,9 @@ func (c *IRCClient) SendRawCommand(command string) error {
 		return fmt.Errorf("not connected")
 	}
 	c.mu.RUnlock()
+
+	// Wait for rate limiter before sending
+	c.rateLimiter.Wait()
 
 	// Send raw command via the connection's SendRaw method
 	if err := c.conn.SendRaw(command); err != nil {

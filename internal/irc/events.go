@@ -20,7 +20,17 @@ const (
 	EventSASLFailed         = "sasl.failed"
 	EventSASLAborted        = "sasl.aborted"
 	EventWhoisReceived      = "whois.received"
+	EventChannelListItem    = "channel.list.item"
+	EventChannelListEnd     = "channel.list.end"
 )
+
+// ChannelListItem represents a single entry from the LIST response
+type ChannelListItem struct {
+	Channel   string `json:"channel"`
+	Users     int    `json:"users"`
+	Topic     string `json:"topic"`
+	NetworkID int64  `json:"networkId"`
+}
 
 // WhoisInfo represents parsed WHOIS information
 type WhoisInfo struct {
