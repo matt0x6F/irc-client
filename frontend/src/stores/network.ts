@@ -21,6 +21,16 @@ import {
   SendCommand,
 } from '../../wailsjs/go/main/App';
 
+// Sort messages chronologically (oldest first) as a safety net
+function sortByTimestamp(msgs: storage.Message[]): storage.Message[] {
+  return [...msgs].sort((a, b) => {
+    const ta = new Date(a.timestamp).getTime();
+    const tb = new Date(b.timestamp).getTime();
+    if (ta !== tb) return ta - tb;
+    return a.id - b.id; // stable sort by ID for same timestamp
+  });
+}
+
 interface NetworkState {
   // Data
   networks: storage.Network[];
@@ -110,20 +120,20 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
     try {
       if (selectedChannel === null || selectedChannel === 'status') {
         const msgs = await GetMessages(selectedNetwork, null, 100);
-        set({ messages: msgs || [] });
+        set({ messages: sortByTimestamp(msgs || []) });
         return;
       }
 
       if (selectedChannel.startsWith('pm:')) {
         const user = selectedChannel.substring(3);
         const msgs = await GetPrivateMessages(selectedNetwork, user, 100);
-        set({ messages: msgs || [] });
+        set({ messages: sortByTimestamp(msgs || []) });
         return;
       }
 
       const channelId = await GetChannelIDByName(selectedNetwork, selectedChannel);
       const msgs = await GetMessages(selectedNetwork, channelId as number, 100);
-      set({ messages: msgs || [] });
+      set({ messages: sortByTimestamp(msgs || []) });
     } catch (error) {
       console.error('Failed to load messages:', error);
       set({ messages: [] });
@@ -316,7 +326,7 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
           timestamp: new Date().toISOString(),
           raw_line: '',
         });
-        set((state) => ({ messages: [...state.messages, optimisticMessage] }));
+        set((state) => ({ messages: sortByTimestamp([...state.messages, optimisticMessage]) }));
       } catch {
         // Channel ID lookup failed, skip optimistic update
       }
