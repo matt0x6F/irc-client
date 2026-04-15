@@ -16,4 +16,3 @@ const (
 	// ConnectionCleanupDelay is the delay to wait for connection cleanup
 	ConnectionCleanupDelay = 500 * time.Millisecond
 )
-

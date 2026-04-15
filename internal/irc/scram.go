@@ -18,18 +18,18 @@ import (
 
 // SCRAMState tracks the state of SCRAM authentication
 type SCRAMState struct {
-	mechanism    string
-	username     string
-	password     string
-	clientNonce  string
-	serverNonce  string
-	salt         string
-	iterations   int
-	saltedPassword []byte
-	clientKey    []byte
-	storedKey    []byte
-	serverKey    []byte
-	clientProof  string
+	mechanism       string
+	username        string
+	password        string
+	clientNonce     string
+	serverNonce     string
+	salt            string
+	iterations      int
+	saltedPassword  []byte
+	clientKey       []byte
+	storedKey       []byte
+	serverKey       []byte
+	clientProof     string
 	serverSignature string
 }
 
@@ -54,7 +54,7 @@ func (c *IRCClient) handleSCRAMAuth(response string) {
 		clientFirstMessageBare := fmt.Sprintf("n=%s,r=%s", state.username, state.clientNonce)
 		gs2Header := "n,," // No channel binding, no authorization identity
 		clientFirstMessage := gs2Header + clientFirstMessageBare
-		
+
 		encoded := base64.StdEncoding.EncodeToString([]byte(clientFirstMessage))
 		c.conn.SendRaw(fmt.Sprintf("AUTHENTICATE %s", encoded))
 	} else if response == "*" {
@@ -73,10 +73,10 @@ func (c *IRCClient) handleSCRAMAuth(response string) {
 		}
 
 		serverMessage := string(decoded)
-		
+
 		// Parse server-first-message: r=...,s=...,i=...
 		params := parseSCRAMParams(serverMessage)
-		
+
 		serverNonce, ok := params["r"]
 		if !ok || !strings.HasPrefix(serverNonce, state.clientNonce) {
 			c.abortSASL("Invalid server nonce")
@@ -124,7 +124,7 @@ func (c *IRCClient) handleSCRAMAuth(response string) {
 
 		// Compute client key
 		state.clientKey = computeHMAC(state.saltedPassword, "Client Key", h)
-		
+
 		// Compute stored key
 		state.storedKey = computeHash(state.clientKey, h)
 
@@ -135,12 +135,12 @@ func (c *IRCClient) handleSCRAMAuth(response string) {
 		clientFirstMessageBare := fmt.Sprintf("n=%s,r=%s", state.username, state.clientNonce)
 		serverFirstMessage := serverMessage
 		clientFinalMessageWithoutProof := fmt.Sprintf("c=%s,r=%s", base64.StdEncoding.EncodeToString([]byte("n,,")), state.serverNonce)
-		
+
 		authMessage := clientFirstMessageBare + "," + serverFirstMessage + "," + clientFinalMessageWithoutProof
-		
+
 		// Compute client signature
 		clientSignature := computeHMAC(state.storedKey, authMessage, h)
-		
+
 		// Compute client proof
 		clientProof := xorBytes(state.clientKey, clientSignature)
 		state.clientProof = base64.StdEncoding.EncodeToString(clientProof)
@@ -185,7 +185,7 @@ func (c *IRCClient) verifySCRAMServerSignature(response string) bool {
 	}
 
 	expectedSignature := base64.StdEncoding.EncodeToString(computeHMAC(c.scramState.serverKey, authMessage, h))
-	
+
 	return serverSignature == expectedSignature
 }
 
@@ -237,7 +237,7 @@ func (c *IRCClient) abortSASL(reason string) {
 	c.saslInProgress = false
 	c.scramState = nil
 	c.mu.Unlock()
-	
+
 	statusMsg := storage.Message{
 		NetworkID:   c.networkID,
 		ChannelID:   nil,
@@ -248,10 +248,10 @@ func (c *IRCClient) abortSASL(reason string) {
 		RawLine:     "",
 	}
 	c.storage.WriteMessage(statusMsg)
-	
+
 	c.conn.SendRaw("AUTHENTICATE *")
 	c.conn.SendRaw("CAP END")
-	
+
 	c.eventBus.Emit(events.Event{
 		Type:      EventSASLAborted,
 		Data:      map[string]interface{}{"network": c.network.Address, "reason": reason},
@@ -259,4 +259,3 @@ func (c *IRCClient) abortSASL(reason string) {
 		Source:    events.EventSourceIRC,
 	})
 }
-

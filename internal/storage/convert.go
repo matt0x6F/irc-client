@@ -21,7 +21,7 @@ func convertNetworkFromDB(n db.Network) Network {
 		Username:    n.Username,
 		Realname:    n.Realname,
 		Password:    convertNullString(n.Password),
-		SASLEnabled:  n.SaslEnabled,
+		SASLEnabled: n.SaslEnabled,
 		AutoConnect: n.AutoConnect,
 		CreatedAt:   n.CreatedAt,
 		UpdatedAt:   n.UpdatedAt,

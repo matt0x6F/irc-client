@@ -58,4 +58,3 @@ func (k *Keychain) DeletePassword(user string) error {
 	}
 	return nil
 }
-

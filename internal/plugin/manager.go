@@ -166,7 +166,7 @@ func (pm *Manager) DiscoverAndLoad() error {
 			Strs("events", info.Events).
 			Strs("metadata_types", info.MetadataTypes).
 			Msg("Found plugin")
-		
+
 		if info.Enabled {
 			logger.Log.Info().Str("plugin", info.Name).Msg("Attempting to load plugin")
 			if err := pm.LoadPlugin(info); err != nil {
@@ -439,9 +439,9 @@ func (pm *Manager) GetPluginMetadata(info *PluginInfo) (*PluginInfo, error) {
 		if err == nil && dbConfig.ConfigSchema != nil && len(dbConfig.ConfigSchema) > 0 {
 			// Return metadata from database
 			result := &PluginInfo{
-				Name:        info.Name,
-				Path:        info.Path,
-				Enabled:     dbConfig.Enabled,
+				Name:         info.Name,
+				Path:         info.Path,
+				Enabled:      dbConfig.Enabled,
 				ConfigSchema: dbConfig.ConfigSchema,
 			}
 			return result, nil
@@ -483,15 +483,15 @@ func (pm *Manager) GetPluginMetadata(info *PluginInfo) (*PluginInfo, error) {
 
 	// Build result
 	result := &PluginInfo{
-		Name:        initResult.Name,
-		Version:     initResult.Version,
-		Description: initResult.Description,
-		Author:      initResult.Author,
-		Events:      initResult.Events,
+		Name:          initResult.Name,
+		Version:       initResult.Version,
+		Description:   initResult.Description,
+		Author:        initResult.Author,
+		Events:        initResult.Events,
 		MetadataTypes: initResult.MetadataTypes,
-		ConfigSchema: initResult.ConfigSchema,
-		Path:        info.Path,
-		Enabled:     info.Enabled,
+		ConfigSchema:  initResult.ConfigSchema,
+		Path:          info.Path,
+		Enabled:       info.Enabled,
 	}
 
 	// Store config_schema in database for future use
@@ -571,7 +571,7 @@ func (pm *Manager) ListPlugins() []*PluginInfo {
 					unloadedInfo.ConfigSchema = dbConfig.ConfigSchema
 				}
 			}
-			
+
 			// If no config_schema in database, try to get it by initializing the plugin
 			if unloadedInfo.ConfigSchema == nil || len(unloadedInfo.ConfigSchema) == 0 {
 				logger.Log.Debug().Str("plugin", info.Name).Msg("No config_schema in database, fetching from plugin")
@@ -594,7 +594,7 @@ func (pm *Manager) ListPlugins() []*PluginInfo {
 					logger.Log.Debug().Str("plugin", info.Name).Msg("Plugin metadata fetched but no config_schema found")
 				}
 			}
-			
+
 			infos = append(infos, unloadedInfo)
 		}
 	}
@@ -909,4 +909,3 @@ func (pm *Manager) Close() error {
 
 	return nil
 }
-

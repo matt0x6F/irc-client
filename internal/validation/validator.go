@@ -65,4 +65,3 @@ func ValidateServerAddress(address string, port int) error {
 	}
 	return nil
 }
-

@@ -76,7 +76,7 @@ func Migrate(db *sqlx.DB) error {
 func migrateRefactorTables(db *sqlx.DB) error {
 	// Check if old 'servers' table exists (before refactoring)
 	var oldServersExists int
-	err := db.Get(&oldServersExists, 
+	err := db.Get(&oldServersExists,
 		"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='servers'")
 	if err != nil {
 		return fmt.Errorf("failed to check for old servers table: %w", err)
@@ -247,8 +247,8 @@ func migrateSASLFields(db *sqlx.DB) error {
 func migrateChannelInfo(db *sqlx.DB) error {
 	// Check each column individually and add if missing
 	columnsToAdd := map[string]string{
-		"topic":     "ALTER TABLE channels ADD COLUMN topic TEXT DEFAULT ''",
-		"modes":     "ALTER TABLE channels ADD COLUMN modes TEXT DEFAULT ''",
+		"topic":      "ALTER TABLE channels ADD COLUMN topic TEXT DEFAULT ''",
+		"modes":      "ALTER TABLE channels ADD COLUMN modes TEXT DEFAULT ''",
 		"updated_at": "ALTER TABLE channels ADD COLUMN updated_at TIMESTAMP",
 	}
 

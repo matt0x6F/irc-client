@@ -9,9 +9,9 @@ import (
 type EventSource string
 
 const (
-	EventSourceIRC     EventSource = "irc"
-	EventSourceUI      EventSource = "ui"     // Future
-	EventSourceSystem  EventSource = "system"
+	EventSourceIRC    EventSource = "irc"
+	EventSourceUI     EventSource = "ui" // Future
+	EventSourceSystem EventSource = "system"
 )
 
 // System event types
@@ -21,8 +21,8 @@ const (
 
 // UI event types
 const (
-	EventUIPaneFocused = "ui.pane.focused"   // When a pane (channel/PM/status) gains focus
-	EventUIPaneBlurred  = "ui.pane.blurred"  // When a pane loses focus
+	EventUIPaneFocused = "ui.pane.focused" // When a pane (channel/PM/status) gains focus
+	EventUIPaneBlurred = "ui.pane.blurred" // When a pane loses focus
 )
 
 // Event represents a generic event
@@ -114,4 +114,3 @@ func (eb *EventBus) EmitSync(event Event) {
 		sub.OnEvent(event)
 	}
 }
-

@@ -16,16 +16,16 @@ import (
 
 // IPC handles communication with a plugin process
 type IPC struct {
-	cmd      *exec.Cmd
-	stdin    io.WriteCloser
-	stdout   io.ReadCloser
+	cmd          *exec.Cmd
+	stdin        io.WriteCloser
+	stdout       io.ReadCloser
 	stdoutReader *bufio.Reader
-	mu       sync.Mutex
-	requests map[interface{}]chan *Response
-	nextID   int64
-	closed   bool
-	pluginID string
-	manager  *Manager // Reference to manager for handling notifications
+	mu           sync.Mutex
+	requests     map[interface{}]chan *Response
+	nextID       int64
+	closed       bool
+	pluginID     string
+	manager      *Manager // Reference to manager for handling notifications
 }
 
 // NewIPC creates a new IPC connection to a plugin
@@ -41,10 +41,10 @@ func NewIPC(pluginPath string, pluginID string, manager *Manager) (*IPC, error) 
 	// This prevents plugins from trying to initialize shells, terminals, or other
 	// unnecessary subsystems that could cause deadlocks or blocking behavior
 	env := []string{
-		"PATH=" + os.Getenv("PATH"),           // Needed to find shared libraries
-		"HOME=" + os.Getenv("HOME"),           // Needed for user directory access (if needed)
-		"USER=" + os.Getenv("USER"),           // Basic user info
-		"TERM=dumb",                            // Prevent terminal initialization attempts
+		"PATH=" + os.Getenv("PATH"), // Needed to find shared libraries
+		"HOME=" + os.Getenv("HOME"), // Needed for user directory access (if needed)
+		"USER=" + os.Getenv("USER"), // Basic user info
+		"TERM=dumb",                 // Prevent terminal initialization attempts
 	}
 	// Add locale settings if available, otherwise use safe defaults
 	if lang := os.Getenv("LANG"); lang != "" {
@@ -57,7 +57,7 @@ func NewIPC(pluginPath string, pluginID string, manager *Manager) (*IPC, error) 
 		env = append(env, "LC_ALL="+lcAll)
 	}
 	cmd.Env = env
-	
+
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create stdin pipe: %w", err)
@@ -89,7 +89,7 @@ func NewIPC(pluginPath string, pluginID string, manager *Manager) (*IPC, error) 
 	// CRITICAL: Start reading from stdout and stderr BEFORE starting the process
 	// If pipes aren't being read when the process starts, the child can block
 	// when pipe buffers fill, causing deadlocks and zombie processes
-	
+
 	// Start reading stderr
 	go func() {
 		reader := bufio.NewReader(stderr)
@@ -195,7 +195,7 @@ func (ipc *IPC) readLoop() {
 	logger.Log.Info().
 		Str("plugin", ipc.pluginID).
 		Msg("IPC read loop started, waiting for plugin stdout")
-	
+
 	for {
 		line, err := ipc.stdoutReader.ReadString('\n')
 		if err != nil {
@@ -211,18 +211,18 @@ func (ipc *IPC) readLoop() {
 			}
 			break
 		}
-		
+
 		// Remove trailing newline
 		line = strings.TrimSuffix(line, "\n")
 		if line == "" {
 			continue
 		}
-		
+
 		logger.Log.Info().
 			Str("plugin", ipc.pluginID).
 			Str("line", line).
 			Msg("Received line from plugin stdout")
-		
+
 		// Try to parse as Response first (responses have "result" or "error" field)
 		var resp Response
 		if err := json.Unmarshal([]byte(line), &resp); err == nil {
@@ -237,7 +237,7 @@ func (ipc *IPC) readLoop() {
 						Msg("Received response with invalid ID type")
 					continue
 				}
-				
+
 				ipc.mu.Lock()
 				ch, ok := ipc.requests[normalizedID]
 				if ok {
@@ -257,7 +257,7 @@ func (ipc *IPC) readLoop() {
 				continue
 			}
 		}
-		
+
 		// Try to parse as Request (notifications have method but no ID, or method with ID)
 		var msg Request
 		if err := json.Unmarshal([]byte(line), &msg); err != nil {
@@ -287,7 +287,7 @@ func (ipc *IPC) readLoop() {
 						Msg("Received response with invalid ID type")
 					continue
 				}
-				
+
 				ipc.mu.Lock()
 				ch, ok := ipc.requests[normalizedID]
 				if ok {
@@ -380,7 +380,7 @@ func (ipc *IPC) SendRequest(method string, params interface{}) (*Response, error
 			Msg("Failed to write request to plugin")
 		return nil, fmt.Errorf("failed to write request: %w", err)
 	}
-	
+
 	// Verify we wrote all the data
 	if n != len(data) {
 		ipc.mu.Lock()
@@ -394,14 +394,14 @@ func (ipc *IPC) SendRequest(method string, params interface{}) (*Response, error
 			Msg("Partial write to plugin stdin")
 		return nil, fmt.Errorf("partial write: wrote %d of %d bytes", n, len(data))
 	}
-	
+
 	logger.Log.Info().
 		Str("plugin", ipc.pluginID).
 		Str("method", method).
 		Int("bytes_written", n).
 		Int("data_length", len(data)).
 		Msg("Successfully wrote request to plugin, waiting for response")
-	
+
 	// Give the OS a moment to deliver the data through the pipe
 	// This helps ensure the plugin receives the data before we start waiting
 	time.Sleep(10 * time.Millisecond)
@@ -412,13 +412,13 @@ func (ipc *IPC) SendRequest(method string, params interface{}) (*Response, error
 		Str("method", method).
 		Interface("id", id).
 		Msg("Waiting for response from plugin")
-	
+
 	// Use a shorter timeout for initialization to fail fast
 	timeout := 10 * time.Second
 	if method == "initialize" {
 		timeout = 5 * time.Second
 	}
-	
+
 	select {
 	case resp := <-ch:
 		if resp == nil {
@@ -501,34 +501,34 @@ func (ipc *IPC) handleNotification(req *Request) {
 		return
 	}
 
-		// Handle ui_metadata.set notifications
-		if req.Method == "ui_metadata.set" {
-			params, ok := req.Params.(map[string]interface{})
-			if !ok {
-				// Try to unmarshal if it's raw JSON
-				if paramsBytes, err := json.Marshal(req.Params); err == nil {
-					var parsedParams map[string]interface{}
-					if err := json.Unmarshal(paramsBytes, &parsedParams); err == nil {
-						params = parsedParams
-						ok = true
-					}
+	// Handle ui_metadata.set notifications
+	if req.Method == "ui_metadata.set" {
+		params, ok := req.Params.(map[string]interface{})
+		if !ok {
+			// Try to unmarshal if it's raw JSON
+			if paramsBytes, err := json.Marshal(req.Params); err == nil {
+				var parsedParams map[string]interface{}
+				if err := json.Unmarshal(paramsBytes, &parsedParams); err == nil {
+					params = parsedParams
+					ok = true
 				}
-			}
-			if ok {
-				logger.Log.Info().
-					Str("plugin", ipc.pluginID).
-					Interface("params", params).
-					Msg("Received ui_metadata.set notification")
-				if err := ipc.manager.HandleMetadataRequest(ipc.pluginID, params); err != nil {
-					logger.Log.Error().Err(err).Str("plugin", ipc.pluginID).Msg("Error handling metadata request")
-				}
-			} else {
-				logger.Log.Warn().
-					Str("plugin", ipc.pluginID).
-					Interface("params", req.Params).
-					Msg("Failed to parse ui_metadata.set params")
 			}
 		}
+		if ok {
+			logger.Log.Info().
+				Str("plugin", ipc.pluginID).
+				Interface("params", params).
+				Msg("Received ui_metadata.set notification")
+			if err := ipc.manager.HandleMetadataRequest(ipc.pluginID, params); err != nil {
+				logger.Log.Error().Err(err).Str("plugin", ipc.pluginID).Msg("Error handling metadata request")
+			}
+		} else {
+			logger.Log.Warn().
+				Str("plugin", ipc.pluginID).
+				Interface("params", req.Params).
+				Msg("Failed to parse ui_metadata.set params")
+		}
+	}
 }
 
 // Close closes the IPC connection
@@ -553,15 +553,14 @@ func (ipc *IPC) Close() error {
 	if ipc.cmd.Process != nil {
 		// Give process a moment to exit naturally after stdin close
 		time.Sleep(50 * time.Millisecond)
-		
+
 		// Try graceful termination first
 		ipc.cmd.Process.Signal(os.Interrupt)
 		time.Sleep(100 * time.Millisecond)
-		
+
 		// Force kill if still running
 		ipc.cmd.Process.Kill()
 		// The Wait() goroutine started in NewIPC() will reap the process
 	}
 	return nil
 }
-

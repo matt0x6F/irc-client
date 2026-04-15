@@ -5,7 +5,7 @@ import (
 	"strings"
 	"sync"
 	"time"
-	
+
 	"github.com/matt0x6f/irc-client/internal/logger"
 )
 
@@ -30,7 +30,7 @@ type MetadataEntry struct {
 	Type      MetadataType
 	Value     interface{}
 	PluginID  string
-	Priority  int       // Higher = more important
+	Priority  int // Higher = more important
 	Timestamp time.Time
 }
 
@@ -139,7 +139,7 @@ func (mr *MetadataRegistry) GetMetadataBatch(networkID int64, channel *string, k
 			Msg("All stored metadata scopes")
 	}
 	mr.mu.RUnlock()
-	
+
 	result := make(map[string]interface{})
 	for _, key := range keys {
 		if value := mr.GetMetadata(networkID, channel, key, mtype); value != nil {

@@ -277,8 +277,8 @@ func (a *App) GetChannelIDByName(networkID int64, channelName string) (*int64, e
 
 // ChannelInfo represents channel information with users
 type ChannelInfo struct {
-	Channel      *storage.Channel       `json:"channel"`
-	Users        []storage.ChannelUser  `json:"users"`
+	Channel      *storage.Channel        `json:"channel"`
+	Users        []storage.ChannelUser   `json:"users"`
 	Capabilities *ServerCapabilitiesInfo `json:"capabilities,omitempty"`
 }
 

@@ -25,4 +25,3 @@ func init() {
 func SetLevel(level zerolog.Level) {
 	zerolog.SetGlobalLevel(level)
 }
-
