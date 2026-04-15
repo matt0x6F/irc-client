@@ -65,14 +65,17 @@ A modern, multi-platform IRC client built with Wails (Go + React), featuring:
 #### 3. Storage Layer (`internal/storage/`)
 - **Purpose**: Persistent data storage
 - **Database**: SQLite with WAL mode
+- **Code Generation**: SQLC for type-safe database queries
 - **Key Features**:
   - Batch write buffering (configurable size and flush interval)
   - Efficient indexed queries
   - Migration system
+  - Type-safe queries via SQLC
 - **Patterns**:
   - Background flush goroutine
   - Channel-based write buffer
-  - Prepared statements for performance
+  - SQLC-generated queries for type safety
+  - Batch inserts use sqlx for performance
 
 #### 4. Plugin System (`internal/plugin/`)
 - **Purpose**: Extensible plugin architecture
@@ -175,8 +178,9 @@ IRC Event → EventBus → [Subscribers]
 
 1. Messages buffered in channel (configurable size)
 2. Background goroutine flushes periodically
-3. Batch inserts using prepared statements
-4. WAL mode for concurrent reads during writes
+3. Batch inserts using sqlx NamedExec (kept for performance)
+4. Single inserts use SQLC-generated queries
+5. WAL mode for concurrent reads during writes
 
 ### Frontend-Backend Communication
 
@@ -219,6 +223,18 @@ IRC Event → EventBus → [Subscribers]
    cd frontend && npm test
    ```
 
+5. **Database Code Generation**:
+   ```bash
+   # Generate SQLC code after changing queries or schema
+   sqlc generate
+   
+   # Validate queries
+   sqlc vet
+   
+   # Check for uncommitted generated code changes
+   sqlc diff
+   ```
+
 ### Plugin Development
 
 1. **Create Plugin Executable**:
@@ -244,12 +260,53 @@ IRC Event → EventBus → [Subscribers]
 1. **Add Migration**:
    - Add SQL to `migrations.go`
    - Update `Migrate()` function
+   - Update `schema.sql` to match new schema
    - Test migration on fresh database
 
 2. **Schema Changes**:
-   - Update models in `models.go`
-   - Add migration SQL
-   - Update queries if needed
+   - Update `schema.sql` to reflect new schema
+   - Add migration SQL to `migrations.go`
+   - Regenerate SQLC code: `sqlc generate`
+   - Update queries in `queries/*.sql` if needed
+
+### SQLC Code Generation
+
+The project uses [SQLC](https://sqlc.dev) to generate type-safe Go code from SQL queries.
+
+1. **Query Files**:
+   - SQL queries are in `internal/storage/queries/*.sql`
+   - Each query must have a `-- name: QueryName :one|:many|:exec` annotation
+   - Use `:one` for single row results, `:many` for multiple rows, `:exec` for updates/deletes
+
+2. **Schema File**:
+   - Schema is defined in `internal/storage/schema.sql`
+   - Keep this in sync with migrations in `migrations.go`
+   - Schema is the source of truth for SQLC code generation
+
+3. **Generating Code**:
+   ```bash
+   sqlc generate
+   ```
+   - Generated code is in `internal/storage/generated/`
+   - Never edit generated code directly
+   - Regenerate after changing queries or schema
+
+4. **Writing Queries**:
+   - Use `?` for parameters (SQLite style)
+   - For ON CONFLICT clauses, use `excluded.column` syntax to avoid parameter duplication
+   - Complex queries with JOINs and subqueries are supported
+   - Case-insensitive comparisons use `LOWER()` - SQLC will generate parameter names like `LOWER`
+
+5. **Type Conversions**:
+   - SQLC generates types using `sql.NullString`, `sql.NullInt64`, etc. for nullable fields
+   - Application types use pointers (`*string`, `*int64`) for nullable fields
+   - Conversion helpers in `convert.go` handle type conversions
+   - Port fields: SQLC uses `int64`, application uses `int` - conversions handle this
+
+6. **Special Cases**:
+   - **Batch Inserts**: Keep using sqlx for batch message inserts (performance)
+   - **JSON Fields**: Configured in `sqlc.yaml` to use `json.RawMessage`
+   - **Complex Queries**: GetLastOpenPane, GetPrivateMessages work with SQLC
 
 ### Frontend Development
 

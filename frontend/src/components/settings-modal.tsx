@@ -829,9 +829,13 @@ export function SettingsModal({ onClose, onServerUpdate, initialSection }: Setti
                         <div className="flex-1">
                           <div className="flex items-center gap-2 mb-2">
                             <h4 className="font-semibold">{network.name}</h4>
-                            <span className={`w-2 h-2 rounded-full ${
-                              isConnected ? 'bg-green-500' : 'bg-gray-400'
-                            }`} title={isConnected ? 'Connected' : 'Disconnected'} />
+                            <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
+                              isConnected 
+                                ? 'bg-green-500/20 text-green-700 dark:text-green-400' 
+                                : 'bg-gray-500/20 text-gray-700 dark:text-gray-400'
+                            }`} title={isConnected ? 'Connected' : 'Disconnected'}>
+                              {isConnected ? '●' : '○'}
+                            </span>
                           </div>
                           <div className="text-sm text-muted-foreground space-y-1">
                             {networkServers[network.id] && networkServers[network.id].length > 0 ? (

@@ -98,6 +98,25 @@ tasks:
       - cp "{{.DB_PATH}}" "backups/cascade-$(date +%Y%m%d-%H%M%S).db"
       - echo "Backed up to backups/"
 
+  # SQLC Tasks
+  sqlc-generate:
+    desc: Generate SQLC code from SQL queries
+    cmds:
+      - sqlc generate
+      - echo "SQLC code generated"
+
+  sqlc-vet:
+    desc: Validate SQLC queries
+    cmds:
+      - sqlc vet
+      - echo "SQLC queries validated"
+
+  sqlc-diff:
+    desc: Check for uncommitted generated code changes
+    cmds:
+      - sqlc diff || (echo "Generated code is out of sync. Run 'task sqlc-generate' and commit the changes." && exit 1)
+      - echo "Generated code is up to date"
+
   # Plugin Tasks
   plugin-dir:
     desc: Create plugin directory
@@ -123,14 +142,17 @@ tasks:
       - rm -rf frontend/wailsjs
       - rm -rf bin/
       - rm -f coverage.out coverage.html
+      - rm -rf internal/storage/generated
       - echo "Clean complete"
 
   # Checks
   check:
-    desc: Run all checks (fmt, lint, test, type-check)
+    desc: Run all checks (fmt, lint, test, type-check, sqlc)
     cmds:
       - task: fmt
       - task: lint
+      - task: sqlc-vet
+      - task: sqlc-diff
       - task: test
       - task: frontend-type-check
       - echo "All checks complete"
