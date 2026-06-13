@@ -18,6 +18,11 @@ export function writeRuntime(r: Runtime): void {
 }
 
 export function readRuntime(): Runtime {
+  if (!fs.existsSync(RUNTIME_PATH)) {
+    throw new Error(
+      'e2e/.runtime.json not found — run `npx playwright test` (it starts globalSetup); `--list` alone does not create it',
+    );
+  }
   return JSON.parse(fs.readFileSync(RUNTIME_PATH, 'utf-8')) as Runtime;
 }
 
