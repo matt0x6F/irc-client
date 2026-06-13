@@ -20,7 +20,7 @@ export function getFreePort(): Promise<number> {
 
 /** Allocate N distinct free ports. */
 export async function getFreePorts(n: number): Promise<number[]> {
-  const ports: number[] = [];
-  for (let i = 0; i < n; i++) ports.push(await getFreePort());
-  return ports;
+  const seen = new Set<number>();
+  while (seen.size < n) seen.add(await getFreePort());
+  return [...seen];
 }

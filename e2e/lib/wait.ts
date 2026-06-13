@@ -9,7 +9,7 @@ export async function waitForTcp(host: string, port: number, timeoutMs = 30000):
   while (Date.now() < deadline) {
     const ok = await new Promise<boolean>((resolve) => {
       const sock = net.connect({ host, port }, () => {
-        sock.end();
+        sock.destroy();
         resolve(true);
       });
       sock.on('error', () => resolve(false));
@@ -25,12 +25,15 @@ export async function waitForHttp200(url: string, timeoutMs = 120000): Promise<v
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const ok = await new Promise<boolean>((resolve) => {
-      http
-        .get(url, (res) => {
-          res.resume();
-          resolve(res.statusCode === 200);
-        })
-        .on('error', () => resolve(false));
+      const req = http.get(url, (res) => {
+        res.resume();
+        resolve(res.statusCode === 200);
+      });
+      req.setTimeout(5000, () => {
+        req.destroy();
+        resolve(false);
+      });
+      req.on('error', () => resolve(false));
     });
     if (ok) return;
     await sleep(1000);
