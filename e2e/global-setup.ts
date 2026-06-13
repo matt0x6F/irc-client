@@ -35,15 +35,43 @@ export default async function globalSetup(): Promise<void> {
       stdio: ['ignore', logFd, logFd],
     },
   );
+  fs.closeSync(logFd); // child holds its own duplicated fd; release the parent's copy
   child.unref();
+
+  // Playwright does NOT run globalTeardown when globalSetup throws, so any
+  // resources started above must be cleaned up here before re-throwing.
+  const cleanupPartial = () => {
+    try {
+      if (child.pid) process.kill(-child.pid, 'SIGTERM');
+    } catch {
+      /* already gone */
+    }
+    spawnSync('docker', ['compose', '-p', composeProject, 'down', '-v'], {
+      cwd: repoRoot,
+      env: composeEnv,
+      stdio: 'inherit',
+    });
+  };
+
+  // A failed spawn (e.g. `wails` not on PATH) emits 'error' asynchronously.
+  // Without a listener Node crashes with an unhandled error; race it against
+  // readiness so we fail fast with a readable message instead of waiting out
+  // the full timeout. The trailing .catch avoids an unhandledRejection once
+  // readiness wins the race.
+  const spawnFailed = new Promise<never>((_, reject) => {
+    child.on('error', (err) => reject(new Error(`failed to spawn wails dev: ${err.message}`)));
+  });
+  spawnFailed.catch(() => {});
 
   const bridgeUrl = `http://localhost:${bridgePort}`;
   try {
     // 3. Wait for the bridge (Go compile can take a while on first run).
-    await waitForHttp200(`${bridgeUrl}/wails/ipc.js`, 180_000);
+    const ready = waitForHttp200(`${bridgeUrl}/wails/ipc.js`, 180_000);
+    await Promise.race([ready, spawnFailed]);
   } catch (err) {
+    cleanupPartial();
     const log = fs.existsSync(logFile) ? fs.readFileSync(logFile, 'utf-8') : '(no log)';
-    throw new Error(`wails dev never became ready.\n--- wails log ---\n${log}`);
+    throw new Error(`${(err as Error).message}\n--- wails log ---\n${log}`);
   }
 
   const runtime: Runtime = {
