@@ -801,6 +801,7 @@ export function SettingsModal({ onClose, onServerUpdate, initialSection }: Setti
                     </button>
                     <button
                       type="submit"
+                      data-testid="save-network-button"
                       className="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-all shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)] font-medium"
                       style={{ transition: 'var(--transition-base)' }}
                     >
@@ -1037,6 +1038,7 @@ export function SettingsModal({ onClose, onServerUpdate, initialSection }: Setti
           <h2 className="text-xl font-semibold">Settings</h2>
           <button
             onClick={onClose}
+            data-testid="settings-close-button"
             className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-accent transition-all shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)]"
             style={{ transition: 'var(--transition-base)' }}
           >
