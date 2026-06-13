@@ -383,6 +383,8 @@ export function ServerTree({
                         return (
                           <div
                             key={channel}
+                            data-testid="channel-node"
+                            data-channel={channel}
                             className={`p-2 cursor-pointer select-none flex items-center justify-between transition-all ${
                               isSelected && selectedChannel === channel
                                 ? 'bg-primary/10 border-l-4 border-primary'

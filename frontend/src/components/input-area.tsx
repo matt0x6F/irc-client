@@ -214,6 +214,7 @@ export function InputArea({ onSendMessage, placeholder = 'Type a message...', ne
           placeholder={placeholder}
           className="flex-1 px-4 py-2.5 border border-border rounded-lg bg-background text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all shadow-[var(--shadow-sm)] focus:shadow-[var(--shadow-md)]"
           style={{ transition: 'var(--transition-base)' }}
+          data-testid="message-input"
         />
         <button
           type="submit"
