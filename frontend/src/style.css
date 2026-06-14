@@ -88,6 +88,19 @@
     --color-ring: var(--ring);
 }
 
+/* Tailwind v4's preflight resets every border to `0 solid currentColor`, so any
+   `border`/`border-r`/etc. without an explicit color renders in the text color
+   (near-black) instead of the design's hairline slate. Default every border to
+   --border; explicit color classes (border-primary, border-destructive, …)
+   still override via higher specificity. */
+@layer base {
+    *,
+    ::before,
+    ::after {
+        border-color: var(--border);
+    }
+}
+
 :root {
     --radius: 0.75rem;
     --background: #fafafa;
