@@ -54,12 +54,12 @@ export function GetMessages(arg1, arg2, arg3) {
   return window['go']['main']['App']['GetMessages'](arg1, arg2, arg3);
 }
 
-export function GetMessagesAround(arg1, arg2, arg3, arg4) {
-  return window['go']['main']['App']['GetMessagesAround'](arg1, arg2, arg3, arg4);
-}
-
 export function GetMessagesAfter(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['GetMessagesAfter'](arg1, arg2, arg3, arg4);
+}
+
+export function GetMessagesAround(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['GetMessagesAround'](arg1, arg2, arg3, arg4);
 }
 
 export function GetMessagesBefore(arg1, arg2, arg3, arg4) {
