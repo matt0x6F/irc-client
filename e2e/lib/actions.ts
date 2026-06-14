@@ -28,9 +28,8 @@ export async function addNetwork(
   await page.getByTestId('server-address-input').fill('localhost');
   await page.getByTestId('server-port-input').fill(String(runtime.ergoPort));
   await page.getByTestId('network-nickname-input').fill(nick);
-  // username and realname are required by the Go validator but have no data-testid.
-  await page.getByPlaceholder('username').fill(nick);
-  await page.getByPlaceholder('Real Name').fill(nick);
+  await page.getByTestId('network-username-input').fill(nick);
+  await page.getByTestId('network-realname-input').fill(nick);
 
   // Submit — the save button has testid "save-network-button".
   await page.getByTestId('save-network-button').click();
@@ -54,8 +53,8 @@ export async function connect(page: Page): Promise<void> {
   await page.getByTestId('settings-close-button').click();
   await page.getByTestId('settings-close-button').waitFor({ state: 'hidden', timeout: 5_000 });
 
-  // The server tree shows a green pulsing dot when connected (bg-green-500 animate-pulse).
-  await page.locator('.bg-green-500.animate-pulse').waitFor({ state: 'visible', timeout: 30_000 });
+  // The server tree shows a connected indicator anchored by data-testid + data-connected attribute.
+  await page.locator('[data-testid="network-status-indicator"][data-connected="true"]').first().waitFor({ state: 'visible', timeout: 30_000 });
 }
 
 /** Close the Settings modal to reach the main chat UI. */
@@ -70,8 +69,12 @@ export async function closeSettings(page: Page): Promise<void> {
 }
 
 /** Convenience: add + connect + close settings. Used by most specs. */
-export async function addNetworkAndConnect(page: Page, runtime: Runtime): Promise<void> {
-  await addNetwork(page, runtime);
+export async function addNetworkAndConnect(
+  page: Page,
+  runtime: Runtime,
+  opts: { name?: string; nick?: string } = {},
+): Promise<void> {
+  await addNetwork(page, runtime, opts);
   await connect(page);
   // connect() already closes settings; closeSettings() is idempotent.
 }

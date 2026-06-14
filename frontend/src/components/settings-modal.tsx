@@ -665,6 +665,7 @@ export function SettingsModal({ onClose, onServerUpdate, initialSection }: Setti
                         className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all shadow-[var(--shadow-sm)] focus:shadow-[var(--shadow-md)]"
                         style={{ transition: 'var(--transition-base)' }}
                         placeholder="username"
+                        data-testid="network-username-input"
                       />
                     </div>
                     <div>
@@ -676,6 +677,7 @@ export function SettingsModal({ onClose, onServerUpdate, initialSection }: Setti
                         className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all shadow-[var(--shadow-sm)] focus:shadow-[var(--shadow-md)]"
                         style={{ transition: 'var(--transition-base)' }}
                         placeholder="Real Name"
+                        data-testid="network-realname-input"
                       />
                     </div>
                     <div>

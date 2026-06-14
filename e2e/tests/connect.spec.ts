@@ -11,5 +11,5 @@ test('add a network and connect to Ergo', async ({ page, runtime }) => {
   await connect(page);
 
   // The server tree shows the network name once connected.
-  await expect(page.getByText('e2e').first()).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByTestId('server-tree').getByText('e2e')).toBeVisible({ timeout: 10_000 });
 });
