@@ -96,8 +96,9 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
       }
       
       // Refresh on user join/part/quit/kick/nick events or when NAMES list completes
-      if (eventType === 'user.joined' || eventType === 'user.parted' || eventType === 'user.quit' || 
-          eventType === 'user.kicked' || eventType === 'user.nick' || eventType === 'channel.names.complete') {
+      if (eventType === 'user.joined' || eventType === 'user.parted' || eventType === 'user.quit' ||
+          eventType === 'user.kicked' || eventType === 'user.nick' || eventType === 'channel.names.complete' ||
+          eventType === 'channel.usermode') {
         const eventNetworkId = eventData.networkId;
         
         // Check network ID match first (convert to number for comparison)

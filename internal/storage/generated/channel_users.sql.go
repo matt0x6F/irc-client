@@ -46,6 +46,22 @@ func (q *Queries) ClearNetworkChannelUsers(ctx context.Context, networkID int64)
 	return err
 }
 
+const getChannelUserModes = `-- name: GetChannelUserModes :one
+SELECT modes FROM channel_users WHERE channel_id = ? AND LOWER(nickname) = LOWER(?)
+`
+
+type GetChannelUserModesParams struct {
+	ChannelID int64  `json:"channel_id"`
+	LOWER     string `json:"LOWER"`
+}
+
+func (q *Queries) GetChannelUserModes(ctx context.Context, arg GetChannelUserModesParams) (sql.NullString, error) {
+	row := q.db.QueryRowContext(ctx, getChannelUserModes, arg.ChannelID, arg.LOWER)
+	var modes sql.NullString
+	err := row.Scan(&modes)
+	return modes, err
+}
+
 const getChannelUsers = `-- name: GetChannelUsers :many
 SELECT id, channel_id, nickname, modes, created_at, updated_at FROM channel_users WHERE channel_id = ? ORDER BY nickname
 `

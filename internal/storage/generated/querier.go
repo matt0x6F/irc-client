@@ -6,6 +6,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 )
 
 type Querier interface {
@@ -22,6 +23,7 @@ type Querier interface {
 	DeleteServer(ctx context.Context, id int64) error
 	GetAllPluginConfigs(ctx context.Context) ([]PluginConfig, error)
 	GetChannelByName(ctx context.Context, arg GetChannelByNameParams) (Channel, error)
+	GetChannelUserModes(ctx context.Context, arg GetChannelUserModesParams) (sql.NullString, error)
 	GetChannelUsers(ctx context.Context, channelID int64) ([]ChannelUser, error)
 	GetChannels(ctx context.Context, networkID int64) ([]Channel, error)
 	GetJoinedChannels(ctx context.Context, arg GetJoinedChannelsParams) ([]Channel, error)

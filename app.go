@@ -95,6 +95,9 @@ func NewApp() (*App, error) {
 	eventBus.Subscribe(irc.EventUserNick, app)
 	eventBus.Subscribe(irc.EventWhoisReceived, app)
 	eventBus.Subscribe(irc.EventChannelListEnd, app)
+	eventBus.Subscribe(irc.EventChannelMode, app)
+	eventBus.Subscribe(irc.EventChannelUserMode, app)
+	eventBus.Subscribe(irc.EventChannelBanList, app)
 
 	go app.processPluginActions()
 
@@ -335,6 +338,12 @@ type ServerCapabilitiesInfo struct {
 	Prefix       map[string]string `json:"prefix"`
 	PrefixString string            `json:"prefix_string"`
 	ChanModes    string            `json:"chanmodes"`
+	// Resolved CHANMODES classes (sorted letters), with RFC1459 defaults applied.
+	// A=list (bans), B=always-param (key), C=param-on-set (limit), D=boolean flag.
+	ChanModesA string `json:"chanmodes_a"`
+	ChanModesB string `json:"chanmodes_b"`
+	ChanModesC string `json:"chanmodes_c"`
+	ChanModesD string `json:"chanmodes_d"`
 }
 
 // GetChannelInfo retrieves channel information including topic and users
@@ -388,11 +397,28 @@ func (a *App) GetServerCapabilities(networkID int64) (*ServerCapabilitiesInfo, e
 		prefixMap[string(k)] = string(v)
 	}
 
+	clsA, clsB, clsC, clsD := client.GetChanModeClasses()
 	return &ServerCapabilitiesInfo{
 		Prefix:       prefixMap,
 		PrefixString: cap.PrefixString,
 		ChanModes:    cap.ChanModes,
+		ChanModesA:   clsA,
+		ChanModesB:   clsB,
+		ChanModesC:   clsC,
+		ChanModesD:   clsD,
 	}, nil
+}
+
+// RequestChannelBans asks the server for a channel's ban list. The result is delivered
+// asynchronously to the frontend via the "channel.banlist" event.
+func (a *App) RequestChannelBans(networkID int64, channelName string) error {
+	a.mu.RLock()
+	client, exists := a.ircClients[networkID]
+	a.mu.RUnlock()
+	if !exists || !client.IsConnected() {
+		return fmt.Errorf("not connected to network %d", networkID)
+	}
+	return client.RequestChannelBans(channelName)
 }
 
 // SetChannelOpen sets the is_open state for a channel

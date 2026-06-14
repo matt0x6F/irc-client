@@ -723,6 +723,22 @@ func (s *Storage) GetChannelUsers(channelID int64) ([]ChannelUser, error) {
 	return users, nil
 }
 
+// GetChannelUserModes returns the stored prefix modes (e.g. "@+") for a single user
+// in a channel. Returns sql.ErrNoRows if the user is not currently tracked.
+func (s *Storage) GetChannelUserModes(channelID int64, nickname string) (string, error) {
+	modes, err := s.queries.GetChannelUserModes(context.Background(), db.GetChannelUserModesParams{
+		ChannelID: channelID,
+		LOWER:     nickname,
+	})
+	if err != nil {
+		return "", err
+	}
+	if modes.Valid {
+		return modes.String, nil
+	}
+	return "", nil
+}
+
 // AddChannelUser adds or updates a user in a channel
 func (s *Storage) AddChannelUser(channelID int64, nickname string, modes string) error {
 	err := s.queries.AddChannelUser(context.Background(), db.AddChannelUserParams{

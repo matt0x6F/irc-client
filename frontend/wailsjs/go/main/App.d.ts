@@ -78,6 +78,8 @@ export function PinMessage(arg1:number,arg2:number,arg3:any):Promise<void>;
 
 export function ReloadPlugin(arg1:string):Promise<void>;
 
+export function RequestChannelBans(arg1:number,arg2:string):Promise<void>;
+
 export function RequestChannelList(arg1:number):Promise<void>;
 
 export function SaveNetwork(arg1:main.NetworkConfig):Promise<void>;

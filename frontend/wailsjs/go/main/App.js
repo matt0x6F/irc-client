@@ -150,6 +150,10 @@ export function ReloadPlugin(arg1) {
   return window['go']['main']['App']['ReloadPlugin'](arg1);
 }
 
+export function RequestChannelBans(arg1, arg2) {
+  return window['go']['main']['App']['RequestChannelBans'](arg1, arg2);
+}
+
 export function RequestChannelList(arg1) {
   return window['go']['main']['App']['RequestChannelList'](arg1);
 }

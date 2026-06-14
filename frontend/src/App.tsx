@@ -10,7 +10,7 @@ import { SettingsModal } from './components/settings-modal';
 import { ChannelInfo } from './components/channel-info';
 import { PinnedMessages } from './components/pinned-messages';
 import { TopicEditModal } from './components/topic-edit-modal';
-import { ModeEditModal } from './components/mode-edit-modal';
+import { ChannelModeEditor } from './components/channel-mode-editor';
 import { UserInfo } from './components/user-info';
 import { SearchModal } from './components/search-modal';
 import { ChannelListModal } from './components/channel-list-modal';
@@ -661,16 +661,15 @@ function App() {
             !selectedChannel.startsWith('pm:') &&
             channelInfo?.channel && (
               <div className="px-5 pb-3 flex items-center gap-4 text-sm border-t border-border/50 pt-2">
-                {channelInfo.channel.modes && (
-                  <button
-                    onClick={() => setShowModeModal(true)}
-                    className="text-muted-foreground hover:text-foreground cursor-pointer transition-all px-2 py-1 rounded-md hover:bg-accent/50"
-                    style={{ transition: 'var(--transition-base)' }}
-                    title="Click to edit modes"
-                  >
-                    Modes: {channelInfo.channel.modes}
-                  </button>
-                )}
+                <button
+                  data-testid="channel-modes-button"
+                  onClick={() => setShowModeModal(true)}
+                  className="text-muted-foreground hover:text-foreground cursor-pointer transition-all px-2 py-1 rounded-md hover:bg-accent/50 shrink-0"
+                  style={{ transition: 'var(--transition-base)' }}
+                  title="Click to edit channel modes"
+                >
+                  Modes: {channelInfo.channel.modes || '(none)'}
+                </button>
                 <button
                   onClick={() => setShowTopicModal(true)}
                   className="text-muted-foreground hover:text-foreground cursor-pointer italic flex-1 text-left truncate px-2 py-1 rounded-md hover:bg-accent/50 transition-all"
@@ -847,10 +846,11 @@ function App() {
         selectedChannel !== null &&
         selectedChannel !== 'status' &&
         channelInfo?.channel && (
-          <ModeEditModal
+          <ChannelModeEditor
             networkId={selectedNetwork}
             channelName={selectedChannel}
             currentModes={channelInfo.channel.modes || ''}
+            capabilities={channelInfo.capabilities}
             onClose={() => setShowModeModal(false)}
             onUpdate={loadChannelInfo}
           />
