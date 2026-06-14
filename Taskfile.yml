@@ -14,12 +14,15 @@ tasks:
   dev:
     desc: Run development server (Wails handles frontend + backend)
     cmds:
-      - wails dev
+      # -tags fts5 is REQUIRED: the SQLite schema uses an FTS5 virtual table for
+      # message search; without it the app errors at runtime ("no such module: fts5")
+      # and message persistence fails.
+      - wails dev -tags fts5
 
   build:
     desc: Build application for current platform
     cmds:
-      - wails build
+      - wails build -tags fts5
 
   build-all:
     desc: Build for all platforms
@@ -28,30 +31,31 @@ tasks:
   build-darwin:
     desc: Build for macOS
     cmds:
-      - wails build -platform darwin/amd64
-      - wails build -platform darwin/arm64
+      - wails build -tags fts5 -platform darwin/amd64
+      - wails build -tags fts5 -platform darwin/arm64
 
   build-linux:
     desc: Build for Linux
     cmds:
-      - wails build -platform linux/amd64
-      - wails build -platform linux/arm64
+      - wails build -tags fts5 -platform linux/amd64
+      - wails build -tags fts5 -platform linux/arm64
 
   build-windows:
     desc: Build for Windows
     cmds:
-      - wails build -platform windows/amd64
+      - wails build -tags fts5 -platform windows/amd64
 
   # Go Tasks
   test:
     desc: Run Go tests
     cmds:
-      - go test -v ./...
+      # fts5 tag + CGO are required for the SQLite full-text-search tests.
+      - CGO_ENABLED=1 go test -tags fts5 -v ./...
 
   test-coverage:
     desc: Run Go tests with coverage
     cmds:
-      - go test -v -coverprofile=coverage.out ./...
+      - CGO_ENABLED=1 go test -tags fts5 -v -coverprofile=coverage.out ./...
       - go tool cover -html=coverage.out -o coverage.html
       - echo "Coverage report generated at coverage.html"
 
