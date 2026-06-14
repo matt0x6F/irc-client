@@ -69,11 +69,21 @@ export default async function globalSetup(): Promise<void> {
   });
   spawnFailed.catch(() => {});
 
+  // If the app crashes during startup (e.g. the WebKit webview fails to init in a
+  // headless environment), the process exits before the bridge ever serves. Reject
+  // immediately on exit instead of blindly polling until the readiness timeout.
+  const processExited = new Promise<never>((_, reject) => {
+    child.on('exit', (code, signal) =>
+      reject(new Error(`wails dev exited before becoming ready (code=${code}, signal=${signal})`)),
+    );
+  });
+  processExited.catch(() => {});
+
   const bridgeUrl = `http://localhost:${bridgePort}`;
   try {
     // 3. Wait for the bridge (Go compile can take a while on first run).
     const ready = waitForHttp200(`${bridgeUrl}/wails/ipc.js`, 180_000);
-    await Promise.race([ready, spawnFailed]);
+    await Promise.race([ready, spawnFailed, processExited]);
   } catch (err) {
     cleanupPartial();
     const log = fs.existsSync(logFile) ? fs.readFileSync(logFile, 'utf-8') : '(no log)';

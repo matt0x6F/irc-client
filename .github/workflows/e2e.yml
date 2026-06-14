@@ -19,10 +19,12 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install system deps (webkit2gtk 4.0, xvfb, build tools)
+      - name: Install system deps (webkit2gtk 4.0, xvfb, dbus, build tools)
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev build-essential pkg-config xvfb
+          sudo apt-get install -y \
+            libgtk-3-dev libwebkit2gtk-4.0-dev build-essential pkg-config \
+            xvfb dbus dbus-x11 at-spi2-core libgl1-mesa-dri
 
       - name: Install Wails CLI
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.10.2
@@ -38,10 +40,15 @@ jobs:
         working-directory: e2e
 
       - name: Run e2e under xvfb
-        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24" npx playwright test
+        # A D-Bus session + disabled GPU compositing are required or the WebKitGTK
+        # webview panics on init under headless xvfb (no a11y bus / no GPU).
+        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24" dbus-run-session -- npx playwright test
         working-directory: e2e
         env:
           CGO_ENABLED: '1'
+          WEBKIT_DISABLE_COMPOSITING_MODE: '1'
+          WEBKIT_DISABLE_DMABUF_RENDERER: '1'
+          LIBGL_ALWAYS_SOFTWARE: '1'
 
       - name: Upload Playwright report
         if: always()
