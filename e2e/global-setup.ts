@@ -24,6 +24,12 @@ export default async function globalSetup(): Promise<void> {
   await waitForTcp('localhost', ergoPort, 60_000);
 
   // 2. Spawn `wails dev` (own process group so teardown can kill the whole tree).
+  //    `-tags fts5` is REQUIRED: without it the Go app crashes at startup on the
+  //    SQLite FTS5 migration. `-frontenddevserverurl` is REQUIRED for per-worktree
+  //    isolation: wails.json hardcodes `frontend:dev:serverUrl: http://localhost:5173`,
+  //    so without this override Wails proxies the bridge to the fixed 5173 instead of
+  //    our dynamic VITE_PORT, breaking parallel runs. Vite reads VITE_PORT (see
+  //    frontend/vite.config.ts), so the watcher and this URL resolve to the same port.
   const logFd = fs.openSync(logFile, 'w');
   const child = spawn(
     'wails',

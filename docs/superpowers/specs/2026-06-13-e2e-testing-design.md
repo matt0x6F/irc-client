@@ -60,11 +60,16 @@ real chat history from being clobbered when running the app out of a worktree.
    FTS5; the app crashes at startup on the `messages_fts` migration
    (`no such module: fts5`) before serving anything. The harness must run
    `wails dev -tags fts5`.
-2. **Drive Vite via `VITE_PORT`, not `-frontenddevserverurl`.** Passing an external
-   frontend URL makes Wails *also* spawn its own watcher → two Vite servers, the second on
-   a fixed port (breaks parallelism). Instead: let Wails run its own watcher and make
-   `vite.config.ts` read `process.env.VITE_PORT`. Wails auto-detects the URL from the
-   watcher's stdout (`Vite Server URL: http://localhost:<port>/`). Single, dynamic Vite.
+2. **Drive Vite via `VITE_PORT` *and* pass `-frontenddevserverurl`.** `vite.config.ts`
+   reads `process.env.VITE_PORT` so Wails' own watcher binds the dynamic port. But
+   `wails.json` hardcodes `frontend:dev:serverUrl: http://localhost:5173`, so the bridge
+   would proxy to the fixed 5173 unless overridden — therefore `global-setup.ts` also
+   passes `-frontenddevserverurl http://localhost:${vitePort}`. Both resolve to the same
+   dynamic port, so there is a single Vite, not two. (An earlier spike note here was
+   wrong: it claimed the flag spawns a *second* fixed-port Vite — that only happened in
+   the spike because Vite was started manually on a different port. With `VITE_PORT`
+   driving the watcher, the flag is required and correct. See the comment at
+   `e2e/global-setup.ts`.)
 3. **Bindings reachable over the bridge.** With the tag, the app boots, the bridge serves
    HTTP 200, and `/wails/ipc.js` (the binding transport) is served — so `window.go.*`
    calls work from an external headless browser.
