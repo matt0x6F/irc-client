@@ -444,7 +444,7 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
           const isError = msg.message_type === 'error';
           const isStatus = msg.message_type === 'status';
           const isCommand = msg.message_type === 'command';
-          const isSystemMessage = msg.message_type === 'join' || msg.message_type === 'part' || msg.message_type === 'quit';
+          const isSystemMessage = msg.message_type === 'join' || msg.message_type === 'part' || msg.message_type === 'quit' || msg.message_type === 'mode';
           const isEven = index % 2 === 0;
           const isRegularMessage = !isError && !isStatus && !isCommand && !isSystemMessage;
           const hasMention = isRegularMessage && isMention(msg.message);

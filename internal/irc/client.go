@@ -47,6 +47,8 @@ type IRCClient struct {
 	capNegotiationDone  bool                  // Whether CAP negotiation has finished
 	channelListItems    []ChannelListItem     // Temporary storage for LIST response
 	channelListMu       sync.Mutex            // Mutex for channelListItems
+	banLists            map[string][]BanEntry // Per-channel ban entries collected between 367 and 368
+	banListsMu          sync.Mutex            // Mutex for banLists
 	rateLimiter         *RateLimiter          // Rate limiter for outgoing messages
 	desiredNick         string                // The original nickname the user wanted
 	nickAttempt         int                   // Current nick collision retry attempt (0 = first try with underscore)
@@ -56,8 +58,81 @@ type IRCClient struct {
 type ServerCapabilities struct {
 	Prefix       map[rune]rune // Map prefix char to mode char (e.g., '@' -> 'o', '+' -> 'v')
 	PrefixString string        // Raw PREFIX string (e.g., "(ov)@+")
-	ChanModes    string        // Raw CHANMODES string
+	ChanModes    string        // Raw CHANMODES string (e.g., "b,k,l,imnpst")
+	ChanModesA   map[rune]bool // Type A modes (list modes, e.g. b)
+	ChanModesB   map[rune]bool // Type B modes (always parameterized, e.g. k)
+	ChanModesC   map[rune]bool // Type C modes (parameterized only when set, e.g. l)
+	ChanModesD   map[rune]bool // Type D modes (boolean flags, e.g. imnpst)
 	mu           sync.RWMutex  // Mutex for thread-safe access
+}
+
+// classification builds an immutable snapshot for the mode parser, combining the
+// classified CHANMODES groups with the membership modes from PREFIX. When the server
+// never advertised CHANMODES, RFC1459-style defaults are substituted so parsing still
+// consumes parameters correctly. Callers should hold the client lock for reads.
+func (sc *ServerCapabilities) classification() ModeClassification {
+	a, b, c, d := sc.ChanModesA, sc.ChanModesB, sc.ChanModesC, sc.ChanModesD
+	if len(a)+len(b)+len(c)+len(d) == 0 {
+		a, b, c, d = classifyChanModes(defaultChanModes)
+	}
+	prefix := make(map[rune]bool, len(sc.Prefix))
+	for _, modeLetter := range sc.Prefix {
+		prefix[modeLetter] = true
+	}
+	return ModeClassification{List: a, Param: b, SetParam: c, Flag: d, Prefix: prefix}
+}
+
+// prefixForMode returns the display prefix char for a membership mode letter
+// (e.g. 'o' -> '@'), and whether one exists. Callers should hold the client lock.
+func (sc *ServerCapabilities) prefixForMode(modeLetter rune) (rune, bool) {
+	for prefixChar, letter := range sc.Prefix {
+		if letter == modeLetter {
+			return prefixChar, true
+		}
+	}
+	return 0, false
+}
+
+// prefixRank returns prefix chars ordered by descending privilege, derived from the
+// order they appear in the PREFIX string (e.g. "(ov)@+" -> ['@','+']). Used to keep a
+// user's stored prefix string sorted highest-first. Callers should hold the client lock.
+func (sc *ServerCapabilities) prefixRank() []rune {
+	if close := strings.IndexRune(sc.PrefixString, ')'); close >= 0 {
+		return []rune(sc.PrefixString[close+1:])
+	}
+	return nil
+}
+
+// applyUserPrefix adds or removes the prefix char for the given membership mode letter
+// in a user's stored prefix string, keeping it ordered highest-privilege first.
+// Callers should hold the client lock.
+func (sc *ServerCapabilities) applyUserPrefix(current string, modeLetter rune, add bool) string {
+	prefixChar, ok := sc.prefixForMode(modeLetter)
+	if !ok {
+		return current
+	}
+	present := make(map[rune]bool)
+	for _, r := range current {
+		present[r] = true
+	}
+	if add {
+		present[prefixChar] = true
+	} else {
+		delete(present, prefixChar)
+	}
+
+	var b strings.Builder
+	for _, r := range sc.prefixRank() {
+		if present[r] {
+			b.WriteRune(r)
+			delete(present, r)
+		}
+	}
+	// Preserve any prefix chars not present in PREFIX rank (defensive for exotic servers).
+	for r := range present {
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // IsConnected returns whether the client is connected.
@@ -110,6 +185,7 @@ func NewIRCClient(network *storage.Network, eventBus *events.EventBus, storage *
 		namesInProgress:     make(map[string]bool),
 		whoisInProgress:     make(map[string]*WhoisInfo),
 		enabledCaps:         make(map[string]bool),
+		banLists:            make(map[string][]BanEntry),
 		serverCapabilities: &ServerCapabilities{
 			Prefix:       make(map[rune]rune),
 			PrefixString: "",
@@ -1130,29 +1206,190 @@ func (c *IRCClient) setupHandlers() {
 			return
 		}
 		target := e.Params[0]
-		mode := e.Params[1]
+		// Only handle channel modes (target starts with # or &); ignore user modes.
+		if len(target) == 0 || (target[0] != '#' && target[0] != '&') {
+			return
+		}
 
-		// Only handle channel modes (target starts with # or &)
-		if len(target) > 0 && (target[0] == '#' || target[0] == '&') {
-			ch, err := c.storage.GetChannelByName(c.networkID, target)
-			if err == nil {
-				// Update channel modes
-				// Note: This is simplified - full MODE parsing is complex
-				c.storage.UpdateChannelModes(ch.ID, mode)
+		ch, err := c.storage.GetChannelByName(c.networkID, target)
+		if err != nil {
+			return
+		}
 
-				// Emit event for mode change
-				c.eventBus.Emit(events.Event{
-					Type: EventChannelMode,
-					Data: map[string]interface{}{
-						"network": c.network.Address,
-						"channel": target,
-						"modes":   mode,
-					},
-					Timestamp: time.Now(),
-					Source:    events.EventSourceIRC,
-				})
+		// Snapshot the server's mode grammar once under lock, then parse lock-free.
+		c.mu.RLock()
+		cls := c.serverCapabilities.classification()
+		c.mu.RUnlock()
+
+		changes := ParseModeChanges(e.Params[1], e.Params[2:], cls)
+
+		// Surface the change in the channel itself (like join/part/kick), faithfully
+		// mirroring what the server applied: "<actor> sets mode: +o-v+k a b key".
+		// Bare list-mode *queries* (e.g. ban-list fetches) never reach here — the
+		// server answers those with 367/368, not a MODE echo — so this won't fire for them.
+		if len(changes) > 0 {
+			actor := e.Nick()
+			if actor == "" {
+				actor = e.Source
+			}
+			rawLine, _ := e.Line()
+			c.storage.WriteMessageSync(storage.Message{
+				NetworkID:   c.networkID,
+				ChannelID:   &ch.ID,
+				User:        actor,
+				Message:     fmt.Sprintf("%s sets mode: %s", actor, strings.Join(e.Params[1:], " ")),
+				MessageType: "mode",
+				Timestamp:   time.Now(),
+				RawLine:     rawLine,
+			})
+		}
+
+		// Fold channel-level changes (D flags + B/C params) into the canonical mode
+		// string, persisting only when it actually changed.
+		newModes := applyChannelModes(ch.Modes, changes, cls)
+		if newModes != ch.Modes {
+			if err := c.storage.UpdateChannelModes(ch.ID, newModes); err != nil {
+				logger.Log.Warn().Err(err).Str("channel", target).Msg("Failed to persist channel modes")
 			}
 		}
+		// Always announce the mode change so the UI reloads the channel — both the modes
+		// header and the "sets mode" line written above. This fires even for list-mode
+		// changes (e.g. +b) where the canonical string is unchanged, which would otherwise
+		// leave the new line invisible until the next poll.
+		c.eventBus.Emit(events.Event{
+			Type: EventChannelMode,
+			Data: map[string]interface{}{
+				"network": c.network.Address,
+				"channel": target,
+				"modes":   newModes,
+			},
+			Timestamp: time.Now(),
+			Source:    events.EventSourceIRC,
+		})
+
+		// Apply per-user membership (prefix) changes individually, emitting a granular
+		// event per affected user so the member list re-groups live.
+		for _, mc := range changes {
+			if mc.Kind != ModeKindPrefix || mc.Param == "" {
+				continue
+			}
+			current, gerr := c.storage.GetChannelUserModes(ch.ID, mc.Param)
+			if gerr != nil {
+				// User not tracked yet (e.g. NAMES not complete) — skip.
+				continue
+			}
+			c.mu.RLock()
+			updated := c.serverCapabilities.applyUserPrefix(current, mc.Mode, mc.Add)
+			c.mu.RUnlock()
+			if updated == current {
+				continue
+			}
+			if err := c.storage.AddChannelUser(ch.ID, mc.Param, updated); err != nil {
+				logger.Log.Warn().Err(err).Str("nick", mc.Param).Str("channel", target).Msg("Failed to update user modes")
+				continue
+			}
+			added, removed := "", ""
+			if mc.Add {
+				added = string(mc.Mode)
+			} else {
+				removed = string(mc.Mode)
+			}
+			c.eventBus.Emit(events.Event{
+				Type: EventChannelUserMode,
+				Data: map[string]interface{}{
+					"network":   c.network.Address,
+					"networkId": c.networkID,
+					"channel":   target,
+					"nick":      mc.Param,
+					"modes":     updated,
+					"added":     added,
+					"removed":   removed,
+				},
+				Timestamp: time.Now(),
+				Source:    events.EventSourceIRC,
+			})
+		}
+	})
+
+	// RPL_CHANNELMODEIS (324) - authoritative channel modes, typically on join or
+	// in response to a "MODE #channel" query. Replaces the stored canonical string.
+	c.conn.AddCallback("324", func(e ircmsg.Message) {
+		if len(e.Params) < 3 {
+			return
+		}
+		channel := e.Params[1]
+		ch, err := c.storage.GetChannelByName(c.networkID, channel)
+		if err != nil {
+			return
+		}
+		c.mu.RLock()
+		cls := c.serverCapabilities.classification()
+		c.mu.RUnlock()
+
+		changes := ParseModeChanges(e.Params[2], e.Params[3:], cls)
+		newModes := applyChannelModes("", changes, cls) // authoritative: rebuild from scratch
+		if err := c.storage.UpdateChannelModes(ch.ID, newModes); err != nil {
+			logger.Log.Warn().Err(err).Str("channel", channel).Msg("Failed to persist channel modes from 324")
+			return
+		}
+		c.eventBus.Emit(events.Event{
+			Type: EventChannelMode,
+			Data: map[string]interface{}{
+				"network": c.network.Address,
+				"channel": channel,
+				"modes":   newModes,
+			},
+			Timestamp: time.Now(),
+			Source:    events.EventSourceIRC,
+		})
+	})
+
+	// RPL_BANLIST (367) - a single ban entry: <channel> <mask> [<setter> <time>]
+	c.conn.AddCallback("367", func(e ircmsg.Message) {
+		if len(e.Params) < 3 {
+			return
+		}
+		channel := e.Params[1]
+		entry := BanEntry{Mask: e.Params[2]}
+		if len(e.Params) >= 4 {
+			entry.By = e.Params[3]
+		}
+		if len(e.Params) >= 5 {
+			fmt.Sscanf(e.Params[4], "%d", &entry.Time)
+		}
+		key := strings.ToLower(channel)
+		c.banListsMu.Lock()
+		c.banLists[key] = append(c.banLists[key], entry)
+		c.banListsMu.Unlock()
+	})
+
+	// RPL_ENDOFBANLIST (368) - end of ban list; flush collected entries to the frontend.
+	c.conn.AddCallback("368", func(e ircmsg.Message) {
+		if len(e.Params) < 2 {
+			return
+		}
+		channel := e.Params[1]
+		key := strings.ToLower(channel)
+		c.banListsMu.Lock()
+		entries := c.banLists[key]
+		delete(c.banLists, key)
+		c.banListsMu.Unlock()
+
+		bans := make([]interface{}, len(entries))
+		for i, b := range entries {
+			bans[i] = map[string]interface{}{"mask": b.Mask, "by": b.By, "time": b.Time}
+		}
+		c.eventBus.Emit(events.Event{
+			Type: EventChannelBanList,
+			Data: map[string]interface{}{
+				"network":   c.network.Address,
+				"networkId": c.networkID,
+				"channel":   channel,
+				"bans":      bans,
+			},
+			Timestamp: time.Now(),
+			Source:    events.EventSourceIRC,
+		})
 	})
 
 	// MOTD (Message of the Day) - store in status window
@@ -1432,8 +1669,13 @@ func (c *IRCClient) setupHandlers() {
 			// Parse CHANMODES parameter: CHANMODES=b,k,l,imnpst
 			if strings.HasPrefix(param, "CHANMODES=") {
 				chanModesValue := param[10:] // Skip "CHANMODES="
+				a, b, cc, d := classifyChanModes(chanModesValue)
 				c.mu.Lock()
 				c.serverCapabilities.ChanModes = chanModesValue
+				c.serverCapabilities.ChanModesA = a
+				c.serverCapabilities.ChanModesB = b
+				c.serverCapabilities.ChanModesC = cc
+				c.serverCapabilities.ChanModesD = d
 				c.mu.Unlock()
 				logger.Log.Debug().
 					Str("chanmodes", chanModesValue).
@@ -2221,6 +2463,22 @@ func (c *IRCClient) GetServerCapabilities() *ServerCapabilities {
 	}
 
 	return cap
+}
+
+// GetChanModeClasses returns the resolved CHANMODES classes as sorted letter strings
+// (A=list, B=param, C=set-param, D=flag), applying RFC1459 defaults when the server
+// never advertised CHANMODES. Used to drive the capability-aware mode editor.
+func (c *IRCClient) GetChanModeClasses() (a, b, cc, d string) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	cls := c.serverCapabilities.classification()
+	return sortedRunes(cls.List), sortedRunes(cls.Param), sortedRunes(cls.SetParam), sortedRunes(cls.Flag)
+}
+
+// RequestChannelBans asks the server for the channel ban list (MODE #channel +b).
+// Results arrive asynchronously via the EventChannelBanList event after RPL_ENDOFBANLIST.
+func (c *IRCClient) RequestChannelBans(channel string) error {
+	return c.SendRawCommand(fmt.Sprintf("MODE %s +b", channel))
 }
 
 // handleCTCPRequest handles incoming CTCP requests and sends appropriate responses

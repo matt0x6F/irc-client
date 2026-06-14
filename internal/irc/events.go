@@ -11,6 +11,8 @@ const (
 	EventUserNick              = "user.nick"
 	EventChannelTopic          = "channel.topic"
 	EventChannelMode           = "channel.mode"
+	EventChannelUserMode       = "channel.usermode"
+	EventChannelBanList        = "channel.banlist"
 	EventChannelsChanged       = "channels.changed"
 	EventConnectionEstablished = "connection.established"
 	EventConnectionLost        = "connection.lost"
@@ -23,6 +25,13 @@ const (
 	EventChannelListItem       = "channel.list.item"
 	EventChannelListEnd        = "channel.list.end"
 )
+
+// BanEntry represents a single entry from a channel ban list (RPL_BANLIST 367)
+type BanEntry struct {
+	Mask string `json:"mask"`
+	By   string `json:"by"`
+	Time int64  `json:"time"` // unix timestamp the ban was set
+}
 
 // ChannelListItem represents a single entry from the LIST response
 type ChannelListItem struct {

@@ -46,6 +46,10 @@ export namespace main {
 	    prefix: Record<string, string>;
 	    prefix_string: string;
 	    chanmodes: string;
+	    chanmodes_a: string;
+	    chanmodes_b: string;
+	    chanmodes_c: string;
+	    chanmodes_d: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ServerCapabilitiesInfo(source);
@@ -56,6 +60,10 @@ export namespace main {
 	        this.prefix = source["prefix"];
 	        this.prefix_string = source["prefix_string"];
 	        this.chanmodes = source["chanmodes"];
+	        this.chanmodes_a = source["chanmodes_a"];
+	        this.chanmodes_b = source["chanmodes_b"];
+	        this.chanmodes_c = source["chanmodes_c"];
+	        this.chanmodes_d = source["chanmodes_d"];
 	    }
 	}
 	export class ChannelInfo {
