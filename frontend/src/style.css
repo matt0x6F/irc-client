@@ -195,6 +195,21 @@
     --glass-bg: rgba(30, 41, 59, 0.50);
 }
 
+/* ---- Accent themes ----
+   data-accent on <html> selects the primary/ring hue. "blue" is the default
+   (defined in :root / .dark above), so it needs no override. Light overrides
+   come first; the .dark variants follow so they win in dark mode (equal
+   specificity, later rule wins). */
+:root[data-accent="purple"]  { --primary: #7c3aed; --ring: #7c3aed; }
+:root[data-accent="emerald"] { --primary: #059669; --ring: #059669; }
+:root[data-accent="rose"]    { --primary: #e11d48; --ring: #e11d48; }
+:root[data-accent="amber"]   { --primary: #d97706; --ring: #d97706; }
+
+.dark[data-accent="purple"]  { --primary: #a78bfa; --ring: #a78bfa; }
+.dark[data-accent="emerald"] { --primary: #34d399; --ring: #34d399; }
+.dark[data-accent="rose"]    { --primary: #fb7185; --ring: #fb7185; }
+.dark[data-accent="amber"]   { --primary: #fbbf24; --ring: #fbbf24; }
+
 body {
     margin: 0;
     font-family: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto",
