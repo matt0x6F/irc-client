@@ -104,6 +104,53 @@
 
     /* Font families */
     --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+    /* ---- IRC member roles (channel mode prefixes) ---- */
+    --role-owner:  #9333ea;
+    --role-admin:  #dc2626;
+    --role-op:     #ef4444;
+    --role-halfop: #f97316;
+    --role-voice:  #3b82f6;
+
+    /* ---- Presence ---- */
+    --presence-online:  #22c55e;
+    --presence-away:    #f59e0b;
+    --presence-offline: #94a3b8;
+
+    /* ---- Mention / highlight ---- */
+    --mention-bg: rgba(234, 179, 8, 0.10);
+    --mention-border: rgba(234, 179, 8, 0.50);
+
+    /* ---- IRC standard 16-color text palette (mIRC) ---- */
+    --irc-0:  #ffffff; --irc-1:  #000000; --irc-2:  #00007f; --irc-3:  #007f00;
+    --irc-4:  #ff0000; --irc-5:  #7f0000; --irc-6:  #9c009c; --irc-7:  #fc7f00;
+    --irc-8:  #ffff00; --irc-9:  #00fc00; --irc-10: #009393; --irc-11: #00ffff;
+    --irc-12: #0000fc; --irc-13: #ff00ff; --irc-14: #7f7f7f; --irc-15: #cfcfcf;
+
+    /* ---- Semantic status (light) ---- */
+    --success: #22c55e;
+    --warning: #f59e0b;
+
+    /* ---- Type scale ---- */
+    --text-2xs: 0.6875rem;
+    --text-xs:  0.75rem;
+    --text-sm:  0.875rem;
+    --text-base:1rem;
+    --text-lg:  1.125rem;
+    --text-xl:  1.375rem;
+    --text-2xl: 1.75rem;
+    --text-3xl: 2.25rem;
+    --text-4xl: 3rem;
+    --leading-tight: 1.2;
+    --leading-snug: 1.4;
+    --leading-normal: 1.6;
+    --tracking-tight: -0.02em;
+    --tracking-body: 0.01em;
+    --tracking-wide: 0.04em;
+
+    /* ---- Glass / backdrop (header + composer + popovers) ---- */
+    --backdrop-blur: 8px;
+    --glass-bg: rgba(255, 255, 255, 0.50);
 }
 
 .dark {
@@ -131,6 +178,21 @@
     --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -1px rgba(0, 0, 0, 0.3);
     --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -2px rgba(0, 0, 0, 0.3);
     --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.4), 0 10px 10px -5px rgba(0, 0, 0, 0.3);
+
+    /* Role / mention / status / glass overrides for dark mode */
+    --role-owner:  #c084fc;
+    --role-admin:  #f87171;
+    --role-op:     #f87171;
+    --role-halfop: #fb923c;
+    --role-voice:  #60a5fa;
+
+    --mention-bg: rgba(250, 204, 21, 0.10);
+    --mention-border: rgba(250, 204, 21, 0.45);
+
+    --success: #4ade80;
+    --warning: #fbbf24;
+
+    --glass-bg: rgba(30, 41, 59, 0.50);
 }
 
 body {
