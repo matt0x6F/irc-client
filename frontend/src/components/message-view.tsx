@@ -394,7 +394,7 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
               data-testid="message-item"
               className={`group flex space-x-3 py-1 px-2 rounded transition-colors ${
                 hasMention
-                  ? 'bg-yellow-500/10 dark:bg-yellow-400/10 border-l-2 border-yellow-500/50'
+                  ? 'cc-mention border-l-2'
                   : isError
                   ? 'bg-destructive/10 border-l-2 border-destructive shadow-[var(--shadow-sm)]'
                   : isStatus || isCommand

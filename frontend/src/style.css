@@ -262,3 +262,10 @@ button, a, input, select, textarea {
         inset 2px 0 0 0 color-mix(in srgb, var(--primary) 55%, transparent),
         inset 14px 0 20px -12px color-mix(in srgb, var(--primary) 70%, transparent);
 }
+
+/* Mention row: highlight tint + left border sourced from --mention-* tokens
+   (the .dark token overrides handle dark mode automatically). */
+.cc-mention {
+    background: var(--mention-bg);
+    border-left-color: var(--mention-border);
+}
