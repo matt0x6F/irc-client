@@ -8,6 +8,7 @@ import { MessageView } from './components/message-view';
 import { InputArea } from './components/input-area';
 import { SettingsModal } from './components/settings-modal';
 import { ChannelInfo } from './components/channel-info';
+import { PinnedMessages } from './components/pinned-messages';
 import { TopicEditModal } from './components/topic-edit-modal';
 import { ModeEditModal } from './components/mode-edit-modal';
 import { UserInfo } from './components/user-info';
@@ -28,6 +29,9 @@ function App() {
   const loadMessages = useNetworkStore((s) => s.loadMessages);
   const loadChannelInfo = useNetworkStore((s) => s.loadChannelInfo);
   const loadConnectionStatus = useNetworkStore((s) => s.loadConnectionStatus);
+  const loadPinnedMessages = useNetworkStore((s) => s.loadPinnedMessages);
+  const noteNewWhileAnchored = useNetworkStore((s) => s.noteNewWhileAnchored);
+  const pinnedCount = useNetworkStore((s) => s.pinnedMessages.length);
   const selectPane = useNetworkStore((s) => s.selectPane);
   const connectNetwork = useNetworkStore((s) => s.connectNetwork);
   const disconnectNetwork = useNetworkStore((s) => s.disconnectNetwork);
@@ -66,6 +70,8 @@ function App() {
   const toggleRightSidebar = useUIStore((s) => s.toggleRightSidebar);
   const setLeftSidebarCollapsed = useUIStore((s) => s.setLeftSidebarCollapsed);
   const setRightSidebarCollapsed = useUIStore((s) => s.setRightSidebarCollapsed);
+  const rightSidebarTab = useUIStore((s) => s.rightSidebarTab);
+  const setRightSidebarTab = useUIStore((s) => s.setRightSidebarTab);
 
   // Refs
   const hasRestoredPaneRef = useRef(false);
@@ -221,6 +227,7 @@ function App() {
       loadMessages();
       loadConnectionStatus();
       loadChannelInfo();
+      loadPinnedMessages();
       const interval = setInterval(() => {
         loadMessages();
         loadConnectionStatus();
@@ -310,16 +317,19 @@ function App() {
       if (selectedNetwork === null) return;
       const currentNetwork = networks.find((n) => n.id === selectedNetwork);
       if (currentNetwork && network === currentNetwork.address) {
-        if (
-          (eventType === 'message.received' || eventType === 'message.sent') &&
-          target &&
-          selectedChannel === target
-        ) {
-          loadMessages();
-        } else if (target && selectedChannel === target) {
-          loadMessages();
-        } else if (eventData.channel === null && selectedChannel === 'status') {
-          loadMessages();
+        const matchesView =
+          (target && selectedChannel === target) ||
+          (eventData.channel === null && selectedChannel === 'status');
+        if (matchesView) {
+          // While anchored to a pinned/old message, don't reload (which would snap
+          // back to live). Instead count new messages so the badge can show them.
+          if (useNetworkStore.getState().viewMode === 'anchored') {
+            if (eventType === 'message.received' || eventType === 'message.sent') {
+              noteNewWhileAnchored();
+            }
+          } else {
+            loadMessages();
+          }
         }
       }
     });
@@ -586,12 +596,12 @@ function App() {
                   {navigator.platform?.includes('Mac') ? '\u2318' : 'Ctrl+'}K
                 </kbd>
               </button>
-              {/* Right sidebar toggle — only show when a channel is selected */}
-              {selectedChannel && selectedChannel !== 'status' && !selectedChannel.startsWith('pm:') && (
+              {/* Right sidebar toggle — show for channels and PMs */}
+              {selectedChannel && selectedChannel !== 'status' && (
                 <button
                   onClick={toggleRightSidebar}
                   className="p-1.5 rounded-md hover:bg-accent/50 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-                  title={rightSidebarCollapsed ? 'Show channel info' : 'Hide channel info'}
+                  title={rightSidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <rect x="3" y="3" width="18" height="18" rx="2" />
@@ -649,44 +659,90 @@ function App() {
             )}
           </div>
 
-          {/* Channel Info Sidebar */}
+          {/* Right Sidebar — Users (channels only) + Pinned messages */}
           {selectedChannel &&
             selectedChannel !== 'status' &&
-            !selectedChannel.startsWith('pm:') && (
-              <div
-                className="border-l border-border overflow-auto flex-shrink-0 relative"
-                style={{
-                  width: rightSidebarCollapsed ? '0px' : `${rightSidebarWidth}px`,
-                  minWidth: rightSidebarCollapsed ? '0px' : undefined,
-                  overflow: rightSidebarCollapsed ? 'hidden' : undefined,
-                  transition: 'width 0.2s ease',
-                  borderLeftWidth: rightSidebarCollapsed ? '0px' : undefined,
-                }}
-              >
-                {!rightSidebarCollapsed && (
-                  <div
-                    className="absolute top-0 left-0 w-1 h-full cursor-col-resize hover:w-2 hover:bg-primary/40 bg-border/50 z-10"
-                    style={{ transition: 'var(--transition-base)' }}
-                    onMouseDown={handleRightResizeStart}
-                    title="Drag to resize"
-                  />
-                )}
-                <ChannelInfo
-                  networkId={selectedNetwork}
-                  channelName={selectedChannel}
-                  currentNickname={
-                    selectedNetwork !== null
-                      ? networks.find((n) => n.id === selectedNetwork)?.nickname || null
-                      : null
-                  }
-                  onSendCommand={async (command: string) => {
-                    if (selectedNetwork !== null) {
-                      await SendCommand(selectedNetwork, command);
-                    }
+            (() => {
+              const isPM = selectedChannel.startsWith('pm:');
+              // PMs have no user list, so the pinned tab is the only option there.
+              const effectiveTab = isPM ? 'pinned' : rightSidebarTab;
+              return (
+                <div
+                  className="border-l border-border flex-shrink-0 relative"
+                  style={{
+                    width: rightSidebarCollapsed ? '0px' : `${rightSidebarWidth}px`,
+                    minWidth: rightSidebarCollapsed ? '0px' : undefined,
+                    overflow: 'hidden',
+                    transition: 'width 0.2s ease',
+                    borderLeftWidth: rightSidebarCollapsed ? '0px' : undefined,
                   }}
-                />
-              </div>
-            )}
+                >
+                  {!rightSidebarCollapsed && (
+                    <div
+                      className="absolute top-0 left-0 w-1 h-full cursor-col-resize hover:w-2 hover:bg-primary/40 bg-border/50 z-10"
+                      style={{ transition: 'var(--transition-base)' }}
+                      onMouseDown={handleRightResizeStart}
+                      title="Drag to resize"
+                    />
+                  )}
+                  {!rightSidebarCollapsed && (
+                    <div className="flex flex-col h-full">
+                      {/* Tab header */}
+                      <div className="flex flex-shrink-0 border-b border-border text-sm">
+                        {!isPM && (
+                          <button
+                            onClick={() => setRightSidebarTab('users')}
+                            className={`flex-1 px-3 py-2 cursor-pointer transition-colors ${
+                              effectiveTab === 'users'
+                                ? 'text-foreground border-b-2 border-primary font-medium'
+                                : 'text-muted-foreground hover:text-foreground'
+                            }`}
+                          >
+                            Users
+                          </button>
+                        )}
+                        <button
+                          onClick={() => setRightSidebarTab('pinned')}
+                          className={`flex-1 px-3 py-2 cursor-pointer transition-colors flex items-center justify-center gap-1.5 ${
+                            effectiveTab === 'pinned'
+                              ? 'text-foreground border-b-2 border-primary font-medium'
+                              : 'text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          Pinned
+                          {pinnedCount > 0 && (
+                            <span className="inline-flex items-center justify-center min-w-4 h-4 px-1 rounded-full bg-primary/20 text-primary text-[10px] font-medium">
+                              {pinnedCount}
+                            </span>
+                          )}
+                        </button>
+                      </div>
+                      {/* Body */}
+                      <div className="flex-1 overflow-auto">
+                        {effectiveTab === 'users' && !isPM ? (
+                          <ChannelInfo
+                            networkId={selectedNetwork}
+                            channelName={selectedChannel}
+                            currentNickname={
+                              selectedNetwork !== null
+                                ? networks.find((n) => n.id === selectedNetwork)?.nickname || null
+                                : null
+                            }
+                            onSendCommand={async (command: string) => {
+                              if (selectedNetwork !== null) {
+                                await SendCommand(selectedNetwork, command);
+                              }
+                            }}
+                          />
+                        ) : (
+                          <PinnedMessages networkId={selectedNetwork} />
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
           {showUserInfo && (
             <UserInfo

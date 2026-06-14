@@ -30,6 +30,8 @@ export function GetLastOpenPane():Promise<main.LastOpenPane>;
 
 export function GetMessages(arg1:number,arg2:any,arg3:number):Promise<Array<storage.Message>>;
 
+export function GetMessagesAround(arg1:number,arg2:any,arg3:number,arg4:number):Promise<Array<storage.Message>>;
+
 export function GetNetworks():Promise<Array<storage.Network>>;
 
 export function GetNicknameColor(arg1:number,arg2:string):Promise<string>;
@@ -37,6 +39,8 @@ export function GetNicknameColor(arg1:number,arg2:string):Promise<string>;
 export function GetNicknameColorsBatch(arg1:number,arg2:Array<string>):Promise<Record<string, string>>;
 
 export function GetOpenChannels(arg1:number):Promise<Array<storage.Channel>>;
+
+export function GetPinnedMessages(arg1:number,arg2:any):Promise<Array<storage.PinnedMessage>>;
 
 export function GetPluginConfig(arg1:string):Promise<Record<string, any>>;
 
@@ -66,6 +70,8 @@ export function OpenSettingsNetworks():Promise<void>;
 
 export function OpenSettingsPlugins():Promise<void>;
 
+export function PinMessage(arg1:number,arg2:number,arg3:any):Promise<void>;
+
 export function ReloadPlugin(arg1:string):Promise<void>;
 
 export function RequestChannelList(arg1:number):Promise<void>;
@@ -89,3 +95,5 @@ export function SetPrivateMessageOpen(arg1:number,arg2:string,arg3:boolean):Prom
 export function ToggleChannelAutoJoin(arg1:number,arg2:string):Promise<void>;
 
 export function ToggleNetworkAutoConnect(arg1:number):Promise<void>;
+
+export function UnpinMessage(arg1:number):Promise<void>;

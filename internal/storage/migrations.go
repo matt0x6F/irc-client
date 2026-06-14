@@ -69,6 +69,11 @@ func Migrate(db *sqlx.DB) error {
 		return fmt.Errorf("FTS5 migration failed: %w", err)
 	}
 
+	// Handle pinned messages table migration
+	if err := migratePinnedMessages(db); err != nil {
+		return fmt.Errorf("pinned messages migration failed: %w", err)
+	}
+
 	return nil
 }
 
@@ -445,6 +450,41 @@ func migratePluginConfigColumn(db *sqlx.DB) error {
 				}
 			}
 		}
+	}
+
+	return nil
+}
+
+const createPinnedMessagesTable = `
+CREATE TABLE IF NOT EXISTS pinned_messages (
+    message_id INTEGER PRIMARY KEY,
+    network_id INTEGER NOT NULL,
+    channel_id INTEGER,
+    pinned_by  TEXT NOT NULL DEFAULT '',
+    pinned_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE,
+    FOREIGN KEY (network_id) REFERENCES networks(id) ON DELETE CASCADE,
+    FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE
+);
+`
+
+// migratePinnedMessages creates the pinned_messages table and its index if they don't exist
+func migratePinnedMessages(db *sqlx.DB) error {
+	var tableExists int
+	err := db.Get(&tableExists,
+		"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='pinned_messages'")
+	if err != nil {
+		return fmt.Errorf("failed to check for pinned_messages table: %w", err)
+	}
+
+	if tableExists == 0 {
+		if _, err := db.Exec(createPinnedMessagesTable); err != nil {
+			return fmt.Errorf("failed to create pinned_messages table: %w", err)
+		}
+	}
+
+	if _, err := db.Exec("CREATE INDEX IF NOT EXISTS idx_pinned_network_channel ON pinned_messages(network_id, channel_id)"); err != nil {
+		return fmt.Errorf("failed to create pinned_messages index: %w", err)
 	}
 
 	return nil

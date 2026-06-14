@@ -27,6 +27,10 @@ type Querier interface {
 	GetJoinedChannels(ctx context.Context, arg GetJoinedChannelsParams) ([]Channel, error)
 	GetLastOpenChannel(ctx context.Context) (GetLastOpenChannelRow, error)
 	GetLastOpenPM(ctx context.Context) (GetLastOpenPMRow, error)
+	GetMessagesAfterWithChannel(ctx context.Context, arg GetMessagesAfterWithChannelParams) ([]Message, error)
+	GetMessagesAfterWithoutChannel(ctx context.Context, arg GetMessagesAfterWithoutChannelParams) ([]Message, error)
+	GetMessagesBeforeWithChannel(ctx context.Context, arg GetMessagesBeforeWithChannelParams) ([]Message, error)
+	GetMessagesBeforeWithoutChannel(ctx context.Context, arg GetMessagesBeforeWithoutChannelParams) ([]Message, error)
 	GetMessagesWithChannel(ctx context.Context, arg GetMessagesWithChannelParams) ([]Message, error)
 	GetMessagesWithoutChannel(ctx context.Context, arg GetMessagesWithoutChannelParams) ([]Message, error)
 	GetNetwork(ctx context.Context, id int64) (Network, error)
@@ -34,15 +38,19 @@ type Querier interface {
 	GetOpenChannels(ctx context.Context, arg GetOpenChannelsParams) ([]Channel, error)
 	GetOpenPMConversations(ctx context.Context, networkID int64) ([]PrivateMessageConversation, error)
 	GetPMConversation(ctx context.Context, arg GetPMConversationParams) (PrivateMessageConversation, error)
+	GetPinnedMessagesWithChannel(ctx context.Context, arg GetPinnedMessagesWithChannelParams) ([]GetPinnedMessagesWithChannelRow, error)
+	GetPinnedMessagesWithoutChannel(ctx context.Context, networkID int64) ([]GetPinnedMessagesWithoutChannelRow, error)
 	GetPluginConfig(ctx context.Context, name string) (PluginConfig, error)
 	GetPrivateMessageConversationsAll(ctx context.Context, arg GetPrivateMessageConversationsAllParams) ([]interface{}, error)
 	GetPrivateMessageConversationsOpen(ctx context.Context, networkID int64) ([]string, error)
 	GetPrivateMessages(ctx context.Context, arg GetPrivateMessagesParams) ([]Message, error)
 	GetServers(ctx context.Context, networkID int64) ([]Server, error)
+	PinMessage(ctx context.Context, arg PinMessageParams) error
 	RemoveChannelUser(ctx context.Context, arg RemoveChannelUserParams) error
 	SetPluginConfig(ctx context.Context, arg SetPluginConfigParams) error
 	SetPluginConfigSchema(ctx context.Context, arg SetPluginConfigSchemaParams) error
 	SetPluginEnabled(ctx context.Context, arg SetPluginEnabledParams) error
+	UnpinMessage(ctx context.Context, messageID int64) error
 	UpdateChannelAutoJoin(ctx context.Context, arg UpdateChannelAutoJoinParams) error
 	UpdateChannelIsOpen(ctx context.Context, arg UpdateChannelIsOpenParams) error
 	UpdateChannelModes(ctx context.Context, arg UpdateChannelModesParams) error

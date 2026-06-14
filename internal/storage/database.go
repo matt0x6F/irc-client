@@ -314,6 +314,118 @@ func (s *Storage) GetMessages(networkID int64, channelID *int64, limit int) ([]M
 	return messages, nil
 }
 
+// PinMessage pins a message (idempotent — re-pinning is a no-op)
+func (s *Storage) PinMessage(messageID, networkID int64, channelID *int64, pinnedBy string) error {
+	var channelIDNull sql.NullInt64
+	if channelID != nil {
+		channelIDNull = sql.NullInt64{Int64: *channelID, Valid: true}
+	}
+	err := s.queries.PinMessage(context.Background(), db.PinMessageParams{
+		MessageID: messageID,
+		NetworkID: networkID,
+		ChannelID: channelIDNull,
+		PinnedBy:  pinnedBy,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to pin message: %w", err)
+	}
+	return nil
+}
+
+// UnpinMessage removes a pin
+func (s *Storage) UnpinMessage(messageID int64) error {
+	if err := s.queries.UnpinMessage(context.Background(), messageID); err != nil {
+		return fmt.Errorf("failed to unpin message: %w", err)
+	}
+	return nil
+}
+
+// GetPinnedMessages returns pinned messages for a network and channel (channelID nil = status/PM pane)
+func (s *Storage) GetPinnedMessages(networkID int64, channelID *int64) ([]PinnedMessage, error) {
+	if channelID != nil {
+		rows, err := s.queries.GetPinnedMessagesWithChannel(context.Background(), db.GetPinnedMessagesWithChannelParams{
+			NetworkID: networkID,
+			ChannelID: sql.NullInt64{Int64: *channelID, Valid: true},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to get pinned messages: %w", err)
+		}
+		pinned := make([]PinnedMessage, len(rows))
+		for i, r := range rows {
+			pinned[i] = convertPinnedMessageWithChannelFromDB(r)
+		}
+		return pinned, nil
+	}
+
+	rows, err := s.queries.GetPinnedMessagesWithoutChannel(context.Background(), networkID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get pinned messages: %w", err)
+	}
+	pinned := make([]PinnedMessage, len(rows))
+	for i, r := range rows {
+		pinned[i] = convertPinnedMessageWithoutChannelFromDB(r)
+	}
+	return pinned, nil
+}
+
+// GetMessagesAround returns a window of messages around a target message id:
+// up to `window` messages at or before the target, plus up to `window` after it,
+// in chronological (ascending id) order.
+func (s *Storage) GetMessagesAround(networkID int64, channelID *int64, targetID int64, window int) ([]Message, error) {
+	var before, after []db.Message
+	var err error
+
+	if channelID != nil {
+		channelIDNull := sql.NullInt64{Int64: *channelID, Valid: true}
+		before, err = s.queries.GetMessagesBeforeWithChannel(context.Background(), db.GetMessagesBeforeWithChannelParams{
+			NetworkID: networkID,
+			ChannelID: channelIDNull,
+			ID:        targetID,
+			Limit:     int64(window),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to get messages before target: %w", err)
+		}
+		after, err = s.queries.GetMessagesAfterWithChannel(context.Background(), db.GetMessagesAfterWithChannelParams{
+			NetworkID: networkID,
+			ChannelID: channelIDNull,
+			ID:        targetID,
+			Limit:     int64(window),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to get messages after target: %w", err)
+		}
+	} else {
+		before, err = s.queries.GetMessagesBeforeWithoutChannel(context.Background(), db.GetMessagesBeforeWithoutChannelParams{
+			NetworkID: networkID,
+			ID:        targetID,
+			Limit:     int64(window),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to get messages before target: %w", err)
+		}
+		after, err = s.queries.GetMessagesAfterWithoutChannel(context.Background(), db.GetMessagesAfterWithoutChannelParams{
+			NetworkID: networkID,
+			ID:        targetID,
+			Limit:     int64(window),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to get messages after target: %w", err)
+		}
+	}
+
+	// `before` is DESC (newest first); reverse it to ascending, then append `after` (already ASC).
+	messages := make([]Message, 0, len(before)+len(after))
+	for i := len(before) - 1; i >= 0; i-- {
+		messages = append(messages, convertMessageFromDB(before[i]))
+	}
+	for _, m := range after {
+		messages = append(messages, convertMessageFromDB(m))
+	}
+
+	return messages, nil
+}
+
 // CreateNetwork creates a new network configuration
 func (s *Storage) CreateNetwork(network *Network) error {
 	params := convertNetworkToDBCreateParams(network)

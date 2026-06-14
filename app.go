@@ -243,6 +243,34 @@ func (a *App) GetPrivateMessageConversations(networkID int64, openOnly bool) ([]
 	return a.storage.GetPrivateMessageConversations(networkID, network.Nickname, openOnly)
 }
 
+// PinMessage pins a message in a network/channel (channelID nil for status/PM panes)
+func (a *App) PinMessage(networkID, messageID int64, channelID *int64) error {
+	var pinnedBy string
+	if network, err := a.storage.GetNetwork(networkID); err == nil {
+		pinnedBy = network.Nickname
+	}
+	return a.storage.PinMessage(messageID, networkID, channelID, pinnedBy)
+}
+
+// UnpinMessage removes a pin
+func (a *App) UnpinMessage(messageID int64) error {
+	return a.storage.UnpinMessage(messageID)
+}
+
+// GetPinnedMessages retrieves pinned messages for a network and channel
+func (a *App) GetPinnedMessages(networkID int64, channelID *int64) ([]storage.PinnedMessage, error) {
+	return a.storage.GetPinnedMessages(networkID, channelID)
+}
+
+// GetMessagesAround retrieves a window of messages around a target message id,
+// so the frontend can "jump" to a pinned message with surrounding context.
+func (a *App) GetMessagesAround(networkID int64, channelID *int64, targetID int64, window int) ([]storage.Message, error) {
+	if window <= 0 {
+		window = 50
+	}
+	return a.storage.GetMessagesAround(networkID, channelID, targetID, window)
+}
+
 // GetChannels retrieves channels for a network
 func (a *App) GetChannels(networkID int64) ([]storage.Channel, error) {
 	return a.storage.GetChannels(networkID)

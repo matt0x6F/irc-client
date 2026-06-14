@@ -204,6 +204,46 @@ func convertMessageToDBCreateParams(m Message) db.CreateMessageParams {
 	}
 }
 
+func convertPinnedMessageWithChannelFromDB(p db.GetPinnedMessagesWithChannelRow) PinnedMessage {
+	result := PinnedMessage{
+		Message: Message{
+			ID:          p.ID,
+			NetworkID:   p.NetworkID,
+			User:        p.User,
+			Message:     p.Message,
+			MessageType: p.MessageType,
+			Timestamp:   p.Timestamp,
+			RawLine:     convertNullString(p.RawLine),
+		},
+		PinnedBy: p.PinnedBy,
+		PinnedAt: p.PinnedAt,
+	}
+	if p.ChannelID.Valid {
+		result.ChannelID = &p.ChannelID.Int64
+	}
+	return result
+}
+
+func convertPinnedMessageWithoutChannelFromDB(p db.GetPinnedMessagesWithoutChannelRow) PinnedMessage {
+	result := PinnedMessage{
+		Message: Message{
+			ID:          p.ID,
+			NetworkID:   p.NetworkID,
+			User:        p.User,
+			Message:     p.Message,
+			MessageType: p.MessageType,
+			Timestamp:   p.Timestamp,
+			RawLine:     convertNullString(p.RawLine),
+		},
+		PinnedBy: p.PinnedBy,
+		PinnedAt: p.PinnedAt,
+	}
+	if p.ChannelID.Valid {
+		result.ChannelID = &p.ChannelID.Int64
+	}
+	return result
+}
+
 func convertPMConversationFromDB(pmc db.PrivateMessageConversation) PrivateMessageConversation {
 	result := PrivateMessageConversation{
 		ID:         pmc.ID,
