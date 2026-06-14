@@ -1,10 +1,10 @@
 -- name: GetPrivateMessageConversationsOpen :many
 SELECT COALESCE(
     (SELECT m.user FROM messages m 
-     WHERE m.network_id = pmc.network_id 
-       AND m.channel_id IS NULL 
-       AND LOWER(m.user) = pmc.target_user 
-       AND m.message_type IN ('privmsg', 'action')
+     WHERE m.network_id = pmc.network_id
+       AND m.channel_id IS NULL
+       AND LOWER(m.user) = pmc.target_user
+       AND m.message_type IN ('privmsg', 'action', 'notice')
      ORDER BY m.timestamp DESC 
      LIMIT 1),
     pmc.target_user

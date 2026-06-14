@@ -151,6 +151,13 @@ func (a *App) handleDesktopNotification(event events.Event) {
 			return
 		}
 
+		// Service/user notices (ChanServ, NickServ, …) route to a query pane but
+		// must not raise a desktop notification per line — services are chatty,
+		// especially on connect. They still badge the pane in-app.
+		if mt, _ := event.Data["messageType"].(string); mt == "notice" {
+			return
+		}
+
 		if notification.IsPrivateMessage(event.Data) {
 			// Private message
 			title := fmt.Sprintf("PM from %s", user)

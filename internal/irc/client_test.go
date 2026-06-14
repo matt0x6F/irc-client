@@ -31,6 +31,41 @@ func TestPMPeer(t *testing.T) {
 	}
 }
 
+// TestNoticePMTarget verifies how an inbound NOTICE is routed. Services such as
+// ChanServ/NickServ (and ordinary users) reply via NOTICE, and those should land
+// in the sender's query pane — keyed by the conversation peer — rather than the
+// Status log. True *server* notices (a bare server-name prefix with no
+// user@host mask) and channel notices must stay out of any PM pane (peer == "").
+func TestNoticePMTarget(t *testing.T) {
+	c := &IRCClient{network: &storage.Network{Nickname: "matt0x6f"}}
+
+	cases := []struct {
+		name, source, sender, target, want string
+	}{
+		// Service reply with a full hostmask -> ChanServ's query pane.
+		{"chanserv service notice", "ChanServ!ChanServ@services.libera.chat", "ChanServ", "matt0x6f", "ChanServ"},
+		{"nickserv service notice", "NickServ!NickServ@services.", "NickServ", "matt0x6f", "NickServ"},
+		// Ordinary user notice -> that user's pane.
+		{"user notice", "alice!~a@host", "alice", "matt0x6f", "alice"},
+		// Echoed self-notice (echo-message): peer is the recipient, not us.
+		{"echoed self notice", "matt0x6f!~m@host", "matt0x6f", "chanserv", "chanserv"},
+		// Server-sourced notices have no user@host mask -> stay in Status.
+		{"server notice to nick", "irc.libera.chat", "irc.libera.chat", "matt0x6f", ""},
+		{"pre-registration server notice", "irc.libera.chat", "irc.libera.chat", "*", ""},
+		{"empty source", "", "", "*", ""},
+		// Channel-targeted notice is never a PM.
+		{"channel notice", "alice!~a@host", "alice", "#chan", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := c.noticePMTarget(tc.source, tc.sender, tc.target); got != tc.want {
+				t.Fatalf("noticePMTarget(%q, %q, %q) = %q, want %q",
+					tc.source, tc.sender, tc.target, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestIsConnectedIsPureGetter is a regression guard for the sleep/wake bug where
 // the UI reported "disconnected" while messages kept arriving.
 //

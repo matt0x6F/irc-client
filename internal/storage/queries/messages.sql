@@ -17,7 +17,7 @@ RETURNING *;
 
 -- name: GetPrivateMessages :many
 SELECT * FROM messages
-WHERE network_id = ? AND channel_id IS NULL AND message_type IN ('privmsg', 'action')
+WHERE network_id = ? AND channel_id IS NULL AND message_type IN ('privmsg', 'action', 'notice')
 AND LOWER(pm_target) = ?
 ORDER BY timestamp DESC
 LIMIT ?;
