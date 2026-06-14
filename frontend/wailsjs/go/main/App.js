@@ -58,6 +58,10 @@ export function GetMessagesAround(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['GetMessagesAround'](arg1, arg2, arg3, arg4);
 }
 
+export function GetMessagesBefore(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['GetMessagesBefore'](arg1, arg2, arg3, arg4);
+}
+
 export function GetNetworks() {
   return window['go']['main']['App']['GetNetworks']();
 }

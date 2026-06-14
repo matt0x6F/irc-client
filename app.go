@@ -219,6 +219,12 @@ func (a *App) GetMessages(networkID int64, channelID *int64, limit int) ([]stora
 	return a.storage.GetMessages(networkID, channelID, limit)
 }
 
+// GetMessagesBefore retrieves up to `limit` messages older than beforeID (exclusive),
+// chronological order. Used for scrollback pagination. channelID nil = status pane.
+func (a *App) GetMessagesBefore(networkID int64, channelID *int64, beforeID int64, limit int) ([]storage.Message, error) {
+	return a.storage.GetMessagesBefore(networkID, channelID, beforeID, limit)
+}
+
 // GetPrivateMessages retrieves private messages for a network and user
 func (a *App) GetPrivateMessages(networkID int64, targetUser string, limit int) ([]storage.Message, error) {
 	network, err := a.storage.GetNetwork(networkID)

@@ -215,6 +215,11 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
   const clearAnchorFlash = useNetworkStore((s) => s.clearAnchorFlash);
   const returnToLive = useNetworkStore((s) => s.returnToLive);
   const newSinceAnchor = useNetworkStore((s) => s.newSinceAnchor);
+  const loadOlderMessages = useNetworkStore((s) => s.loadOlderMessages);
+
+  // Scrollback pagination state (refs so they don't trigger re-renders).
+  const loadingOlderRef = useRef(false);
+  const reachedStartRef = useRef(false);
 
   const pinnedIds = useMemo(() => new Set(pinnedMessages.map((p) => p.id)), [pinnedMessages]);
   // Map of message id -> row element, used to scroll/flash a specific message
@@ -252,13 +257,53 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
     setIsNearBottom(isNear);
   };
 
+  // When scrolled to the top, load an older page and preserve the viewport so the
+  // content doesn't jump. Stops once the backend reports no more history.
+  const maybeLoadOlder = () => {
+    const container = scrollContainerRef.current;
+    if (!container || loadingOlderRef.current || reachedStartRef.current) return;
+    if (container.scrollTop > 80) return;
+
+    loadingOlderRef.current = true;
+    const prevHeight = container.scrollHeight;
+    const prevTop = container.scrollTop;
+    loadOlderMessages().then((added) => {
+      if (added > 0) {
+        // Keep the previously-top message visually fixed after prepending.
+        // Bypass the container's smooth scroll-behavior so this is instant.
+        requestAnimationFrame(() => {
+          const c = scrollContainerRef.current;
+          if (!c) return;
+          const prevBehavior = c.style.scrollBehavior;
+          c.style.scrollBehavior = 'auto';
+          c.scrollTop = c.scrollHeight - prevHeight + prevTop;
+          c.style.scrollBehavior = prevBehavior;
+        });
+      } else {
+        reachedStartRef.current = true;
+      }
+      loadingOlderRef.current = false;
+    });
+  };
+
+  const handleScroll = () => {
+    checkIfNearBottom();
+    maybeLoadOlder();
+  };
+
+  // Reset pagination state when the channel changes.
+  useEffect(() => {
+    reachedStartRef.current = false;
+    loadingOlderRef.current = false;
+  }, [selectedChannel]);
+
   // Handle scroll events
   useEffect(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
 
-    container.addEventListener('scroll', checkIfNearBottom);
-    return () => container.removeEventListener('scroll', checkIfNearBottom);
+    container.addEventListener('scroll', handleScroll);
+    return () => container.removeEventListener('scroll', handleScroll);
   }, []);
 
   // Jump-to-message: scroll to the anchored message and flash it briefly.
@@ -362,7 +407,7 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
     <div
       ref={scrollContainerRef}
       className="h-full overflow-y-auto p-4 space-y-1"
-      onScroll={checkIfNearBottom}
+      onScroll={handleScroll}
       style={{ scrollBehavior: 'smooth' }}
       data-testid="message-list"
     >
