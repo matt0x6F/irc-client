@@ -4,6 +4,7 @@ import { GetChannels, GetJoinedChannels, GetOpenChannels, GetServers, LeaveChann
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import { useUIStore } from '../stores/ui';
 import markUrl from '../assets/brand/cascade-mark.svg';
+import { ChevronRight, SquareTerminal } from 'lucide-react';
 
 type Channel = storage.Channel;
 
@@ -328,6 +329,9 @@ export function ServerTree({
       <div className="flex-1 overflow-y-auto">
         {servers && servers.length > 0 ? (
           <div className="py-2">
+            <div className="px-3 pt-1 pb-2 text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground/80">
+              Servers
+            </div>
             {servers.map((network) => {
               const isExpanded = expandedServers.has(network.id);
               const isConnected = connectionStatus[network.id] || false;
@@ -352,21 +356,25 @@ export function ServerTree({
                       }
                     }}
                   >
-                    <span className="mr-2 text-xs opacity-60">
-                      {isExpanded ? '▼' : '▶'}
-                    </span>
-                    <span className={`w-2 h-2 rounded-full mr-2 shadow-sm ${
-                      isConnected ? 'bg-green-500 animate-pulse' : 'bg-gray-400'
-                    }`} title={isConnected ? 'Connected' : 'Disconnected'} data-testid="network-status-indicator" data-connected={isConnected ? 'true' : 'false'} />
+                    <ChevronRight
+                      className={`mr-1.5 w-3.5 h-3.5 flex-shrink-0 text-muted-foreground transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+                    />
+                    <span
+                      className="w-2 h-2 rounded-full mr-2 flex-shrink-0 shadow-sm"
+                      style={{ background: isConnected ? 'var(--presence-online)' : 'var(--presence-offline)' }}
+                      title={isConnected ? 'Connected' : 'Disconnected'}
+                      data-testid="network-status-indicator"
+                      data-connected={isConnected ? 'true' : 'false'}
+                    />
                     <span className="flex-1 font-medium">{network.name}</span>
                   </div>
                   {isExpanded && (
                     <div className="pl-6">
-                      {/* Status channel */}
+                      {/* Server log (status pane) */}
                       <div
-                        className={`p-2 cursor-pointer select-none transition-all ${
-                          isSelected && selectedChannel === 'status' 
-                            ? 'cc-active-pane' 
+                        className={`p-2 cursor-pointer select-none transition-all flex items-center gap-2 ${
+                          isSelected && selectedChannel === 'status'
+                            ? 'cc-active-pane'
                             : 'hover:bg-accent/70'
                         }`}
                         style={{ transition: 'var(--transition-base)' }}
@@ -377,7 +385,8 @@ export function ServerTree({
                           }
                         }}
                       >
-                        <span className="text-sm text-muted-foreground">Status</span>
+                        <SquareTerminal className="w-3.5 h-3.5 flex-shrink-0 text-muted-foreground" />
+                        <span className="text-sm text-muted-foreground">Server log</span>
                       </div>
                       {/* Regular channels */}
                       {networkChannels.map((channel) => {
@@ -414,8 +423,8 @@ export function ServerTree({
                       {/* Private Message conversations */}
                       {(pmConversations[network.id] || []).length > 0 && (
                         <>
-                          <div className="px-2 py-1 text-xs font-semibold text-muted-foreground uppercase">
-                            Private Messages
+                          <div className="px-3 pt-3 pb-1 text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground/80">
+                            Direct messages
                           </div>
                           {(pmConversations[network.id] || []).map((user) => {
                             const pmKey = `pm:${user}`;
@@ -438,7 +447,10 @@ export function ServerTree({
                                   }
                                 }}
                               >
-                                <span className={`text-sm ${unreadCount > 0 ? 'font-semibold' : ''}`}>💬 {user}</span>
+                                <span className={`text-sm flex items-center gap-2 min-w-0 ${unreadCount > 0 ? 'font-semibold' : ''}`}>
+                                  <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: 'var(--presence-online)' }} />
+                                  <span className="truncate">{user}</span>
+                                </span>
                                 {unreadCount > 0 && (
                                   <span className="bg-primary text-primary-foreground text-xs px-1.5 min-w-[1.25rem] text-center rounded-full ml-2" title="Unread messages">
                                     {unreadCount > 99 ? '99+' : unreadCount}
