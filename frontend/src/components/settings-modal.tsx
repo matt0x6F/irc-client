@@ -416,6 +416,7 @@ export function SettingsModal({ onClose, onServerUpdate, initialSection }: Setti
                 className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-accent transition-all shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)] disabled:opacity-50 disabled:cursor-not-allowed"
                 style={{ transition: 'var(--transition-base)' }}
                 disabled={showAddForm || editingNetwork !== null}
+                data-testid="add-network-button"
               >
                 + Add Network
               </button>
@@ -439,6 +440,7 @@ export function SettingsModal({ onClose, onServerUpdate, initialSection }: Setti
                         style={{ transition: 'var(--transition-base)' }}
                         required
                         placeholder="My IRC Server"
+                        data-testid="network-name-input"
                       />
                     </div>
                   </div>
@@ -508,10 +510,12 @@ export function SettingsModal({ onClose, onServerUpdate, initialSection }: Setti
                               className="px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all shadow-[var(--shadow-sm)] focus:shadow-[var(--shadow-md)]"
                               style={{ transition: 'var(--transition-base)' }}
                               placeholder="irc.example.com"
+                              data-testid="server-address-input"
                             />
                             <input
                               title="Server Port"
                               placeholder="6667"
+                              data-testid="server-port-input"
                               type="number"
                               value={editingNetwork ? (srv as storage.Server).port : (srv as main.ServerConfig).port}
                               onChange={(e) => {
@@ -649,6 +653,7 @@ export function SettingsModal({ onClose, onServerUpdate, initialSection }: Setti
                         style={{ transition: 'var(--transition-base)' }}
                         required
                         placeholder="MyNick"
+                        data-testid="network-nickname-input"
                       />
                     </div>
                     <div>
@@ -660,6 +665,7 @@ export function SettingsModal({ onClose, onServerUpdate, initialSection }: Setti
                         className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all shadow-[var(--shadow-sm)] focus:shadow-[var(--shadow-md)]"
                         style={{ transition: 'var(--transition-base)' }}
                         placeholder="username"
+                        data-testid="network-username-input"
                       />
                     </div>
                     <div>
@@ -671,6 +677,7 @@ export function SettingsModal({ onClose, onServerUpdate, initialSection }: Setti
                         className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all shadow-[var(--shadow-sm)] focus:shadow-[var(--shadow-md)]"
                         style={{ transition: 'var(--transition-base)' }}
                         placeholder="Real Name"
+                        data-testid="network-realname-input"
                       />
                     </div>
                     <div>
@@ -796,6 +803,7 @@ export function SettingsModal({ onClose, onServerUpdate, initialSection }: Setti
                     </button>
                     <button
                       type="submit"
+                      data-testid="save-network-button"
                       className="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-all shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)] font-medium"
                       style={{ transition: 'var(--transition-base)' }}
                     >
@@ -868,6 +876,7 @@ export function SettingsModal({ onClose, onServerUpdate, initialSection }: Setti
                               onClick={() => handleConnect(network)}
                               className="px-3 py-1.5 text-xs border border-border rounded-lg hover:bg-primary hover:text-primary-foreground transition-all shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)]"
                               style={{ transition: 'var(--transition-base)' }}
+                              data-testid="network-connect-button"
                             >
                               Connect
                             </button>
@@ -1031,6 +1040,7 @@ export function SettingsModal({ onClose, onServerUpdate, initialSection }: Setti
           <h2 className="text-xl font-semibold">Settings</h2>
           <button
             onClick={onClose}
+            data-testid="settings-close-button"
             className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-accent transition-all shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)]"
             style={{ transition: 'var(--transition-base)' }}
           >

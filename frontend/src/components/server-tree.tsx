@@ -317,7 +317,7 @@ export function ServerTree({
   }, [expandedServers]);
 
   return (
-    <div className="h-full flex flex-col relative bg-card/30">
+    <div data-testid="server-tree" className="h-full flex flex-col relative bg-card/30">
         <div className="p-4 border-b border-border bg-card/50">
         <h2 className="font-semibold text-lg">Networks</h2>
       </div>
@@ -354,7 +354,7 @@ export function ServerTree({
                     </span>
                     <span className={`w-2 h-2 rounded-full mr-2 shadow-sm ${
                       isConnected ? 'bg-green-500 animate-pulse' : 'bg-gray-400'
-                    }`} title={isConnected ? 'Connected' : 'Disconnected'} />
+                    }`} title={isConnected ? 'Connected' : 'Disconnected'} data-testid="network-status-indicator" data-connected={isConnected ? 'true' : 'false'} />
                     <span className="flex-1 font-medium">{network.name}</span>
                   </div>
                   {isExpanded && (
@@ -383,6 +383,8 @@ export function ServerTree({
                         return (
                           <div
                             key={channel}
+                            data-testid="channel-node"
+                            data-channel={channel}
                             className={`p-2 cursor-pointer select-none flex items-center justify-between transition-all ${
                               isSelected && selectedChannel === channel
                                 ? 'bg-primary/10 border-l-4 border-primary'

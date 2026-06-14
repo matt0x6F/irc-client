@@ -84,6 +84,15 @@ tasks:
     cmds:
       - npx tsc --noEmit
 
+  # End-to-End Tests
+  e2e:
+    desc: Run full-stack e2e tests (Docker Ergo + wails dev + Playwright)
+    dir: "e2e"
+    cmds:
+      - npm install
+      - npx playwright install chromium
+      - npx playwright test
+
   # Database Tasks
   db-reset:
     desc: 'Reset database (WARNING: Deletes all data)'

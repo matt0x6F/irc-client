@@ -7,7 +7,7 @@ import path from 'path'
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
-    port: 5173,
+    port: Number(process.env.VITE_PORT) || 5173,
     strictPort: true,
     host: 'localhost',
   },

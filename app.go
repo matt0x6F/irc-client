@@ -39,11 +39,19 @@ type App struct {
 
 // NewApp creates a new App application struct
 func NewApp() (*App, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get home directory: %w", err)
+	// baseDir is the root for all persistent data (DB, plugins). It defaults to
+	// ~/.cascade-chat but can be overridden with CASCADE_DATA_DIR. The override
+	// isolates data per run/worktree (used by e2e tests and parallel worktrees)
+	// so they never clobber the user's real chat history.
+	baseDir := os.Getenv("CASCADE_DATA_DIR")
+	if baseDir == "" {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get home directory: %w", err)
+		}
+		baseDir = filepath.Join(homeDir, ".cascade-chat")
 	}
-	dbPath := filepath.Join(homeDir, ".cascade-chat", "cascade-chat.db")
+	dbPath := filepath.Join(baseDir, "cascade-chat.db")
 
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
 		return nil, fmt.Errorf("failed to create config directory: %w", err)
@@ -57,7 +65,7 @@ func NewApp() (*App, error) {
 	eventBus := events.NewEventBus()
 	keychain := security.NewKeychain()
 
-	pluginDir := filepath.Join(homeDir, ".cascade-chat", "plugins")
+	pluginDir := filepath.Join(baseDir, "plugins")
 	pluginMgr := plugin.NewManager(eventBus, pluginDir)
 	pluginMgr.SetStorage(stor)
 

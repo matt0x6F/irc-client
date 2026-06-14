@@ -304,11 +304,12 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
   }, [consolidateEnabled]);
 
   return (
-    <div 
+    <div
       ref={scrollContainerRef}
       className="h-full overflow-y-auto p-4 space-y-1"
       onScroll={checkIfNearBottom}
       style={{ scrollBehavior: 'smooth' }}
+      data-testid="message-list"
     >
       {processedMessages.length === 0 ? (
         <div className="text-center text-muted-foreground py-12 px-4">
@@ -331,6 +332,7 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
           return (
             <div
               key={msg.id}
+              data-testid="message-item"
               className={`flex space-x-3 py-1 px-2 rounded transition-colors ${
                 hasMention
                   ? 'bg-yellow-500/10 dark:bg-yellow-400/10 border-l-2 border-yellow-500/50'

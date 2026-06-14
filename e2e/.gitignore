@@ -1,0 +1,4 @@
+node_modules/
+.runtime.json
+test-results/
+playwright-report/
