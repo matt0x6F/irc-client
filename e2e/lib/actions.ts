@@ -74,6 +74,8 @@ export async function closeSettings(page: Page): Promise<void> {
  * across specs. If a previous spec already added and connected the network, the
  * server tree already shows the green indicator — skip the add/connect dance and
  * just make sure Settings is closed so the main UI is usable.
+ *
+ * Note: the fast-path checks only connection state, not channel membership; specs must (re)join channels they need.
  */
 export async function addNetworkAndConnect(
   page: Page,

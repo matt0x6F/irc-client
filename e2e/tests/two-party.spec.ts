@@ -11,8 +11,8 @@ test('a message from a second IRC user appears in the UI', async ({ page, runtim
   const peer = new IrcPeer('localhost', runtime.ergoPort, 'peerbot');
   await peer.connect();
   peer.join('#e2e');
+  await peer.waitForJoin('#e2e'); // wait for the server's JOIN echo instead of a fixed sleep
   const unique = `from-peer-${Date.now()}`;
-  await new Promise((r) => setTimeout(r, 1000)); // let the peer's JOIN settle
   peer.say('#e2e', unique);
 
   try {
