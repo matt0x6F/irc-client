@@ -3,6 +3,7 @@ import { main, storage } from '../../wailsjs/go/models';
 import { GetChannels, GetJoinedChannels, GetOpenChannels, GetServers, LeaveChannel, ToggleChannelAutoJoin, ToggleNetworkAutoConnect, SetChannelOpen, GetPrivateMessageConversations, SendCommand, SetPrivateMessageOpen, ClearPaneFocus } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import { useUIStore } from '../stores/ui';
+import markUrl from '../assets/brand/cascade-mark.svg';
 
 type Channel = storage.Channel;
 
@@ -318,9 +319,11 @@ export function ServerTree({
 
   return (
     <div data-testid="server-tree" className="h-full flex flex-col relative bg-card/30">
-        <div className="p-4 border-b border-border bg-card/50">
-        <h2 className="font-semibold text-lg">Networks</h2>
-      </div>
+        <div className="p-4 border-b border-border bg-card/50 flex items-center gap-2.5">
+          <img src={markUrl} alt="" className="h-7 w-7 rounded-lg select-none flex-shrink-0" draggable={false} />
+          <span className="font-extrabold text-lg tracking-tight text-foreground">Cascade</span>
+          <span className="font-semibold text-sm text-muted-foreground">Chat</span>
+        </div>
 
       <div className="flex-1 overflow-y-auto">
         {servers && servers.length > 0 ? (
