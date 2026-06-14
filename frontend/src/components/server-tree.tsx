@@ -4,7 +4,7 @@ import { GetChannels, GetJoinedChannels, GetOpenChannels, GetServers, LeaveChann
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import { useUIStore } from '../stores/ui';
 import markUrl from '../assets/brand/cascade-mark.svg';
-import { SquareTerminal } from 'lucide-react';
+import { Terminal } from 'lucide-react';
 
 type Channel = storage.Channel;
 
@@ -343,7 +343,7 @@ export function ServerTree({
                   <div
                     className={`flex items-center px-2.5 py-1.5 mx-1 rounded-md cursor-pointer select-none transition-all ${
                       isSelected
-                        ? 'bg-accent/60'
+                        ? 'bg-secondary'
                         : 'hover:bg-accent/50'
                     }`}
                     style={{ transition: 'var(--transition-base)' }}
@@ -382,8 +382,8 @@ export function ServerTree({
                           }
                         }}
                       >
-                        <SquareTerminal className="w-3.5 h-3.5 flex-shrink-0 text-muted-foreground" />
-                        <span className="text-sm text-muted-foreground">Server log</span>
+                        <Terminal className="w-3.5 h-3.5 flex-shrink-0 opacity-85" />
+                        <span className="text-sm">Server log</span>
                       </div>
                       {/* Regular channels */}
                       {networkChannels.map((channel) => {

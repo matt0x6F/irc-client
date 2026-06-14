@@ -498,7 +498,7 @@ function App() {
         {!leftSidebarCollapsed && (
           <div
             data-testid="left-resize-handle"
-            className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:w-2 hover:bg-primary/40 bg-border/50 z-10"
+            className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:w-2 hover:bg-primary/40 bg-transparent z-10"
             style={{ transition: 'var(--transition-base)' }}
             onMouseDown={handleLeftResizeStart}
             title="Drag to resize"
@@ -611,6 +611,7 @@ function App() {
                   <circle cx="11" cy="11" r="8" />
                   <path d="m21 21-4.3-4.3" />
                 </svg>
+                <span className="hidden sm:inline">Search</span>
                 <kbd className="hidden sm:inline-flex h-5 select-none items-center gap-1 rounded border border-border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-60">
                   {navigator.platform?.includes('Mac') ? '\u2318' : 'Ctrl+'}K
                 </kbd>
@@ -726,7 +727,7 @@ function App() {
                   {!rightSidebarCollapsed && (
                     <div
                       data-testid="right-resize-handle"
-                      className="absolute top-0 left-0 w-1 h-full cursor-col-resize hover:w-2 hover:bg-primary/40 bg-border/50 z-10"
+                      className="absolute top-0 left-0 w-1 h-full cursor-col-resize hover:w-2 hover:bg-primary/40 bg-transparent z-10"
                       style={{ transition: 'var(--transition-base)' }}
                       onMouseDown={handleRightResizeStart}
                       title="Drag to resize"
