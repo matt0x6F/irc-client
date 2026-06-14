@@ -9,6 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from './ui/select';
+import { useThemeStore, ACCENTS, type ThemeMode } from '../stores/theme';
 
 type SettingsSection = 'networks' | 'plugins' | 'display';
 
@@ -60,6 +61,12 @@ export function SettingsModal({ onClose, onServerUpdate, initialSection }: Setti
   const [plugins, setPlugins] = useState<main.PluginInfo[]>([]);
   const [editingNetwork, setEditingNetwork] = useState<storage.Network | null>(null);
   const [consolidateJoinQuit, setConsolidateJoinQuit] = useState<boolean>(loadConsolidateSetting);
+
+  // Theme (appearance + accent)
+  const themeMode = useThemeStore((s) => s.mode);
+  const accent = useThemeStore((s) => s.accent);
+  const setThemeMode = useThemeStore((s) => s.setMode);
+  const setAccent = useThemeStore((s) => s.setAccent);
   const [pluginLoading, setPluginLoading] = useState<Set<string>>(new Set());
   const [expandedPlugins, setExpandedPlugins] = useState<Set<string>>(new Set());
   const [formData, setFormData] = useState<main.NetworkConfig>(main.NetworkConfig.createFrom({
@@ -1008,8 +1015,55 @@ export function SettingsModal({ onClose, onServerUpdate, initialSection }: Setti
           <div className="mb-6">
             <h3 className="text-md font-semibold mb-4">Display Settings</h3>
             <div className="space-y-4">
-              <div className="border border-border rounded p-4">
-                <label className="flex items-center space-x-2">
+              {/* Theme */}
+              <div className="border border-border rounded-lg p-4 bg-card/50 shadow-[var(--shadow-sm)] space-y-4">
+                <div>
+                  <div className="text-sm font-medium mb-2">Appearance</div>
+                  <div className="inline-flex rounded-lg border border-border p-0.5 bg-muted/40">
+                    {(['light', 'dark', 'system'] as ThemeMode[]).map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => setThemeMode(m)}
+                        className={`px-3 py-1.5 text-sm rounded-md capitalize cursor-pointer transition-colors ${
+                          themeMode === m
+                            ? 'bg-primary text-primary-foreground font-medium shadow-[var(--shadow-sm)]'
+                            : 'text-muted-foreground hover:text-foreground'
+                        }`}
+                      >
+                        {m}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-sm font-medium mb-2">Accent</div>
+                  <div className="flex items-center gap-3">
+                    {ACCENTS.map((a) => (
+                      <button
+                        key={a.id}
+                        type="button"
+                        onClick={() => setAccent(a.id)}
+                        title={a.label}
+                        aria-label={`${a.label} accent`}
+                        aria-pressed={accent === a.id}
+                        className="w-7 h-7 rounded-full cursor-pointer transition-transform hover:scale-110"
+                        style={{
+                          background: a.swatch,
+                          boxShadow:
+                            accent === a.id
+                              ? `0 0 0 2px var(--card), 0 0 0 4px ${a.swatch}`
+                              : undefined,
+                        }}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Messages */}
+              <div className="border border-border rounded-lg p-4 bg-card/50 shadow-[var(--shadow-sm)]">
+                <label className="flex items-center space-x-2 cursor-pointer">
                   <input
                     type="checkbox"
                     checked={consolidateJoinQuit}
