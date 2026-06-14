@@ -174,15 +174,21 @@ function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [openSearch, openSettings, toggleKeyboardShortcuts, closeKeyboardShortcuts, showKeyboardShortcuts, showSearch, closeSearch, showSettings, closeSettings, showTopicModal, setShowTopicModal, showModeModal, setShowModeModal, showUserInfo, setShowUserInfo, showChannelList, closeChannelList, toggleLeftSidebar, toggleRightSidebar]);
 
-  // Responsive sidebar collapse on small windows
+  // Responsive sidebar collapse on small windows.
+  // Only react when the window actually crosses the breakpoint — otherwise a
+  // resize within the same band would overwrite a manual sidebar toggle on every
+  // resize tick, making the sidebar fight the user and the layout look "messed up".
   useEffect(() => {
     const BREAKPOINT = 768;
+    let wasNarrow: boolean | null = null;
     const handleResize = () => {
       const narrow = window.innerWidth < BREAKPOINT;
+      if (narrow === wasNarrow) return;
+      wasNarrow = narrow;
       setLeftSidebarCollapsed(narrow);
       setRightSidebarCollapsed(narrow);
     };
-    // Check on mount
+    // Check on mount (wasNarrow starts null, so this always sets initial state)
     handleResize();
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
@@ -449,10 +455,12 @@ function App() {
   // --- Render ---
 
   return (
-    <div className="flex h-screen bg-background">
+    <div className="flex h-screen bg-background overflow-hidden">
       {/* Network Tree Sidebar */}
       <div
         ref={serverTreeRef}
+        data-testid="left-sidebar"
+        data-collapsed={String(leftSidebarCollapsed)}
         className="border-r border-border overflow-auto flex-shrink-0 relative bg-card/30"
         style={{
           width: leftSidebarCollapsed ? '0px' : `${leftSidebarWidth}px`,
@@ -478,6 +486,7 @@ function App() {
         />
         {!leftSidebarCollapsed && (
           <div
+            data-testid="left-resize-handle"
             className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:w-2 hover:bg-primary/40 bg-border/50 z-10"
             style={{ transition: 'var(--transition-base)' }}
             onMouseDown={handleLeftResizeStart}
@@ -487,7 +496,7 @@ function App() {
       </div>
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col">
+      <div className="flex-1 flex flex-col min-w-0">
         {/* Header */}
         <div className="border-b border-border bg-card/50 backdrop-blur-sm">
           <div className="h-14 flex items-center justify-between px-3 sm:px-5">
@@ -496,6 +505,7 @@ function App() {
               {leftSidebarCollapsed && (
                 <button
                   onClick={toggleLeftSidebar}
+                  data-testid="toggle-left-sidebar"
                   className="flex-shrink-0 p-1.5 rounded-md hover:bg-accent/50 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
                   title="Show sidebar"
                 >
@@ -509,6 +519,7 @@ function App() {
               {!leftSidebarCollapsed && (
                 <button
                   onClick={toggleLeftSidebar}
+                  data-testid="toggle-left-sidebar"
                   className="flex-shrink-0 p-1.5 rounded-md hover:bg-accent/50 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
                   title="Hide sidebar"
                 >
@@ -590,6 +601,7 @@ function App() {
               {selectedChannel && selectedChannel !== 'status' && !selectedChannel.startsWith('pm:') && (
                 <button
                   onClick={toggleRightSidebar}
+                  data-testid="toggle-right-sidebar"
                   className="p-1.5 rounded-md hover:bg-accent/50 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
                   title={rightSidebarCollapsed ? 'Show channel info' : 'Hide channel info'}
                 >
@@ -654,6 +666,8 @@ function App() {
             selectedChannel !== 'status' &&
             !selectedChannel.startsWith('pm:') && (
               <div
+                data-testid="right-sidebar"
+                data-collapsed={String(rightSidebarCollapsed)}
                 className="border-l border-border overflow-auto flex-shrink-0 relative"
                 style={{
                   width: rightSidebarCollapsed ? '0px' : `${rightSidebarWidth}px`,
@@ -665,6 +679,7 @@ function App() {
               >
                 {!rightSidebarCollapsed && (
                   <div
+                    data-testid="right-resize-handle"
                     className="absolute top-0 left-0 w-1 h-full cursor-col-resize hover:w-2 hover:bg-primary/40 bg-border/50 z-10"
                     style={{ transition: 'var(--transition-base)' }}
                     onMouseDown={handleRightResizeStart}
