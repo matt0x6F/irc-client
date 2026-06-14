@@ -508,7 +508,10 @@ function App() {
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Header */}
-        <div className="border-b border-border bg-card/50 backdrop-blur-sm">
+        <div
+          className="border-b border-border"
+          style={{ background: 'var(--glass-bg)', backdropFilter: 'blur(var(--backdrop-blur))', WebkitBackdropFilter: 'blur(var(--backdrop-blur))' }}
+        >
           <div className="h-14 flex items-center justify-between px-3 sm:px-5">
             <div className="flex items-center gap-2 min-w-0">
               {/* Hamburger toggle for left sidebar */}

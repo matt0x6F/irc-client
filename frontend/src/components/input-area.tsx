@@ -203,7 +203,10 @@ export function InputArea({ onSendMessage, placeholder = 'Type a message...', ne
   };
 
   return (
-    <div className="border-t border-border p-4 bg-card/50 backdrop-blur-sm">
+    <div
+      className="border-t border-border p-4"
+      style={{ background: 'var(--glass-bg)', backdropFilter: 'blur(var(--backdrop-blur))', WebkitBackdropFilter: 'blur(var(--backdrop-blur))' }}
+    >
       <form onSubmit={handleSubmit} className="flex space-x-3">
         <input
           ref={inputRef}
