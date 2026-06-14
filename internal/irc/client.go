@@ -47,6 +47,8 @@ type IRCClient struct {
 	capNegotiationDone  bool                  // Whether CAP negotiation has finished
 	channelListItems    []ChannelListItem     // Temporary storage for LIST response
 	channelListMu       sync.Mutex            // Mutex for channelListItems
+	list322Raw          int                   // CHANLIST-DEBUG: raw count of 322 replies seen (before parse guard)
+	list321Seen         bool                  // CHANLIST-DEBUG: whether RPL_LISTSTART (321) arrived
 	rateLimiter         *RateLimiter          // Rate limiter for outgoing messages
 	desiredNick         string                // The original nickname the user wanted
 	nickAttempt         int                   // Current nick collision retry attempt (0 = first try with underscore)
@@ -1458,12 +1460,17 @@ func (c *IRCClient) setupHandlers() {
 	c.conn.AddCallback("321", func(e ircmsg.Message) {
 		c.channelListMu.Lock()
 		c.channelListItems = nil // Reset list
+		c.list322Raw = 0
+		c.list321Seen = true
 		c.channelListMu.Unlock()
 		logger.Log.Info().Int64("network_id", c.networkID).Msg("CHANLIST-DEBUG: 321 RPL_LISTSTART received")
 	})
 
 	// RPL_LIST (322) - Channel list entry: <channel> <visible> :<topic>
 	c.conn.AddCallback("322", func(e ircmsg.Message) {
+		c.channelListMu.Lock()
+		c.list322Raw++
+		c.channelListMu.Unlock()
 		logger.Log.Info().Int64("network_id", c.networkID).Strs("params", e.Params).Msg("CHANLIST-DEBUG: 322 RPL_LIST received")
 		if len(e.Params) < 3 {
 			return
@@ -1494,9 +1501,13 @@ func (c *IRCClient) setupHandlers() {
 		items := make([]ChannelListItem, len(c.channelListItems))
 		copy(items, c.channelListItems)
 		c.channelListItems = nil
+		raw322 := c.list322Raw
+		sawStart := c.list321Seen
+		c.list322Raw = 0
+		c.list321Seen = false
 		c.channelListMu.Unlock()
 
-		logger.Log.Info().Int64("network_id", c.networkID).Int("count", len(items)).Msg("CHANLIST-DEBUG: Channel LIST completed (322 entries accumulated)")
+		logger.Log.Info().Int64("network_id", c.networkID).Int("count", len(items)).Int("raw322", raw322).Bool("sawStart", sawStart).Msg("CHANLIST-DEBUG: Channel LIST completed (322 entries accumulated)")
 
 		// Convert items to interface slice for event data
 		itemsData := make([]interface{}, len(items))
@@ -1512,8 +1523,10 @@ func (c *IRCClient) setupHandlers() {
 		c.eventBus.Emit(events.Event{
 			Type: EventChannelListEnd,
 			Data: map[string]interface{}{
-				"networkId": c.networkID,
-				"channels":  itemsData,
+				"networkId":   c.networkID,
+				"channels":    itemsData,
+				"raw322Count": raw322,  // CHANLIST-DEBUG: raw 322s seen
+				"sawStart":    sawStart, // CHANLIST-DEBUG: 321 seen
 			},
 			Timestamp: time.Now(),
 			Source:    events.EventSourceIRC,
