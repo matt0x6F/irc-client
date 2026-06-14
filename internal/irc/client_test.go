@@ -1,0 +1,67 @@
+package irc
+
+import (
+	"testing"
+	"time"
+)
+
+// TestIsConnectedIsPureGetter is a regression guard for the sleep/wake bug where
+// the UI reported "disconnected" while messages kept arriving.
+//
+// IsConnected() used to be a getter with a side effect: a passive "no messages
+// in 15 minutes" check that flipped connected -> false. Combined with the
+// short-circuit `if !connected { return false }`, this created an asymmetric
+// latch — once tripped, live inbound traffic (which updates lastMessageTime but
+// not connected) could never restore the reported state. Liveness is now owned
+// solely by the library's pingLoop + DisconnectCallback, so IsConnected() must
+// be a pure read of the connection flag and must ignore lastMessageTime.
+func TestIsConnectedIsPureGetter(t *testing.T) {
+	t.Run("stale lastMessageTime does not flip a connected client", func(t *testing.T) {
+		c := &IRCClient{
+			connected:       true,
+			lastMessageTime: time.Now().Add(-24 * time.Hour), // far past, well beyond the old 15m threshold
+		}
+
+		if !c.IsConnected() {
+			t.Fatal("IsConnected() returned false for a connected client with stale lastMessageTime; " +
+				"a stale activity timestamp must no longer mark the connection dead")
+		}
+
+		// Calling it again must observe no state mutation (it is side-effect free).
+		if !c.IsConnected() {
+			t.Fatal("IsConnected() became false on a second call; it must not mutate connection state")
+		}
+		if !c.connected {
+			t.Fatal("IsConnected() mutated the connected flag; it must be a pure getter")
+		}
+	})
+
+	t.Run("reflects the connected flag", func(t *testing.T) {
+		c := &IRCClient{connected: false}
+		if c.IsConnected() {
+			t.Fatal("IsConnected() returned true for a disconnected client")
+		}
+
+		// Simulate the DisconnectCallback / ConnectCallback flipping the flag.
+		c.mu.Lock()
+		c.connected = true
+		c.mu.Unlock()
+		if !c.IsConnected() {
+			t.Fatal("IsConnected() did not reflect connected=true")
+		}
+
+		c.mu.Lock()
+		c.connected = false
+		c.mu.Unlock()
+		if c.IsConnected() {
+			t.Fatal("IsConnected() did not reflect connected=false")
+		}
+	})
+
+	t.Run("IsConnectedDirect agrees with IsConnected", func(t *testing.T) {
+		c := &IRCClient{connected: true, lastMessageTime: time.Now().Add(-24 * time.Hour)}
+		if c.IsConnected() != c.IsConnectedDirect() {
+			t.Fatal("IsConnectedDirect() must be identical to IsConnected()")
+		}
+	})
+}
