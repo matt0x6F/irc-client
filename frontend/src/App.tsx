@@ -15,6 +15,7 @@ import { UserInfo } from './components/user-info';
 import { SearchModal } from './components/search-modal';
 import { ChannelListModal } from './components/channel-list-modal';
 import { KeyboardShortcutsModal } from './components/keyboard-shortcuts-modal';
+import { List, Settings } from 'lucide-react';
 
 function App() {
   // Network store
@@ -548,14 +549,18 @@ function App() {
                     {networks.find((n) => n.id === selectedNetwork)?.name || 'Unknown'}
                   </span>
                   <span
-                    className={`text-xs font-medium px-1.5 py-0.5 rounded ${
+                    className={`inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full ${
                       connectionStatus[selectedNetwork]
-                        ? 'bg-green-500/20 text-green-700 dark:text-green-400'
-                        : 'bg-gray-500/20 text-gray-700 dark:text-gray-400'
+                        ? 'bg-green-500/15 text-green-700 dark:text-green-400'
+                        : 'bg-muted text-muted-foreground'
                     }`}
                     title={connectionStatus[selectedNetwork] ? 'Connected' : 'Disconnected'}
                   >
-                    {connectionStatus[selectedNetwork] ? '●' : '○'}
+                    <span
+                      className="w-1.5 h-1.5 rounded-full"
+                      style={{ background: connectionStatus[selectedNetwork] ? 'var(--presence-online)' : 'var(--presence-offline)' }}
+                    />
+                    {connectionStatus[selectedNetwork] ? 'Connected' : 'Disconnected'}
                   </span>
                   {selectedChannel &&
                     selectedChannel !== 'status' &&
@@ -609,6 +614,30 @@ function App() {
                 <kbd className="hidden sm:inline-flex h-5 select-none items-center gap-1 rounded border border-border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-60">
                   {navigator.platform?.includes('Mac') ? '\u2318' : 'Ctrl+'}K
                 </kbd>
+              </button>
+              {/* Browse channels — for the selected network */}
+              {selectedNetwork !== null && (
+                <button
+                  onClick={() => {
+                    if (selectedNetwork !== null) {
+                      useUIStore.getState().openChannelList(selectedNetwork);
+                    }
+                  }}
+                  className="p-1.5 rounded-md hover:bg-accent/50 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                  title="Browse channels"
+                  aria-label="Browse channels"
+                >
+                  <List size={18} />
+                </button>
+              )}
+              {/* Settings */}
+              <button
+                onClick={() => openSettings(undefined)}
+                className="p-1.5 rounded-md hover:bg-accent/50 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                title="Settings"
+                aria-label="Settings"
+              >
+                <Settings size={18} />
               </button>
               {/* Right sidebar toggle — show for channels and PMs */}
               {selectedChannel && selectedChannel !== 'status' && (
