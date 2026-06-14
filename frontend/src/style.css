@@ -243,3 +243,22 @@ button, a, input, select, textarea {
 .pin-flash {
     animation: pin-flash 1.6s ease-out;
 }
+
+/* Active-pane indicator: a soft left-edge glow instead of a hard border bar.
+   Softer in light, fuller in dark (matches the design system's final iteration). */
+.cc-active-pane {
+    background:
+        linear-gradient(90deg, color-mix(in srgb, var(--primary) 10%, transparent), transparent 55%),
+        color-mix(in srgb, var(--accent) 70%, transparent);
+    box-shadow:
+        inset 2px 0 0 0 color-mix(in srgb, var(--primary) 45%, transparent),
+        inset 14px 0 20px -13px color-mix(in srgb, var(--primary) 40%, transparent);
+}
+.dark .cc-active-pane {
+    background:
+        linear-gradient(90deg, color-mix(in srgb, var(--primary) 18%, transparent), transparent 55%),
+        color-mix(in srgb, var(--accent) 85%, transparent);
+    box-shadow:
+        inset 2px 0 0 0 color-mix(in srgb, var(--primary) 55%, transparent),
+        inset 14px 0 20px -12px color-mix(in srgb, var(--primary) 70%, transparent);
+}

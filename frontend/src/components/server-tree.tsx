@@ -336,7 +336,7 @@ export function ServerTree({
                   <div
                     className={`flex items-center p-2.5 cursor-pointer select-none transition-all ${
                       isSelected 
-                        ? 'bg-primary/10 border-l-4 border-primary' 
+                        ? 'cc-active-pane' 
                         : 'hover:bg-accent/70'
                     }`}
                     style={{ transition: 'var(--transition-base)' }}
@@ -363,7 +363,7 @@ export function ServerTree({
                       <div
                         className={`p-2 cursor-pointer select-none transition-all ${
                           isSelected && selectedChannel === 'status' 
-                            ? 'bg-primary/10 border-l-4 border-primary' 
+                            ? 'cc-active-pane' 
                             : 'hover:bg-accent/70'
                         }`}
                         style={{ transition: 'var(--transition-base)' }}
@@ -387,7 +387,7 @@ export function ServerTree({
                             data-channel={channel}
                             className={`p-2 cursor-pointer select-none flex items-center justify-between transition-all ${
                               isSelected && selectedChannel === channel
-                                ? 'bg-primary/10 border-l-4 border-primary'
+                                ? 'cc-active-pane'
                                 : 'hover:bg-accent/70'
                             }`}
                             style={{ transition: 'var(--transition-base)' }}
@@ -423,7 +423,7 @@ export function ServerTree({
                                 key={pmKey}
                                 className={`p-2 cursor-pointer select-none flex items-center justify-between transition-all ${
                                   isSelected && selectedChannel === pmKey
-                                    ? 'bg-primary/10 border-l-4 border-primary'
+                                    ? 'cc-active-pane'
                                     : 'hover:bg-accent/70'
                                 }`}
                                 style={{ transition: 'var(--transition-base)' }}
