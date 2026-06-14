@@ -27,7 +27,7 @@ export default async function globalSetup(): Promise<void> {
   const logFd = fs.openSync(logFile, 'w');
   const child = spawn(
     'wails',
-    ['dev', '-tags', 'fts5', '-devserver', `localhost:${bridgePort}`, '-loglevel', 'Warning'],
+    ['dev', '-tags', 'fts5', '-devserver', `localhost:${bridgePort}`, '-frontenddevserverurl', `http://localhost:${vitePort}`, '-loglevel', 'Warning'],
     {
       cwd: repoRoot,
       env: { ...process.env, CASCADE_DATA_DIR: dataDir, VITE_PORT: String(vitePort), CGO_ENABLED: '1' },
