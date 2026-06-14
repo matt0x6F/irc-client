@@ -19,6 +19,10 @@ type ConsolidatedMessage = storage.Message & {
 
 const CONSOLIDATE_JOIN_QUIT_KEY = 'cascade-chat-consolidate-join-quit';
 
+// Optimistic messages use `Date.now()` as a placeholder id (~1.7e12) until the real
+// DB row (a small autoincrement id) is loaded. Don't offer pinning on those rows.
+const OPTIMISTIC_ID_THRESHOLD = 1_000_000_000_000;
+
 export function MessageView({ messages, networkId, selectedChannel }: MessageViewProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -202,6 +206,21 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
     return network?.nickname || null;
   });
 
+  // Pinned messages / jump-to-message state
+  const pinnedMessages = useNetworkStore((s) => s.pinnedMessages);
+  const pinMessage = useNetworkStore((s) => s.pinMessage);
+  const unpinMessage = useNetworkStore((s) => s.unpinMessage);
+  const viewMode = useNetworkStore((s) => s.viewMode);
+  const anchoredMessageId = useNetworkStore((s) => s.anchoredMessageId);
+  const clearAnchorFlash = useNetworkStore((s) => s.clearAnchorFlash);
+  const returnToLive = useNetworkStore((s) => s.returnToLive);
+  const newSinceAnchor = useNetworkStore((s) => s.newSinceAnchor);
+
+  const pinnedIds = useMemo(() => new Set(pinnedMessages.map((p) => p.id)), [pinnedMessages]);
+  // Map of message id -> row element, used to scroll/flash a specific message
+  // (there is no virtualization, so every row is in the DOM).
+  const messageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+
   // Check if a message text contains the user's nickname as a whole word (case-insensitive)
   const isMention = useCallback(
     (text: string): boolean => {
@@ -242,9 +261,27 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
     return () => container.removeEventListener('scroll', checkIfNearBottom);
   }, []);
 
+  // Jump-to-message: scroll to the anchored message and flash it briefly.
+  useEffect(() => {
+    if (anchoredMessageId == null) return;
+    const el = messageRefs.current.get(anchoredMessageId);
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el.classList.add('pin-flash');
+    const timeout = setTimeout(() => {
+      el.classList.remove('pin-flash');
+      clearAnchorFlash(); // clears the id but keeps viewMode 'anchored' (poll stays frozen)
+    }, 1600);
+    return () => clearTimeout(timeout);
+  }, [anchoredMessageId, messages, clearAnchorFlash]);
+
   // Auto-scroll when channel changes - always scroll to bottom when switching channels
   useEffect(() => {
-    if (selectedChannel !== undefined && selectedChannel !== prevChannelRef.current) {
+    if (
+      viewMode !== 'anchored' &&
+      selectedChannel !== undefined &&
+      selectedChannel !== prevChannelRef.current
+    ) {
       prevChannelRef.current = selectedChannel;
       // When channel changes, always scroll to bottom
       // Use a small delay to ensure DOM is updated with new messages
@@ -266,13 +303,28 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
     const hasNewMessages = messages.length > prevMessagesLengthRef.current;
     prevMessagesLengthRef.current = messages.length;
 
-    if (isNearBottom && hasNewMessages) {
+    if (isNearBottom && hasNewMessages && viewMode !== 'anchored') {
       // Small delay to ensure DOM is updated
       setTimeout(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
       }, 50);
     }
-  }, [messages, isNearBottom]);
+  }, [messages, isNearBottom, viewMode]);
+
+  // Scroll-to-bottom / return-to-live handler for the floating badge.
+  const handleScrollToBottom = useCallback(() => {
+    const wasAnchored = viewMode === 'anchored';
+    if (wasAnchored) {
+      returnToLive(); // reloads the latest messages and flips back to live mode
+    }
+    setTimeout(
+      () => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        setIsNearBottom(true);
+      },
+      wasAnchored ? 150 : 0
+    );
+  }, [viewMode, returnToLive]);
 
   // Listen for setting changes
   useEffect(() => {
@@ -303,7 +355,10 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
     };
   }, [consolidateEnabled]);
 
+  const showScrollBadge = viewMode === 'anchored' || !isNearBottom;
+
   return (
+    <div className="relative h-full">
     <div
       ref={scrollContainerRef}
       className="h-full overflow-y-auto p-4 space-y-1"
@@ -332,8 +387,12 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
           return (
             <div
               key={msg.id}
+              ref={(el) => {
+                if (el) messageRefs.current.set(msg.id, el);
+                else messageRefs.current.delete(msg.id);
+              }}
               data-testid="message-item"
-              className={`flex space-x-3 py-1 px-2 rounded transition-colors ${
+              className={`group flex space-x-3 py-1 px-2 rounded transition-colors ${
                 hasMention
                   ? 'bg-yellow-500/10 dark:bg-yellow-400/10 border-l-2 border-yellow-500/50'
                   : isError
@@ -429,20 +488,76 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
                       )}
                     </span>
                   ) : (
-                    <IRCFormattedText 
-                      text={msg.message} 
+                    <IRCFormattedText
+                      text={msg.message}
                       className={`text-sm flex-1 ${
                         isStatus || isCommand ? 'text-muted-foreground italic' : ''
-                      }`} 
+                      }`}
                     />
                   )}
                 </>
+              )}
+              {isRegularMessage && msg.id < OPTIMISTIC_ID_THRESHOLD && (
+                <button
+                  onClick={() =>
+                    pinnedIds.has(msg.id) ? unpinMessage(msg.id) : pinMessage(msg.id)
+                  }
+                  data-testid="pin-button"
+                  className={`self-start flex-shrink-0 p-0.5 rounded transition-opacity cursor-pointer hover:text-foreground ${
+                    pinnedIds.has(msg.id)
+                      ? 'opacity-100 text-primary'
+                      : 'opacity-0 group-hover:opacity-100 focus:opacity-100 text-muted-foreground'
+                  }`}
+                  title={pinnedIds.has(msg.id) ? 'Unpin message' : 'Pin message'}
+                  aria-label={pinnedIds.has(msg.id) ? 'Unpin message' : 'Pin message'}
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill={pinnedIds.has(msg.id) ? 'currentColor' : 'none'}
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M12 17v5" />
+                    <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
+                  </svg>
+                </button>
               )}
             </div>
           );
         })
       )}
       <div ref={messagesEndRef} />
+    </div>
+
+      {showScrollBadge && (
+        <button
+          onClick={handleScrollToBottom}
+          data-testid="scroll-to-bottom"
+          className="absolute bottom-4 right-4 z-20 flex items-center gap-1.5 rounded-full bg-primary text-primary-foreground shadow-[var(--shadow-md)] px-3 py-1.5 text-xs font-medium hover:opacity-90 transition-opacity cursor-pointer"
+          title={viewMode === 'anchored' ? 'Return to latest messages' : 'Scroll to bottom'}
+        >
+          {newSinceAnchor > 0 && <span>{newSinceAnchor} new</span>}
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M12 5v14" />
+            <path d="m19 12-7 7-7-7" />
+          </svg>
+        </button>
+      )}
     </div>
   );
 }

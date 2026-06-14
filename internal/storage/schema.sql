@@ -90,9 +90,21 @@ CREATE TABLE IF NOT EXISTS plugin_configs (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS pinned_messages (
+    message_id INTEGER PRIMARY KEY,
+    network_id INTEGER NOT NULL,
+    channel_id INTEGER,
+    pinned_by  TEXT NOT NULL DEFAULT '',
+    pinned_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE,
+    FOREIGN KEY (network_id) REFERENCES networks(id) ON DELETE CASCADE,
+    FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE
+);
+
 CREATE INDEX IF NOT EXISTS idx_messages_network_channel_time ON messages(network_id, channel_id, timestamp);
 CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
 CREATE INDEX IF NOT EXISTS idx_servers_network_order ON servers(network_id, "order");
+CREATE INDEX IF NOT EXISTS idx_pinned_network_channel ON pinned_messages(network_id, channel_id);
 
 -- FTS5 full-text search index for messages
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(

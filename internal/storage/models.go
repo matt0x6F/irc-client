@@ -70,6 +70,13 @@ type Message struct {
 	RawLine     string    `db:"raw_line" json:"raw_line"` // Original IRC line
 }
 
+// PinnedMessage represents a message that has been pinned, with pin metadata
+type PinnedMessage struct {
+	Message
+	PinnedBy string    `db:"pinned_by" json:"pinned_by"`
+	PinnedAt time.Time `db:"pinned_at" json:"pinned_at"`
+}
+
 // PrivateMessageConversation represents a private message conversation with a user
 type PrivateMessageConversation struct {
 	ID         int64      `db:"id" json:"id"`

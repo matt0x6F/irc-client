@@ -42,6 +42,11 @@ type Message struct {
 	RawLine     sql.NullString `json:"raw_line"`
 }
 
+type MessagesFt struct {
+	Message string `json:"message"`
+	User    string `json:"user"`
+}
+
 type Network struct {
 	ID               int64          `json:"id"`
 	Name             string         `json:"name"`
@@ -60,6 +65,14 @@ type Network struct {
 	AutoConnect      bool           `json:"auto_connect"`
 	CreatedAt        time.Time      `json:"created_at"`
 	UpdatedAt        time.Time      `json:"updated_at"`
+}
+
+type PinnedMessage struct {
+	MessageID int64         `json:"message_id"`
+	NetworkID int64         `json:"network_id"`
+	ChannelID sql.NullInt64 `json:"channel_id"`
+	PinnedBy  string        `json:"pinned_by"`
+	PinnedAt  time.Time     `json:"pinned_at"`
 }
 
 type PluginConfig struct {

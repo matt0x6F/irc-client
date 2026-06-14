@@ -114,3 +114,13 @@ button, a, input, select, textarea {
     outline: 2px solid var(--ring);
     outline-offset: 2px;
 }
+
+/* Highlight flash when jumping to a pinned message */
+@keyframes pin-flash {
+    0% { background-color: rgba(234, 179, 8, 0.35); }
+    100% { background-color: transparent; }
+}
+
+.pin-flash {
+    animation: pin-flash 1.6s ease-out;
+}

@@ -7,6 +7,7 @@ import {
   DisconnectNetwork,
   DeleteNetwork,
   GetMessages,
+  GetMessagesAround,
   GetPrivateMessages,
   GetChannelIDByName,
   GetChannelInfo,
@@ -17,9 +18,23 @@ import {
   SetChannelOpen,
   SetPrivateMessageOpen,
   GetPrivateMessageConversations,
+  GetPinnedMessages,
+  PinMessage,
+  UnpinMessage,
   SendMessage,
   SendCommand,
 } from '../../wailsjs/go/main/App';
+
+// How many messages of surrounding context to load when jumping to a pinned message.
+const JUMP_WINDOW = 50;
+
+// Does a (null-channel) message belong to the private-message conversation with `user`?
+// Mirrors the backend GetPrivateMessages matching: received from the user, or sent by us to them.
+function messageBelongsToPM(msg: storage.Message, user: string): boolean {
+  const target = user.toLowerCase();
+  if (msg.user.toLowerCase() === target) return true;
+  return (msg.raw_line || '').toLowerCase().includes(`privmsg ${target}`);
+}
 
 // Sort messages chronologically (oldest first) as a safety net
 function sortByTimestamp(msgs: storage.Message[]): storage.Message[] {
@@ -39,6 +54,12 @@ interface NetworkState {
   channelInfo: main.ChannelInfo | null;
   unreadCounts: Map<string, number>;
 
+  // Pinned messages / jump-to-message
+  pinnedMessages: storage.PinnedMessage[];
+  viewMode: 'live' | 'anchored'; // 'anchored' = viewing a context window, live updates paused
+  anchoredMessageId: number | null; // message id to scroll to + flash
+  newSinceAnchor: number; // count of messages that arrived while anchored
+
   // Selection
   selectedNetwork: number | null;
   selectedChannel: string | null;
@@ -48,6 +69,15 @@ interface NetworkState {
   loadMessages: () => Promise<void>;
   loadChannelInfo: () => Promise<void>;
   loadConnectionStatus: (networkId?: number) => Promise<void>;
+
+  // Pinned message actions
+  loadPinnedMessages: () => Promise<void>;
+  pinMessage: (messageId: number) => Promise<void>;
+  unpinMessage: (messageId: number) => Promise<void>;
+  jumpToMessage: (messageId: number) => Promise<void>;
+  returnToLive: () => Promise<void>;
+  clearAnchorFlash: () => void;
+  noteNewWhileAnchored: () => void;
 
   // Selection actions
   setSelectedNetwork: (id: number | null) => void;
@@ -80,6 +110,10 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
   messages: [],
   channelInfo: null,
   unreadCounts: new Map(),
+  pinnedMessages: [],
+  viewMode: 'live',
+  anchoredMessageId: null,
+  newSinceAnchor: 0,
   selectedNetwork: null,
   selectedChannel: null,
 
@@ -114,8 +148,11 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
   },
 
   loadMessages: async () => {
-    const { selectedNetwork, selectedChannel } = get();
+    const { selectedNetwork, selectedChannel, viewMode } = get();
     if (selectedNetwork === null) return;
+    // While anchored to a pinned/old message, suppress reloads so the polling
+    // in App.tsx and message events don't snap the view back to the latest 100.
+    if (viewMode === 'anchored') return;
 
     try {
       if (selectedChannel === null || selectedChannel === 'status') {
@@ -173,13 +210,130 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
     }
   },
 
+  loadPinnedMessages: async () => {
+    const { selectedNetwork, selectedChannel } = get();
+    if (selectedNetwork === null) {
+      set({ pinnedMessages: [] });
+      return;
+    }
+    try {
+      // Channel pane: filter by channel_id at the DB level (clean).
+      if (
+        selectedChannel &&
+        selectedChannel !== 'status' &&
+        !selectedChannel.startsWith('pm:')
+      ) {
+        const channelId = await GetChannelIDByName(selectedNetwork, selectedChannel);
+        const pins = await GetPinnedMessages(selectedNetwork, channelId as number);
+        set({ pinnedMessages: pins || [] });
+        return;
+      }
+
+      // PM pane: pins live under channel_id NULL (shared with status + other PMs),
+      // so fetch all null-channel pins and filter to this conversation client-side.
+      if (selectedChannel && selectedChannel.startsWith('pm:')) {
+        const user = selectedChannel.substring(3);
+        const pins = await GetPinnedMessages(selectedNetwork, null);
+        set({ pinnedMessages: (pins || []).filter((p) => messageBelongsToPM(p, user)) });
+        return;
+      }
+
+      // Status pane: no pinned sidebar.
+      set({ pinnedMessages: [] });
+    } catch (error) {
+      console.error('Failed to load pinned messages:', error);
+      set({ pinnedMessages: [] });
+    }
+  },
+
+  pinMessage: async (messageId) => {
+    const { selectedNetwork, selectedChannel, loadPinnedMessages } = get();
+    if (selectedNetwork === null) return;
+    try {
+      let channelId: number | null = null;
+      if (
+        selectedChannel &&
+        selectedChannel !== 'status' &&
+        !selectedChannel.startsWith('pm:')
+      ) {
+        channelId = (await GetChannelIDByName(selectedNetwork, selectedChannel)) as number;
+      }
+      await PinMessage(selectedNetwork, messageId, channelId);
+      await loadPinnedMessages();
+    } catch (error) {
+      console.error('Failed to pin message:', error);
+    }
+  },
+
+  unpinMessage: async (messageId) => {
+    try {
+      await UnpinMessage(messageId);
+      await get().loadPinnedMessages();
+    } catch (error) {
+      console.error('Failed to unpin message:', error);
+    }
+  },
+
+  jumpToMessage: async (messageId) => {
+    const { selectedNetwork, selectedChannel, messages } = get();
+    if (selectedNetwork === null) return;
+
+    // Already loaded? Just anchor + flash, no reload (and freeze live updates).
+    if (messages.some((m) => m.id === messageId)) {
+      set({ viewMode: 'anchored', anchoredMessageId: messageId, newSinceAnchor: 0 });
+      return;
+    }
+
+    try {
+      let window: storage.Message[];
+      if (selectedChannel && selectedChannel.startsWith('pm:')) {
+        // PMs are conversation-filtered, so load a generous slice of the conversation
+        // rather than a raw null-channel id-window (which would mix other PMs/status).
+        const user = selectedChannel.substring(3);
+        window = (await GetPrivateMessages(selectedNetwork, user, 500)) || [];
+      } else {
+        let channelId: number | null = null;
+        if (selectedChannel && selectedChannel !== 'status') {
+          channelId = (await GetChannelIDByName(selectedNetwork, selectedChannel)) as number;
+        }
+        window =
+          (await GetMessagesAround(selectedNetwork, channelId, messageId, JUMP_WINDOW)) || [];
+      }
+      set({
+        messages: sortByTimestamp(window),
+        viewMode: 'anchored',
+        anchoredMessageId: messageId,
+        newSinceAnchor: 0,
+      });
+    } catch (error) {
+      console.error('Failed to jump to message:', error);
+    }
+  },
+
+  returnToLive: async () => {
+    set({ viewMode: 'live', anchoredMessageId: null, newSinceAnchor: 0 });
+    await get().loadMessages();
+  },
+
+  clearAnchorFlash: () => set({ anchoredMessageId: null }),
+
+  noteNewWhileAnchored: () =>
+    set((state) => ({ newSinceAnchor: state.newSinceAnchor + 1 })),
+
   setSelectedNetwork: (id) => set({ selectedNetwork: id }),
   setSelectedChannel: (channel) => set({ selectedChannel: channel }),
 
   selectPane: async (networkId, channel) => {
     const prev = get();
 
-    set({ selectedNetwork: networkId, selectedChannel: channel });
+    // Switching panes always returns to the live view and clears any anchor.
+    set({
+      selectedNetwork: networkId,
+      selectedChannel: channel,
+      viewMode: 'live',
+      anchoredMessageId: null,
+      newSinceAnchor: 0,
+    });
 
     // Clear activity for selected channel
     if (channel && channel !== 'status') {
