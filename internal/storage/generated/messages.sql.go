@@ -12,9 +12,9 @@ import (
 )
 
 const createMessage = `-- name: CreateMessage :one
-INSERT INTO messages (network_id, channel_id, user, message, message_type, timestamp, raw_line)
-VALUES (?, ?, ?, ?, ?, ?, ?)
-RETURNING id, network_id, channel_id, user, message, message_type, timestamp, raw_line
+INSERT INTO messages (network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target
 `
 
 type CreateMessageParams struct {
@@ -25,6 +25,7 @@ type CreateMessageParams struct {
 	MessageType string         `json:"message_type"`
 	Timestamp   time.Time      `json:"timestamp"`
 	RawLine     sql.NullString `json:"raw_line"`
+	PmTarget    sql.NullString `json:"pm_target"`
 }
 
 func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) (Message, error) {
@@ -36,6 +37,7 @@ func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) (M
 		arg.MessageType,
 		arg.Timestamp,
 		arg.RawLine,
+		arg.PmTarget,
 	)
 	var i Message
 	err := row.Scan(
@@ -47,12 +49,13 @@ func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) (M
 		&i.MessageType,
 		&i.Timestamp,
 		&i.RawLine,
+		&i.PmTarget,
 	)
 	return i, err
 }
 
 const getMessagesWithChannel = `-- name: GetMessagesWithChannel :many
-SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line FROM messages 
+SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target FROM messages 
 WHERE network_id = ? AND channel_id = ? 
 ORDER BY timestamp DESC 
 LIMIT ?
@@ -82,6 +85,7 @@ func (q *Queries) GetMessagesWithChannel(ctx context.Context, arg GetMessagesWit
 			&i.MessageType,
 			&i.Timestamp,
 			&i.RawLine,
+			&i.PmTarget,
 		); err != nil {
 			return nil, err
 		}
@@ -97,9 +101,9 @@ func (q *Queries) GetMessagesWithChannel(ctx context.Context, arg GetMessagesWit
 }
 
 const getMessagesWithoutChannel = `-- name: GetMessagesWithoutChannel :many
-SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line FROM messages 
-WHERE network_id = ? AND channel_id IS NULL 
-ORDER BY timestamp DESC 
+SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target FROM messages
+WHERE network_id = ? AND channel_id IS NULL AND pm_target IS NULL
+ORDER BY timestamp DESC
 LIMIT ?
 `
 
@@ -126,6 +130,7 @@ func (q *Queries) GetMessagesWithoutChannel(ctx context.Context, arg GetMessages
 			&i.MessageType,
 			&i.Timestamp,
 			&i.RawLine,
+			&i.PmTarget,
 		); err != nil {
 			return nil, err
 		}
@@ -141,32 +146,21 @@ func (q *Queries) GetMessagesWithoutChannel(ctx context.Context, arg GetMessages
 }
 
 const getPrivateMessages = `-- name: GetPrivateMessages :many
-SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line FROM messages 
+SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target FROM messages
 WHERE network_id = ? AND channel_id IS NULL AND message_type IN ('privmsg', 'action')
-AND (
-  LOWER(user) = ? OR 
-  (LOWER(user) = ? AND LOWER(raw_line) LIKE ?)
-)
-ORDER BY timestamp DESC 
+AND LOWER(pm_target) = ?
+ORDER BY timestamp DESC
 LIMIT ?
 `
 
 type GetPrivateMessagesParams struct {
 	NetworkID int64          `json:"network_id"`
-	User      string         `json:"user"`
-	User_2    string         `json:"user_2"`
-	RawLine   sql.NullString `json:"raw_line"`
+	PmTarget  sql.NullString `json:"pm_target"`
 	Limit     int64          `json:"limit"`
 }
 
 func (q *Queries) GetPrivateMessages(ctx context.Context, arg GetPrivateMessagesParams) ([]Message, error) {
-	rows, err := q.db.QueryContext(ctx, getPrivateMessages,
-		arg.NetworkID,
-		arg.User,
-		arg.User_2,
-		arg.RawLine,
-		arg.Limit,
-	)
+	rows, err := q.db.QueryContext(ctx, getPrivateMessages, arg.NetworkID, arg.PmTarget, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -183,6 +177,7 @@ func (q *Queries) GetPrivateMessages(ctx context.Context, arg GetPrivateMessages
 			&i.MessageType,
 			&i.Timestamp,
 			&i.RawLine,
+			&i.PmTarget,
 		); err != nil {
 			return nil, err
 		}

@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS messages (
     message_type TEXT NOT NULL DEFAULT 'privmsg',
     timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     raw_line TEXT,
+    pm_target TEXT, -- conversation peer for private messages (NULL for channel/status/server rows)
     FOREIGN KEY (network_id) REFERENCES networks(id) ON DELETE CASCADE,
     FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE
 );

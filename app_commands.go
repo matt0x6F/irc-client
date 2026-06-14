@@ -288,6 +288,7 @@ func (a *App) SendCommand(networkID int64, command string) error {
 					MessageType: "privmsg",
 					Timestamp:   time.Now(),
 					RawLine:     fmt.Sprintf("QUERY %s", nickname),
+					PMTarget:    nickname,
 				}
 				if err := a.storage.WriteMessageSync(placeholderMsg); err != nil {
 					logger.Log.Warn().Err(err).Str("nickname", nickname).Msg("Failed to store placeholder message for PM conversation")

@@ -328,11 +328,12 @@ export namespace storage {
 	    // Go type: time
 	    timestamp: any;
 	    raw_line: string;
-	
+	    pm_target: string;
+
 	    static createFrom(source: any = {}) {
 	        return new Message(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -343,6 +344,7 @@ export namespace storage {
 	        this.message_type = source["message_type"];
 	        this.timestamp = this.convertValues(source["timestamp"], null);
 	        this.raw_line = source["raw_line"];
+	        this.pm_target = source["pm_target"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -437,6 +439,7 @@ export namespace storage {
 	    // Go type: time
 	    timestamp: any;
 	    raw_line: string;
+	    pm_target: string;
 	    pinned_by: string;
 	    // Go type: time
 	    pinned_at: any;
@@ -455,6 +458,7 @@ export namespace storage {
 	        this.message_type = source["message_type"];
 	        this.timestamp = this.convertValues(source["timestamp"], null);
 	        this.raw_line = source["raw_line"];
+	        this.pm_target = source["pm_target"];
 	        this.pinned_by = source["pinned_by"];
 	        this.pinned_at = this.convertValues(source["pinned_at"], null);
 	    }

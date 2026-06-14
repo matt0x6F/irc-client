@@ -3,7 +3,33 @@ package irc
 import (
 	"testing"
 	"time"
+
+	"github.com/matt0x6f/irc-client/internal/storage"
 )
+
+// TestPMPeer verifies the conversation-peer computation used to route private
+// messages. For messages we sent (sender == our nick, e.g. echoed back via
+// echo-message) the peer is the recipient; for received messages it is the
+// sender. The comparison is case-insensitive on our nick.
+func TestPMPeer(t *testing.T) {
+	c := &IRCClient{network: &storage.Network{Nickname: "matt0x6f"}}
+
+	cases := []struct {
+		name, sender, target, want string
+	}{
+		{"sent to chanserv (echo)", "matt0x6f", "chanserv", "chanserv"},
+		{"sent, nick case differs", "MATT0X6F", "chanserv", "chanserv"},
+		{"received from alice", "alice", "matt0x6f", "alice"},
+		{"genuine self-PM", "matt0x6f", "matt0x6f", "matt0x6f"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := c.pmPeer(tc.sender, tc.target); got != tc.want {
+				t.Fatalf("pmPeer(%q, %q) = %q, want %q", tc.sender, tc.target, got, tc.want)
+			}
+		})
+	}
+}
 
 // TestIsConnectedIsPureGetter is a regression guard for the sleep/wake bug where
 // the UI reported "disconnected" while messages kept arriving.

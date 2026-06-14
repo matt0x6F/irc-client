@@ -40,6 +40,7 @@ type Message struct {
 	MessageType string         `json:"message_type"`
 	Timestamp   time.Time      `json:"timestamp"`
 	RawLine     sql.NullString `json:"raw_line"`
+	PmTarget    sql.NullString `json:"pm_target"`
 }
 
 type MessagesFt struct {

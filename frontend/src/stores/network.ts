@@ -38,9 +38,13 @@ const SCROLLBACK_PAGE = 100;
 const OPTIMISTIC_ID_THRESHOLD = 1_000_000_000_000;
 
 // Does a (null-channel) message belong to the private-message conversation with `user`?
-// Mirrors the backend GetPrivateMessages matching: received from the user, or sent by us to them.
+// Mirrors the backend GetPrivateMessages matching, which keys PM rows by pm_target
+// (the conversation peer). Falls back to the legacy raw_line heuristic for rows
+// written before the pm_target column existed and not yet backfilled.
 function messageBelongsToPM(msg: storage.Message, user: string): boolean {
   const target = user.toLowerCase();
+  if (msg.pm_target) return msg.pm_target.toLowerCase() === target;
+  // Legacy fallback (pm_target missing): received from the user, or sent to them.
   if (msg.user.toLowerCase() === target) return true;
   return (msg.raw_line || '').toLowerCase().includes(`privmsg ${target}`);
 }
