@@ -71,16 +71,14 @@ func main() {
 	})
 	appMenu.Append(menu.SubMenu("File", fileMenu))
 
-	// Add Edit menu (on macOS, add it after File for proper ordering)
+	// Edit and Window menus use macOS-only menu roles (the OS populates them).
+	// On Linux/Windows these role items carry no SubMenu, and Wails' GTK menu
+	// builder nil-dereferences them at startup (processSubmenu → menuItem.SubMenu.Items),
+	// crashing the app. So only add them on macOS.
 	if runtime.GOOS == "darwin" {
 		appMenu.Append(menu.EditMenu())
+		appMenu.Append(menu.WindowMenu())
 	}
-
-	// Add standard menus
-	if runtime.GOOS != "darwin" {
-		appMenu.Append(menu.EditMenu())
-	}
-	appMenu.Append(menu.WindowMenu())
 
 	// Create application with options
 	err = wails.Run(&options.App{
