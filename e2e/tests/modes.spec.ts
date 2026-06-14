@@ -1,6 +1,11 @@
 import { test, expect } from '../lib/fixtures';
 import { addNetworkAndConnect, selectNetwork, joinChannel } from '../lib/actions';
 
+// NOTE: the suite runs serially (workers: 1) against a backend whose SQLite DB persists
+// across specs, and Playwright runs files alphabetically. `connect.spec.ts` adds the
+// network from scratch and must run first on a clean DB, so this file is named to sort
+// *after* it — don't rename it to sort before `connect.spec.ts`.
+
 // The UI user creates the channel via /join, so Ergo grants it channel-operator
 // status — it may therefore set channel modes. These tests exercise the full loop:
 // editor -> SendCommand -> server echo -> MODE parse -> canonical string -> live header.
