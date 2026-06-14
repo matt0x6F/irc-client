@@ -28,7 +28,7 @@ type IRCClient struct {
 	network             *storage.Network
 	mu                  sync.RWMutex
 	connected           bool
-	lastMessageTime     time.Time // Last time we received any message from server (including PING)
+	lastMessageTime     time.Time // Last time we received any message from server (including PING). Informational only — liveness is owned by the library pingLoop, not this field.
 	saslEnabled         bool
 	saslMechanism       string
 	saslUsername        string
@@ -60,45 +60,26 @@ type ServerCapabilities struct {
 	mu           sync.RWMutex  // Mutex for thread-safe access
 }
 
-// IsConnected returns whether the client is connected
-// Also checks if we've received messages recently (including PING from server) to detect dead connections
-// IRC servers send PING regularly, so if we haven't received any message in 5 minutes, the connection is likely dead
+// IsConnected returns whether the client is connected.
+//
+// This is a pure, side-effect-free read of the connection flag. Liveness
+// detection (dead-connection / timeout handling) is owned entirely by the
+// underlying ergochat/irc-go pingLoop, which PINGs on a KeepAlive interval and
+// treats an unacked PING as fatal, firing the DisconnectCallback. That callback
+// is the single authority that flips connected -> false. Keeping this method a
+// plain getter avoids the old asymmetric latch where a passive staleness check
+// could mark the connection dead while the live read loop kept delivering
+// messages, leaving the UI permanently "disconnected" despite active traffic.
 func (c *IRCClient) IsConnected() bool {
-	c.mu.RLock()
-	connected := c.connected
-	lastMessage := c.lastMessageTime
-	c.mu.RUnlock()
-
-	if !connected {
-		return false
-	}
-
-	// If we haven't received a message (including PING) in 15 minutes, consider connection dead
-	// IRC servers typically send PING every 2-3 minutes, so 15 minutes indicates a dead connection
-	// This handles cases where disconnect callback wasn't triggered (e.g., network interruption, sleep/wake)
-	if !lastMessage.IsZero() {
-		timeSinceLastMessage := time.Since(lastMessage)
-		if timeSinceLastMessage > 15*time.Minute {
-			logger.Log.Warn().
-				Dur("time_since_last_message", timeSinceLastMessage).
-				Str("network", c.network.Address).
-				Msg("Connection appears dead (no messages including PING received recently)")
-			// Mark as disconnected and clean up
-			c.markConnectionDead()
-			return false
-		}
-	}
-
-	return true
-}
-
-// IsConnectedDirect returns whether the client is connected without checking for dead connections
-// This is used internally to avoid triggering markConnectionDead() which emits events
-// and can create feedback loops during connection state checks
-func (c *IRCClient) IsConnectedDirect() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.connected
+}
+
+// IsConnectedDirect is retained for its existing call sites and is now identical
+// to IsConnected (both are pure reads of the connection flag).
+func (c *IRCClient) IsConnectedDirect() bool {
+	return c.IsConnected()
 }
 
 // NewIRCClient creates a new IRC client
@@ -157,6 +138,14 @@ func NewIRCClient(network *storage.Network, eventBus *events.EventBus, storage *
 		UseTLS:        network.TLS,
 		Password:      network.Password,
 		ReconnectFreq: 0, // Disable automatic reconnection - we'll handle it manually
+		// Liveness detection is owned by the library's pingLoop: it sends a
+		// keepalive PING every KeepAlive and treats an unacked PING (within
+		// Timeout, enforced via socket read/write deadlines) as fatal, firing
+		// the DisconnectCallback. This is the single source of truth for whether
+		// the connection is alive, including across OS sleep/wake. Constraint:
+		// KeepAlive must be >= Timeout.
+		Timeout:   1 * time.Minute,
+		KeepAlive: 3 * time.Minute,
 	}
 
 	// Set up event handlers
@@ -1992,104 +1981,6 @@ func (c *IRCClient) Disconnect() error {
 	}
 	c.connected = false
 	return nil
-}
-
-// markConnectionDead marks the connection as dead and clears user lists
-// This is called when we detect a dead connection (e.g., no messages received recently)
-func (c *IRCClient) markConnectionDead() {
-	c.mu.Lock()
-	wasConnected := c.connected
-	c.connected = false
-	c.mu.Unlock()
-
-	if !wasConnected {
-		// Already marked as disconnected
-		return
-	}
-
-	logger.Log.Warn().
-		Str("network", c.network.Address).
-		Int64("network_id", c.networkID).
-		Msg("Marking connection as dead (no messages received recently)")
-
-	// Write "Disconnected" messages to all open/joined channels BEFORE clearing users
-	var channelsToNotify []storage.Channel
-	if c.network.Nickname != "" {
-		// Get channels that are open or where we're joined
-		openChannels, err := c.storage.GetOpenChannels(c.networkID, c.network.Nickname)
-		if err == nil && len(openChannels) > 0 {
-			channelsToNotify = openChannels
-		}
-	}
-
-	// Fallback: if GetOpenChannels didn't work or returned nothing, get all channels
-	// and filter to those that are open
-	if len(channelsToNotify) == 0 {
-		allChannels, err := c.storage.GetChannels(c.networkID)
-		if err == nil {
-			for _, ch := range allChannels {
-				if ch.IsOpen {
-					channelsToNotify = append(channelsToNotify, ch)
-				}
-			}
-		}
-	}
-
-	// Write "Disconnected" message to each channel
-	if len(channelsToNotify) > 0 {
-		logger.Log.Info().Int64("network_id", c.networkID).Int("channel_count", len(channelsToNotify)).Msg("Writing disconnect messages to channels (dead connection)")
-		for _, channel := range channelsToNotify {
-			disconnectMsg := storage.Message{
-				NetworkID:   c.networkID,
-				ChannelID:   &channel.ID,
-				User:        "*",
-				Message:     "Disconnected",
-				MessageType: "status",
-				Timestamp:   time.Now(),
-				RawLine:     "",
-			}
-			// Use WriteMessageDirect to ensure immediate persistence
-			if err := c.storage.WriteMessageDirect(disconnectMsg); err != nil {
-				if err.Error() != "storage is closed" {
-					logger.Log.Warn().Err(err).Int64("network_id", c.networkID).Str("channel", channel.Name).Msg("Failed to write disconnect message to channel")
-				}
-			} else {
-				logger.Log.Debug().Int64("network_id", c.networkID).Str("channel", channel.Name).Msg("Wrote disconnect message to channel (dead connection)")
-			}
-		}
-	}
-
-	// Clear all channel user lists for this network since we're disconnected
-	// This prevents showing stale user lists when reconnecting
-	channels, err := c.storage.GetChannels(c.networkID)
-	if err == nil {
-		for _, ch := range channels {
-			if err := c.storage.ClearChannelUsers(ch.ID); err != nil {
-				logger.Log.Error().Err(err).Str("channel", ch.Name).Msg("Failed to clear users for channel")
-			} else {
-				logger.Log.Debug().Str("channel", ch.Name).Msg("Cleared user list for channel (dead connection)")
-			}
-		}
-	}
-
-	// Store disconnection message in status window
-	statusMsg := storage.Message{
-		NetworkID:   c.networkID,
-		ChannelID:   nil, // Status window
-		User:        "*",
-		Message:     "Connection lost (no messages received recently)",
-		MessageType: "status",
-		Timestamp:   time.Now(),
-		RawLine:     "",
-	}
-	c.storage.WriteMessage(statusMsg)
-
-	c.eventBus.Emit(events.Event{
-		Type:      EventConnectionLost,
-		Data:      map[string]interface{}{"network": c.network.Address, "networkId": c.networkID},
-		Timestamp: time.Now(),
-		Source:    events.EventSourceIRC,
-	})
 }
 
 // SendMessage sends a message to a channel or user
