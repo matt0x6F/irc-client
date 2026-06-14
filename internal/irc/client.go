@@ -1495,7 +1495,7 @@ func (c *IRCClient) setupHandlers() {
 		c.channelListItems = nil
 		c.channelListMu.Unlock()
 
-		logger.Log.Debug().Int64("network_id", c.networkID).Int("count", len(items)).Msg("Channel LIST completed")
+		logger.Log.Info().Int64("network_id", c.networkID).Int("count", len(items)).Msg("CHANLIST-DEBUG: Channel LIST completed (322 entries accumulated)")
 
 		// Convert items to interface slice for event data
 		itemsData := make([]interface{}, len(items))

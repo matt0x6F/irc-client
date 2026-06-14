@@ -47,6 +47,15 @@ export function ChannelListModal({ networkId, onClose }: ChannelListModalProps) 
   useEffect(() => {
     const unsubscribe = EventsOn('channel-list', (data: any) => {
       const eventData = data?.data;
+      console.log('[CHANLIST-DEBUG] channel-list event received:', {
+        raw: data,
+        eventNetworkId: eventData?.networkId,
+        eventNetworkIdType: typeof eventData?.networkId,
+        modalNetworkId: networkId,
+        modalNetworkIdType: typeof networkId,
+        matches: eventData?.networkId === networkId,
+        channelCount: eventData?.channels?.length,
+      });
       if (!eventData) return;
 
       const eventNetworkId = eventData.networkId;
@@ -65,10 +74,14 @@ export function ChannelListModal({ networkId, onClose }: ChannelListModalProps) 
     });
 
     // Request the channel list
-    RequestChannelList(networkId).catch((err) => {
-      setError(`Failed to request channel list: ${err}`);
-      setLoading(false);
-    });
+    console.log('[CHANLIST-DEBUG] calling RequestChannelList for network', networkId);
+    RequestChannelList(networkId)
+      .then(() => console.log('[CHANLIST-DEBUG] RequestChannelList resolved (LIST sent)'))
+      .catch((err) => {
+        console.log('[CHANLIST-DEBUG] RequestChannelList rejected:', err);
+        setError(`Failed to request channel list: ${err}`);
+        setLoading(false);
+      });
 
     return () => unsubscribe();
   }, [networkId]);
