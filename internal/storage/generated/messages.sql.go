@@ -147,7 +147,7 @@ func (q *Queries) GetMessagesWithoutChannel(ctx context.Context, arg GetMessages
 
 const getPrivateMessages = `-- name: GetPrivateMessages :many
 SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target FROM messages
-WHERE network_id = ? AND channel_id IS NULL AND message_type IN ('privmsg', 'action')
+WHERE network_id = ? AND channel_id IS NULL AND message_type IN ('privmsg', 'action', 'notice')
 AND LOWER(pm_target) = ?
 ORDER BY timestamp DESC
 LIMIT ?
