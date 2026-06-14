@@ -67,7 +67,8 @@ type Message struct {
 	Message     string    `db:"message" json:"message"`
 	MessageType string    `db:"message_type" json:"message_type"` // 'privmsg', 'notice', 'action', etc.
 	Timestamp   time.Time `db:"timestamp" json:"timestamp"`
-	RawLine     string    `db:"raw_line" json:"raw_line"` // Original IRC line
+	RawLine     string    `db:"raw_line" json:"raw_line"`   // Original IRC line
+	PMTarget    string    `db:"pm_target" json:"pm_target"` // Conversation peer for PMs ("" for channel/status/server rows)
 }
 
 // PinnedMessage represents a message that has been pinned, with pin metadata

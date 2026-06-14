@@ -271,7 +271,19 @@ function App() {
           const isChannel = target.startsWith('#') || target.startsWith('&');
           let pmUser: string | null = null;
           if (!isChannel) {
-            pmUser = eventType === 'message.received' ? eventData.user || null : target;
+            // With echo-message, our own sent PMs come back as a 'message.received'
+            // event whose user is *us*. That isn't a new incoming message — the
+            // matching 'message.sent' already tracked the conversation — so don't
+            // badge it (and never key it to our own nick, which created a phantom
+            // self-PM badge). The conversation peer is the target, not the sender.
+            const isEcho =
+              eventType === 'message.received' &&
+              !!networkObj.nickname &&
+              !!eventData.user &&
+              eventData.user.toLowerCase() === networkObj.nickname.toLowerCase();
+            if (!isEcho) {
+              pmUser = eventType === 'message.received' ? eventData.user || null : target;
+            }
           }
           const pmKey = pmUser ? `pm:${pmUser}` : null;
           const activityKey = isChannel

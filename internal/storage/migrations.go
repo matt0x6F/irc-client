@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"database/sql"
 	"fmt"
 	"strings"
 
@@ -72,6 +73,11 @@ func Migrate(db *sqlx.DB) error {
 	// Handle pinned messages table migration
 	if err := migratePinnedMessages(db); err != nil {
 		return fmt.Errorf("pinned messages migration failed: %w", err)
+	}
+
+	// Handle pm_target column migration (adds column + best-effort backfill)
+	if err := migratePMTarget(db); err != nil {
+		return fmt.Errorf("pm_target migration failed: %w", err)
 	}
 
 	return nil
@@ -207,6 +213,7 @@ CREATE TABLE IF NOT EXISTS messages (
     message_type TEXT NOT NULL DEFAULT 'privmsg',
     timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     raw_line TEXT,
+    pm_target TEXT,
     FOREIGN KEY (network_id) REFERENCES networks(id) ON DELETE CASCADE,
     FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE
 );
@@ -335,6 +342,110 @@ func migrateChannelIsOpen(db *sqlx.DB) error {
 	}
 
 	return nil
+}
+
+// migratePMTarget adds the pm_target column to the messages table (if missing)
+// and best-effort backfills it for existing private-message rows.
+//
+// pm_target holds the conversation peer (the other party) for a PM row, and is
+// NULL for channel/status/server rows. For received messages the peer is the
+// sender; for messages we sent (sender == our nick, e.g. echo-message) the peer
+// is the PRIVMSG target parsed from raw_line. Rows whose target can't be
+// determined (sent rows with a malformed/empty raw_line) are left NULL and fall
+// back to the legacy raw_line matcher in the frontend.
+func migratePMTarget(db *sqlx.DB) error {
+	var columnExists int
+	err := db.Get(&columnExists,
+		"SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name='pm_target'")
+	if err != nil {
+		return fmt.Errorf("failed to check for pm_target column: %w", err)
+	}
+
+	if columnExists == 0 {
+		if _, err := db.Exec("ALTER TABLE messages ADD COLUMN pm_target TEXT"); err != nil {
+			// Ignore "duplicate column" errors (concurrent/repeat migration)
+			if !strings.Contains(err.Error(), "duplicate column") {
+				return fmt.Errorf("failed to add pm_target column: %w", err)
+			}
+		}
+	}
+
+	// Index creation is idempotent and must run for both fresh schemas (where
+	// the column is created by createMessagesTable) and migrated databases.
+	if _, err := db.Exec(
+		"CREATE INDEX IF NOT EXISTS idx_messages_network_pm_target ON messages(network_id, pm_target)"); err != nil {
+		return fmt.Errorf("failed to create pm_target index: %w", err)
+	}
+
+	// Best-effort backfill of any private-message rows still missing pm_target.
+	// This is intentionally NOT gated on whether we just added the column: a
+	// crash (or the fts5-less binding generator) can add the column via
+	// auto-committed DDL while the backfill rolls back, so we must retry the
+	// NULL rows on every startup. A healthy database returns zero rows here.
+	type pmRow struct {
+		ID       int64          `db:"id"`
+		User     string         `db:"user"`
+		RawLine  sql.NullString `db:"raw_line"`
+		Nickname string         `db:"nickname"`
+	}
+	var rows []pmRow
+	err = db.Select(&rows, `
+		SELECT m.id AS id, m.user AS user, m.raw_line AS raw_line, n.nickname AS nickname
+		FROM messages m
+		JOIN networks n ON n.id = m.network_id
+		WHERE m.channel_id IS NULL
+		  AND m.message_type IN ('privmsg', 'action')
+		  AND m.pm_target IS NULL`)
+	if err != nil {
+		return fmt.Errorf("failed to load rows for pm_target backfill: %w", err)
+	}
+
+	if len(rows) == 0 {
+		return nil
+	}
+
+	tx, err := db.Beginx()
+	if err != nil {
+		return fmt.Errorf("failed to begin pm_target backfill tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	for _, r := range rows {
+		var peer string
+		if strings.EqualFold(r.User, r.Nickname) {
+			// We sent this message; the peer is the PRIVMSG target.
+			peer = parsePrivmsgTarget(r.RawLine.String)
+		} else {
+			// We received this message; the peer is the sender.
+			peer = r.User
+		}
+		if peer == "" {
+			// Can't determine the peer; leave NULL for the legacy fallback.
+			continue
+		}
+		if _, err := tx.Exec("UPDATE messages SET pm_target = ? WHERE id = ?", peer, r.ID); err != nil {
+			return fmt.Errorf("failed to backfill pm_target for message %d: %w", r.ID, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit pm_target backfill: %w", err)
+	}
+
+	return nil
+}
+
+// parsePrivmsgTarget extracts the target (first parameter) of a PRIVMSG from a
+// raw IRC line, tolerating optional message tags and a source prefix. Returns
+// "" if no PRIVMSG target can be found.
+func parsePrivmsgTarget(rawLine string) string {
+	fields := strings.Fields(rawLine)
+	for i, f := range fields {
+		if strings.EqualFold(f, "PRIVMSG") && i+1 < len(fields) {
+			return strings.TrimPrefix(fields[i+1], ":")
+		}
+	}
+	return ""
 }
 
 const createPrivateMessageConversationsTable = `

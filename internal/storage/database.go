@@ -177,9 +177,11 @@ func (s *Storage) flushBuffer() {
 				return
 			}
 
-			// Batch insert
-			query := `INSERT INTO messages (network_id, channel_id, user, message, message_type, timestamp, raw_line)
-			          VALUES (:network_id, :channel_id, :user, :message, :message_type, :timestamp, :raw_line)`
+			// Batch insert. NULLIF maps an empty pm_target to NULL so non-PM rows
+			// stay out of the PM-keyed queries (and in the status pane), matching
+			// the SQLC CreateMessage path which converts "" to a NULL string.
+			query := `INSERT INTO messages (network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target)
+			          VALUES (:network_id, :channel_id, :user, :message, :message_type, :timestamp, :raw_line, NULLIF(:pm_target, ''))`
 
 			_, err := s.db.NamedExec(query, messages)
 			if err != nil {
@@ -780,22 +782,17 @@ func (s *Storage) UpdateChannelUserNickname(networkID int64, oldNickname string,
 	return err
 }
 
-// GetPrivateMessages retrieves private messages for a network and user
-// Private messages have channel_id IS NULL and user != '*'
-// Returns both messages FROM the target user (received) and messages TO the target user (sent by currentUser)
-// Uses case-insensitive matching for IRC nicknames
+// GetPrivateMessages retrieves the private-message conversation with targetUser.
+// PM rows carry their conversation peer in pm_target (set when written), so both
+// sent and received messages are matched by a single case-insensitive equality.
+// The currentUser parameter is retained for API compatibility but no longer used.
 func (s *Storage) GetPrivateMessages(networkID int64, targetUser string, currentUser string, limit int) ([]Message, error) {
-	// Normalize usernames to lowercase for case-insensitive comparison
+	_ = currentUser
 	targetUserLower := strings.ToLower(targetUser)
-	currentUserLower := strings.ToLower(currentUser)
 
-	// Get messages FROM targetUser (received) OR messages TO targetUser sent by currentUser (sent)
-	// For sent messages, we check the raw_line to identify the target (case-insensitive)
 	dbMessages, err := s.queries.GetPrivateMessages(context.Background(), db.GetPrivateMessagesParams{
 		NetworkID: networkID,
-		User:      targetUserLower,
-		User_2:    currentUserLower,
-		RawLine:   sql.NullString{String: fmt.Sprintf("privmsg %s%%", targetUserLower), Valid: true},
+		PmTarget:  sql.NullString{String: targetUserLower, Valid: true},
 		Limit:     int64(limit),
 	})
 

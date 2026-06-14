@@ -181,6 +181,7 @@ func convertMessageFromDB(m db.Message) Message {
 		MessageType: m.MessageType,
 		Timestamp:   m.Timestamp,
 		RawLine:     convertNullString(m.RawLine),
+		PMTarget:    convertNullString(m.PmTarget),
 	}
 	if m.ChannelID.Valid {
 		result.ChannelID = &m.ChannelID.Int64
@@ -201,6 +202,7 @@ func convertMessageToDBCreateParams(m Message) db.CreateMessageParams {
 		MessageType: m.MessageType,
 		Timestamp:   m.Timestamp,
 		RawLine:     convertToNullString(m.RawLine),
+		PmTarget:    convertToNullString(m.PMTarget),
 	}
 }
 
@@ -214,6 +216,7 @@ func convertPinnedMessageWithChannelFromDB(p db.GetPinnedMessagesWithChannelRow)
 			MessageType: p.MessageType,
 			Timestamp:   p.Timestamp,
 			RawLine:     convertNullString(p.RawLine),
+			PMTarget:    convertNullString(p.PmTarget),
 		},
 		PinnedBy: p.PinnedBy,
 		PinnedAt: p.PinnedAt,
@@ -234,6 +237,7 @@ func convertPinnedMessageWithoutChannelFromDB(p db.GetPinnedMessagesWithoutChann
 			MessageType: p.MessageType,
 			Timestamp:   p.Timestamp,
 			RawLine:     convertNullString(p.RawLine),
+			PMTarget:    convertNullString(p.PmTarget),
 		},
 		PinnedBy: p.PinnedBy,
 		PinnedAt: p.PinnedAt,

@@ -12,7 +12,7 @@ import (
 )
 
 const getMessagesAfterWithChannel = `-- name: GetMessagesAfterWithChannel :many
-SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line FROM messages
+SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target FROM messages
 WHERE network_id = ? AND channel_id = ? AND id > ?
 ORDER BY id ASC
 LIMIT ?
@@ -48,6 +48,7 @@ func (q *Queries) GetMessagesAfterWithChannel(ctx context.Context, arg GetMessag
 			&i.MessageType,
 			&i.Timestamp,
 			&i.RawLine,
+			&i.PmTarget,
 		); err != nil {
 			return nil, err
 		}
@@ -63,8 +64,8 @@ func (q *Queries) GetMessagesAfterWithChannel(ctx context.Context, arg GetMessag
 }
 
 const getMessagesAfterWithoutChannel = `-- name: GetMessagesAfterWithoutChannel :many
-SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line FROM messages
-WHERE network_id = ? AND channel_id IS NULL AND id > ?
+SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target FROM messages
+WHERE network_id = ? AND channel_id IS NULL AND pm_target IS NULL AND id > ?
 ORDER BY id ASC
 LIMIT ?
 `
@@ -93,6 +94,7 @@ func (q *Queries) GetMessagesAfterWithoutChannel(ctx context.Context, arg GetMes
 			&i.MessageType,
 			&i.Timestamp,
 			&i.RawLine,
+			&i.PmTarget,
 		); err != nil {
 			return nil, err
 		}
@@ -108,7 +110,7 @@ func (q *Queries) GetMessagesAfterWithoutChannel(ctx context.Context, arg GetMes
 }
 
 const getMessagesBeforeWithChannel = `-- name: GetMessagesBeforeWithChannel :many
-SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line FROM messages
+SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target FROM messages
 WHERE network_id = ? AND channel_id = ? AND id <= ?
 ORDER BY id DESC
 LIMIT ?
@@ -144,6 +146,7 @@ func (q *Queries) GetMessagesBeforeWithChannel(ctx context.Context, arg GetMessa
 			&i.MessageType,
 			&i.Timestamp,
 			&i.RawLine,
+			&i.PmTarget,
 		); err != nil {
 			return nil, err
 		}
@@ -159,8 +162,8 @@ func (q *Queries) GetMessagesBeforeWithChannel(ctx context.Context, arg GetMessa
 }
 
 const getMessagesBeforeWithoutChannel = `-- name: GetMessagesBeforeWithoutChannel :many
-SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line FROM messages
-WHERE network_id = ? AND channel_id IS NULL AND id <= ?
+SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target FROM messages
+WHERE network_id = ? AND channel_id IS NULL AND pm_target IS NULL AND id <= ?
 ORDER BY id DESC
 LIMIT ?
 `
@@ -189,6 +192,7 @@ func (q *Queries) GetMessagesBeforeWithoutChannel(ctx context.Context, arg GetMe
 			&i.MessageType,
 			&i.Timestamp,
 			&i.RawLine,
+			&i.PmTarget,
 		); err != nil {
 			return nil, err
 		}
@@ -204,7 +208,7 @@ func (q *Queries) GetMessagesBeforeWithoutChannel(ctx context.Context, arg GetMe
 }
 
 const getPinnedMessagesWithChannel = `-- name: GetPinnedMessagesWithChannel :many
-SELECT m.id, m.network_id, m.channel_id, m.user, m.message, m.message_type, m.timestamp, m.raw_line,
+SELECT m.id, m.network_id, m.channel_id, m.user, m.message, m.message_type, m.timestamp, m.raw_line, m.pm_target,
        p.pinned_by, p.pinned_at
 FROM pinned_messages p
 JOIN messages m ON m.id = p.message_id
@@ -226,6 +230,7 @@ type GetPinnedMessagesWithChannelRow struct {
 	MessageType string         `json:"message_type"`
 	Timestamp   time.Time      `json:"timestamp"`
 	RawLine     sql.NullString `json:"raw_line"`
+	PmTarget    sql.NullString `json:"pm_target"`
 	PinnedBy    string         `json:"pinned_by"`
 	PinnedAt    time.Time      `json:"pinned_at"`
 }
@@ -248,6 +253,7 @@ func (q *Queries) GetPinnedMessagesWithChannel(ctx context.Context, arg GetPinne
 			&i.MessageType,
 			&i.Timestamp,
 			&i.RawLine,
+			&i.PmTarget,
 			&i.PinnedBy,
 			&i.PinnedAt,
 		); err != nil {
@@ -265,7 +271,7 @@ func (q *Queries) GetPinnedMessagesWithChannel(ctx context.Context, arg GetPinne
 }
 
 const getPinnedMessagesWithoutChannel = `-- name: GetPinnedMessagesWithoutChannel :many
-SELECT m.id, m.network_id, m.channel_id, m.user, m.message, m.message_type, m.timestamp, m.raw_line,
+SELECT m.id, m.network_id, m.channel_id, m.user, m.message, m.message_type, m.timestamp, m.raw_line, m.pm_target,
        p.pinned_by, p.pinned_at
 FROM pinned_messages p
 JOIN messages m ON m.id = p.message_id
@@ -282,6 +288,7 @@ type GetPinnedMessagesWithoutChannelRow struct {
 	MessageType string         `json:"message_type"`
 	Timestamp   time.Time      `json:"timestamp"`
 	RawLine     sql.NullString `json:"raw_line"`
+	PmTarget    sql.NullString `json:"pm_target"`
 	PinnedBy    string         `json:"pinned_by"`
 	PinnedAt    time.Time      `json:"pinned_at"`
 }
@@ -304,6 +311,7 @@ func (q *Queries) GetPinnedMessagesWithoutChannel(ctx context.Context, networkID
 			&i.MessageType,
 			&i.Timestamp,
 			&i.RawLine,
+			&i.PmTarget,
 			&i.PinnedBy,
 			&i.PinnedAt,
 		); err != nil {

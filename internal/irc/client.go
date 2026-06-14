@@ -417,16 +417,18 @@ func (c *IRCClient) setupHandlers() {
 					// CTCP ACTION - already handled, but store as action type
 					// Determine if it's a channel or private message
 					var channelID *int64
+					var pmTarget string
 					if len(channel) > 0 && (channel[0] == '#' || channel[0] == '&') {
 						ch, err := c.storage.GetChannelByName(c.networkID, channel)
 						if err == nil {
 							channelID = &ch.ID
 						}
 					} else {
-						// Private message - create or get PM conversation
-						_, err := c.storage.GetOrCreatePMConversation(c.networkID, user, c.network.Nickname)
+						// Private message - create or get PM conversation keyed by the peer
+						pmTarget = c.pmPeer(user, channel)
+						_, err := c.storage.GetOrCreatePMConversation(c.networkID, pmTarget, c.network.Nickname)
 						if err != nil {
-							logger.Log.Error().Err(err).Str("user", user).Msg("Failed to create/get PM conversation")
+							logger.Log.Error().Err(err).Str("user", user).Str("pmTarget", pmTarget).Msg("Failed to create/get PM conversation")
 						}
 					}
 
@@ -439,6 +441,7 @@ func (c *IRCClient) setupHandlers() {
 						MessageType: "action",
 						Timestamp:   c.getMessageTime(e),
 						RawLine:     rawLine,
+						PMTarget:    pmTarget,
 					}
 					c.storage.WriteMessageSync(msg)
 				} else {
@@ -467,6 +470,7 @@ func (c *IRCClient) setupHandlers() {
 
 		// Determine if it's a channel or private message
 		var channelID *int64
+		var pmTarget string
 		if len(channel) > 0 && (channel[0] == '#' || channel[0] == '&') {
 			// Channel message - look up channel ID
 			ch, err := c.storage.GetChannelByName(c.networkID, channel)
@@ -478,10 +482,11 @@ func (c *IRCClient) setupHandlers() {
 				logger.Log.Debug().Err(err).Str("channel", channel).Msg("Channel not found in database")
 			}
 		} else {
-			// Private message - create or get PM conversation
-			_, err := c.storage.GetOrCreatePMConversation(c.networkID, user, c.network.Nickname)
+			// Private message - create or get PM conversation keyed by the peer
+			pmTarget = c.pmPeer(user, channel)
+			_, err := c.storage.GetOrCreatePMConversation(c.networkID, pmTarget, c.network.Nickname)
 			if err != nil {
-				logger.Log.Error().Err(err).Str("user", user).Msg("Failed to create/get PM conversation")
+				logger.Log.Error().Err(err).Str("user", user).Str("pmTarget", pmTarget).Msg("Failed to create/get PM conversation")
 			}
 		}
 
@@ -495,6 +500,7 @@ func (c *IRCClient) setupHandlers() {
 			MessageType: "privmsg",
 			Timestamp:   c.getMessageTime(e),
 			RawLine:     rawLine,
+			PMTarget:    pmTarget,
 		}
 
 		// Store message (use sync write so it appears immediately)
@@ -2038,6 +2044,17 @@ func (c *IRCClient) isEchoMessage(e ircmsg.Message) bool {
 	return strings.EqualFold(e.Nick(), c.network.Nickname)
 }
 
+// pmPeer returns the conversation peer (the other party) for a private message.
+// For messages we sent (sender == our nick, e.g. echoed back via echo-message)
+// the peer is the recipient (target); for received messages it is the sender.
+// Uses the same identity comparison as isEchoMessage (c.network.Nickname).
+func (c *IRCClient) pmPeer(sender, target string) string {
+	if strings.EqualFold(sender, c.network.Nickname) {
+		return target
+	}
+	return sender
+}
+
 func contains(capabilities, cap string) bool {
 	// Split by space and check each capability
 	// Capabilities can be in the form "cap" or "cap=value" or "cap=value1,value2"
@@ -2269,6 +2286,12 @@ func (c *IRCClient) SendMessage(target, message string) error {
 	c.mu.RUnlock()
 
 	if !hasEcho {
+		// For a private message the peer is the recipient (we are the sender);
+		// for channel messages there is no PM peer.
+		var pmTarget string
+		if !(len(target) > 0 && (target[0] == '#' || target[0] == '&')) {
+			pmTarget = target
+		}
 		msg := storage.Message{
 			NetworkID:   c.networkID,
 			ChannelID:   channelID,
@@ -2277,6 +2300,7 @@ func (c *IRCClient) SendMessage(target, message string) error {
 			MessageType: "privmsg",
 			Timestamp:   time.Now(),
 			RawLine:     fmt.Sprintf("PRIVMSG %s :%s", target, message),
+			PMTarget:    pmTarget,
 		}
 		if err := c.storage.WriteMessageSync(msg); err != nil {
 			return fmt.Errorf("failed to store message: %w", err)
