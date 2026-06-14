@@ -78,3 +78,20 @@ export async function addNetworkAndConnect(
   await connect(page);
   // connect() already closes settings; closeSettings() is idempotent.
 }
+
+/** Select the network's status pane so the message input becomes available. */
+export async function selectNetwork(page: Page, name = 'e2e'): Promise<void> {
+  await page.getByTestId('server-tree').getByText(name, { exact: true }).click();
+  await page.getByTestId('message-input').waitFor({ state: 'visible', timeout: 10_000 });
+}
+
+/** Join a channel via the /join command and open its pane. */
+export async function joinChannel(page: Page, channel: string): Promise<void> {
+  const input = page.getByTestId('message-input');
+  await input.click();
+  await input.fill(`/join ${channel}`);
+  await input.press('Enter');
+  const node = page.locator(`[data-testid="channel-node"][data-channel="${channel}"]`);
+  await node.waitFor({ state: 'visible', timeout: 20_000 });
+  await node.click();
+}
