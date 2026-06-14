@@ -1459,11 +1459,12 @@ func (c *IRCClient) setupHandlers() {
 		c.channelListMu.Lock()
 		c.channelListItems = nil // Reset list
 		c.channelListMu.Unlock()
-		logger.Log.Debug().Int64("network_id", c.networkID).Msg("Channel LIST started")
+		logger.Log.Info().Int64("network_id", c.networkID).Msg("CHANLIST-DEBUG: 321 RPL_LISTSTART received")
 	})
 
 	// RPL_LIST (322) - Channel list entry: <channel> <visible> :<topic>
 	c.conn.AddCallback("322", func(e ircmsg.Message) {
+		logger.Log.Info().Int64("network_id", c.networkID).Strs("params", e.Params).Msg("CHANLIST-DEBUG: 322 RPL_LIST received")
 		if len(e.Params) < 3 {
 			return
 		}
