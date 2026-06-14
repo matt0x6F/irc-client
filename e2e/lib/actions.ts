@@ -96,12 +96,18 @@ export async function joinChannel(page: Page, channel: string): Promise<void> {
   await node.click();
 }
 
-/** Open an already-joined channel's pane, expanding the network first if its node is hidden. */
+/** Open an already-joined channel's pane, expanding the network first if its node stays hidden. */
 export async function openChannel(page: Page, channel: string, networkName = 'e2e'): Promise<void> {
   const node = page.locator(`[data-testid="channel-node"][data-channel="${channel}"]`);
-  if (!(await node.isVisible().catch(() => false))) {
+  // Fast path: the node may already be visible (e.g. session restore re-expanded the tree).
+  // Only click the network to expand if it stays hidden for a short window. Using waitFor
+  // (rather than a point-in-time isVisible snapshot) lets Playwright's retry loop handle the race.
+  const alreadyVisible = await node
+    .waitFor({ state: 'visible', timeout: 2_000 })
+    .then(() => true, () => false);
+  if (!alreadyVisible) {
     await page.getByTestId('server-tree').getByText(networkName, { exact: true }).click();
+    await node.waitFor({ state: 'visible', timeout: 15_000 });
   }
-  await node.waitFor({ state: 'visible', timeout: 15_000 });
   await node.click();
 }
