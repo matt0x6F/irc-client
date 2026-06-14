@@ -465,164 +465,49 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
     return user.nickname.toLowerCase() === currentNickname.toLowerCase();
   };
 
+  // Flatten users into one role-ordered list. Each carries its role icon +
+  // color token (owner → Crown, admin → ShieldCheck, op → Shield,
+  // halfop → Star, voice → Mic; regular users have no icon).
+  const roleMeta: { key: string; Icon: typeof Crown | null; color: string }[] = [
+    { key: '~', Icon: Crown, color: 'var(--role-owner)' },
+    { key: '&', Icon: ShieldCheck, color: 'var(--role-admin)' },
+    { key: '@', Icon: Shield, color: 'var(--role-op)' },
+    { key: '%', Icon: Star, color: 'var(--role-halfop)' },
+    { key: '+', Icon: Mic, color: 'var(--role-voice)' },
+    { key: '', Icon: null, color: '' },
+  ];
+  const orderedUsers = roleMeta.flatMap((r) =>
+    usersByMode[r.key].map((user) => ({ user, Icon: r.Icon, color: r.color }))
+  );
+
   return (
     <div className="w-full flex flex-col h-full bg-card/30">
-      {/* Channel Header */}
-      <div className="p-4 border-b border-border bg-card/50">
-        <h3 className="font-semibold text-base">{channel.name}</h3>
-      </div>
-
-      {/* Users List */}
-      <div className="flex-1 overflow-y-auto p-4">
-        <div className="text-xs font-semibold text-muted-foreground mb-3 uppercase tracking-wider">
+      {/* Users List — flat, role-ordered */}
+      <div className="flex-1 overflow-y-auto p-3">
+        <div className="px-1 pb-2 text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground/80">
           Users ({users.length})
         </div>
-        
-        {/* Owners */}
-        {usersByMode['~'].length > 0 && (
-          <div className="mb-3">
-            <div className="text-xs font-medium text-muted-foreground mb-1">Owners</div>
-            {usersByMode['~'].map(user => (
-              <div 
-                key={user.id} 
-                className="text-sm py-1.5 px-2 cursor-pointer hover:bg-accent/70 rounded-md transition-all"
-                style={{ transition: 'var(--transition-base)' }}
-                onContextMenu={(e) => handleContextMenu(e, user)}
-              >
-                <Crown className="inline w-3.5 h-3.5 text-purple-600" />
-                <span 
-                  className="ml-1.5 font-medium"
-                  style={{ color: nicknameColors.get(user.nickname) || undefined }}
-                  title={nicknameColors.get(user.nickname) ? `Color: ${nicknameColors.get(user.nickname)}` : 'No color'}
-                >
-                  {user.nickname}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
 
-        {/* Admins */}
-        {usersByMode['&'].length > 0 && (
-          <div className="mb-3">
-            <div className="text-xs font-medium text-muted-foreground mb-1">Admins</div>
-            {usersByMode['&'].map(user => (
-              <div 
-                key={user.id} 
-                className="text-sm py-1.5 px-2 cursor-pointer hover:bg-accent/70 rounded-md transition-all"
-                style={{ transition: 'var(--transition-base)' }}
-                onContextMenu={(e) => handleContextMenu(e, user)}
-              >
-                <ShieldCheck className="inline w-3.5 h-3.5 text-red-600" />
-                <span 
-                  className="ml-1.5 font-medium"
-                  style={{ color: nicknameColors.get(user.nickname) || undefined }}
-                  title={nicknameColors.get(user.nickname) ? `Color: ${nicknameColors.get(user.nickname)}` : 'No color'}
-                >
-                  {user.nickname}
-                </span>
-              </div>
-            ))}
+        {orderedUsers.map(({ user, Icon, color }) => (
+          <div
+            key={user.id}
+            className="text-sm py-1.5 px-2 cursor-pointer hover:bg-accent/70 rounded-md transition-all flex items-center gap-1.5"
+            style={{ transition: 'var(--transition-base)' }}
+            onContextMenu={(e) => handleContextMenu(e, user)}
+          >
+            {Icon && <Icon className="w-3.5 h-3.5 flex-shrink-0" style={{ color }} />}
+            <span
+              className="font-medium truncate"
+              style={{ color: nicknameColors.get(user.nickname) || undefined }}
+              title={nicknameColors.get(user.nickname) ? `Color: ${nicknameColors.get(user.nickname)}` : 'No color'}
+            >
+              {user.nickname}
+            </span>
           </div>
-        )}
-
-        {/* Operators */}
-        {usersByMode['@'].length > 0 && (
-          <div className="mb-3">
-            <div className="text-xs font-medium text-muted-foreground mb-1">Operators</div>
-            {usersByMode['@'].map(user => (
-              <div 
-                key={user.id} 
-                className="text-sm py-1.5 px-2 cursor-pointer hover:bg-accent/70 rounded-md transition-all"
-                style={{ transition: 'var(--transition-base)' }}
-                onContextMenu={(e) => handleContextMenu(e, user)}
-              >
-                <Shield className="inline w-3.5 h-3.5 text-red-500" />
-                <span 
-                  className="ml-1.5 font-medium"
-                  style={{ color: nicknameColors.get(user.nickname) || undefined }}
-                  title={nicknameColors.get(user.nickname) ? `Color: ${nicknameColors.get(user.nickname)}` : 'No color'}
-                >
-                  {user.nickname}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Halfops */}
-        {usersByMode['%'].length > 0 && (
-          <div className="mb-3">
-            <div className="text-xs font-medium text-muted-foreground mb-1">Halfops</div>
-            {usersByMode['%'].map(user => (
-              <div 
-                key={user.id} 
-                className="text-sm py-1.5 px-2 cursor-pointer hover:bg-accent/70 rounded-md transition-all"
-                style={{ transition: 'var(--transition-base)' }}
-                onContextMenu={(e) => handleContextMenu(e, user)}
-              >
-                <Star className="inline w-3.5 h-3.5 text-orange-500" />
-                <span 
-                  className="ml-1.5 font-medium"
-                  style={{ color: nicknameColors.get(user.nickname) || undefined }}
-                  title={nicknameColors.get(user.nickname) ? `Color: ${nicknameColors.get(user.nickname)}` : 'No color'}
-                >
-                  {user.nickname}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Voiced */}
-        {usersByMode['+'].length > 0 && (
-          <div className="mb-3">
-            <div className="text-xs font-medium text-muted-foreground mb-1">Voiced</div>
-            {usersByMode['+'].map(user => (
-              <div 
-                key={user.id} 
-                className="text-sm py-1.5 px-2 cursor-pointer hover:bg-accent/70 rounded-md transition-all"
-                style={{ transition: 'var(--transition-base)' }}
-                onContextMenu={(e) => handleContextMenu(e, user)}
-              >
-                <Mic className="inline w-3.5 h-3.5 text-blue-500" />
-                <span 
-                  className="ml-1.5 font-medium"
-                  style={{ color: nicknameColors.get(user.nickname) || undefined }}
-                  title={nicknameColors.get(user.nickname) ? `Color: ${nicknameColors.get(user.nickname)}` : 'No color'}
-                >
-                  {user.nickname}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Regular Users */}
-        {usersByMode[''].length > 0 && (
-          <div className="mb-3">
-            <div className="text-xs font-medium text-muted-foreground mb-1">Regular Users</div>
-            {usersByMode[''].map(user => (
-              <div 
-                key={user.id} 
-                className="text-sm py-1.5 px-2 cursor-pointer hover:bg-accent/70 rounded-md transition-all"
-                style={{ transition: 'var(--transition-base)' }}
-                onContextMenu={(e) => handleContextMenu(e, user)}
-              >
-                <span
-                  className="font-medium"
-                  style={{ color: nicknameColors.get(user.nickname) || undefined }}
-                  title={nicknameColors.get(user.nickname) ? `Color: ${nicknameColors.get(user.nickname)}` : 'No color'}
-                >
-                  {user.nickname}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
+        ))}
 
         {users.length === 0 && (
-          <div className="text-sm text-muted-foreground">No users found</div>
+          <div className="text-sm text-muted-foreground px-2">No users found</div>
         )}
       </div>
 

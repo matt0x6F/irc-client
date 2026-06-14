@@ -3,6 +3,8 @@ import { main, storage } from '../../wailsjs/go/models';
 import { GetChannels, GetJoinedChannels, GetOpenChannels, GetServers, LeaveChannel, ToggleChannelAutoJoin, ToggleNetworkAutoConnect, SetChannelOpen, GetPrivateMessageConversations, SendCommand, SetPrivateMessageOpen, ClearPaneFocus } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import { useUIStore } from '../stores/ui';
+import markUrl from '../assets/brand/cascade-mark.svg';
+import { Terminal } from 'lucide-react';
 
 type Channel = storage.Channel;
 
@@ -318,13 +320,18 @@ export function ServerTree({
 
   return (
     <div data-testid="server-tree" className="h-full flex flex-col relative bg-card/30">
-        <div className="p-4 border-b border-border bg-card/50">
-        <h2 className="font-semibold text-lg">Networks</h2>
-      </div>
+        <div className="h-14 px-4 border-b border-border bg-card/50 flex items-center gap-2.5">
+          <img src={markUrl} alt="" className="h-7 w-7 rounded-lg select-none flex-shrink-0" draggable={false} />
+          <span className="font-extrabold text-lg tracking-tight text-foreground">Cascade</span>
+          <span className="font-semibold text-sm text-muted-foreground">Chat</span>
+        </div>
 
       <div className="flex-1 overflow-y-auto">
         {servers && servers.length > 0 ? (
           <div className="py-2">
+            <div className="px-3 pt-1 pb-2 text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground/80">
+              Servers
+            </div>
             {servers.map((network) => {
               const isExpanded = expandedServers.has(network.id);
               const isConnected = connectionStatus[network.id] || false;
@@ -334,10 +341,10 @@ export function ServerTree({
               return (
                 <div key={network.id}>
                   <div
-                    className={`flex items-center p-2.5 cursor-pointer select-none transition-all ${
-                      isSelected 
-                        ? 'bg-primary/10 border-l-4 border-primary' 
-                        : 'hover:bg-accent/70'
+                    className={`flex items-center px-2.5 py-1.5 mx-1 rounded-md cursor-pointer select-none transition-all ${
+                      isSelected
+                        ? 'bg-secondary'
+                        : 'hover:bg-accent/50'
                     }`}
                     style={{ transition: 'var(--transition-base)' }}
                     onClick={() => handleServerClick(network.id)}
@@ -349,21 +356,22 @@ export function ServerTree({
                       }
                     }}
                   >
-                    <span className="mr-2 text-xs opacity-60">
-                      {isExpanded ? '▼' : '▶'}
-                    </span>
-                    <span className={`w-2 h-2 rounded-full mr-2 shadow-sm ${
-                      isConnected ? 'bg-green-500 animate-pulse' : 'bg-gray-400'
-                    }`} title={isConnected ? 'Connected' : 'Disconnected'} data-testid="network-status-indicator" data-connected={isConnected ? 'true' : 'false'} />
-                    <span className="flex-1 font-medium">{network.name}</span>
+                    <span
+                      className="w-2 h-2 rounded-full mr-2.5 flex-shrink-0"
+                      style={{ background: isConnected ? 'var(--presence-online)' : 'var(--presence-offline)' }}
+                      title={isConnected ? 'Connected' : 'Disconnected'}
+                      data-testid="network-status-indicator"
+                      data-connected={isConnected ? 'true' : 'false'}
+                    />
+                    <span className={`flex-1 truncate text-sm ${isSelected ? 'font-bold' : 'font-medium'}`}>{network.name}</span>
                   </div>
                   {isExpanded && (
-                    <div className="pl-6">
-                      {/* Status channel */}
+                    <div className="ml-[1.1rem] pl-1.5 border-l border-border/60 mt-0.5 mb-1">
+                      {/* Server log (status pane) */}
                       <div
-                        className={`p-2 cursor-pointer select-none transition-all ${
-                          isSelected && selectedChannel === 'status' 
-                            ? 'bg-primary/10 border-l-4 border-primary' 
+                        className={`px-2 py-1.5 mr-1 rounded-md cursor-pointer select-none transition-all flex items-center gap-2 ${
+                          isSelected && selectedChannel === 'status'
+                            ? 'cc-active-pane'
                             : 'hover:bg-accent/70'
                         }`}
                         style={{ transition: 'var(--transition-base)' }}
@@ -374,7 +382,8 @@ export function ServerTree({
                           }
                         }}
                       >
-                        <span className="text-sm text-muted-foreground">Status</span>
+                        <Terminal className="w-3.5 h-3.5 flex-shrink-0 opacity-85" />
+                        <span className="text-sm">Server log</span>
                       </div>
                       {/* Regular channels */}
                       {networkChannels.map((channel) => {
@@ -385,9 +394,9 @@ export function ServerTree({
                             key={channel}
                             data-testid="channel-node"
                             data-channel={channel}
-                            className={`p-2 cursor-pointer select-none flex items-center justify-between transition-all ${
+                            className={`px-2 py-1.5 mr-1 rounded-md cursor-pointer select-none flex items-center justify-between transition-all ${
                               isSelected && selectedChannel === channel
-                                ? 'bg-primary/10 border-l-4 border-primary'
+                                ? 'cc-active-pane'
                                 : 'hover:bg-accent/70'
                             }`}
                             style={{ transition: 'var(--transition-base)' }}
@@ -399,7 +408,16 @@ export function ServerTree({
                               }
                             }}
                           >
-                            <span className={`text-sm ${unreadCount > 0 ? 'font-semibold' : ''}`}>{channel}</span>
+                            <span className={`text-sm truncate ${unreadCount > 0 ? 'font-semibold' : ''}`}>
+                              {channel.startsWith('#') || channel.startsWith('&') ? (
+                                <>
+                                  <span className="text-muted-foreground/50">{channel[0]}</span>
+                                  {channel.slice(1)}
+                                </>
+                              ) : (
+                                channel
+                              )}
+                            </span>
                             {unreadCount > 0 && (
                               <span className="bg-primary text-primary-foreground text-xs px-1.5 min-w-[1.25rem] text-center rounded-full ml-2" title="Unread messages">
                                 {unreadCount > 99 ? '99+' : unreadCount}
@@ -411,8 +429,8 @@ export function ServerTree({
                       {/* Private Message conversations */}
                       {(pmConversations[network.id] || []).length > 0 && (
                         <>
-                          <div className="px-2 py-1 text-xs font-semibold text-muted-foreground uppercase">
-                            Private Messages
+                          <div className="px-3 pt-3 pb-1 text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground/80">
+                            Direct messages
                           </div>
                           {(pmConversations[network.id] || []).map((user) => {
                             const pmKey = `pm:${user}`;
@@ -421,9 +439,9 @@ export function ServerTree({
                             return (
                               <div
                                 key={pmKey}
-                                className={`p-2 cursor-pointer select-none flex items-center justify-between transition-all ${
+                                className={`px-2 py-1.5 mr-1 rounded-md cursor-pointer select-none flex items-center justify-between transition-all ${
                                   isSelected && selectedChannel === pmKey
-                                    ? 'bg-primary/10 border-l-4 border-primary'
+                                    ? 'cc-active-pane'
                                     : 'hover:bg-accent/70'
                                 }`}
                                 style={{ transition: 'var(--transition-base)' }}
@@ -435,7 +453,10 @@ export function ServerTree({
                                   }
                                 }}
                               >
-                                <span className={`text-sm ${unreadCount > 0 ? 'font-semibold' : ''}`}>💬 {user}</span>
+                                <span className={`text-sm flex items-center gap-2 min-w-0 ${unreadCount > 0 ? 'font-semibold' : ''}`}>
+                                  <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: 'var(--presence-online)' }} />
+                                  <span className="truncate">{user}</span>
+                                </span>
                                 {unreadCount > 0 && (
                                   <span className="bg-primary text-primary-foreground text-xs px-1.5 min-w-[1.25rem] text-center rounded-full ml-2" title="Unread messages">
                                     {unreadCount > 99 ? '99+' : unreadCount}

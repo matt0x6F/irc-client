@@ -26,6 +26,11 @@ export function ChannelListModal({ networkId, onClose }: ChannelListModalProps) 
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const [joiningChannel, setJoiningChannel] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Ensures exactly one LIST is requested per open. React StrictMode (dev)
+  // double-invokes effects; two concurrent LIST requests share one backend
+  // accumulation buffer, and the second LISTEND emits an empty list that
+  // overwrites the populated one — making the modal always show "No channels".
+  const requestedRef = useRef(false);
 
   // Focus input on mount
   useEffect(() => {
@@ -64,11 +69,14 @@ export function ChannelListModal({ networkId, onClose }: ChannelListModalProps) 
       setLoading(false);
     });
 
-    // Request the channel list
-    RequestChannelList(networkId).catch((err) => {
-      setError(`Failed to request channel list: ${err}`);
-      setLoading(false);
-    });
+    // Request the channel list — exactly once per open (see requestedRef).
+    if (!requestedRef.current) {
+      requestedRef.current = true;
+      RequestChannelList(networkId).catch((err) => {
+        setError(`Failed to request channel list: ${err}`);
+        setLoading(false);
+      });
+    }
 
     return () => unsubscribe();
   }, [networkId]);

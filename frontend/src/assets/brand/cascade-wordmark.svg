@@ -1,0 +1,18 @@
+<svg width="520" height="128" viewBox="0 0 520 128" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Cascade Chat">
+  <rect x="8" y="8" width="112" height="112" rx="28" fill="#2563eb"></rect>
+  <rect x="8" y="8" width="112" height="112" rx="28" fill="url(#wm_g)"></rect>
+  <g fill="#ffffff">
+    <rect x="34" y="34" width="62" height="13" rx="6.5" opacity="0.55"></rect>
+    <rect x="34" y="53" width="51" height="13" rx="6.5" opacity="0.78"></rect>
+    <rect x="34" y="72" width="40" height="13" rx="6.5"></rect>
+  </g>
+  <circle cx="88" cy="88" r="7" fill="#ffffff"></circle>
+  <text x="146" y="66" font-family="Nunito, sans-serif" font-size="44" font-weight="800" fill="#1a1a1a" letter-spacing="-0.02em">Cascade</text>
+  <text x="148" y="98" font-family="Nunito, sans-serif" font-size="21" font-weight="600" fill="#64748b" letter-spacing="0.02em">Chat</text>
+  <defs>
+    <linearGradient id="wm_g" x1="8" y1="8" x2="120" y2="120" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffffff" stop-opacity="0.16"></stop>
+      <stop offset="1" stop-color="#1d4ed8" stop-opacity="0.25"></stop>
+    </linearGradient>
+  </defs>
+</svg>

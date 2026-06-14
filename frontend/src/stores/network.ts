@@ -8,6 +8,8 @@ import {
   DeleteNetwork,
   GetMessages,
   GetMessagesAround,
+  GetMessagesBefore,
+  GetMessagesAfter,
   GetPrivateMessages,
   GetChannelIDByName,
   GetChannelInfo,
@@ -27,6 +29,13 @@ import {
 
 // How many messages of surrounding context to load when jumping to a pinned message.
 const JUMP_WINDOW = 50;
+
+// How many older messages to fetch per scrollback page.
+const SCROLLBACK_PAGE = 100;
+
+// Optimistic (just-sent) messages use Date.now() as a placeholder id until the
+// real DB row loads. Never paginate past one — its id isn't a real row boundary.
+const OPTIMISTIC_ID_THRESHOLD = 1_000_000_000_000;
 
 // Does a (null-channel) message belong to the private-message conversation with `user`?
 // Mirrors the backend GetPrivateMessages matching: received from the user, or sent by us to them.
@@ -67,6 +76,8 @@ interface NetworkState {
   // Loading
   loadNetworks: () => Promise<void>;
   loadMessages: () => Promise<void>;
+  loadOlderMessages: () => Promise<number>;
+  loadNewerMessages: () => Promise<number>;
   loadChannelInfo: () => Promise<void>;
   loadConnectionStatus: (networkId?: number) => Promise<void>;
 
@@ -174,6 +185,82 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
     } catch (error) {
       console.error('Failed to load messages:', error);
       set({ messages: [] });
+    }
+  },
+
+  loadOlderMessages: async (): Promise<number> => {
+    const { selectedNetwork, selectedChannel, messages } = get();
+    if (selectedNetwork === null || messages.length === 0) return 0;
+
+    // PM panes are conversation-filtered, not id-window paginated — skip for now.
+    if (selectedChannel && selectedChannel.startsWith('pm:')) return 0;
+
+    const oldest = messages[0];
+    // Don't paginate past an optimistic (not-yet-persisted) placeholder row.
+    if (!oldest || oldest.id >= OPTIMISTIC_ID_THRESHOLD) return 0;
+
+    try {
+      let channelId: number | null = null;
+      if (selectedChannel && selectedChannel !== 'status') {
+        channelId = (await GetChannelIDByName(selectedNetwork, selectedChannel)) as number;
+      }
+      const older =
+        (await GetMessagesBefore(selectedNetwork, channelId, oldest.id, SCROLLBACK_PAGE)) || [];
+      if (older.length === 0) return 0;
+
+      // Defensive dedupe (the query is already exclusive of the boundary id).
+      const seen = new Set(get().messages.map((m) => m.id));
+      const fresh = older.filter((m) => !seen.has(m.id));
+      if (fresh.length === 0) return 0;
+
+      // Prepend history and enter 'anchored' mode so the live poll (which reloads
+      // the latest 100) can't discard the older messages we just loaded. The
+      // existing scroll-to-bottom badge returns the user to live.
+      set((state) => ({
+        messages: [...fresh, ...state.messages],
+        viewMode: 'anchored',
+      }));
+      return fresh.length;
+    } catch (error) {
+      console.error('Failed to load older messages:', error);
+      return 0;
+    }
+  },
+
+  loadNewerMessages: async (): Promise<number> => {
+    const { selectedNetwork, selectedChannel, messages, viewMode } = get();
+    // Only meaningful while anchored (viewing a window that may not reach live).
+    if (viewMode !== 'anchored') return 0;
+    if (selectedNetwork === null || messages.length === 0) return 0;
+    if (selectedChannel && selectedChannel.startsWith('pm:')) return 0;
+
+    const newest = messages[messages.length - 1];
+    if (!newest || newest.id >= OPTIMISTIC_ID_THRESHOLD) return 0;
+
+    try {
+      let channelId: number | null = null;
+      if (selectedChannel && selectedChannel !== 'status') {
+        channelId = (await GetChannelIDByName(selectedNetwork, selectedChannel)) as number;
+      }
+      const newer =
+        (await GetMessagesAfter(selectedNetwork, channelId, newest.id, SCROLLBACK_PAGE)) || [];
+
+      const seen = new Set(get().messages.map((m) => m.id));
+      const fresh = newer.filter((m) => !seen.has(m.id));
+
+      if (fresh.length === 0) {
+        // No more newer rows: the loaded window now extends to the live tip.
+        // Resume live (badge clears, new messages append) without a reload/jump.
+        set({ viewMode: 'live', anchoredMessageId: null, newSinceAnchor: 0 });
+        return 0;
+      }
+
+      // Append below the current view (no scroll adjustment needed for appends).
+      set((state) => ({ messages: [...state.messages, ...fresh] }));
+      return fresh.length;
+    } catch (error) {
+      console.error('Failed to load newer messages:', error);
+      return 0;
     }
   },
 

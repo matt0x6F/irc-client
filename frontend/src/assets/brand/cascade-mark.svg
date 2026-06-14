@@ -1,0 +1,16 @@
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Cascade Chat">
+  <rect width="256" height="256" rx="58" fill="#2563eb"></rect>
+  <rect width="256" height="256" rx="58" fill="url(#cscd_g)"></rect>
+  <g fill="#ffffff">
+    <rect x="58" y="60" width="140" height="26" rx="13" opacity="0.55"></rect>
+    <rect x="58" y="102" width="116" height="26" rx="13" opacity="0.78"></rect>
+    <rect x="58" y="144" width="92" height="26" rx="13"></rect>
+  </g>
+  <circle cx="180" cy="178" r="15" fill="#ffffff"></circle>
+  <defs>
+    <linearGradient id="cscd_g" x1="0" y1="0" x2="256" y2="256" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffffff" stop-opacity="0.16"></stop>
+      <stop offset="1" stop-color="#1d4ed8" stop-opacity="0.25"></stop>
+    </linearGradient>
+  </defs>
+</svg>

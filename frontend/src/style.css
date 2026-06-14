@@ -8,6 +8,99 @@
     url("assets/fonts/nunito-v16-latin-regular.woff2") format("woff2");
 }
 
+@font-face {
+    font-family: "Nunito";
+    font-style: normal;
+    font-weight: 500;
+    font-display: swap;
+    src: url("assets/fonts/nunito-500.woff2") format("woff2");
+}
+@font-face {
+    font-family: "Nunito";
+    font-style: normal;
+    font-weight: 600;
+    font-display: swap;
+    src: url("assets/fonts/nunito-600.woff2") format("woff2");
+}
+@font-face {
+    font-family: "Nunito";
+    font-style: normal;
+    font-weight: 700;
+    font-display: swap;
+    src: url("assets/fonts/nunito-700.woff2") format("woff2");
+}
+@font-face {
+    font-family: "Nunito";
+    font-style: normal;
+    font-weight: 800;
+    font-display: swap;
+    src: url("assets/fonts/nunito-800.woff2") format("woff2");
+}
+@font-face {
+    font-family: "JetBrains Mono";
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url("assets/fonts/jetbrains-mono-400.woff2") format("woff2");
+}
+@font-face {
+    font-family: "JetBrains Mono";
+    font-style: normal;
+    font-weight: 500;
+    font-display: swap;
+    src: url("assets/fonts/jetbrains-mono-500.woff2") format("woff2");
+}
+@font-face {
+    font-family: "JetBrains Mono";
+    font-style: normal;
+    font-weight: 600;
+    font-display: swap;
+    src: url("assets/fonts/jetbrains-mono-600.woff2") format("woff2");
+}
+
+@theme {
+    --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+/* Map the app's semantic CSS variables into Tailwind's color namespace so
+   utilities like bg-card, border-border, text-muted-foreground, bg-accent/30
+   actually generate CSS. `inline` keeps the utilities referencing var(--…)
+   directly, so the .dark class and accent presets retint at runtime. */
+@theme inline {
+    --color-background: var(--background);
+    --color-foreground: var(--foreground);
+    --color-card: var(--card);
+    --color-card-foreground: var(--card-foreground);
+    --color-popover: var(--popover);
+    --color-popover-foreground: var(--popover-foreground);
+    --color-primary: var(--primary);
+    --color-primary-foreground: var(--primary-foreground);
+    --color-secondary: var(--secondary);
+    --color-secondary-foreground: var(--secondary-foreground);
+    --color-muted: var(--muted);
+    --color-muted-foreground: var(--muted-foreground);
+    --color-accent: var(--accent);
+    --color-accent-foreground: var(--accent-foreground);
+    --color-destructive: var(--destructive);
+    --color-destructive-foreground: var(--destructive-foreground);
+    --color-border: var(--border);
+    --color-input: var(--input);
+    --color-ring: var(--ring);
+}
+
+/* Tailwind v4's preflight resets every border to `0 solid currentColor`, so any
+   `border`/`border-r`/etc. without an explicit color renders in the text color
+   (near-black) instead of the design's hairline slate. Default every border to
+   --border; explicit color classes (border-primary, border-destructive, …)
+   still override via higher specificity. */
+@layer base {
+    *,
+    ::before,
+    ::after {
+        border-color: var(--border);
+    }
+}
+
 :root {
     --radius: 0.75rem;
     --background: #fafafa;
@@ -25,6 +118,7 @@
     --accent: #f1f5f9;
     --accent-foreground: #1a1a1a;
     --destructive: #ef4444;
+    --destructive-foreground: #ffffff;
     --border: #e2e8f0;
     --input: #e2e8f0;
     --ring: #2563eb;
@@ -47,6 +141,56 @@
     --spacing-lg: 1.5rem;
     --spacing-xl: 2rem;
     --spacing-2xl: 3rem;
+
+    /* Font families */
+    --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+    /* ---- IRC member roles (channel mode prefixes) ---- */
+    --role-owner:  #9333ea;
+    --role-admin:  #dc2626;
+    --role-op:     #ef4444;
+    --role-halfop: #f97316;
+    --role-voice:  #3b82f6;
+
+    /* ---- Presence ---- */
+    --presence-online:  #22c55e;
+    --presence-away:    #f59e0b;
+    --presence-offline: #94a3b8;
+
+    /* ---- Mention / highlight ---- */
+    --mention-bg: rgba(234, 179, 8, 0.10);
+    --mention-border: rgba(234, 179, 8, 0.50);
+
+    /* ---- IRC standard 16-color text palette (mIRC) ---- */
+    --irc-0:  #ffffff; --irc-1:  #000000; --irc-2:  #00007f; --irc-3:  #007f00;
+    --irc-4:  #ff0000; --irc-5:  #7f0000; --irc-6:  #9c009c; --irc-7:  #fc7f00;
+    --irc-8:  #ffff00; --irc-9:  #00fc00; --irc-10: #009393; --irc-11: #00ffff;
+    --irc-12: #0000fc; --irc-13: #ff00ff; --irc-14: #7f7f7f; --irc-15: #cfcfcf;
+
+    /* ---- Semantic status (light) ---- */
+    --success: #22c55e;
+    --warning: #f59e0b;
+
+    /* ---- Type scale ---- */
+    --text-2xs: 0.6875rem;
+    --text-xs:  0.75rem;
+    --text-sm:  0.875rem;
+    --text-base:1rem;
+    --text-lg:  1.125rem;
+    --text-xl:  1.375rem;
+    --text-2xl: 1.75rem;
+    --text-3xl: 2.25rem;
+    --text-4xl: 3rem;
+    --leading-tight: 1.2;
+    --leading-snug: 1.4;
+    --leading-normal: 1.6;
+    --tracking-tight: -0.02em;
+    --tracking-body: 0.01em;
+    --tracking-wide: 0.04em;
+
+    /* ---- Glass / backdrop (header + composer + popovers) ---- */
+    --backdrop-blur: 8px;
+    --glass-bg: rgba(255, 255, 255, 0.50);
 }
 
 .dark {
@@ -74,7 +218,37 @@
     --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -1px rgba(0, 0, 0, 0.3);
     --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -2px rgba(0, 0, 0, 0.3);
     --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.4), 0 10px 10px -5px rgba(0, 0, 0, 0.3);
+
+    /* Role / mention / status / glass overrides for dark mode */
+    --role-owner:  #c084fc;
+    --role-admin:  #f87171;
+    --role-op:     #f87171;
+    --role-halfop: #fb923c;
+    --role-voice:  #60a5fa;
+
+    --mention-bg: rgba(250, 204, 21, 0.10);
+    --mention-border: rgba(250, 204, 21, 0.45);
+
+    --success: #4ade80;
+    --warning: #fbbf24;
+
+    --glass-bg: rgba(30, 41, 59, 0.50);
 }
+
+/* ---- Accent themes ----
+   data-accent on <html> selects the primary/ring hue. "blue" is the default
+   (defined in :root / .dark above), so it needs no override. Light overrides
+   come first; the .dark variants follow so they win in dark mode (equal
+   specificity, later rule wins). */
+:root[data-accent="purple"]  { --primary: #7c3aed; --ring: #7c3aed; }
+:root[data-accent="emerald"] { --primary: #059669; --ring: #059669; }
+:root[data-accent="rose"]    { --primary: #e11d48; --ring: #e11d48; }
+:root[data-accent="amber"]   { --primary: #d97706; --ring: #d97706; }
+
+.dark[data-accent="purple"]  { --primary: #a78bfa; --ring: #a78bfa; }
+.dark[data-accent="emerald"] { --primary: #34d399; --ring: #34d399; }
+.dark[data-accent="rose"]    { --primary: #fb7185; --ring: #fb7185; }
+.dark[data-accent="amber"]   { --primary: #fbbf24; --ring: #fbbf24; }
 
 body {
     margin: 0;
@@ -123,4 +297,30 @@ button, a, input, select, textarea {
 
 .pin-flash {
     animation: pin-flash 1.6s ease-out;
+}
+
+/* Active-pane indicator: a soft left-edge glow instead of a hard border bar.
+   Softer in light, fuller in dark (matches the design system's final iteration). */
+.cc-active-pane {
+    background:
+        linear-gradient(90deg, color-mix(in srgb, var(--primary) 10%, transparent), transparent 55%),
+        color-mix(in srgb, var(--accent) 70%, transparent);
+    box-shadow:
+        inset 2px 0 0 0 color-mix(in srgb, var(--primary) 45%, transparent),
+        inset 14px 0 20px -13px color-mix(in srgb, var(--primary) 40%, transparent);
+}
+.dark .cc-active-pane {
+    background:
+        linear-gradient(90deg, color-mix(in srgb, var(--primary) 18%, transparent), transparent 55%),
+        color-mix(in srgb, var(--accent) 85%, transparent);
+    box-shadow:
+        inset 2px 0 0 0 color-mix(in srgb, var(--primary) 55%, transparent),
+        inset 14px 0 20px -12px color-mix(in srgb, var(--primary) 70%, transparent);
+}
+
+/* Mention row: highlight tint + left border sourced from --mention-* tokens
+   (the .dark token overrides handle dark mode automatically). */
+.cc-mention {
+    background: var(--mention-bg);
+    border-left-color: var(--mention-border);
 }

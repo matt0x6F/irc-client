@@ -9,6 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from './ui/select';
+import { useThemeStore, ACCENTS, type ThemeMode } from '../stores/theme';
 
 type SettingsSection = 'networks' | 'plugins' | 'display';
 
@@ -19,6 +20,29 @@ interface SettingsModalProps {
   onClose: () => void;
   onServerUpdate?: () => void;
   initialSection?: SettingsSection;
+}
+
+/** A small on-brand switch toggle (design system uses switches, not checkboxes). */
+function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors cursor-pointer ${
+        checked ? 'bg-primary' : 'bg-muted-foreground/30'
+      }`}
+      style={{ transition: 'var(--transition-base)' }}
+    >
+      <span
+        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+          checked ? 'translate-x-[1.125rem]' : 'translate-x-0.5'
+        }`}
+        style={{ transition: 'var(--transition-base)' }}
+      />
+    </button>
+  );
 }
 
 export function SettingsModal({ onClose, onServerUpdate, initialSection }: SettingsModalProps) {
@@ -60,6 +84,12 @@ export function SettingsModal({ onClose, onServerUpdate, initialSection }: Setti
   const [plugins, setPlugins] = useState<main.PluginInfo[]>([]);
   const [editingNetwork, setEditingNetwork] = useState<storage.Network | null>(null);
   const [consolidateJoinQuit, setConsolidateJoinQuit] = useState<boolean>(loadConsolidateSetting);
+
+  // Theme (appearance + accent)
+  const themeMode = useThemeStore((s) => s.mode);
+  const accent = useThemeStore((s) => s.accent);
+  const setThemeMode = useThemeStore((s) => s.setMode);
+  const setAccent = useThemeStore((s) => s.setAccent);
   const [pluginLoading, setPluginLoading] = useState<Set<string>>(new Set());
   const [expandedPlugins, setExpandedPlugins] = useState<Set<string>>(new Set());
   const [formData, setFormData] = useState<main.NetworkConfig>(main.NetworkConfig.createFrom({
@@ -837,12 +867,16 @@ export function SettingsModal({ onClose, onServerUpdate, initialSection }: Setti
                         <div className="flex-1">
                           <div className="flex items-center gap-2 mb-2">
                             <h4 className="font-semibold">{network.name}</h4>
-                            <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
-                              isConnected 
-                                ? 'bg-green-500/20 text-green-700 dark:text-green-400' 
-                                : 'bg-gray-500/20 text-gray-700 dark:text-gray-400'
+                            <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full ${
+                              isConnected
+                                ? 'bg-green-500/15 text-green-700 dark:text-green-400'
+                                : 'bg-muted text-muted-foreground'
                             }`} title={isConnected ? 'Connected' : 'Disconnected'}>
-                              {isConnected ? '●' : '○'}
+                              <span
+                                className="w-1.5 h-1.5 rounded-full"
+                                style={{ background: isConnected ? 'var(--presence-online)' : 'var(--presence-offline)' }}
+                              />
+                              {isConnected ? 'Connected' : 'Disconnected'}
                             </span>
                           </div>
                           <div className="text-sm text-muted-foreground space-y-1">
@@ -1008,16 +1042,59 @@ export function SettingsModal({ onClose, onServerUpdate, initialSection }: Setti
           <div className="mb-6">
             <h3 className="text-md font-semibold mb-4">Display Settings</h3>
             <div className="space-y-4">
-              <div className="border border-border rounded p-4">
-                <label className="flex items-center space-x-2">
-                  <input
-                    type="checkbox"
-                    checked={consolidateJoinQuit}
-                    onChange={(e) => setConsolidateJoinQuit(e.target.checked)}
-                  />
+              {/* Theme */}
+              <div className="border border-border rounded-lg p-4 bg-card/50 shadow-[var(--shadow-sm)] space-y-4">
+                <div>
+                  <div className="text-sm font-medium mb-2">Appearance</div>
+                  <div className="inline-flex rounded-lg border border-border p-0.5 bg-muted/40">
+                    {(['light', 'dark', 'system'] as ThemeMode[]).map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => setThemeMode(m)}
+                        className={`px-3 py-1.5 text-sm rounded-md capitalize cursor-pointer transition-colors ${
+                          themeMode === m
+                            ? 'bg-primary text-primary-foreground font-medium shadow-[var(--shadow-sm)]'
+                            : 'text-muted-foreground hover:text-foreground'
+                        }`}
+                      >
+                        {m}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-sm font-medium mb-2">Accent</div>
+                  <div className="flex items-center gap-3">
+                    {ACCENTS.map((a) => (
+                      <button
+                        key={a.id}
+                        type="button"
+                        onClick={() => setAccent(a.id)}
+                        title={a.label}
+                        aria-label={`${a.label} accent`}
+                        aria-pressed={accent === a.id}
+                        className="w-7 h-7 rounded-full cursor-pointer transition-transform hover:scale-110"
+                        style={{
+                          background: a.swatch,
+                          boxShadow:
+                            accent === a.id
+                              ? `0 0 0 2px var(--card), 0 0 0 4px ${a.swatch}`
+                              : undefined,
+                        }}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Messages */}
+              <div className="border border-border rounded-lg p-4 bg-card/50 shadow-[var(--shadow-sm)]">
+                <div className="flex items-center justify-between gap-4">
                   <span className="text-sm font-medium">Consolidate join/quit messages</span>
-                </label>
-                <p className="text-xs text-muted-foreground mt-2 ml-6">
+                  <Toggle checked={consolidateJoinQuit} onChange={setConsolidateJoinQuit} />
+                </div>
+                <p className="text-xs text-muted-foreground mt-2">
                   When enabled, consecutive join, part, or quit messages of the same type will be combined into a single line (e.g., "A, B, C joins" instead of three separate lines).
                 </p>
               </div>
@@ -1056,7 +1133,7 @@ export function SettingsModal({ onClose, onServerUpdate, initialSection }: Setti
                 onClick={() => setSelectedSection('networks')}
                 className={`w-full text-left px-3 py-2.5 rounded-md text-sm transition-all ${
                   selectedSection === 'networks'
-                    ? 'bg-primary/10 text-primary font-medium border-l-2 border-primary shadow-[var(--shadow-sm)]'
+                    ? 'cc-active-pane text-foreground font-medium'
                     : 'hover:bg-accent/70 text-foreground'
                 }`}
                 style={{ transition: 'var(--transition-base)' }}
@@ -1067,7 +1144,7 @@ export function SettingsModal({ onClose, onServerUpdate, initialSection }: Setti
                 onClick={() => setSelectedSection('plugins')}
                 className={`w-full text-left px-3 py-2.5 rounded-md text-sm transition-all ${
                   selectedSection === 'plugins'
-                    ? 'bg-primary/10 text-primary font-medium border-l-2 border-primary shadow-[var(--shadow-sm)]'
+                    ? 'cc-active-pane text-foreground font-medium'
                     : 'hover:bg-accent/70 text-foreground'
                 }`}
                 style={{ transition: 'var(--transition-base)' }}
@@ -1078,7 +1155,7 @@ export function SettingsModal({ onClose, onServerUpdate, initialSection }: Setti
                 onClick={() => setSelectedSection('display')}
                 className={`w-full text-left px-3 py-2.5 rounded-md text-sm transition-all ${
                   selectedSection === 'display'
-                    ? 'bg-primary/10 text-primary font-medium border-l-2 border-primary shadow-[var(--shadow-sm)]'
+                    ? 'cc-active-pane text-foreground font-medium'
                     : 'hover:bg-accent/70 text-foreground'
                 }`}
                 style={{ transition: 'var(--transition-base)' }}

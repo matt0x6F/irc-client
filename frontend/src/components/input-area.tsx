@@ -203,7 +203,10 @@ export function InputArea({ onSendMessage, placeholder = 'Type a message...', ne
   };
 
   return (
-    <div className="border-t border-border p-4 bg-card/50 backdrop-blur-sm">
+    <div
+      className="border-t border-border p-4"
+      style={{ background: 'var(--glass-bg)', backdropFilter: 'blur(var(--backdrop-blur))', WebkitBackdropFilter: 'blur(var(--backdrop-blur))' }}
+    >
       <form onSubmit={handleSubmit} className="flex space-x-3">
         <input
           ref={inputRef}
@@ -212,13 +215,13 @@ export function InputArea({ onSendMessage, placeholder = 'Type a message...', ne
           onChange={(e) => setMessage(e.target.value)}
           onKeyDown={(e) => { handleHistoryNavigation(e); performTabCompletion(e); }}
           placeholder={placeholder}
-          className="flex-1 px-4 py-2.5 border border-border rounded-lg bg-background text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all shadow-[var(--shadow-sm)] focus:shadow-[var(--shadow-md)]"
+          className="flex-1 px-4 py-2.5 border border-border rounded-full bg-background text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all shadow-[var(--shadow-sm)] focus:shadow-[var(--shadow-md)]"
           style={{ transition: 'var(--transition-base)' }}
           data-testid="message-input"
         />
         <button
           type="submit"
-          className="px-6 py-2.5 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 active:scale-[0.98] font-medium shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          className="px-6 py-2.5 bg-primary text-primary-foreground rounded-full hover:bg-primary/90 active:scale-[0.98] font-medium shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
           style={{ transition: 'var(--transition-base)' }}
           disabled={!message.trim()}
         >

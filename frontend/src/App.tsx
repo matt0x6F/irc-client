@@ -15,6 +15,7 @@ import { UserInfo } from './components/user-info';
 import { SearchModal } from './components/search-modal';
 import { ChannelListModal } from './components/channel-list-modal';
 import { KeyboardShortcutsModal } from './components/keyboard-shortcuts-modal';
+import { List, Settings } from 'lucide-react';
 
 function App() {
   // Network store
@@ -497,7 +498,7 @@ function App() {
         {!leftSidebarCollapsed && (
           <div
             data-testid="left-resize-handle"
-            className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:w-2 hover:bg-primary/40 bg-border/50 z-10"
+            className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:w-2 hover:bg-primary/40 bg-transparent z-10"
             style={{ transition: 'var(--transition-base)' }}
             onMouseDown={handleLeftResizeStart}
             title="Drag to resize"
@@ -508,7 +509,10 @@ function App() {
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Header */}
-        <div className="border-b border-border bg-card/50 backdrop-blur-sm">
+        <div
+          className="border-b border-border"
+          style={{ background: 'var(--glass-bg)', backdropFilter: 'blur(var(--backdrop-blur))', WebkitBackdropFilter: 'blur(var(--backdrop-blur))' }}
+        >
           <div className="h-14 flex items-center justify-between px-3 sm:px-5">
             <div className="flex items-center gap-2 min-w-0">
               {/* Hamburger toggle for left sidebar */}
@@ -545,14 +549,18 @@ function App() {
                     {networks.find((n) => n.id === selectedNetwork)?.name || 'Unknown'}
                   </span>
                   <span
-                    className={`text-xs font-medium px-1.5 py-0.5 rounded ${
+                    className={`inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full ${
                       connectionStatus[selectedNetwork]
-                        ? 'bg-green-500/20 text-green-700 dark:text-green-400'
-                        : 'bg-gray-500/20 text-gray-700 dark:text-gray-400'
+                        ? 'bg-green-500/15 text-green-700 dark:text-green-400'
+                        : 'bg-muted text-muted-foreground'
                     }`}
                     title={connectionStatus[selectedNetwork] ? 'Connected' : 'Disconnected'}
                   >
-                    {connectionStatus[selectedNetwork] ? '●' : '○'}
+                    <span
+                      className="w-1.5 h-1.5 rounded-full"
+                      style={{ background: connectionStatus[selectedNetwork] ? 'var(--presence-online)' : 'var(--presence-offline)' }}
+                    />
+                    {connectionStatus[selectedNetwork] ? 'Connected' : 'Disconnected'}
                   </span>
                   {selectedChannel &&
                     selectedChannel !== 'status' &&
@@ -603,9 +611,34 @@ function App() {
                   <circle cx="11" cy="11" r="8" />
                   <path d="m21 21-4.3-4.3" />
                 </svg>
+                <span className="hidden sm:inline">Search</span>
                 <kbd className="hidden sm:inline-flex h-5 select-none items-center gap-1 rounded border border-border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-60">
                   {navigator.platform?.includes('Mac') ? '\u2318' : 'Ctrl+'}K
                 </kbd>
+              </button>
+              {/* Browse channels — for the selected network */}
+              {selectedNetwork !== null && (
+                <button
+                  onClick={() => {
+                    if (selectedNetwork !== null) {
+                      useUIStore.getState().openChannelList(selectedNetwork);
+                    }
+                  }}
+                  className="p-1.5 rounded-md hover:bg-accent/50 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                  title="Browse channels"
+                  aria-label="Browse channels"
+                >
+                  <List size={18} />
+                </button>
+              )}
+              {/* Settings */}
+              <button
+                onClick={() => openSettings(undefined)}
+                className="p-1.5 rounded-md hover:bg-accent/50 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                title="Settings"
+                aria-label="Settings"
+              >
+                <Settings size={18} />
               </button>
               {/* Right sidebar toggle — show for channels and PMs */}
               {selectedChannel && selectedChannel !== 'status' && (
@@ -694,7 +727,7 @@ function App() {
                   {!rightSidebarCollapsed && (
                     <div
                       data-testid="right-resize-handle"
-                      className="absolute top-0 left-0 w-1 h-full cursor-col-resize hover:w-2 hover:bg-primary/40 bg-border/50 z-10"
+                      className="absolute top-0 left-0 w-1 h-full cursor-col-resize hover:w-2 hover:bg-primary/40 bg-transparent z-10"
                       style={{ transition: 'var(--transition-base)' }}
                       onMouseDown={handleRightResizeStart}
                       title="Drag to resize"
