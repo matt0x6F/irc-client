@@ -26,6 +26,11 @@ export function ChannelListModal({ networkId, onClose }: ChannelListModalProps) 
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const [joiningChannel, setJoiningChannel] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Ensures exactly one LIST is requested per open. React StrictMode (dev)
+  // double-invokes effects; two concurrent LIST requests share one backend
+  // accumulation buffer, and the second LISTEND emits an empty list that
+  // overwrites the populated one — making the modal always show "No channels".
+  const requestedRef = useRef(false);
 
   // Focus input on mount
   useEffect(() => {
@@ -47,15 +52,6 @@ export function ChannelListModal({ networkId, onClose }: ChannelListModalProps) 
   useEffect(() => {
     const unsubscribe = EventsOn('channel-list', (data: any) => {
       const eventData = data?.data;
-      console.log('[CHANLIST-DEBUG] channel-list event received:', {
-        raw: data,
-        eventNetworkId: eventData?.networkId,
-        eventNetworkIdType: typeof eventData?.networkId,
-        modalNetworkId: networkId,
-        modalNetworkIdType: typeof networkId,
-        matches: eventData?.networkId === networkId,
-        channelCount: eventData?.channels?.length,
-      });
       if (!eventData) return;
 
       const eventNetworkId = eventData.networkId;
@@ -73,15 +69,14 @@ export function ChannelListModal({ networkId, onClose }: ChannelListModalProps) 
       setLoading(false);
     });
 
-    // Request the channel list
-    console.log('[CHANLIST-DEBUG] calling RequestChannelList for network', networkId);
-    RequestChannelList(networkId)
-      .then(() => console.log('[CHANLIST-DEBUG] RequestChannelList resolved (LIST sent)'))
-      .catch((err) => {
-        console.log('[CHANLIST-DEBUG] RequestChannelList rejected:', err);
+    // Request the channel list — exactly once per open (see requestedRef).
+    if (!requestedRef.current) {
+      requestedRef.current = true;
+      RequestChannelList(networkId).catch((err) => {
         setError(`Failed to request channel list: ${err}`);
         setLoading(false);
       });
+    }
 
     return () => unsubscribe();
   }, [networkId]);
