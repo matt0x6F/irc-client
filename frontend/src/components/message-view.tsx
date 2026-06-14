@@ -216,13 +216,12 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
   const returnToLive = useNetworkStore((s) => s.returnToLive);
   const newSinceAnchor = useNetworkStore((s) => s.newSinceAnchor);
   const loadOlderMessages = useNetworkStore((s) => s.loadOlderMessages);
+  const loadNewerMessages = useNetworkStore((s) => s.loadNewerMessages);
 
-  // Scrollback pagination state (refs so they don't trigger re-renders).
+  // Pagination state (refs so they don't trigger re-renders).
   const loadingOlderRef = useRef(false);
+  const loadingNewerRef = useRef(false);
   const reachedStartRef = useRef(false);
-  // True when 'anchored' was entered by loading older history (vs. a jump-to-pin),
-  // so scrolling back to the bottom can auto-return to live only in that case.
-  const scrollbackModeRef = useRef(false);
 
   const pinnedIds = useMemo(() => new Set(pinnedMessages.map((p) => p.id)), [pinnedMessages]);
   // Map of message id -> row element, used to scroll/flash a specific message
@@ -258,20 +257,22 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
     const threshold = 100; // pixels from bottom
     const isNear = container.scrollHeight - container.scrollTop - container.clientHeight < threshold;
     setIsNearBottom(isNear);
+  };
 
-    // Manually scrolling to the bottom while anchored (e.g. after loading older
-    // history) means the user has caught up — return to live so the
-    // scroll-to-bottom badge clears itself. Read from the store directly to
-    // avoid a stale closure in the once-bound scroll listener.
-    if (
-      isNear &&
-      !loadingOlderRef.current &&
-      scrollbackModeRef.current &&
-      useNetworkStore.getState().viewMode === 'anchored'
-    ) {
-      scrollbackModeRef.current = false;
-      useNetworkStore.getState().returnToLive();
-    }
+  // When scrolled near the bottom while anchored (after a jump-to-pin or
+  // scrollback), load the next newer page to bridge toward live. When there are
+  // no more newer rows, loadNewerMessages flips back to live (badge clears).
+  // No scroll adjustment needed — appends add content below the viewport.
+  const maybeLoadNewer = () => {
+    const container = scrollContainerRef.current;
+    if (!container || loadingNewerRef.current || loadingOlderRef.current) return;
+    if (useNetworkStore.getState().viewMode !== 'anchored') return;
+    if (container.scrollHeight - container.scrollTop - container.clientHeight > 120) return;
+
+    loadingNewerRef.current = true;
+    loadNewerMessages().finally(() => {
+      loadingNewerRef.current = false;
+    });
   };
 
   // When scrolled to the top, load an older page and preserve the viewport so the
@@ -286,7 +287,6 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
     const prevTop = container.scrollTop;
     loadOlderMessages().then((added) => {
       if (added > 0) {
-        scrollbackModeRef.current = true;
         // Keep the previously-top message visually fixed after prepending.
         // Bypass the container's smooth scroll-behavior so this is instant.
         requestAnimationFrame(() => {
@@ -307,13 +307,14 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
   const handleScroll = () => {
     checkIfNearBottom();
     maybeLoadOlder();
+    maybeLoadNewer();
   };
 
   // Reset pagination state when the channel changes.
   useEffect(() => {
     reachedStartRef.current = false;
     loadingOlderRef.current = false;
-    scrollbackModeRef.current = false;
+    loadingNewerRef.current = false;
   }, [selectedChannel]);
 
   // Handle scroll events
@@ -328,9 +329,6 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
   // Jump-to-message: scroll to the anchored message and flash it briefly.
   useEffect(() => {
     if (anchoredMessageId == null) return;
-    // A jump-to-pin is a different kind of anchor than scrollback; don't let
-    // scrolling to the bottom of a pin's context window snap back to live.
-    scrollbackModeRef.current = false;
     const el = messageRefs.current.get(anchoredMessageId);
     if (!el) return;
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });

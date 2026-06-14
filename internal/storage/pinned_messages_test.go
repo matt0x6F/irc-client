@@ -129,6 +129,48 @@ func TestGetMessagesBefore(t *testing.T) {
 	}
 }
 
+func TestGetMessagesAfter(t *testing.T) {
+	s := newTestStorage(t)
+	net := makeNetwork("AfterNet")
+	if err := s.CreateNetwork(net); err != nil {
+		t.Fatalf("CreateNetwork: %v", err)
+	}
+	ch := &Channel{NetworkID: net.ID, Name: "#after", CreatedAt: time.Now()}
+	if err := s.CreateChannel(ch); err != nil {
+		t.Fatalf("CreateChannel: %v", err)
+	}
+
+	msgs := writeMessagesForPinTest(t, s, net.ID, &ch.ID, 10)
+
+	// Page strictly newer than msgs[5], limit 3 → expect msgs[6], [7], [8] ascending.
+	page, err := s.GetMessagesAfter(net.ID, &ch.ID, msgs[5].ID, 3)
+	if err != nil {
+		t.Fatalf("GetMessagesAfter: %v", err)
+	}
+	if len(page) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(page))
+	}
+	for i, want := range []Message{msgs[6], msgs[7], msgs[8]} {
+		if page[i].ID != want.ID {
+			t.Errorf("page[%d]: expected id %d, got %d", i, want.ID, page[i].ID)
+		}
+	}
+	for _, m := range page {
+		if m.ID == msgs[5].ID {
+			t.Errorf("GetMessagesAfter must exclude the boundary id %d", msgs[5].ID)
+		}
+	}
+
+	// Nothing newer than the very last message.
+	empty, err := s.GetMessagesAfter(net.ID, &ch.ID, msgs[9].ID, 5)
+	if err != nil {
+		t.Fatalf("GetMessagesAfter (newest): %v", err)
+	}
+	if len(empty) != 0 {
+		t.Errorf("expected 0 messages after the newest, got %d", len(empty))
+	}
+}
+
 func TestGetMessagesAround(t *testing.T) {
 	s := newTestStorage(t)
 	net := makeNetwork("AroundNet")

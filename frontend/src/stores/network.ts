@@ -9,6 +9,7 @@ import {
   GetMessages,
   GetMessagesAround,
   GetMessagesBefore,
+  GetMessagesAfter,
   GetPrivateMessages,
   GetChannelIDByName,
   GetChannelInfo,
@@ -76,6 +77,7 @@ interface NetworkState {
   loadNetworks: () => Promise<void>;
   loadMessages: () => Promise<void>;
   loadOlderMessages: () => Promise<number>;
+  loadNewerMessages: () => Promise<number>;
   loadChannelInfo: () => Promise<void>;
   loadConnectionStatus: (networkId?: number) => Promise<void>;
 
@@ -221,6 +223,43 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
       return fresh.length;
     } catch (error) {
       console.error('Failed to load older messages:', error);
+      return 0;
+    }
+  },
+
+  loadNewerMessages: async (): Promise<number> => {
+    const { selectedNetwork, selectedChannel, messages, viewMode } = get();
+    // Only meaningful while anchored (viewing a window that may not reach live).
+    if (viewMode !== 'anchored') return 0;
+    if (selectedNetwork === null || messages.length === 0) return 0;
+    if (selectedChannel && selectedChannel.startsWith('pm:')) return 0;
+
+    const newest = messages[messages.length - 1];
+    if (!newest || newest.id >= OPTIMISTIC_ID_THRESHOLD) return 0;
+
+    try {
+      let channelId: number | null = null;
+      if (selectedChannel && selectedChannel !== 'status') {
+        channelId = (await GetChannelIDByName(selectedNetwork, selectedChannel)) as number;
+      }
+      const newer =
+        (await GetMessagesAfter(selectedNetwork, channelId, newest.id, SCROLLBACK_PAGE)) || [];
+
+      const seen = new Set(get().messages.map((m) => m.id));
+      const fresh = newer.filter((m) => !seen.has(m.id));
+
+      if (fresh.length === 0) {
+        // No more newer rows: the loaded window now extends to the live tip.
+        // Resume live (badge clears, new messages append) without a reload/jump.
+        set({ viewMode: 'live', anchoredMessageId: null, newSinceAnchor: 0 });
+        return 0;
+      }
+
+      // Append below the current view (no scroll adjustment needed for appends).
+      set((state) => ({ messages: [...state.messages, ...fresh] }));
+      return fresh.length;
+    } catch (error) {
+      console.error('Failed to load newer messages:', error);
       return 0;
     }
   },

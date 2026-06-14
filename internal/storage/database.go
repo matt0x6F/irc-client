@@ -462,6 +462,43 @@ func (s *Storage) GetMessagesBefore(networkID int64, channelID *int64, beforeID 
 	return messages, nil
 }
 
+// GetMessagesAfter returns up to `limit` messages strictly newer than afterID
+// (exclusive), in chronological (ascending id) order. channelID nil = status pane.
+// The newer-direction counterpart of GetMessagesBefore — used when scrolling down
+// out of an anchored context window (e.g. after jumping to a pinned message).
+func (s *Storage) GetMessagesAfter(networkID int64, channelID *int64, afterID int64, limit int) ([]Message, error) {
+	var dbMessages []db.Message
+	var err error
+
+	if channelID != nil {
+		channelIDNull := sql.NullInt64{Int64: *channelID, Valid: true}
+		dbMessages, err = s.queries.GetMessagesAfterWithChannel(context.Background(), db.GetMessagesAfterWithChannelParams{
+			NetworkID: networkID,
+			ChannelID: channelIDNull,
+			ID:        afterID, // underlying query is id > ?, already exclusive
+			Limit:     int64(limit),
+		})
+	} else {
+		dbMessages, err = s.queries.GetMessagesAfterWithoutChannel(context.Background(), db.GetMessagesAfterWithoutChannelParams{
+			NetworkID: networkID,
+			ID:        afterID,
+			Limit:     int64(limit),
+		})
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get messages after: %w", err)
+	}
+
+	// Query already returns ASC (chronological).
+	messages := make([]Message, len(dbMessages))
+	for i, m := range dbMessages {
+		messages[i] = convertMessageFromDB(m)
+	}
+
+	return messages, nil
+}
+
 // CreateNetwork creates a new network configuration
 func (s *Storage) CreateNetwork(network *Network) error {
 	params := convertNetworkToDBCreateParams(network)

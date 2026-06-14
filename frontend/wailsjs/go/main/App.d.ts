@@ -32,6 +32,8 @@ export function GetMessages(arg1:number,arg2:any,arg3:number):Promise<Array<stor
 
 export function GetMessagesAround(arg1:number,arg2:any,arg3:number,arg4:number):Promise<Array<storage.Message>>;
 
+export function GetMessagesAfter(arg1:number,arg2:any,arg3:number,arg4:number):Promise<Array<storage.Message>>;
+
 export function GetMessagesBefore(arg1:number,arg2:any,arg3:number,arg4:number):Promise<Array<storage.Message>>;
 
 export function GetNetworks():Promise<Array<storage.Network>>;
