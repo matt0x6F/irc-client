@@ -68,12 +68,30 @@ export async function closeSettings(page: Page): Promise<void> {
   }
 }
 
-/** Convenience: add + connect + close settings. Used by most specs. */
+/** Convenience: add + connect + close settings. Used by most specs.
+ *
+ * When tests run serially in one Playwright run the backend SQLite DB persists
+ * across specs. If a previous spec already added and connected the network, the
+ * server tree already shows the green indicator — skip the add/connect dance and
+ * just make sure Settings is closed so the main UI is usable.
+ */
 export async function addNetworkAndConnect(
   page: Page,
   runtime: Runtime,
   opts: { name?: string; nick?: string } = {},
 ): Promise<void> {
+  // Fast-path: network already connected (DB persisted from an earlier spec).
+  const alreadyConnected = await page
+    .locator('[data-testid="network-status-indicator"][data-connected="true"]')
+    .first()
+    .waitFor({ state: 'visible', timeout: 1_500 })
+    .then(() => true, () => false);
+
+  if (alreadyConnected) {
+    await closeSettings(page);
+    return;
+  }
+
   await addNetwork(page, runtime, opts);
   await connect(page);
   // connect() already closes settings; closeSettings() is idempotent.
