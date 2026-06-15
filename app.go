@@ -30,6 +30,7 @@ type App struct {
 	ircClients           map[int64]*irc.IRCClient
 	connectingNetworks   map[string]chan struct{} // Track networks currently connecting by "address:port"
 	reconnectingNetworks map[int64]bool           // Track networks currently reconnecting (by network ID)
+	connectionGapOpen    map[int64]bool           // Networks with an open disconnect→reconnect gap (by network ID)
 	mu                   sync.RWMutex
 	channelListCache     map[int64]channelListCacheEntry // Cached LIST results keyed by network ID
 	channelListCacheMu   sync.RWMutex                    // Guards channelListCache; separate from mu to avoid contention
@@ -89,6 +90,7 @@ func NewApp() (*App, error) {
 		ircClients:           make(map[int64]*irc.IRCClient),
 		connectingNetworks:   make(map[string]chan struct{}),
 		reconnectingNetworks: make(map[int64]bool),
+		connectionGapOpen:    make(map[int64]bool),
 		channelListCache:     make(map[int64]channelListCacheEntry),
 	}
 

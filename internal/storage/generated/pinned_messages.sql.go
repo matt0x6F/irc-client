@@ -114,7 +114,7 @@ func (q *Queries) GetMessagesAfterWithoutChannel(ctx context.Context, arg GetMes
 const getMessagesBeforeTimePM = `-- name: GetMessagesBeforeTimePM :many
 SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, msgid FROM messages
 WHERE network_id = ? AND channel_id IS NULL
-  AND message_type IN ('privmsg', 'action', 'notice')
+  AND message_type IN ('privmsg', 'action', 'notice', 'marker')
   AND LOWER(pm_target) = ? AND timestamp < ?
 ORDER BY timestamp DESC, id DESC
 LIMIT ?

@@ -363,6 +363,12 @@ func (a *App) connectNetwork(config NetworkConfig, reconnect bool) error {
 			Timestamp:   time.Now(),
 		})
 
+		// If this connect closed an open disconnect→reconnect gap, bracket it in the
+		// channel/PM buffers with a "Reconnected" marker. Gating on the gap flag (not
+		// the reconnect arg) means a manual reconnect after a drop still closes the
+		// bracket, while a true first-time connect (no gap) writes nothing.
+		a.closeConnectionGap(network.ID, network)
+
 		return nil
 	}
 
@@ -414,6 +420,12 @@ func (a *App) handleConnectionLost(networkID int64) {
 		a.mu.Unlock()
 		return
 	}
+
+	// Mark the drop point in each open channel/PM buffer. Done here (a confirmed
+	// disconnect, past the IsConnectedDirect false-positive guard) but before the
+	// auto-connect gate, so the gap is delineated even when auto-reconnect is
+	// disabled and no "Reconnected" marker will ever follow.
+	a.openConnectionGap(networkID, network)
 
 	if !network.AutoConnect {
 		logger.Log.Debug().Int64("network_id", networkID).Str("network", network.Name).Msg("Auto-connect disabled, skipping reconnect")
@@ -814,6 +826,7 @@ func (a *App) DeleteNetwork(networkID int64) error {
 		client.Disconnect()
 		delete(a.ircClients, networkID)
 	}
+	delete(a.connectionGapOpen, networkID)
 	a.mu.Unlock()
 
 	return a.storage.DeleteNetwork(networkID)
@@ -972,50 +985,61 @@ func (a *App) getNetworkWithTimeout(networkID int64) *storage.Network {
 	}
 }
 
-// writeDisconnectToChannels writes "Disconnected" messages to all open/joined channels
-func (a *App) writeDisconnectToChannels(networkID int64, network *storage.Network) {
+// openBufferChannels returns the channels whose buffers are currently "live" for a
+// network: those flagged open plus those we are joined to, deduped. It does not
+// include the all-channels shutdown fallback — callers that need that handle it.
+func (a *App) openBufferChannels(networkID int64, network *storage.Network) []storage.Channel {
 	allChannels, err := a.storage.GetChannels(networkID)
 	if err != nil {
-		logger.Log.Warn().Err(err).Int64("network_id", networkID).Msg("Failed to get channels for disconnect message")
-		return
+		logger.Log.Warn().Err(err).Int64("network_id", networkID).Msg("Failed to get channels for connection buffer enumeration")
+		return nil
 	}
 
-	var channelsToNotify []storage.Channel
+	var channels []storage.Channel
+	seen := make(map[int64]bool)
 
-	// Filter to only channels that are open
+	// Channels with an open pane.
 	for _, ch := range allChannels {
 		if ch.IsOpen {
-			channelsToNotify = append(channelsToNotify, ch)
+			channels = append(channels, ch)
+			seen[ch.ID] = true
 		}
 	}
 
-	// Also include joined channels
+	// Plus channels we are currently joined to.
 	if network.Nickname != "" {
 		joinedChannels, err := a.storage.GetJoinedChannels(networkID, network.Nickname)
 		if err == nil {
-			channelMap := make(map[int64]bool)
-			for _, ch := range channelsToNotify {
-				channelMap[ch.ID] = true
-			}
 			for _, ch := range joinedChannels {
-				if !channelMap[ch.ID] {
-					channelsToNotify = append(channelsToNotify, ch)
-					channelMap[ch.ID] = true
+				if !seen[ch.ID] {
+					channels = append(channels, ch)
+					seen[ch.ID] = true
 				}
 			}
 		}
 	}
 
+	return channels
+}
+
+// writeDisconnectToChannels writes "Disconnected" messages to all open/joined channels
+func (a *App) writeDisconnectToChannels(networkID int64, network *storage.Network) {
+	channelsToNotify := a.openBufferChannels(networkID, network)
+
 	// Fallback: write to all channels if no open/joined channels found
-	if len(channelsToNotify) == 0 && len(allChannels) > 0 {
-		logger.Log.Info().Int64("network_id", networkID).Int("total_channels", len(allChannels)).Msg("No open/joined channels found, writing disconnect messages to all channels as fallback")
-		channelsToNotify = allChannels
+	if len(channelsToNotify) == 0 {
+		allChannels, err := a.storage.GetChannels(networkID)
+		if err == nil && len(allChannels) > 0 {
+			logger.Log.Info().Int64("network_id", networkID).Int("total_channels", len(allChannels)).Msg("No open/joined channels found, writing disconnect messages to all channels as fallback")
+			channelsToNotify = allChannels
+		}
 	}
 
 	for _, channel := range channelsToNotify {
+		channelID := channel.ID
 		disconnectMsg := storage.Message{
 			NetworkID:   networkID,
-			ChannelID:   &channel.ID,
+			ChannelID:   &channelID,
 			User:        "*",
 			Message:     "Disconnected",
 			MessageType: "status",
@@ -1025,6 +1049,82 @@ func (a *App) writeDisconnectToChannels(networkID int64, network *storage.Networ
 			if err.Error() != "storage is closed" {
 				logger.Log.Warn().Err(err).Int64("network_id", networkID).Str("channel", channel.Name).Msg("Failed to write disconnect message to channel")
 			}
+		}
+	}
+}
+
+// openConnectionGap records the start of a disconnect→reconnect gap and writes a
+// "Disconnected" marker into each open channel/PM buffer. Idempotent: a gap that is
+// already open is left untouched, so repeated connection.lost events for the same
+// drop produce only a single marker.
+func (a *App) openConnectionGap(networkID int64, network *storage.Network) {
+	a.mu.Lock()
+	alreadyOpen := a.connectionGapOpen[networkID]
+	if !alreadyOpen {
+		a.connectionGapOpen[networkID] = true
+	}
+	a.mu.Unlock()
+
+	if !alreadyOpen {
+		a.writeConnectionMarker(networkID, network, "Disconnected")
+	}
+}
+
+// closeConnectionGap closes an open disconnect→reconnect gap, writing a "Reconnected"
+// marker into each open channel/PM buffer. A no-op when no gap is open (e.g. a
+// first-time connect), so only genuine recoveries are bracketed.
+func (a *App) closeConnectionGap(networkID int64, network *storage.Network) {
+	a.mu.Lock()
+	wasOpen := a.connectionGapOpen[networkID]
+	delete(a.connectionGapOpen, networkID)
+	a.mu.Unlock()
+
+	if wasOpen {
+		a.writeConnectionMarker(networkID, network, "Reconnected")
+	}
+}
+
+// writeConnectionMarker writes a delineation marker (label "Disconnected" or
+// "Reconnected") into every currently-open channel and PM buffer for a network, so
+// scrollback shows where the connection broke and where it recovered. Markers are
+// stored as message_type "marker"; the frontend renders them as a centered divider.
+//
+// Each buffered message gets its own channelID local because WriteMessage queues the
+// struct (with its *int64 pointer) for a later flush — sharing &channel.ID across the
+// loop would make every flushed marker resolve to the last channel's id.
+func (a *App) writeConnectionMarker(networkID int64, network *storage.Network, label string) {
+	for _, channel := range a.openBufferChannels(networkID, network) {
+		channelID := channel.ID
+		marker := storage.Message{
+			NetworkID:   networkID,
+			ChannelID:   &channelID,
+			User:        "*",
+			Message:     label,
+			MessageType: "marker",
+			Timestamp:   time.Now(),
+		}
+		if err := a.storage.WriteMessage(marker); err != nil {
+			logger.Log.Warn().Err(err).Int64("network_id", networkID).Str("channel", channel.Name).Str("label", label).Msg("Failed to write connection marker to channel")
+		}
+	}
+
+	pmConvs, err := a.storage.GetOpenPMConversations(networkID, network.Nickname)
+	if err != nil {
+		logger.Log.Warn().Err(err).Int64("network_id", networkID).Msg("Failed to get open PM conversations for connection marker")
+		return
+	}
+	for _, conv := range pmConvs {
+		marker := storage.Message{
+			NetworkID:   networkID,
+			ChannelID:   nil,
+			User:        "*",
+			Message:     label,
+			MessageType: "marker",
+			Timestamp:   time.Now(),
+			PMTarget:    conv.TargetUser,
+		}
+		if err := a.storage.WriteMessage(marker); err != nil {
+			logger.Log.Warn().Err(err).Int64("network_id", networkID).Str("pm_target", conv.TargetUser).Str("label", label).Msg("Failed to write connection marker to PM")
 		}
 	}
 }

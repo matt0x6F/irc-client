@@ -66,7 +66,7 @@ LIMIT ?;
 -- name: GetMessagesBeforeTimePM :many
 SELECT * FROM messages
 WHERE network_id = ? AND channel_id IS NULL
-  AND message_type IN ('privmsg', 'action', 'notice')
+  AND message_type IN ('privmsg', 'action', 'notice', 'marker')
   AND LOWER(pm_target) = ? AND timestamp < ?
 ORDER BY timestamp DESC, id DESC
 LIMIT ?;
