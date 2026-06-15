@@ -46,6 +46,10 @@ export function GetConnectionStatus(arg1) {
   return window['go']['main']['App']['GetConnectionStatus'](arg1);
 }
 
+export function GetCurrentNick(arg1) {
+  return window['go']['main']['App']['GetCurrentNick'](arg1);
+}
+
 export function GetJoinedChannels(arg1) {
   return window['go']['main']['App']['GetJoinedChannels'](arg1);
 }
