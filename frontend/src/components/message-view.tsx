@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { storage } from '../../wailsjs/go/models';
 import { IRCFormattedText } from './irc-formatted-text';
 import { useNicknameColors } from '../hooks/useNicknameColors';
@@ -29,6 +29,18 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
   const [isNearBottom, setIsNearBottom] = useState(true);
   const prevMessagesLengthRef = useRef(0);
   const prevChannelRef = useRef<string | null | undefined>(selectedChannel);
+  // Whether the pane should stay pinned to the latest message. Armed on every
+  // channel switch and whenever the user is at the bottom; released when the user
+  // scrolls up. While set, the pane is kept at the bottom across *all* async message
+  // updates — so a channel switch lands on the latest message regardless of how the
+  // load races the render (the original bug), and stale/out-of-order loads can't
+  // strand it part-way up.
+  const stickToBottomRef = useRef(true);
+  // Last observed scrollTop, used to detect the *direction* of a scroll. The pin is
+  // released only on a genuine upward (user) scroll — never on the transient
+  // "not at bottom" readings that our own programmatic scroll-to-bottom and
+  // content-height growth produce, which is what made a naive isNear-based pin flaky.
+  const lastScrollTopRef = useRef(0);
 
   // Load consolidate setting from localStorage and make it reactive
   const [consolidateEnabled, setConsolidateEnabled] = useState(() => {
@@ -255,8 +267,21 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
     if (!scrollContainerRef.current) return;
     const container = scrollContainerRef.current;
     const threshold = 100; // pixels from bottom
-    const isNear = container.scrollHeight - container.scrollTop - container.clientHeight < threshold;
+    const scrollTop = container.scrollTop;
+    const isNear = container.scrollHeight - scrollTop - container.clientHeight < threshold;
     setIsNearBottom(isNear);
+
+    // Maintain the bottom-pin by scroll *direction*, not by raw position:
+    //  - scrolling up (the user moving away from the latest message) releases it;
+    //  - reaching the bottom re-engages it.
+    // Programmatic scroll-to-bottom and content growth only ever move scrollTop down
+    // (or leave it), so they never spuriously release the pin.
+    if (scrollTop < lastScrollTopRef.current - 4) {
+      stickToBottomRef.current = false;
+    } else if (isNear) {
+      stickToBottomRef.current = true;
+    }
+    lastScrollTopRef.current = scrollTop;
   };
 
   // When scrolled near the bottom while anchored (after a jump-to-pin or
@@ -280,6 +305,10 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
   const maybeLoadOlder = () => {
     const container = scrollContainerRef.current;
     if (!container || loadingOlderRef.current || reachedStartRef.current) return;
+    // While pinned to the bottom (including the channel-switch window, where
+    // selectedChannel and `messages` are briefly out of sync) don't paginate — a
+    // stray scroll event must not page the previous channel's history.
+    if (stickToBottomRef.current) return;
     if (container.scrollTop > 80) return;
 
     loadingOlderRef.current = true;
@@ -340,28 +369,46 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
     return () => clearTimeout(timeout);
   }, [anchoredMessageId, messages, clearAnchorFlash]);
 
-  // Auto-scroll when channel changes - always scroll to bottom when switching channels
-  useEffect(() => {
-    if (
-      viewMode !== 'anchored' &&
-      selectedChannel !== undefined &&
-      selectedChannel !== prevChannelRef.current
-    ) {
+  // Keep the pane pinned to the latest message while "stuck to bottom".
+  //
+  // The original bug: selectedChannel updates synchronously on a switch, but
+  // loadMessages() resolves the new channel's messages a round-trip later, so the
+  // first render after a switch still shows the *old* pane. The previous code
+  // advanced prevChannelRef and fired a single 100ms timeout on that first render,
+  // so the scroll raced (and usually lost to) the async load — leaving the pane
+  // stranded at the old scroll position, blank/short of the latest message until
+  // the user scrolled.
+  //
+  // Instead, every channel switch (re-)arms stickToBottom, and this layout effect
+  // re-pins to the bottom on *every* subsequent render while stuck. That makes the
+  // landing position independent of load timing/order: whenever the real content
+  // arrives (or a later poll/new message updates it) we are already at the bottom.
+  // The scroll is instant (behavior: auto) inside a layout effect, so the pane never
+  // paints at a stale position and there's no smooth-scroll-during-swap flicker.
+  // The user scrolling up releases the pin (see checkIfNearBottom).
+  useLayoutEffect(() => {
+    if (viewMode === 'anchored') {
+      // Anchored (jump-to-pin) view manages its own scroll; just track the channel.
       prevChannelRef.current = selectedChannel;
-      // When channel changes, always scroll to bottom
-      // Use a small delay to ensure DOM is updated with new messages
-      setTimeout(() => {
-        if (messagesEndRef.current) {
-          messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-        } else if (scrollContainerRef.current) {
-          // Fallback: scroll container to bottom
-          scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
-        }
-      }, 100);
-      // Reset near-bottom state since we're scrolling to bottom
+      return;
+    }
+
+    if (selectedChannel !== prevChannelRef.current) {
+      prevChannelRef.current = selectedChannel;
+      stickToBottomRef.current = true; // a freshly opened pane starts at the latest message
       setIsNearBottom(true);
     }
-  }, [selectedChannel, messages]);
+
+    if (stickToBottomRef.current) {
+      const container = scrollContainerRef.current;
+      if (container) {
+        const prevBehavior = container.style.scrollBehavior;
+        container.style.scrollBehavior = 'auto';
+        container.scrollTop = container.scrollHeight;
+        container.style.scrollBehavior = prevBehavior;
+      }
+    }
+  }, [selectedChannel, messages, viewMode]);
 
   // Auto-scroll only if user is near bottom and there are new messages
   useEffect(() => {

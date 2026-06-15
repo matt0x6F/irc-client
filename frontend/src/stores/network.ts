@@ -169,9 +169,18 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
     // in App.tsx and message events don't snap the view back to the latest 100.
     if (viewMode === 'anchored') return;
 
+    // The pane can be switched while a load is in flight (the App.tsx poll, message
+    // events, and selection changes all race — and each load is an async round-trip).
+    // Discard results whose pane is no longer selected so a stale load can't clobber
+    // the new channel's messages (which would also defeat the message-view's
+    // scroll-to-latest on switch).
+    const isStale = () =>
+      get().selectedNetwork !== selectedNetwork || get().selectedChannel !== selectedChannel;
+
     try {
       if (selectedChannel === null || selectedChannel === 'status') {
         const msgs = await GetMessages(selectedNetwork, null, 100);
+        if (isStale()) return;
         set({ messages: sortByTimestamp(msgs || []) });
         return;
       }
@@ -179,15 +188,18 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
       if (selectedChannel.startsWith('pm:')) {
         const user = selectedChannel.substring(3);
         const msgs = await GetPrivateMessages(selectedNetwork, user, 100);
+        if (isStale()) return;
         set({ messages: sortByTimestamp(msgs || []) });
         return;
       }
 
       const channelId = await GetChannelIDByName(selectedNetwork, selectedChannel);
       const msgs = await GetMessages(selectedNetwork, channelId as number, 100);
+      if (isStale()) return;
       set({ messages: sortByTimestamp(msgs || []) });
     } catch (error) {
       console.error('Failed to load messages:', error);
+      if (isStale()) return;
       set({ messages: [] });
     }
   },
