@@ -201,7 +201,7 @@ func convertMessageToDBCreateParams(m Message) db.CreateMessageParams {
 		User:        m.User,
 		Message:     m.Message,
 		MessageType: m.MessageType,
-		Timestamp:   m.Timestamp,
+		Timestamp:   m.Timestamp.UTC(), // keep the TIMESTAMP text column in one UTC format (see normalizeForStore)
 		RawLine:     convertToNullString(m.RawLine),
 		PmTarget:    convertToNullString(m.PMTarget),
 		Msgid:       convertToNullString(m.MsgID),

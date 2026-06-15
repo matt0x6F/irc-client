@@ -163,7 +163,7 @@ func (s *Storage) flushBuffer() {
 	for {
 		select {
 		case msg := <-s.writeBuffer:
-			messages = append(messages, msg)
+			messages = append(messages, normalizeForStore(msg))
 		default:
 			// No more messages available, break out of loop
 			if len(messages) == 0 {
@@ -194,6 +194,18 @@ func (s *Storage) flushBuffer() {
 			return
 		}
 	}
+}
+
+// normalizeForStore canonicalizes a message before persistence. The timestamp is
+// forced to UTC so the TIMESTAMP text column stays in a single, lexicographically
+// monotonic format. SQLite has no native datetime type and compares the column as
+// text, so mixed offsets (UTC server-time rows vs. local time.Now() rows) make
+// `ORDER BY timestamp` and the `WHERE timestamp < ?` scrollback cursor
+// (GetMessagesBeforeTime) chronologically wrong. Keeping every write in UTC keeps
+// text order == chronological order.
+func normalizeForStore(msg Message) Message {
+	msg.Timestamp = msg.Timestamp.UTC()
+	return msg
 }
 
 // WriteMessage queues a message for batch insertion
@@ -307,10 +319,15 @@ func (s *Storage) WriteHistoryMessages(msgs []Message) (int, error) {
 	          VALUES (:network_id, :channel_id, :user, :message, :message_type, :timestamp, :raw_line, NULLIF(:pm_target, ''), NULLIF(:msgid, ''))
 	          ON CONFLICT(network_id, msgid) WHERE msgid IS NOT NULL DO NOTHING`
 
+	normalized := make([]Message, len(msgs))
+	for i := range msgs {
+		normalized[i] = normalizeForStore(msgs[i])
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	result, err := s.db.NamedExec(query, msgs)
+	result, err := s.db.NamedExec(query, normalized)
 	if err != nil {
 		return 0, fmt.Errorf("failed to write history messages: %w", err)
 	}

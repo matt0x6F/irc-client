@@ -85,6 +85,53 @@ func Migrate(db *sqlx.DB) error {
 		return fmt.Errorf("msgid migration failed: %w", err)
 	}
 
+	// Normalize legacy mixed-timezone message timestamps to a single UTC text format
+	// so the lexicographic scrollback cursor (GetMessagesBeforeTime) works.
+	if err := migrateNormalizeMessageTimestamps(db); err != nil {
+		return fmt.Errorf("timestamp normalization migration failed: %w", err)
+	}
+
+	return nil
+}
+
+// migrateNormalizeMessageTimestamps rewrites legacy message timestamps into a single
+// canonical UTC text format. Early builds stored live (server-time) messages in UTC
+// but join/quit/echo rows in local wall-clock, leaving messages.timestamp with mixed
+// offsets ("...+00:00" / "...-07:00" / "...-08:00"). SQLite has no native datetime
+// type and compares the column as text, so mixed offsets break `ORDER BY timestamp`
+// and the `WHERE timestamp < ?` scrollback cursor (GetMessagesBeforeTime), stalling
+// scroll-to-top with older messages unreachable. The write path now forces UTC
+// (normalizeForStore); this backfills existing rows.
+//
+// It is idempotent and cheap on a healthy database: rows already ending in "+00:00"
+// are skipped, so once converted the gating count is zero and it returns immediately.
+// strftime translates any offset to UTC; rows it can't parse are left untouched
+// rather than nulled (the column is NOT NULL), so a stray legacy format degrades to
+// "not improved" instead of failing startup.
+func migrateNormalizeMessageTimestamps(db *sqlx.DB) error {
+	var pending int
+	err := db.Get(&pending, "SELECT COUNT(*) FROM messages WHERE timestamp NOT LIKE '%+00:00'")
+	if err != nil {
+		// A brand-new database may not have the messages table yet; nothing to do.
+		if strings.Contains(err.Error(), "no such table") {
+			return nil
+		}
+		return fmt.Errorf("failed to count non-UTC timestamps: %w", err)
+	}
+	if pending == 0 {
+		return nil
+	}
+
+	// Single statement = single implicit transaction. strftime converts the stored
+	// offset to UTC; the IS NOT NULL guard skips any row it cannot parse.
+	if _, err := db.Exec(`
+		UPDATE messages
+		SET timestamp = strftime('%Y-%m-%d %H:%M:%f', timestamp) || '+00:00'
+		WHERE timestamp NOT LIKE '%+00:00'
+		  AND strftime('%Y-%m-%d %H:%M:%f', timestamp) IS NOT NULL`); err != nil {
+		return fmt.Errorf("failed to normalize message timestamps to UTC: %w", err)
+	}
+
 	return nil
 }
 
