@@ -244,6 +244,15 @@ func (a *App) GetMessagesAfter(networkID int64, channelID *int64, afterID int64,
 	return a.storage.GetMessagesAfter(networkID, channelID, afterID, limit)
 }
 
+// GetMessagesBeforeTime retrieves up to `limit` messages older than `before` (by
+// server-time), chronological order. Unlike GetMessagesBefore (id-keyed), this
+// surfaces CHATHISTORY-backfilled rows (high id, old timestamp). A non-empty
+// pmTarget selects a PM conversation; otherwise channelID selects a channel
+// (nil = status pane). Used for unified local + server scrollback pagination.
+func (a *App) GetMessagesBeforeTime(networkID int64, channelID *int64, pmTarget string, before time.Time, limit int) ([]storage.Message, error) {
+	return a.storage.GetMessagesBeforeTime(networkID, channelID, pmTarget, before, limit)
+}
+
 // GetPrivateMessages retrieves private messages for a network and user
 func (a *App) GetPrivateMessages(networkID int64, targetUser string, limit int) ([]storage.Message, error) {
 	network, err := a.storage.GetNetwork(networkID)

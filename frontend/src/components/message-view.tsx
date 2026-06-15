@@ -229,6 +229,7 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
   const newSinceAnchor = useNetworkStore((s) => s.newSinceAnchor);
   const loadOlderMessages = useNetworkStore((s) => s.loadOlderMessages);
   const loadNewerMessages = useNetworkStore((s) => s.loadNewerMessages);
+  const loadingHistory = useNetworkStore((s) => s.loadingHistory);
 
   // Pagination state (refs so they don't trigger re-renders).
   const loadingOlderRef = useRef(false);
@@ -471,6 +472,18 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
 
   return (
     <div className="relative h-full">
+    {/* Top-of-list spinner while server-side history (CHATHISTORY) is loading.
+        Absolutely positioned so it overlays without changing scrollHeight, which
+        would otherwise break the scroll-preservation math on prepend. */}
+    {loadingHistory && (
+      <div
+        className="absolute top-2 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2 rounded-full bg-muted/90 px-3 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur"
+        data-testid="history-loading"
+      >
+        <span className="h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+        Loading older messages…
+      </div>
+    )}
     <div
       ref={scrollContainerRef}
       className="h-full overflow-y-auto p-4 space-y-1"

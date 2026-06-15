@@ -12,7 +12,7 @@ import (
 )
 
 const getMessagesAfterWithChannel = `-- name: GetMessagesAfterWithChannel :many
-SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target FROM messages
+SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, msgid FROM messages
 WHERE network_id = ? AND channel_id = ? AND id > ?
 ORDER BY id ASC
 LIMIT ?
@@ -49,6 +49,7 @@ func (q *Queries) GetMessagesAfterWithChannel(ctx context.Context, arg GetMessag
 			&i.Timestamp,
 			&i.RawLine,
 			&i.PmTarget,
+			&i.Msgid,
 		); err != nil {
 			return nil, err
 		}
@@ -64,7 +65,7 @@ func (q *Queries) GetMessagesAfterWithChannel(ctx context.Context, arg GetMessag
 }
 
 const getMessagesAfterWithoutChannel = `-- name: GetMessagesAfterWithoutChannel :many
-SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target FROM messages
+SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, msgid FROM messages
 WHERE network_id = ? AND channel_id IS NULL AND pm_target IS NULL AND id > ?
 ORDER BY id ASC
 LIMIT ?
@@ -95,6 +96,167 @@ func (q *Queries) GetMessagesAfterWithoutChannel(ctx context.Context, arg GetMes
 			&i.Timestamp,
 			&i.RawLine,
 			&i.PmTarget,
+			&i.Msgid,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getMessagesBeforeTimePM = `-- name: GetMessagesBeforeTimePM :many
+SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, msgid FROM messages
+WHERE network_id = ? AND channel_id IS NULL
+  AND message_type IN ('privmsg', 'action', 'notice')
+  AND LOWER(pm_target) = ? AND timestamp < ?
+ORDER BY timestamp DESC, id DESC
+LIMIT ?
+`
+
+type GetMessagesBeforeTimePMParams struct {
+	NetworkID int64          `json:"network_id"`
+	PmTarget  sql.NullString `json:"pm_target"`
+	Timestamp time.Time      `json:"timestamp"`
+	Limit     int64          `json:"limit"`
+}
+
+func (q *Queries) GetMessagesBeforeTimePM(ctx context.Context, arg GetMessagesBeforeTimePMParams) ([]Message, error) {
+	rows, err := q.db.QueryContext(ctx, getMessagesBeforeTimePM,
+		arg.NetworkID,
+		arg.PmTarget,
+		arg.Timestamp,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Message
+	for rows.Next() {
+		var i Message
+		if err := rows.Scan(
+			&i.ID,
+			&i.NetworkID,
+			&i.ChannelID,
+			&i.User,
+			&i.Message,
+			&i.MessageType,
+			&i.Timestamp,
+			&i.RawLine,
+			&i.PmTarget,
+			&i.Msgid,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getMessagesBeforeTimeWithChannel = `-- name: GetMessagesBeforeTimeWithChannel :many
+
+SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, msgid FROM messages
+WHERE network_id = ? AND channel_id = ? AND timestamp < ?
+ORDER BY timestamp DESC, id DESC
+LIMIT ?
+`
+
+type GetMessagesBeforeTimeWithChannelParams struct {
+	NetworkID int64         `json:"network_id"`
+	ChannelID sql.NullInt64 `json:"channel_id"`
+	Timestamp time.Time     `json:"timestamp"`
+	Limit     int64         `json:"limit"`
+}
+
+// Timestamp-keyed "before" pagination. Unlike the id-keyed variants above, these
+// correctly include CHATHISTORY-backfilled rows, which are inserted now (high id)
+// but carry old server-time timestamps. The id tiebreaker keeps ordering stable
+// for rows sharing a timestamp.
+func (q *Queries) GetMessagesBeforeTimeWithChannel(ctx context.Context, arg GetMessagesBeforeTimeWithChannelParams) ([]Message, error) {
+	rows, err := q.db.QueryContext(ctx, getMessagesBeforeTimeWithChannel,
+		arg.NetworkID,
+		arg.ChannelID,
+		arg.Timestamp,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Message
+	for rows.Next() {
+		var i Message
+		if err := rows.Scan(
+			&i.ID,
+			&i.NetworkID,
+			&i.ChannelID,
+			&i.User,
+			&i.Message,
+			&i.MessageType,
+			&i.Timestamp,
+			&i.RawLine,
+			&i.PmTarget,
+			&i.Msgid,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getMessagesBeforeTimeWithoutChannel = `-- name: GetMessagesBeforeTimeWithoutChannel :many
+SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, msgid FROM messages
+WHERE network_id = ? AND channel_id IS NULL AND pm_target IS NULL AND timestamp < ?
+ORDER BY timestamp DESC, id DESC
+LIMIT ?
+`
+
+type GetMessagesBeforeTimeWithoutChannelParams struct {
+	NetworkID int64     `json:"network_id"`
+	Timestamp time.Time `json:"timestamp"`
+	Limit     int64     `json:"limit"`
+}
+
+func (q *Queries) GetMessagesBeforeTimeWithoutChannel(ctx context.Context, arg GetMessagesBeforeTimeWithoutChannelParams) ([]Message, error) {
+	rows, err := q.db.QueryContext(ctx, getMessagesBeforeTimeWithoutChannel, arg.NetworkID, arg.Timestamp, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Message
+	for rows.Next() {
+		var i Message
+		if err := rows.Scan(
+			&i.ID,
+			&i.NetworkID,
+			&i.ChannelID,
+			&i.User,
+			&i.Message,
+			&i.MessageType,
+			&i.Timestamp,
+			&i.RawLine,
+			&i.PmTarget,
+			&i.Msgid,
 		); err != nil {
 			return nil, err
 		}
@@ -110,7 +272,7 @@ func (q *Queries) GetMessagesAfterWithoutChannel(ctx context.Context, arg GetMes
 }
 
 const getMessagesBeforeWithChannel = `-- name: GetMessagesBeforeWithChannel :many
-SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target FROM messages
+SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, msgid FROM messages
 WHERE network_id = ? AND channel_id = ? AND id <= ?
 ORDER BY id DESC
 LIMIT ?
@@ -147,6 +309,7 @@ func (q *Queries) GetMessagesBeforeWithChannel(ctx context.Context, arg GetMessa
 			&i.Timestamp,
 			&i.RawLine,
 			&i.PmTarget,
+			&i.Msgid,
 		); err != nil {
 			return nil, err
 		}
@@ -162,7 +325,7 @@ func (q *Queries) GetMessagesBeforeWithChannel(ctx context.Context, arg GetMessa
 }
 
 const getMessagesBeforeWithoutChannel = `-- name: GetMessagesBeforeWithoutChannel :many
-SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target FROM messages
+SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, msgid FROM messages
 WHERE network_id = ? AND channel_id IS NULL AND pm_target IS NULL AND id <= ?
 ORDER BY id DESC
 LIMIT ?
@@ -193,6 +356,7 @@ func (q *Queries) GetMessagesBeforeWithoutChannel(ctx context.Context, arg GetMe
 			&i.Timestamp,
 			&i.RawLine,
 			&i.PmTarget,
+			&i.Msgid,
 		); err != nil {
 			return nil, err
 		}

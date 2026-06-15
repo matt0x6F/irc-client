@@ -22,6 +22,35 @@ func (a *App) SendMessage(networkID int64, target, message string) error {
 	return client.SendMessage(target, message)
 }
 
+// RequestChatHistoryLatest asks the server to replay the most recent `limit`
+// messages for target (channel name or PM nick). Used for on-open catch-up of a
+// PM/query pane (channel catch-up fires automatically on JOIN). Replays are stored
+// and deduped by msgid; the frontend learns of them via the "history-event".
+func (a *App) RequestChatHistoryLatest(networkID int64, target string, limit int) error {
+	a.mu.RLock()
+	client, exists := a.ircClients[networkID]
+	a.mu.RUnlock()
+
+	if !exists {
+		return fmt.Errorf("network not connected")
+	}
+	return client.RequestChatHistoryLatest(target, limit)
+}
+
+// RequestChatHistoryBefore asks the server to replay up to `limit` messages older
+// than beforeISO (an ISO8601 timestamp) for target. Used by scroll-to-top deep
+// backscroll once the local store is exhausted.
+func (a *App) RequestChatHistoryBefore(networkID int64, target, beforeISO string, limit int) error {
+	a.mu.RLock()
+	client, exists := a.ircClients[networkID]
+	a.mu.RUnlock()
+
+	if !exists {
+		return fmt.Errorf("network not connected")
+	}
+	return client.RequestChatHistoryBefore(target, beforeISO, limit)
+}
+
 // SendCommand sends a command from any channel or status window
 // Supports commands like /join #channel, /msg user message, or raw IRC commands
 func (a *App) SendCommand(networkID int64, command string) error {

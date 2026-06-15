@@ -8,10 +8,12 @@ import {
   DeleteNetwork,
   GetMessages,
   GetMessagesAround,
-  GetMessagesBefore,
   GetMessagesAfter,
+  GetMessagesBeforeTime,
   GetPrivateMessages,
   GetChannelIDByName,
+  RequestChatHistoryBefore,
+  RequestChatHistoryLatest,
   GetChannelInfo,
   GetOpenChannels,
   GetLastOpenPane,
@@ -36,6 +38,36 @@ const SCROLLBACK_PAGE = 100;
 // Optimistic (just-sent) messages use Date.now() as a placeholder id until the
 // real DB row loads. Never paginate past one — its id isn't a real row boundary.
 const OPTIMISTIC_ID_THRESHOLD = 1_000_000_000_000;
+
+// Give up waiting for a CHATHISTORY reply after this long, so a silent/unsupported
+// server can't wedge scrollback pagination (loadOlderMessages would never resolve).
+const HISTORY_REQUEST_TIMEOUT_MS = 8000;
+
+// A scroll-driven CHATHISTORY request in flight. loadOlderMessages parks its
+// resolver here when the local store is exhausted; the history-event handler
+// (onHistoryReceived) re-queries the now-backfilled store, prepends the rows, and
+// resolves with how many were added — so the message-view's existing scroll-
+// preservation path works identically for local and server-fetched history.
+// Module-level (not store state) to avoid re-renders on every transition.
+let pendingHistoryWaiter:
+  | { key: string; resolve: (added: number) => void; timer: ReturnType<typeof setTimeout> }
+  | null = null;
+
+function clearHistoryWaiter(): void {
+  if (pendingHistoryWaiter) {
+    clearTimeout(pendingHistoryWaiter.timer);
+    pendingHistoryWaiter = null;
+  }
+}
+
+// Resolve the CHATHISTORY target for a buffer: a channel name (#foo), a PM nick,
+// or null for panes that have no server-side history (status). Returns the IRC
+// target plus the local-query routing (channelId for channels, pmTarget for PMs).
+function historyTargetFor(channel: string | null): { target: string; isPM: boolean } | null {
+  if (!channel || channel === 'status') return null;
+  if (channel.startsWith('pm:')) return { target: channel.substring(3), isPM: true };
+  return { target: channel, isPM: false };
+}
 
 // Does a (null-channel) message belong to the private-message conversation with `user`?
 // Mirrors the backend GetPrivateMessages matching, which keys PM rows by pm_target
@@ -73,6 +105,10 @@ interface NetworkState {
   anchoredMessageId: number | null; // message id to scroll to + flash
   newSinceAnchor: number; // count of messages that arrived while anchored
 
+  // CHATHISTORY scrollback
+  loadingHistory: boolean; // a server history fetch is in flight (drives the top spinner)
+  reachedStart: boolean; // the server reported no more history for the current buffer
+
   // Selection
   selectedNetwork: number | null;
   selectedChannel: string | null;
@@ -82,6 +118,7 @@ interface NetworkState {
   loadMessages: () => Promise<void>;
   loadOlderMessages: () => Promise<number>;
   loadNewerMessages: () => Promise<number>;
+  onHistoryReceived: (target: string, inserted: number) => boolean;
   loadChannelInfo: () => Promise<void>;
   loadConnectionStatus: (networkId?: number) => Promise<void>;
 
@@ -129,6 +166,8 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
   viewMode: 'live',
   anchoredMessageId: null,
   newSinceAnchor: 0,
+  loadingHistory: false,
+  reachedStart: false,
   selectedNetwork: null,
   selectedChannel: null,
 
@@ -208,39 +247,146 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
     const { selectedNetwork, selectedChannel, messages } = get();
     if (selectedNetwork === null || messages.length === 0) return 0;
 
-    // PM panes are conversation-filtered, not id-window paginated — skip for now.
-    if (selectedChannel && selectedChannel.startsWith('pm:')) return 0;
-
     const oldest = messages[0];
     // Don't paginate past an optimistic (not-yet-persisted) placeholder row.
     if (!oldest || oldest.id >= OPTIMISTIC_ID_THRESHOLD) return 0;
 
+    const hist = historyTargetFor(selectedChannel);
+
     try {
+      // Local-query routing: pmTarget for PMs, channelId for channels (status = both nil).
       let channelId: number | null = null;
-      if (selectedChannel && selectedChannel !== 'status') {
+      let pmTarget = '';
+      if (hist?.isPM) {
+        pmTarget = hist.target;
+      } else if (selectedChannel && selectedChannel !== 'status') {
         channelId = (await GetChannelIDByName(selectedNetwork, selectedChannel)) as number;
       }
-      const older =
-        (await GetMessagesBefore(selectedNetwork, channelId, oldest.id, SCROLLBACK_PAGE)) || [];
-      if (older.length === 0) return 0;
 
-      // Defensive dedupe (the query is already exclusive of the boundary id).
+      // Page by the oldest loaded message's server-time timestamp (not id) so that
+      // CHATHISTORY-backfilled rows (high id, old timestamp) are included.
+      const beforeISO = new Date(oldest.timestamp).toISOString();
+      const older =
+        (await GetMessagesBeforeTime(
+          selectedNetwork,
+          channelId,
+          pmTarget,
+          beforeISO,
+          SCROLLBACK_PAGE
+        )) || [];
+
       const seen = new Set(get().messages.map((m) => m.id));
       const fresh = older.filter((m) => !seen.has(m.id));
-      if (fresh.length === 0) return 0;
 
-      // Prepend history and enter 'anchored' mode so the live poll (which reloads
-      // the latest 100) can't discard the older messages we just loaded. The
-      // existing scroll-to-bottom badge returns the user to live.
-      set((state) => ({
-        messages: [...fresh, ...state.messages],
-        viewMode: 'anchored',
-      }));
-      return fresh.length;
+      if (fresh.length > 0) {
+        // Prepend history and enter 'anchored' mode so the live poll (which reloads
+        // the latest 100) can't discard the older messages we just loaded. The
+        // existing scroll-to-bottom badge returns the user to live.
+        set((state) => ({
+          messages: sortByTimestamp([...fresh, ...state.messages]),
+          viewMode: 'anchored',
+        }));
+        return fresh.length;
+      }
+
+      // Local store exhausted. If the server supports CHATHISTORY and we haven't
+      // already reached the start, request older history and resolve once the
+      // replay lands (onHistoryReceived re-queries + prepends + resolves). Status
+      // panes (hist === null) have no server-side history.
+      if (hist && !get().reachedStart && !get().loadingHistory) {
+        return await new Promise<number>((resolve) => {
+          clearHistoryWaiter();
+          const key = `${selectedNetwork}:${selectedChannel}`;
+          const timer = setTimeout(() => {
+            // No reply in time: drop the spinner but don't mark reachedStart (the
+            // server may just be slow) — a later scroll-to-top retries.
+            if (pendingHistoryWaiter && pendingHistoryWaiter.key === key) {
+              pendingHistoryWaiter = null;
+              set({ loadingHistory: false });
+              resolve(0);
+            }
+          }, HISTORY_REQUEST_TIMEOUT_MS);
+          pendingHistoryWaiter = { key, resolve, timer };
+          set({ loadingHistory: true });
+          RequestChatHistoryBefore(selectedNetwork, hist.target, beforeISO, SCROLLBACK_PAGE).catch(
+            (err) => {
+              console.error('CHATHISTORY BEFORE request failed:', err);
+              if (pendingHistoryWaiter && pendingHistoryWaiter.key === key) {
+                clearHistoryWaiter();
+                set({ loadingHistory: false, reachedStart: true });
+                resolve(0);
+              }
+            }
+          );
+        });
+      }
+
+      return 0;
     } catch (error) {
       console.error('Failed to load older messages:', error);
       return 0;
     }
+  },
+
+  // Called by the App-level history-event subscription when a CHATHISTORY replay
+  // for `target` has been stored (`inserted` = new rows). If a scroll-driven
+  // request is parked for the active buffer, re-query the now-backfilled local
+  // store, prepend the older rows, and resolve loadOlderMessages()'s promise with
+  // the count — so the message-view preserves the viewport just like a local page.
+  onHistoryReceived: (target, inserted) => {
+    const waiter = pendingHistoryWaiter;
+    if (!waiter) return false;
+
+    const { selectedNetwork, selectedChannel } = get();
+    if (selectedNetwork === null) return false;
+    const hist = historyTargetFor(selectedChannel);
+    if (!hist || waiter.key !== `${selectedNetwork}:${selectedChannel}`) return false;
+    if (target && hist.target.toLowerCase() !== target.toLowerCase()) return false;
+
+    clearHistoryWaiter();
+
+    (async () => {
+      let added = 0;
+      try {
+        const { messages } = get();
+        const oldest = messages[0];
+        if (oldest && oldest.id < OPTIMISTIC_ID_THRESHOLD) {
+          let channelId: number | null = null;
+          let pmTarget = '';
+          if (hist.isPM) {
+            pmTarget = hist.target;
+          } else {
+            channelId = (await GetChannelIDByName(selectedNetwork, selectedChannel!)) as number;
+          }
+          const beforeISO = new Date(oldest.timestamp).toISOString();
+          const older =
+            (await GetMessagesBeforeTime(
+              selectedNetwork,
+              channelId,
+              pmTarget,
+              beforeISO,
+              SCROLLBACK_PAGE
+            )) || [];
+          const seen = new Set(get().messages.map((m) => m.id));
+          const fresh = older.filter((m) => !seen.has(m.id));
+          if (fresh.length > 0) {
+            set((state) => ({
+              messages: sortByTimestamp([...fresh, ...state.messages]),
+              viewMode: 'anchored',
+            }));
+            added = fresh.length;
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load backfilled history:', err);
+      } finally {
+        // inserted===0 means the server has no more history before our cursor.
+        set({ loadingHistory: false, reachedStart: inserted === 0 });
+        waiter.resolve(added);
+      }
+    })();
+
+    return true;
   },
 
   loadNewerMessages: async (): Promise<number> => {
@@ -424,19 +570,40 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
     set((state) => ({ newSinceAnchor: state.newSinceAnchor + 1 })),
 
   setSelectedNetwork: (id) => set({ selectedNetwork: id }),
-  setSelectedChannel: (channel) => set({ selectedChannel: channel }),
+  setSelectedChannel: (channel) => {
+    // Channel changes invalidate any in-flight scrollback history request and
+    // reset CHATHISTORY pagination state for the new buffer.
+    clearHistoryWaiter();
+    set({ selectedChannel: channel, loadingHistory: false, reachedStart: false });
+  },
 
   selectPane: async (networkId, channel) => {
     const prev = get();
 
-    // Switching panes always returns to the live view and clears any anchor.
+    // A pending scrollback history request belongs to the pane we're leaving.
+    clearHistoryWaiter();
+
+    // Switching panes always returns to the live view and clears any anchor, and
+    // resets CHATHISTORY pagination state for the freshly-selected buffer.
     set({
       selectedNetwork: networkId,
       selectedChannel: channel,
       viewMode: 'live',
       anchoredMessageId: null,
       newSinceAnchor: 0,
+      loadingHistory: false,
+      reachedStart: false,
     });
+
+    // PM/query panes aren't "joined", so the backend's on-JOIN catch-up doesn't
+    // cover them — request recent history when opening one. Channels are covered
+    // server-side on JOIN. No-op if the server lacks CHATHISTORY; replays dedupe
+    // by msgid so re-opening a pane won't duplicate messages.
+    if (channel && channel.startsWith('pm:')) {
+      RequestChatHistoryLatest(networkId, channel.substring(3), SCROLLBACK_PAGE).catch(() => {
+        /* server may not support chathistory; ignore */
+      });
+    }
 
     // Clear activity for selected channel
     if (channel && channel !== 'status') {

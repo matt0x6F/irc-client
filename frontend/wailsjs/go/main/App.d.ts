@@ -38,6 +38,8 @@ export function GetMessagesAround(arg1:number,arg2:any,arg3:number,arg4:number):
 
 export function GetMessagesBefore(arg1:number,arg2:any,arg3:number,arg4:number):Promise<Array<storage.Message>>;
 
+export function GetMessagesBeforeTime(arg1:number,arg2:any,arg3:string,arg4:any,arg5:number):Promise<Array<storage.Message>>;
+
 export function GetNetworks():Promise<Array<storage.Network>>;
 
 export function GetNicknameColor(arg1:number,arg2:string):Promise<string>;
@@ -87,6 +89,10 @@ export function RequestChannelList(arg1:number):Promise<void>;
 export function SaveNetwork(arg1:main.NetworkConfig):Promise<void>;
 
 export function SearchMessages(arg1:string,arg2:any,arg3:number):Promise<Array<storage.SearchResult>>;
+
+export function RequestChatHistoryBefore(arg1:number,arg2:string,arg3:string,arg4:number):Promise<void>;
+
+export function RequestChatHistoryLatest(arg1:number,arg2:string,arg3:number):Promise<void>;
 
 export function SendCommand(arg1:number,arg2:string):Promise<void>;
 

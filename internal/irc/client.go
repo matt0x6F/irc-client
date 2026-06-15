@@ -3,6 +3,7 @@ package irc
 import (
 	"encoding/base64"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -16,8 +17,12 @@ import (
 	"github.com/matt0x6f/irc-client/internal/validation"
 )
 
-// requestedCaps is the list of IRCv3 capabilities this client wants to negotiate.
-var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags"}
+// requestedCaps lists the IRCv3 capabilities this client wants. We list both the
+// ratified "chathistory" and the older "draft/chathistory" names; the contains()
+// filter only requests whichever the server actually advertises. "batch" is
+// required for CHATHISTORY (replays arrive wrapped in a BATCH that the underlying
+// ergochat/irc-go library collects for us).
+var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory"}
 
 // IRCClient manages IRC connections
 type IRCClient struct {
@@ -44,6 +49,7 @@ type IRCClient struct {
 	whoisInProgress     map[string]*WhoisInfo // Track WHOIS requests in progress (key: nickname)
 	whoisMu             sync.Mutex            // Mutex for whoisInProgress map
 	enabledCaps         map[string]bool       // IRCv3 capabilities granted by the server
+	chatHistoryMaxBatch int                   // Max messages per CHATHISTORY request, from the chathistory=N cap value (0 = unknown, use default)
 	capNegotiationDone  bool                  // Whether CAP negotiation has finished
 	channelListItems    []ChannelListItem     // Temporary storage for LIST response
 	channelListMu       sync.Mutex            // Mutex for channelListItems
@@ -442,6 +448,7 @@ func (c *IRCClient) setupHandlers() {
 						Timestamp:   c.getMessageTime(e),
 						RawLine:     rawLine,
 						PMTarget:    pmTarget,
+						MsgID:       c.getMsgID(e),
 					}
 					c.storage.WriteMessageSync(msg)
 				} else {
@@ -501,6 +508,7 @@ func (c *IRCClient) setupHandlers() {
 			Timestamp:   c.getMessageTime(e),
 			RawLine:     rawLine,
 			PMTarget:    pmTarget,
+			MsgID:       c.getMsgID(e),
 		}
 
 		// Store message (use sync write so it appears immediately)
@@ -598,6 +606,16 @@ func (c *IRCClient) setupHandlers() {
 				logger.Log.Error().Err(err).Str("channel", channel).Msg("Failed to send NAMES command")
 			} else {
 				logger.Log.Debug().Str("channel", channel).Msg("NAMES command sent successfully")
+			}
+
+			// Catch-up: pull recent server-side history for the channel so anything
+			// said while we were away is backfilled. No-op when the server didn't
+			// grant CHATHISTORY. Replays arrive via handleChatHistoryBatch and are
+			// deduped by msgid, so re-joining a channel won't duplicate messages.
+			if c.chatHistoryEnabled() {
+				if err := c.RequestChatHistoryLatest(channel, defaultChatHistoryLimit); err != nil {
+					logger.Log.Debug().Err(err).Str("channel", channel).Msg("CHATHISTORY LATEST request skipped")
+				}
 			}
 		}
 
@@ -1421,6 +1439,12 @@ func (c *IRCClient) setupHandlers() {
 	// Also handle CTCP responses (CTCP replies come as NOTICE)
 	c.conn.AddCallback("NOTICE", c.handleNotice)
 
+	// CHATHISTORY replays arrive wrapped in a BATCH. The library buffers the whole
+	// group and hands it to batch callbacks; handleChatHistoryBatch claims the
+	// "chathistory" batches (bulk dedup-insert + a single history event) and lets
+	// every other batch type fall through to the library's default dispatch.
+	c.conn.AddBatchCallback(c.handleChatHistoryBatch)
+
 	// Numeric replies (like RPL_WELCOME, etc.) - store important ones in status
 	c.conn.AddCallback("001", func(e ircmsg.Message) {
 		// RPL_WELCOME
@@ -1739,6 +1763,15 @@ func (c *IRCClient) setupHandlers() {
 					allCaps := capLSBuffer.String()
 					capLSBuffer.Reset()
 
+					// Record the advertised CHATHISTORY batch limit (chathistory=N /
+					// draft/chathistory=N) so requests can be clamped to it. Prefer the
+					// ratified name's value if both are present.
+					if v, ok := capValue(allCaps, "chathistory"); ok {
+						c.setChatHistoryMax(v)
+					} else if v, ok := capValue(allCaps, "draft/chathistory"); ok {
+						c.setChatHistoryMax(v)
+					}
+
 					c.storage.WriteMessage(storage.Message{
 						NetworkID:   c.networkID,
 						ChannelID:   nil,
@@ -2047,6 +2080,212 @@ func (c *IRCClient) sourceIsUser(source string) bool {
 	return !strings.Contains(source, ".") // bare nick (no dot) vs dotted server name
 }
 
+// ---- IRCv3 CHATHISTORY ----
+
+// defaultChatHistoryLimit is the per-request message count used when the server
+// doesn't advertise a chathistory=N maximum.
+const defaultChatHistoryLimit = 100
+
+// setChatHistoryMax records the advertised chathistory cap value (e.g. "50").
+// A missing/zero/invalid value leaves the limit unset (0 = unknown, use default).
+func (c *IRCClient) setChatHistoryMax(value string) {
+	n, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || n <= 0 {
+		return
+	}
+	c.mu.Lock()
+	c.chatHistoryMaxBatch = n
+	c.mu.Unlock()
+}
+
+// chatHistoryEnabled reports whether the server granted a CHATHISTORY capability
+// (ratified or draft name).
+func (c *IRCClient) chatHistoryEnabled() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.enabledCaps["chathistory"] || c.enabledCaps["draft/chathistory"]
+}
+
+// clampChatHistoryLimit bounds a requested count to the default (when unset) and
+// to the server-advertised maximum (when known).
+func (c *IRCClient) clampChatHistoryLimit(limit int) int {
+	if limit <= 0 {
+		limit = defaultChatHistoryLimit
+	}
+	c.mu.RLock()
+	max := c.chatHistoryMaxBatch
+	c.mu.RUnlock()
+	if max > 0 && limit > max {
+		limit = max
+	}
+	return limit
+}
+
+// getMsgID returns the IRCv3 @msgid tag, or "" if absent.
+func (c *IRCClient) getMsgID(e ircmsg.Message) string {
+	if present, v := e.GetTag("msgid"); present {
+		return v
+	}
+	return ""
+}
+
+// getHistoryTime extracts the @time server-time tag from a replayed message,
+// falling back to now. Unlike getMessageTime it doesn't gate on the server-time
+// cap: CHATHISTORY items always carry @time and we always want the original time.
+func (c *IRCClient) getHistoryTime(e ircmsg.Message) time.Time {
+	if present, timeTag := e.GetTag("time"); present && timeTag != "" {
+		if t, err := time.Parse(time.RFC3339Nano, timeTag); err == nil {
+			return t
+		}
+		if t, err := time.Parse("2006-01-02T15:04:05Z", timeTag); err == nil {
+			return t
+		}
+	}
+	return time.Now()
+}
+
+// RequestChatHistoryLatest asks the server for the most recent `limit` messages
+// for target (a channel name or nick). Used for on-join / on-open catch-up.
+func (c *IRCClient) RequestChatHistoryLatest(target string, limit int) error {
+	if !c.chatHistoryEnabled() {
+		return fmt.Errorf("server does not support chathistory")
+	}
+	if target == "" {
+		return fmt.Errorf("chathistory target required")
+	}
+	limit = c.clampChatHistoryLimit(limit)
+	return c.conn.SendRaw(fmt.Sprintf("CHATHISTORY LATEST %s * %d", target, limit))
+}
+
+// RequestChatHistoryBefore asks the server for up to `limit` messages older than
+// beforeISO (an ISO8601 timestamp, e.g. 2024-06-14T00:00:00.000Z) for target.
+// Used for scroll-to-top deep backscroll.
+func (c *IRCClient) RequestChatHistoryBefore(target, beforeISO string, limit int) error {
+	if !c.chatHistoryEnabled() {
+		return fmt.Errorf("server does not support chathistory")
+	}
+	if target == "" || beforeISO == "" {
+		return fmt.Errorf("chathistory target and timestamp required")
+	}
+	limit = c.clampChatHistoryLimit(limit)
+	return c.conn.SendRaw(fmt.Sprintf("CHATHISTORY BEFORE %s timestamp=%s %d", target, beforeISO, limit))
+}
+
+// handleChatHistoryBatch is registered via AddBatchCallback. The ergochat/irc-go
+// library collects each "BATCH +id chathistory <target> … -id" group and hands it
+// here as one *Batch (b.Items holds the replayed lines). Returning true "claims"
+// the batch so the library does NOT flatten it into per-message dispatch — that
+// would emit a live message event and re-run notification logic for every replayed
+// line. Non-chathistory batches return false, so the library keeps handling them
+// exactly as before this callback existed.
+func (c *IRCClient) handleChatHistoryBatch(b *ircevent.Batch) bool {
+	if b == nil {
+		return false
+	}
+	// BATCH start params: <+id> <type> [type-specific params…]. For chathistory the
+	// type is at Params[1] and the requested target at Params[2].
+	if len(b.Params) < 2 || b.Params[1] != "chathistory" {
+		return false
+	}
+	target := ""
+	if len(b.Params) >= 3 {
+		target = b.Params[2]
+	}
+
+	msgs := make([]storage.Message, 0, len(b.Items))
+	for _, item := range b.Items {
+		if item == nil {
+			continue
+		}
+		if msg, ok := c.buildHistoryMessage(item.Message); ok {
+			msgs = append(msgs, msg)
+		}
+	}
+
+	inserted := 0
+	if len(msgs) > 0 {
+		n, err := c.storage.WriteHistoryMessages(msgs)
+		if err != nil {
+			logger.Log.Error().Err(err).Str("target", target).Msg("Failed to store chathistory batch")
+		} else {
+			inserted = n
+		}
+	}
+
+	c.eventBus.Emit(events.Event{
+		Type: EventHistoryReceived,
+		Data: map[string]interface{}{
+			"network":   c.network.Address,
+			"networkId": c.networkID,
+			"target":    target,
+			"inserted":  inserted,
+			"returned":  len(msgs),
+		},
+		Timestamp: time.Now(),
+		Source:    events.EventSourceIRC,
+	})
+
+	return true
+}
+
+// buildHistoryMessage converts a single replayed PRIVMSG/NOTICE line from a
+// CHATHISTORY batch into a storage.Message, applying the same channel-vs-PM
+// routing as the live handlers. ok=false for lines we don't persist (malformed,
+// or non-ACTION CTCP).
+func (c *IRCClient) buildHistoryMessage(e ircmsg.Message) (storage.Message, bool) {
+	if len(e.Params) < 2 {
+		return storage.Message{}, false
+	}
+	target := e.Params[0]
+	text := e.Params[1]
+	user := e.Nick()
+
+	messageType := "privmsg"
+	switch e.Command {
+	case "PRIVMSG":
+		// CTCP ACTION -> action (stored like the live handler); other CTCP skipped.
+		if len(text) >= 2 && text[0] == '\001' && text[len(text)-1] == '\001' {
+			parts := strings.Fields(text[1 : len(text)-1])
+			if len(parts) > 0 && strings.ToUpper(parts[0]) == "ACTION" {
+				messageType = "action"
+				text = fmt.Sprintf("* %s %s", user, strings.Join(parts[1:], " "))
+			} else {
+				return storage.Message{}, false
+			}
+		}
+	case "NOTICE":
+		messageType = "notice"
+	default:
+		return storage.Message{}, false
+	}
+
+	var channelID *int64
+	var pmTarget string
+	if len(target) > 0 && (target[0] == '#' || target[0] == '&') {
+		if ch, err := c.storage.GetChannelByName(c.networkID, target); err == nil {
+			channelID = &ch.ID
+		}
+	} else {
+		pmTarget = c.pmPeer(user, target)
+		if _, err := c.storage.GetOrCreatePMConversation(c.networkID, pmTarget, c.network.Nickname); err != nil {
+			logger.Log.Error().Err(err).Str("pmTarget", pmTarget).Msg("Failed to create/get PM conversation for history")
+		}
+	}
+
+	rawLine, _ := e.Line()
+	return storage.Message{
+		NetworkID:   c.networkID,
+		ChannelID:   channelID,
+		User:        user,
+		Message:     text,
+		MessageType: messageType,
+		Timestamp:   c.getHistoryTime(e),
+		RawLine:     rawLine,
+		PMTarget:    pmTarget,
+		MsgID:       c.getMsgID(e),
+	}, true
+}
+
 func contains(capabilities, cap string) bool {
 	// Split by space and check each capability
 	// Capabilities can be in the form "cap" or "cap=value" or "cap=value1,value2"
@@ -2062,6 +2301,25 @@ func contains(capabilities, cap string) bool {
 		}
 	}
 	return false
+}
+
+// capValue returns the value advertised for a capability in a CAP LS list
+// (the part after "=", e.g. "draft/chathistory=50" -> "50"), and whether the
+// capability was present at all. An empty string with present=true means the
+// capability was advertised without a value.
+func capValue(capabilities, cap string) (value string, present bool) {
+	for _, c := range strings.Fields(capabilities) {
+		name := c
+		val := ""
+		if idx := strings.Index(c, "="); idx != -1 {
+			name = c[:idx]
+			val = c[idx+1:]
+		}
+		if name == cap {
+			return val, true
+		}
+	}
+	return "", false
 }
 
 // startSASLAuth initiates SASL authentication
@@ -2676,6 +2934,7 @@ func (c *IRCClient) handleNotice(e ircmsg.Message) {
 			Timestamp:   c.getMessageTime(e),
 			RawLine:     rawLine,
 			PMTarget:    pmTarget, // "" keeps it in Status; non-empty routes to a query pane
+			MsgID:       c.getMsgID(e),
 		}
 
 		if pmTarget == "" {

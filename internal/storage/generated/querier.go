@@ -31,6 +31,13 @@ type Querier interface {
 	GetLastOpenPM(ctx context.Context) (GetLastOpenPMRow, error)
 	GetMessagesAfterWithChannel(ctx context.Context, arg GetMessagesAfterWithChannelParams) ([]Message, error)
 	GetMessagesAfterWithoutChannel(ctx context.Context, arg GetMessagesAfterWithoutChannelParams) ([]Message, error)
+	GetMessagesBeforeTimePM(ctx context.Context, arg GetMessagesBeforeTimePMParams) ([]Message, error)
+	// Timestamp-keyed "before" pagination. Unlike the id-keyed variants above, these
+	// correctly include CHATHISTORY-backfilled rows, which are inserted now (high id)
+	// but carry old server-time timestamps. The id tiebreaker keeps ordering stable
+	// for rows sharing a timestamp.
+	GetMessagesBeforeTimeWithChannel(ctx context.Context, arg GetMessagesBeforeTimeWithChannelParams) ([]Message, error)
+	GetMessagesBeforeTimeWithoutChannel(ctx context.Context, arg GetMessagesBeforeTimeWithoutChannelParams) ([]Message, error)
 	GetMessagesBeforeWithChannel(ctx context.Context, arg GetMessagesBeforeWithChannelParams) ([]Message, error)
 	GetMessagesBeforeWithoutChannel(ctx context.Context, arg GetMessagesBeforeWithoutChannelParams) ([]Message, error)
 	GetMessagesWithChannel(ctx context.Context, arg GetMessagesWithChannelParams) ([]Message, error)

@@ -69,6 +69,7 @@ type Message struct {
 	Timestamp   time.Time `db:"timestamp" json:"timestamp"`
 	RawLine     string    `db:"raw_line" json:"raw_line"`   // Original IRC line
 	PMTarget    string    `db:"pm_target" json:"pm_target"` // Conversation peer for PMs ("" for channel/status/server rows)
+	MsgID       string    `db:"msgid" json:"msgid"`         // IRCv3 message id ("" for legacy/local rows); dedup key for CHATHISTORY
 }
 
 // PinnedMessage represents a message that has been pinned, with pin metadata

@@ -369,6 +369,33 @@ function App() {
     return () => unsubscribe();
   }, [selectedNetwork, selectedChannel, networks]);
 
+  // CHATHISTORY completion events. Resolves a parked scrollback request (prepending
+  // older rows while preserving the viewport); for on-join/on-open catch-up there's
+  // no parked request, so refresh the live view to surface the backfilled messages.
+  useEffect(() => {
+    const unsubscribe = EventsOn('history-event', (data: any) => {
+      const eventData = data?.data || {};
+      const target = (eventData.target as string) || '';
+      const inserted = (eventData.inserted as number) || 0;
+      const store = useNetworkStore.getState();
+
+      const handledScrollback = store.onHistoryReceived(target, inserted);
+      if (handledScrollback || inserted === 0) return;
+
+      // Live catch-up: if the backfilled target is the active buffer and we're not
+      // anchored, reload so the new history appears now rather than on the next poll.
+      if (store.viewMode !== 'live' || selectedNetwork === null) return;
+      const currentNetwork = networks.find((n) => n.id === selectedNetwork);
+      if (!currentNetwork || eventData.network !== currentNetwork.address) return;
+      const sel = store.selectedChannel;
+      const matches =
+        sel === target ||
+        (!!sel && sel.startsWith('pm:') && sel.substring(3).toLowerCase() === target.toLowerCase());
+      if (matches) store.loadMessages();
+    });
+    return () => unsubscribe();
+  }, [selectedNetwork, networks]);
+
   // Topic/mode change events
   useEffect(() => {
     const unsubscribe = EventsOn('message-event', (data: any) => {

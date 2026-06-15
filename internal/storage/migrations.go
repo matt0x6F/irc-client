@@ -80,6 +80,41 @@ func Migrate(db *sqlx.DB) error {
 		return fmt.Errorf("pm_target migration failed: %w", err)
 	}
 
+	// Handle msgid column migration (adds column + partial unique index for CHATHISTORY dedup)
+	if err := migrateMsgID(db); err != nil {
+		return fmt.Errorf("msgid migration failed: %w", err)
+	}
+
+	return nil
+}
+
+// migrateMsgID adds the nullable msgid column to the messages table (if missing)
+// and creates the partial unique index used to deduplicate CHATHISTORY replays by
+// IRCv3 message id. Legacy rows (msgid IS NULL) are exempt from the index, so they
+// never collide; only rows that carry a real msgid are deduplicated.
+func migrateMsgID(db *sqlx.DB) error {
+	var columnExists int
+	err := db.Get(&columnExists,
+		"SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name='msgid'")
+	if err != nil {
+		return fmt.Errorf("failed to check for msgid column: %w", err)
+	}
+
+	if columnExists == 0 {
+		if _, err := db.Exec("ALTER TABLE messages ADD COLUMN msgid TEXT"); err != nil {
+			// Ignore "duplicate column" errors
+			if !strings.Contains(err.Error(), "duplicate column") {
+				return fmt.Errorf("failed to add msgid column: %w", err)
+			}
+		}
+	}
+
+	// Create the partial unique index (idempotent via IF NOT EXISTS).
+	if _, err := db.Exec(
+		"CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_network_msgid ON messages(network_id, msgid) WHERE msgid IS NOT NULL"); err != nil {
+		return fmt.Errorf("failed to create msgid unique index: %w", err)
+	}
+
 	return nil
 }
 

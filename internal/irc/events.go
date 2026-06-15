@@ -24,6 +24,7 @@ const (
 	EventWhoisReceived         = "whois.received"
 	EventChannelListItem       = "channel.list.item"
 	EventChannelListEnd        = "channel.list.end"
+	EventHistoryReceived       = "history.received"
 )
 
 // BanEntry represents a single entry from a channel ban list (RPL_BANLIST 367)

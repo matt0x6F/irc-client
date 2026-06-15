@@ -45,3 +45,28 @@ SELECT * FROM messages
 WHERE network_id = ? AND channel_id IS NULL AND pm_target IS NULL AND id > ?
 ORDER BY id ASC
 LIMIT ?;
+
+-- Timestamp-keyed "before" pagination. Unlike the id-keyed variants above, these
+-- correctly include CHATHISTORY-backfilled rows, which are inserted now (high id)
+-- but carry old server-time timestamps. The id tiebreaker keeps ordering stable
+-- for rows sharing a timestamp.
+
+-- name: GetMessagesBeforeTimeWithChannel :many
+SELECT * FROM messages
+WHERE network_id = ? AND channel_id = ? AND timestamp < ?
+ORDER BY timestamp DESC, id DESC
+LIMIT ?;
+
+-- name: GetMessagesBeforeTimeWithoutChannel :many
+SELECT * FROM messages
+WHERE network_id = ? AND channel_id IS NULL AND pm_target IS NULL AND timestamp < ?
+ORDER BY timestamp DESC, id DESC
+LIMIT ?;
+
+-- name: GetMessagesBeforeTimePM :many
+SELECT * FROM messages
+WHERE network_id = ? AND channel_id IS NULL
+  AND message_type IN ('privmsg', 'action', 'notice')
+  AND LOWER(pm_target) = ? AND timestamp < ?
+ORDER BY timestamp DESC, id DESC
+LIMIT ?;
