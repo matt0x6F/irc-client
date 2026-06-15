@@ -4,6 +4,7 @@ import {EventsEmit} from '../wailsjs/runtime/runtime'
 import './style.css'
 import App from './App'
 import { initTheme } from './stores/theme'
+import { installExternalLinkHandler } from './lib/external-links'
 
 // Apply the persisted theme to <html> before first paint (no flash of wrong theme).
 initTheme()
@@ -41,6 +42,11 @@ window.addEventListener('unhandledrejection', (event) => {
     return
   }
 })
+
+// Open external links (message URLs, the About pane link) in the system
+// browser. In a Wails webview a bare <a> click would otherwise navigate the
+// app's own webview or silently do nothing.
+installExternalLinkHandler()
 
 // Track window focus/blur for desktop notification suppression
 window.addEventListener('focus', () => {
