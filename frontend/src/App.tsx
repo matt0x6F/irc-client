@@ -76,7 +76,13 @@ function App() {
 
   // Refs
   const hasRestoredPaneRef = useRef(false);
-  const pendingJoinChannelRef = useRef<{ networkId: number; channel: string } | null>(null);
+  // `fromChannel` records the pane the user was on when they issued /join, so the
+  // deferred auto-focus can yield if they navigate elsewhere before it fires.
+  const pendingJoinChannelRef = useRef<{
+    networkId: number;
+    channel: string;
+    fromChannel: string | null;
+  } | null>(null);
   const resizeStartX = useRef(0);
   const resizeStartWidth = useRef(0);
   const isResizingLeftRef = useRef(false);
@@ -323,8 +329,16 @@ function App() {
             if (norm(pending.channel) === norm(channel)) {
               const nId = networkObj.id;
               const chName = channel;
+              const fromNetwork = pending.networkId;
+              const fromChannel = pending.fromChannel;
               setTimeout(() => {
-                selectPane(nId, chName);
+                // Auto-focus the just-joined channel only if the user hasn't
+                // navigated away since issuing /join — a manual switch wins.
+                const { selectedNetwork: curNet, selectedChannel: curChan } =
+                  useNetworkStore.getState();
+                if (curNet === fromNetwork && curChan === fromChannel) {
+                  selectPane(nId, chName);
+                }
                 pendingJoinChannelRef.current = null;
               }, 300);
             }
@@ -410,7 +424,11 @@ function App() {
       const rest = trimmed.substring(5).trim();
       const parts = rest ? rest.split(/\s+/) : [];
       if (parts.length > 0 && (parts[0].startsWith('#') || parts[0].startsWith('&'))) {
-        pendingJoinChannelRef.current = { networkId: selectedNetwork, channel: parts[0] };
+        pendingJoinChannelRef.current = {
+          networkId: selectedNetwork,
+          channel: parts[0],
+          fromChannel: selectedChannel,
+        };
         setTimeout(() => {
           if (
             pendingJoinChannelRef.current &&
@@ -579,7 +597,10 @@ function App() {
                     !selectedChannel.startsWith('pm:') && (
                       <>
                         <span className="text-muted-foreground/50">/</span>
-                        <span className="text-muted-foreground font-medium">
+                        <span
+                          data-testid="active-channel-name"
+                          className="text-muted-foreground font-medium"
+                        >
                           {selectedChannel.startsWith('#') || selectedChannel.startsWith('&')
                             ? selectedChannel
                             : `#${selectedChannel}`}

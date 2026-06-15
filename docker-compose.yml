@@ -1,9 +1,13 @@
 services:
   ergo:
     image: ghcr.io/ergochat/ergo:stable
+    # The image entrypoint (run.sh) reads its config from /ircd/ircd.yaml and only
+    # generates a default there when the file is absent. Mounting our config to that
+    # path is what actually makes it take effect — the previous /etc/ergo mount was
+    # silently ignored, so the server ran on stock defaults (fakelag on, etc.). TLS
+    # certs are self-signed at startup by `ergo mkcerts`, so no certs mount is needed.
     volumes:
-      - ./docker/ergo/config/ircd.yaml:/etc/ergo/ircd.yaml:ro
-      - ./docker/ergo/certs:/etc/ergo/certs:ro
+      - ./docker/ergo/config/ircd.yaml:/ircd/ircd.yaml:ro
       - ergo_data:/var/lib/ergo
     ports:
       - "${ERGO_PORT:-6667}:6667/tcp"     # plaintext IRC
