@@ -16,6 +16,8 @@ export function DisconnectNetwork(arg1:number):Promise<void>;
 
 export function EnablePlugin(arg1:string):Promise<void>;
 
+export function GetCachedChannelList(arg1:number):Promise<main.ChannelListCacheResult>;
+
 export function GetChannelIDByName(arg1:number,arg2:string):Promise<any>;
 
 export function GetChannelInfo(arg1:number,arg2:string):Promise<main.ChannelInfo>;

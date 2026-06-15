@@ -26,6 +26,10 @@ export function EnablePlugin(arg1) {
   return window['go']['main']['App']['EnablePlugin'](arg1);
 }
 
+export function GetCachedChannelList(arg1) {
+  return window['go']['main']['App']['GetCachedChannelList'](arg1);
+}
+
 export function GetChannelIDByName(arg1, arg2) {
   return window['go']['main']['App']['GetChannelIDByName'](arg1, arg2);
 }
