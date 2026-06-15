@@ -26,39 +26,39 @@ var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tag
 
 // IRCClient manages IRC connections
 type IRCClient struct {
-	conn                *ircevent.Connection
-	eventBus            *events.EventBus
-	storage             *storage.Storage
-	networkID           int64
-	network             *storage.Network
-	mu                  sync.RWMutex
-	connected           bool
-	lastMessageTime     time.Time // Last time we received any message from server (including PING). Informational only — liveness is owned by the library pingLoop, not this field.
-	saslEnabled         bool
-	saslMechanism       string
-	saslUsername        string
-	saslPassword        string
-	saslInProgress      bool
-	saslAuthenticated   bool
-	saslCapRequested    bool
-	saslCapAcknowledged bool
-	scramState          *SCRAMState
-	namesInProgress     map[string]bool       // Track channels currently receiving NAMES list
-	namesMu             sync.Mutex            // Mutex for namesInProgress map
-	serverCapabilities  *ServerCapabilities   // Server capabilities from ISUPPORT
-	whoisInProgress     map[string]*WhoisInfo // Track WHOIS requests in progress (key: nickname)
-	whoisMu             sync.Mutex            // Mutex for whoisInProgress map
-	enabledCaps         map[string]bool       // IRCv3 capabilities granted by the server
-	chatHistoryMaxBatch int                   // Max messages per CHATHISTORY request, from the chathistory=N cap value (0 = unknown, use default)
-	capNegotiationDone  bool                  // Whether CAP negotiation has finished
-	channelListItems    []ChannelListItem     // Temporary storage for LIST response
-	channelListMu       sync.Mutex            // Mutex for channelListItems
-	banLists            map[string][]BanEntry // Per-channel ban entries collected between 367 and 368
-	banListsMu          sync.Mutex            // Mutex for banLists
-	rateLimiter         *RateLimiter          // Rate limiter for outgoing messages
-	desiredNick         string                // The original nickname the user wanted
-	nickAttempt         int                   // Current nick collision retry attempt (0 = first try with underscore)
-	reconnecting        bool                  // True when this connection is an auto-reconnect after an unexpected drop (guarded by mu)
+	conn                  *ircevent.Connection
+	eventBus              *events.EventBus
+	storage               *storage.Storage
+	networkID             int64
+	network               *storage.Network
+	mu                    sync.RWMutex
+	connected             bool
+	lastMessageTime       time.Time // Last time we received any message from server (including PING). Informational only — liveness is owned by the library pingLoop, not this field.
+	saslEnabled           bool
+	saslMechanism         string
+	saslUsername          string
+	saslPassword          string
+	saslInProgress        bool
+	saslAuthenticated     bool
+	saslCapRequested      bool
+	saslCapAcknowledged   bool
+	scramState            *SCRAMState
+	namesInProgress       map[string]bool       // Track channels currently receiving NAMES list
+	namesMu               sync.Mutex            // Mutex for namesInProgress map
+	serverCapabilities    *ServerCapabilities   // Server capabilities from ISUPPORT
+	whoisInProgress       map[string]*WhoisInfo // Track WHOIS requests in progress (key: nickname)
+	whoisMu               sync.Mutex            // Mutex for whoisInProgress map
+	enabledCaps           map[string]bool       // IRCv3 capabilities granted by the server
+	chatHistoryMaxBatch   int                   // Max messages per CHATHISTORY request, from the chathistory=N cap value (0 = unknown, use default)
+	capNegotiationDone    bool                  // Whether CAP negotiation has finished
+	channelListItems      []ChannelListItem     // Temporary storage for LIST response
+	channelListMu         sync.Mutex            // Mutex for channelListItems
+	banLists              map[string][]BanEntry // Per-channel ban entries collected between 367 and 368
+	banListsMu            sync.Mutex            // Mutex for banLists
+	rateLimiter           *RateLimiter          // Rate limiter for outgoing messages
+	currentNick           string                // Nick the server currently knows us by; differs from the preferred nick during a collision (guarded by mu)
+	nickCollisionNotified bool                  // True once we've told the user (one time) that the preferred nick was unavailable (guarded by mu)
+	reconnecting          bool                  // True when this connection is an auto-reconnect after an unexpected drop (guarded by mu)
 }
 
 // ServerCapabilities stores parsed ISUPPORT information
@@ -162,6 +162,161 @@ func (c *IRCClient) IsConnected() bool {
 // to IsConnected (both are pure reads of the connection flag).
 func (c *IRCClient) IsConnectedDirect() bool {
 	return c.IsConnected()
+}
+
+// preferredNick is the nick the user configured and wants to hold. It matches
+// the library's PreferredNick (conn.Nick is initialized from it) and is the one
+// the library re-requests every keepalive while we're on an alternative.
+func (c *IRCClient) preferredNick() string {
+	return c.network.Nickname
+}
+
+// CurrentNick returns the nick the server currently knows us by, which can
+// differ from the preferred nick while a collision is being resolved. Falls
+// back to the preferred nick before registration has assigned one.
+func (c *IRCClient) CurrentNick() string {
+	c.mu.RLock()
+	nick := c.currentNick
+	c.mu.RUnlock()
+	if nick == "" {
+		return c.preferredNick()
+	}
+	return nick
+}
+
+// emitNickChanged notifies subscribers that our own nick changed, carrying both
+// the new nick and the preferred nick so the UI can flag a pending reclaim.
+func (c *IRCClient) emitNickChanged(nick string) {
+	preferred := c.preferredNick()
+	c.eventBus.Emit(events.Event{
+		Type: EventNickChanged,
+		Data: map[string]interface{}{
+			"network":     c.network.Address,
+			"networkId":   c.networkID,
+			"nick":        nick,
+			"desired":     preferred,
+			"isPreferred": nick == preferred,
+		},
+		Timestamp: time.Now(),
+		Source:    events.EventSourceIRC,
+	})
+}
+
+// handleNickInUse handles ERR_NICKNAMEINUSE (433). The library owns nick
+// selection: before registration it cycles through alternatives on its own, and
+// after registration its keepalive loop periodically re-requests the preferred
+// nick (yielding a 433 each time it's still held). We therefore send no NICK of
+// our own and surface only a single, one-time notice while still unregistered —
+// the post-registration reclaim attempts stay silent so the log isn't spammed
+// every keepalive interval.
+func (c *IRCClient) handleNickInUse(_ ircmsg.Message) {
+	c.mu.Lock()
+	registered := c.currentNick != ""
+	alreadyNotified := c.nickCollisionNotified
+	if !registered {
+		c.nickCollisionNotified = true
+	}
+	c.mu.Unlock()
+
+	if registered || alreadyNotified {
+		return
+	}
+	c.storage.WriteMessageSync(storage.Message{
+		NetworkID:   c.networkID,
+		ChannelID:   nil,
+		User:        "*",
+		Message:     fmt.Sprintf("Nick %q is in use — trying alternatives…", c.preferredNick()),
+		MessageType: "status",
+		Timestamp:   time.Now(),
+	})
+}
+
+// handleWelcome records the nick the server actually assigned us on RPL_WELCOME
+// (001). When it isn't our preferred nick, it explains that reclaiming will be
+// retried automatically (the library does this on each keepalive).
+func (c *IRCClient) handleWelcome(e ircmsg.Message) {
+	if len(e.Params) < 1 {
+		return
+	}
+	nick := e.Params[0]
+	preferred := c.preferredNick()
+
+	c.mu.Lock()
+	c.currentNick = nick
+	c.mu.Unlock()
+
+	c.emitNickChanged(nick)
+
+	if nick != preferred {
+		c.storage.WriteMessageSync(storage.Message{
+			NetworkID:   c.networkID,
+			ChannelID:   nil,
+			User:        "*",
+			Message:     fmt.Sprintf("Connected as %q. Cascade will keep trying to reclaim %q automatically.", nick, preferred),
+			MessageType: "status",
+			Timestamp:   time.Now(),
+		})
+	}
+}
+
+// handleNickMessage handles inbound NICK changes. It always updates channel user
+// lists and notifies subscribers (for anyone). When the change is our own —
+// detected because the old nick matches the nick the server currently knows us
+// by — it tracks the new nick and, if we've reclaimed our preferred nick, says
+// so.
+func (c *IRCClient) handleNickMessage(e ircmsg.Message) {
+	oldNick := e.Nick()
+	newNick := e.Params[0]
+
+	// Update nickname in all channels for this network
+	if err := c.storage.UpdateChannelUserNickname(c.networkID, oldNick, newNick); err != nil {
+		logger.Log.Error().Err(err).Str("oldNick", oldNick).Str("newNick", newNick).Msg("Failed to update nickname in channel user lists")
+	} else {
+		logger.Log.Debug().Str("oldNick", oldNick).Str("newNick", newNick).Msg("Updated nickname in channel user lists")
+	}
+
+	c.eventBus.Emit(events.Event{
+		Type: EventUserNick,
+		Data: map[string]interface{}{
+			"network":   c.network.Address,
+			"networkId": c.networkID,
+			"oldNick":   oldNick,
+			"newNick":   newNick,
+		},
+		Timestamp: time.Now(),
+		Source:    events.EventSourceIRC,
+	})
+
+	// Detect when the change is our own and keep our tracked nick in sync.
+	c.mu.RLock()
+	isSelf := strings.EqualFold(oldNick, c.currentNick)
+	c.mu.RUnlock()
+	if !isSelf {
+		return
+	}
+
+	preferred := c.preferredNick()
+	reclaimed := strings.EqualFold(newNick, preferred)
+	c.mu.Lock()
+	c.currentNick = newNick
+	if reclaimed {
+		// Reclaimed the preferred nick; allow a future collision to notify afresh.
+		c.nickCollisionNotified = false
+	}
+	c.mu.Unlock()
+
+	c.emitNickChanged(newNick)
+
+	if reclaimed {
+		c.storage.WriteMessageSync(storage.Message{
+			NetworkID:   c.networkID,
+			ChannelID:   nil,
+			User:        "*",
+			Message:     fmt.Sprintf("Reclaimed your preferred nick %q.", preferred),
+			MessageType: "status",
+			Timestamp:   time.Now(),
+		})
+	}
 }
 
 // NewIRCClient creates a new IRC client
@@ -305,6 +460,9 @@ func (c *IRCClient) setupHandlers() {
 	c.conn.AddDisconnectCallback(func(e ircmsg.Message) {
 		c.mu.Lock()
 		c.connected = false
+		// Reset nick-collision state so a reconnect starts from a clean slate.
+		c.currentNick = ""
+		c.nickCollisionNotified = false
 		c.mu.Unlock()
 
 		// Write "Disconnected" messages to all open/joined channels BEFORE clearing users
@@ -907,29 +1065,8 @@ func (c *IRCClient) setupHandlers() {
 	})
 
 	// Nick change
-	c.conn.AddCallback("NICK", func(e ircmsg.Message) {
-		oldNick := e.Nick()
-		newNick := e.Params[0]
-
-		// Update nickname in all channels for this network
-		if err := c.storage.UpdateChannelUserNickname(c.networkID, oldNick, newNick); err != nil {
-			logger.Log.Error().Err(err).Str("oldNick", oldNick).Str("newNick", newNick).Msg("Failed to update nickname in channel user lists")
-		} else {
-			logger.Log.Debug().Str("oldNick", oldNick).Str("newNick", newNick).Msg("Updated nickname in channel user lists")
-		}
-
-		c.eventBus.Emit(events.Event{
-			Type: EventUserNick,
-			Data: map[string]interface{}{
-				"network":   c.network.Address,
-				"networkId": c.networkID,
-				"oldNick":   oldNick,
-				"newNick":   newNick,
-			},
-			Timestamp: time.Now(),
-			Source:    events.EventSourceIRC,
-		})
-	})
+	// Inbound NICK changes for everyone, with self-tracking. See handleNickMessage.
+	c.conn.AddCallback("NICK", c.handleNickMessage)
 
 	// Channel topic (RPL_TOPIC = 332) - received when topic is retrieved
 	c.conn.AddCallback("332", func(e ircmsg.Message) {
@@ -1462,6 +1599,11 @@ func (c *IRCClient) setupHandlers() {
 		}
 	})
 
+	// Track the nick the server actually assigned us (an alternative if our
+	// preferred nick was taken). Registered after the welcome-line writer above
+	// so the log shows the welcome first; see handleWelcome.
+	c.conn.AddCallback("001", c.handleWelcome)
+
 	// WHOIS response handlers
 	// RPL_WHOISUSER (311) - Basic user information
 	c.conn.AddCallback("311", func(e ircmsg.Message) {
@@ -1937,56 +2079,10 @@ func (c *IRCClient) setupHandlers() {
 	})
 
 	// ERR_NICKNAMEINUSE (433) - nick collision handling
-	c.conn.AddCallback("433", func(e ircmsg.Message) {
-		c.mu.Lock()
-		// On first collision, record the desired nick
-		if c.desiredNick == "" {
-			c.desiredNick = c.conn.Nick
-		}
-		attempt := c.nickAttempt
-		c.nickAttempt++
-		c.mu.Unlock()
-
-		const maxAttempts = 5
-
-		if attempt >= maxAttempts {
-			c.storage.WriteMessage(storage.Message{
-				NetworkID:   c.networkID,
-				ChannelID:   nil,
-				User:        "*",
-				Message:     fmt.Sprintf("Nick %q is in use and all %d alternatives failed. Please change your nick manually.", c.desiredNick, maxAttempts),
-				MessageType: "status",
-				Timestamp:   time.Now(),
-			})
-			return
-		}
-
-		var newNick string
-		if attempt == 0 {
-			// First attempt: append underscore
-			newNick = c.desiredNick + "_"
-		} else {
-			// Subsequent attempts: append a number
-			newNick = fmt.Sprintf("%s%d", c.desiredNick, attempt)
-		}
-
-		logger.Log.Info().
-			Str("desired", c.desiredNick).
-			Str("trying", newNick).
-			Int("attempt", attempt+1).
-			Msg("Nickname in use, trying alternative")
-
-		c.storage.WriteMessage(storage.Message{
-			NetworkID:   c.networkID,
-			ChannelID:   nil,
-			User:        "*",
-			Message:     fmt.Sprintf("Nick %q is already in use, trying %q...", c.conn.Nick, newNick),
-			MessageType: "status",
-			Timestamp:   time.Now(),
-		})
-
-		c.conn.SendRaw(fmt.Sprintf("NICK %s", newNick))
-	})
+	// ERR_NICKNAMEINUSE (433). The library already selects an alternative
+	// pre-registration and re-requests the preferred nick on each keepalive, so
+	// we don't send our own NICK here — we only surface a one-time notice.
+	c.conn.AddCallback("433", c.handleNickInUse)
 }
 
 // contains checks if a capability string contains the given capability

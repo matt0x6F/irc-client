@@ -773,6 +773,21 @@ func (a *App) GetConnectionStatus(networkID int64) (bool, error) {
 	return client.IsConnected(), nil
 }
 
+// GetCurrentNick returns the nick the server currently knows us by on a network,
+// which can differ from the configured nick while a nick collision is being
+// resolved. Returns an empty string when the network has no active client.
+func (a *App) GetCurrentNick(networkID int64) (string, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	client, exists := a.ircClients[networkID]
+	if !exists {
+		return "", nil
+	}
+
+	return client.CurrentNick(), nil
+}
+
 // DisconnectNetwork disconnects from a network
 func (a *App) DisconnectNetwork(networkID int64) error {
 	a.mu.Lock()

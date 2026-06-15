@@ -24,12 +24,14 @@ function App() {
   const selectedChannel = useNetworkStore((s) => s.selectedChannel);
   const messages = useNetworkStore((s) => s.messages);
   const connectionStatus = useNetworkStore((s) => s.connectionStatus);
+  const currentNick = useNetworkStore((s) => s.currentNick);
   const channelInfo = useNetworkStore((s) => s.channelInfo);
   const unreadCounts = useNetworkStore((s) => s.unreadCounts);
   const loadNetworks = useNetworkStore((s) => s.loadNetworks);
   const loadMessages = useNetworkStore((s) => s.loadMessages);
   const loadChannelInfo = useNetworkStore((s) => s.loadChannelInfo);
   const loadConnectionStatus = useNetworkStore((s) => s.loadConnectionStatus);
+  const loadCurrentNick = useNetworkStore((s) => s.loadCurrentNick);
   const loadPinnedMessages = useNetworkStore((s) => s.loadPinnedMessages);
   const noteNewWhileAnchored = useNetworkStore((s) => s.noteNewWhileAnchored);
   const pinnedCount = useNetworkStore((s) => s.pinnedMessages.length);
@@ -39,6 +41,7 @@ function App() {
   const deleteNetwork = useNetworkStore((s) => s.deleteNetwork);
   const sendMessage = useNetworkStore((s) => s.sendMessage);
   const setConnectionStatus = useNetworkStore((s) => s.setConnectionStatus);
+  const setCurrentNick = useNetworkStore((s) => s.setCurrentNick);
   const markActivity = useNetworkStore((s) => s.markActivity);
   const restoreLastPane = useNetworkStore((s) => s.restoreLastPane);
 
@@ -239,11 +242,13 @@ function App() {
     if (selectedNetwork !== null) {
       loadMessages();
       loadConnectionStatus();
+      loadCurrentNick();
       loadChannelInfo();
       loadPinnedMessages();
       const interval = setInterval(() => {
         loadMessages();
         loadConnectionStatus();
+        loadCurrentNick();
         loadChannelInfo();
       }, 2000);
       return () => clearInterval(interval);
@@ -257,6 +262,19 @@ function App() {
       const connected = data?.connected;
       if (networkId !== undefined && typeof connected === 'boolean') {
         setConnectionStatus(networkId, connected);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Current-nick events: track the server-assigned nick so the header reflects
+  // who we actually are, including after an automatic reclaim of our nick.
+  useEffect(() => {
+    const unsubscribe = EventsOn('current-nick', (data: any) => {
+      const networkId = data?.networkId;
+      const nick = data?.nick;
+      if (networkId !== undefined && typeof nick === 'string' && nick) {
+        setCurrentNick(networkId, nick);
       }
     });
     return () => unsubscribe();
@@ -522,6 +540,14 @@ function App() {
 
   // --- Render ---
 
+  // Header nick chip: the nick the server currently knows us by, plus whether it
+  // differs from our configured nick (meaning a reclaim of the preferred nick is
+  // pending — the client retries automatically on each keepalive).
+  const selectedNick = selectedNetwork !== null ? currentNick[selectedNetwork] : undefined;
+  const preferredNick =
+    selectedNetwork !== null ? networks.find((n) => n.id === selectedNetwork)?.nickname : undefined;
+  const nickReclaimPending = !!selectedNick && !!preferredNick && selectedNick !== preferredNick;
+
   return (
     <div className="flex h-screen bg-background overflow-hidden">
       {/* Network Tree Sidebar */}
@@ -619,6 +645,19 @@ function App() {
                     />
                     {connectionStatus[selectedNetwork] ? 'Connected' : 'Disconnected'}
                   </span>
+                  {connectionStatus[selectedNetwork] && selectedNick && (
+                    <span
+                      data-testid="current-nick"
+                      className={`text-xs font-medium ${
+                        nickReclaimPending ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'
+                      }`}
+                      title={
+                        nickReclaimPending ? `Trying to reclaim ${preferredNick}` : `Your nick: ${selectedNick}`
+                      }
+                    >
+                      · {selectedNick}
+                    </span>
+                  )}
                   {selectedChannel &&
                     selectedChannel !== 'status' &&
                     !selectedChannel.startsWith('pm:') && (

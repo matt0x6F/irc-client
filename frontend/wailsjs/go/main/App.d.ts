@@ -28,6 +28,8 @@ export function GetChannels(arg1:number):Promise<Array<storage.Channel>>;
 
 export function GetConnectionStatus(arg1:number):Promise<boolean>;
 
+export function GetCurrentNick(arg1:number):Promise<string>;
+
 export function GetJoinedChannels(arg1:number):Promise<Array<storage.Channel>>;
 
 export function GetLastOpenPane():Promise<main.LastOpenPane>;
