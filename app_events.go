@@ -72,8 +72,13 @@ func (a *App) OnEvent(event events.Event) {
 		})
 	}
 
-	// Forward channel list events to frontend
+	// Forward channel list events to frontend, caching the result first so that
+	// reopening the modal can render instantly without a fresh LIST. This runs after
+	// the IRC 323 handler has cleared its accumulation buffer, so it is race-free.
 	if event.Type == irc.EventChannelListEnd {
+		if networkID, ok := event.Data["networkId"].(int64); ok {
+			a.cacheChannelList(networkID, channelsFromEventData(event.Data["channels"]))
+		}
 		runtime.EventsEmit(a.ctx, "channel-list", map[string]interface{}{
 			"type":      event.Type,
 			"data":      event.Data,

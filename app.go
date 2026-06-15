@@ -31,10 +31,19 @@ type App struct {
 	connectingNetworks   map[string]chan struct{} // Track networks currently connecting by "address:port"
 	reconnectingNetworks map[int64]bool           // Track networks currently reconnecting (by network ID)
 	mu                   sync.RWMutex
+	channelListCache     map[int64]channelListCacheEntry // Cached LIST results keyed by network ID
+	channelListCacheMu   sync.RWMutex                    // Guards channelListCache; separate from mu to avoid contention
 	startupCtx           context.Context
 	startupCancel        context.CancelFunc
 	startupWg            sync.WaitGroup
 	shutdownOnce         sync.Once // Ensure shutdown only runs once
+}
+
+// channelListCacheEntry holds a network's last-fetched LIST result together with
+// the time it was fetched, so the frontend can decide whether it is still fresh.
+type channelListCacheEntry struct {
+	channels  []map[string]interface{}
+	fetchedAt time.Time
 }
 
 // NewApp creates a new App application struct
@@ -80,6 +89,7 @@ func NewApp() (*App, error) {
 		ircClients:           make(map[int64]*irc.IRCClient),
 		connectingNetworks:   make(map[string]chan struct{}),
 		reconnectingNetworks: make(map[int64]bool),
+		channelListCache:     make(map[int64]channelListCacheEntry),
 	}
 
 	// Subscribe to events for frontend forwarding
@@ -855,6 +865,58 @@ func (a *App) SearchMessages(query string, networkID *int64, limit int) ([]stora
 		limit = 50
 	}
 	return a.storage.SearchMessages(query, networkID, limit)
+}
+
+// ChannelListCacheResult is the cached LIST result returned to the frontend.
+// FetchedAt is unix milliseconds; Found is false when no cache exists for the network.
+type ChannelListCacheResult struct {
+	Channels  []map[string]interface{} `json:"channels"`
+	FetchedAt int64                    `json:"fetchedAt"`
+	Found     bool                     `json:"found"`
+}
+
+// GetCachedChannelList returns the last-fetched LIST result for a network, if any.
+// It never triggers a fetch — callers use RequestChannelList to force a refresh.
+func (a *App) GetCachedChannelList(networkID int64) ChannelListCacheResult {
+	a.channelListCacheMu.RLock()
+	defer a.channelListCacheMu.RUnlock()
+
+	entry, ok := a.channelListCache[networkID]
+	if !ok {
+		return ChannelListCacheResult{Found: false}
+	}
+	return ChannelListCacheResult{
+		Channels:  entry.channels,
+		FetchedAt: entry.fetchedAt.UnixMilli(),
+		Found:     true,
+	}
+}
+
+// channelsFromEventData normalizes the channel slice carried on a LISTEND event
+// (a []interface{} of map[string]interface{}) into the typed form the cache stores.
+func channelsFromEventData(raw interface{}) []map[string]interface{} {
+	items, ok := raw.([]interface{})
+	if !ok {
+		return nil
+	}
+	channels := make([]map[string]interface{}, 0, len(items))
+	for _, it := range items {
+		if m, ok := it.(map[string]interface{}); ok {
+			channels = append(channels, m)
+		}
+	}
+	return channels
+}
+
+// cacheChannelList stores a freshly-fetched LIST result for a network, stamped with
+// the current time. Called when a LISTEND event completes.
+func (a *App) cacheChannelList(networkID int64, channels []map[string]interface{}) {
+	a.channelListCacheMu.Lock()
+	defer a.channelListCacheMu.Unlock()
+	a.channelListCache[networkID] = channelListCacheEntry{
+		channels:  channels,
+		fetchedAt: time.Now(),
+	}
 }
 
 // RequestChannelList sends the LIST command to request available channels from the server

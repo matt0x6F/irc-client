@@ -100,6 +100,22 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class ChannelListCacheResult {
+	    channels: any[];
+	    fetchedAt: number;
+	    found: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ChannelListCacheResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.channels = source["channels"];
+	        this.fetchedAt = source["fetchedAt"];
+	        this.found = source["found"];
+	    }
+	}
 	export class LastOpenPane {
 	    network_id: number;
 	    type: string;
@@ -329,11 +345,11 @@ export namespace storage {
 	    timestamp: any;
 	    raw_line: string;
 	    pm_target: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Message(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -491,6 +507,7 @@ export namespace storage {
 	    // Go type: time
 	    timestamp: any;
 	    raw_line: string;
+	    pm_target: string;
 	    channel_name: string;
 	    network_name: string;
 	
@@ -508,6 +525,7 @@ export namespace storage {
 	        this.message_type = source["message_type"];
 	        this.timestamp = this.convertValues(source["timestamp"], null);
 	        this.raw_line = source["raw_line"];
+	        this.pm_target = source["pm_target"];
 	        this.channel_name = source["channel_name"];
 	        this.network_name = source["network_name"];
 	    }
