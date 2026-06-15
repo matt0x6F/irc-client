@@ -1419,130 +1419,7 @@ func (c *IRCClient) setupHandlers() {
 
 	// NOTICE messages - store in status window if not from a channel
 	// Also handle CTCP responses (CTCP replies come as NOTICE)
-	c.conn.AddCallback("NOTICE", func(e ircmsg.Message) {
-		if len(e.Params) < 2 {
-			return
-		}
-		target := e.Params[0]
-		notice := e.Params[1]
-		user := e.Nick()
-
-		// Check if this is a CTCP response (wrapped in \001)
-		if len(notice) >= 2 && notice[0] == '\001' && notice[len(notice)-1] == '\001' {
-			ctcpMessage := notice[1 : len(notice)-1] // Remove \001 delimiters
-			parts := strings.Fields(ctcpMessage)
-			if len(parts) > 0 {
-				ctcpCommand := strings.ToUpper(parts[0])
-				ctcpResponse := ""
-				if len(parts) > 1 {
-					ctcpResponse = strings.Join(parts[1:], " ")
-				}
-
-				// Store CTCP response in status window
-				rawLine, _ := e.Line()
-				statusMsg := storage.Message{
-					NetworkID:   c.networkID,
-					ChannelID:   nil, // Status window
-					User:        user,
-					Message:     fmt.Sprintf("CTCP %s reply from %s: %s", ctcpCommand, user, ctcpResponse),
-					MessageType: "ctcp",
-					Timestamp:   c.getMessageTime(e),
-					RawLine:     rawLine,
-				}
-				c.storage.WriteMessage(statusMsg)
-				return
-			}
-		}
-
-		// Regular NOTICE.
-		// Channel-targeted notices (e.g. bot/announcement notices) belong in that
-		// channel's buffer, mirroring how channel PRIVMSGs are routed.
-		if len(target) > 0 && (target[0] == '#' || target[0] == '&') {
-			rawLine, _ := e.Line()
-			var channelID *int64
-			if ch, err := c.storage.GetChannelByName(c.networkID, target); err == nil {
-				channelID = &ch.ID
-			} else {
-				logger.Log.Debug().Err(err).Str("channel", target).Msg("Channel not found for notice")
-			}
-			c.storage.WriteMessageSync(storage.Message{
-				NetworkID:   c.networkID,
-				ChannelID:   channelID,
-				User:        user,
-				Message:     notice,
-				MessageType: "notice",
-				Timestamp:   c.getMessageTime(e),
-				RawLine:     rawLine,
-			})
-			c.eventBus.Emit(events.Event{
-				Type: EventMessageReceived,
-				Data: map[string]interface{}{
-					"network":     c.network.Address,
-					"networkId":   c.networkID,
-					"channel":     target,
-					"user":        user,
-					"message":     notice,
-					"messageType": "notice",
-				},
-				Timestamp: time.Now(),
-				Source:    events.EventSourceIRC,
-			})
-			return
-		}
-
-		// Non-channel NOTICE.
-		// Notices from a user/service (ChanServ, NickServ, another nick) carry a
-		// "nick!user@host" prefix and route to that sender's query pane, keyed by
-		// pm_target exactly like a PRIVMSG PM. Notices with a bare server-name
-		// prefix (or addressed to "*") are genuine server notices and stay in the
-		// Status window.
-		if target == c.network.Nickname || (len(target) > 0 && target[0] != '#' && target[0] != '&') {
-			rawLine, _ := e.Line()
-			pmTarget := c.noticePMTarget(e.Source, user, target)
-
-			if pmTarget != "" {
-				// Open/refresh the query conversation so the pane appears in the sidebar.
-				if _, err := c.storage.GetOrCreatePMConversation(c.networkID, pmTarget, c.network.Nickname); err != nil {
-					logger.Log.Error().Err(err).Str("user", user).Str("pmTarget", pmTarget).Msg("Failed to create/get PM conversation for notice")
-				}
-			}
-
-			msg := storage.Message{
-				NetworkID:   c.networkID,
-				ChannelID:   nil, // PM rows and status rows both have a nil channel
-				User:        user,
-				Message:     notice,
-				MessageType: "notice",
-				Timestamp:   c.getMessageTime(e),
-				RawLine:     rawLine,
-				PMTarget:    pmTarget, // "" keeps it in Status; non-empty routes to a query pane
-			}
-
-			if pmTarget == "" {
-				// Server notice — buffered write into Status, no event (unchanged).
-				c.storage.WriteMessage(msg)
-			} else {
-				// Service/user notice — sync write so it shows immediately, plus a
-				// message event so the query pane badges and updates live. The
-				// messageType marks it a notice so chatty services don't trigger a
-				// desktop notification on every line.
-				c.storage.WriteMessageSync(msg)
-				c.eventBus.Emit(events.Event{
-					Type: EventMessageReceived,
-					Data: map[string]interface{}{
-						"network":     c.network.Address,
-						"networkId":   c.networkID,
-						"channel":     target,
-						"user":        user,
-						"message":     notice,
-						"messageType": "notice",
-					},
-					Timestamp: time.Now(),
-					Source:    events.EventSourceIRC,
-				})
-			}
-		}
-	})
+	c.conn.AddCallback("NOTICE", c.handleNotice)
 
 	// Numeric replies (like RPL_WELCOME, etc.) - store important ones in status
 	c.conn.AddCallback("001", func(e ircmsg.Message) {
@@ -2132,19 +2009,42 @@ func (c *IRCClient) pmPeer(sender, target string) string {
 // as ChanServ/NickServ (and ordinary users) reply via NOTICE, so those belong in
 // the sender's query pane rather than the Status log.
 //
-// A real user/service prefix carries a "nick!user@host" hostmask; a server
-// notice uses a bare server-name prefix (no '!') and pre-registration notices
-// are addressed to "*". Both of those, plus channel-targeted notices, stay out
-// of any PM pane (returns ""). The peer is computed with the same echo-aware
-// rule as pmPeer so an echoed self-notice keys to the recipient.
+// The source is treated as a user/service when it is a nick rather than a
+// server. Two shapes occur in the wild:
+//   - a full "nick!user@host" hostmask (always a client/service), or
+//   - a bare nick with no '!' and no '.' (e.g. ":ChanServ NOTICE ..." — some
+//     networks/services omit the user@host on service notices).
+//
+// A server source is a bare host name containing a '.' (e.g. "irc.libera.chat")
+// or is empty; those, a "*" target (pre-registration / broadcast), and
+// channel-targeted notices all stay out of any PM pane (returns ""). The peer is
+// computed with the same echo-aware rule as pmPeer so an echoed self-notice keys
+// to the recipient.
 func (c *IRCClient) noticePMTarget(source, sender, target string) string {
-	if !strings.Contains(source, "!") {
-		return "" // bare server prefix (or no prefix) -> Status
+	if !c.sourceIsUser(source) {
+		return "" // server prefix (host name or empty) -> Status
 	}
-	if len(target) > 0 && (target[0] == '#' || target[0] == '&') {
+	if target == "" || target == "*" {
+		return "" // broadcast / pre-registration notice -> Status
+	}
+	if target[0] == '#' || target[0] == '&' {
 		return "" // channel notice -> not a PM
 	}
 	return c.pmPeer(sender, target)
+}
+
+// sourceIsUser reports whether an IRC message prefix names a user/service (a
+// nick) rather than a server. A hostmask ("nick!user@host") is always a user; a
+// bare token is a user only if it has no '.' (server names are dotted host
+// names). An empty prefix is the server.
+func (c *IRCClient) sourceIsUser(source string) bool {
+	if source == "" {
+		return false
+	}
+	if strings.Contains(source, "!") {
+		return true // nick!user@host
+	}
+	return !strings.Contains(source, ".") // bare nick (no dot) vs dotted server name
 }
 
 func contains(capabilities, cap string) bool {
@@ -2672,4 +2572,134 @@ func (c *IRCClient) SendCTCPRequest(target, command, args string) error {
 	c.storage.WriteMessage(statusMsg)
 
 	return nil
+}
+
+// handleNotice routes an inbound NOTICE. Extracted from the connection
+// callback so the routing can be exercised end-to-end in tests by parsing a
+// raw IRC line and calling it directly. Channel notices go to the channel
+// buffer; notices from a user or service (a nick source) go to that sender's
+// query pane keyed by pm_target; genuine server notices stay in Status.
+func (c *IRCClient) handleNotice(e ircmsg.Message) {
+	if len(e.Params) < 2 {
+		return
+	}
+	target := e.Params[0]
+	notice := e.Params[1]
+	user := e.Nick()
+
+	// Check if this is a CTCP response (wrapped in \001)
+	if len(notice) >= 2 && notice[0] == '\001' && notice[len(notice)-1] == '\001' {
+		ctcpMessage := notice[1 : len(notice)-1] // Remove \001 delimiters
+		parts := strings.Fields(ctcpMessage)
+		if len(parts) > 0 {
+			ctcpCommand := strings.ToUpper(parts[0])
+			ctcpResponse := ""
+			if len(parts) > 1 {
+				ctcpResponse = strings.Join(parts[1:], " ")
+			}
+
+			// Store CTCP response in status window
+			rawLine, _ := e.Line()
+			statusMsg := storage.Message{
+				NetworkID:   c.networkID,
+				ChannelID:   nil, // Status window
+				User:        user,
+				Message:     fmt.Sprintf("CTCP %s reply from %s: %s", ctcpCommand, user, ctcpResponse),
+				MessageType: "ctcp",
+				Timestamp:   c.getMessageTime(e),
+				RawLine:     rawLine,
+			}
+			c.storage.WriteMessage(statusMsg)
+			return
+		}
+	}
+
+	// Regular NOTICE.
+	// Channel-targeted notices (e.g. bot/announcement notices) belong in that
+	// channel's buffer, mirroring how channel PRIVMSGs are routed.
+	if len(target) > 0 && (target[0] == '#' || target[0] == '&') {
+		rawLine, _ := e.Line()
+		var channelID *int64
+		if ch, err := c.storage.GetChannelByName(c.networkID, target); err == nil {
+			channelID = &ch.ID
+		} else {
+			logger.Log.Debug().Err(err).Str("channel", target).Msg("Channel not found for notice")
+		}
+		c.storage.WriteMessageSync(storage.Message{
+			NetworkID:   c.networkID,
+			ChannelID:   channelID,
+			User:        user,
+			Message:     notice,
+			MessageType: "notice",
+			Timestamp:   c.getMessageTime(e),
+			RawLine:     rawLine,
+		})
+		c.eventBus.Emit(events.Event{
+			Type: EventMessageReceived,
+			Data: map[string]interface{}{
+				"network":     c.network.Address,
+				"networkId":   c.networkID,
+				"channel":     target,
+				"user":        user,
+				"message":     notice,
+				"messageType": "notice",
+			},
+			Timestamp: time.Now(),
+			Source:    events.EventSourceIRC,
+		})
+		return
+	}
+
+	// Non-channel NOTICE.
+	// Notices from a user/service (ChanServ, NickServ, another nick) carry a
+	// "nick!user@host" prefix and route to that sender's query pane, keyed by
+	// pm_target exactly like a PRIVMSG PM. Notices with a bare server-name
+	// prefix (or addressed to "*") are genuine server notices and stay in the
+	// Status window.
+	if target == c.network.Nickname || (len(target) > 0 && target[0] != '#' && target[0] != '&') {
+		rawLine, _ := e.Line()
+		pmTarget := c.noticePMTarget(e.Source, user, target)
+
+		if pmTarget != "" {
+			// Open/refresh the query conversation so the pane appears in the sidebar.
+			if _, err := c.storage.GetOrCreatePMConversation(c.networkID, pmTarget, c.network.Nickname); err != nil {
+				logger.Log.Error().Err(err).Str("user", user).Str("pmTarget", pmTarget).Msg("Failed to create/get PM conversation for notice")
+			}
+		}
+
+		msg := storage.Message{
+			NetworkID:   c.networkID,
+			ChannelID:   nil, // PM rows and status rows both have a nil channel
+			User:        user,
+			Message:     notice,
+			MessageType: "notice",
+			Timestamp:   c.getMessageTime(e),
+			RawLine:     rawLine,
+			PMTarget:    pmTarget, // "" keeps it in Status; non-empty routes to a query pane
+		}
+
+		if pmTarget == "" {
+			// Server notice — buffered write into Status, no event (unchanged).
+			c.storage.WriteMessage(msg)
+		} else {
+			// Service/user notice — sync write so it shows immediately, plus a
+			// message event so the query pane badges and updates live. The
+			// messageType marks it a notice so chatty services don't trigger a
+			// desktop notification on every line.
+			c.storage.WriteMessageSync(msg)
+			c.eventBus.Emit(events.Event{
+				Type: EventMessageReceived,
+				Data: map[string]interface{}{
+					"network":     c.network.Address,
+					"networkId":   c.networkID,
+					"channel":     target,
+					"user":        user,
+					"message":     notice,
+					"messageType": "notice",
+				},
+				Timestamp: time.Now(),
+				Source:    events.EventSourceIRC,
+			})
+		}
+	}
 }

@@ -45,14 +45,19 @@ func TestNoticePMTarget(t *testing.T) {
 		// Service reply with a full hostmask -> ChanServ's query pane.
 		{"chanserv service notice", "ChanServ!ChanServ@services.libera.chat", "ChanServ", "matt0x6f", "ChanServ"},
 		{"nickserv service notice", "NickServ!NickServ@services.", "NickServ", "matt0x6f", "NickServ"},
+		// Bare-nick service source (no user@host, no dot) -> still a service pane.
+		{"bare chanserv source", "ChanServ", "ChanServ", "matt0x6f", "ChanServ"},
+		{"bare nickserv source", "NickServ", "NickServ", "matt0x6f", "NickServ"},
 		// Ordinary user notice -> that user's pane.
 		{"user notice", "alice!~a@host", "alice", "matt0x6f", "alice"},
 		// Echoed self-notice (echo-message): peer is the recipient, not us.
 		{"echoed self notice", "matt0x6f!~m@host", "matt0x6f", "chanserv", "chanserv"},
-		// Server-sourced notices have no user@host mask -> stay in Status.
+		// Server-sourced notices use a dotted host name -> stay in Status.
 		{"server notice to nick", "irc.libera.chat", "irc.libera.chat", "matt0x6f", ""},
 		{"pre-registration server notice", "irc.libera.chat", "irc.libera.chat", "*", ""},
 		{"empty source", "", "", "*", ""},
+		// A bare-nick service still must not hijack a broadcast/pre-reg notice.
+		{"bare source to star target", "Global", "Global", "*", ""},
 		// Channel-targeted notice is never a PM.
 		{"channel notice", "alice!~a@host", "alice", "#chan", ""},
 	}
