@@ -88,4 +88,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REF_NAME: ${{ github.ref_name }}
-        run: gh release create "$REF_NAME" "$DMG" --generate-notes --title "$REF_NAME"
+        # Upsert: gh release create is not idempotent and fails if the release
+        # already exists (manual cut or a re-run). Create it only when missing;
+        # otherwise just attach the DMG (--clobber to overwrite a stale asset).
+        run: |
+          if gh release view "$REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$REF_NAME" "$DMG" --clobber
+          else
+            gh release create "$REF_NAME" "$DMG" --generate-notes --title "$REF_NAME"
+          fi
