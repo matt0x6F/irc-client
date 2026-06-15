@@ -94,6 +94,13 @@ export function SearchModal({ onClose }: SearchModalProps) {
   }, []);
 
   const handleResultClick = async (result: SearchResult) => {
+    // Close the modal *before* navigating. selectPane updates the store
+    // synchronously, which re-renders InputArea and triggers its auto-focus.
+    // If the modal were still mounted, its focused search box would suppress
+    // that auto-focus (the guard yields to an actively-typed field). Closing
+    // first removes the search box from the DOM so focus lands in the message
+    // input the user is navigating to.
+    onClose();
     // Navigate to the channel/PM where the message was sent
     if (result.channel_name) {
       await selectPane(result.network_id, result.channel_name);
@@ -101,7 +108,6 @@ export function SearchModal({ onClose }: SearchModalProps) {
       // Private message -- navigate to PM with user
       await selectPane(result.network_id, `pm:${result.user}`);
     }
-    onClose();
   };
 
   const formatTimestamp = (ts: string) => {

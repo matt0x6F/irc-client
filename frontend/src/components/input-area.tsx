@@ -21,6 +21,25 @@ export function InputArea({ onSendMessage, placeholder = 'Type a message...', ne
   const historyIndexRef = useRef(-1);
   const draftRef = useRef('');
 
+  // Auto-focus the input whenever the user switches to a different buffer
+  // (channel or PM). The same InputArea instance stays mounted across switches,
+  // so keying this effect on networkId/channelName makes it fire on each change.
+  // Don't steal focus from another editable field — e.g. a modal's search box
+  // the user is actively typing in. Switching via a tree <button> leaves a button
+  // focused, which should yield to the message input.
+  useEffect(() => {
+    const active = document.activeElement as HTMLElement | null;
+    const typingElsewhere =
+      active &&
+      active !== inputRef.current &&
+      (active.tagName === 'INPUT' ||
+        active.tagName === 'TEXTAREA' ||
+        active.isContentEditable);
+    if (!typingElsewhere) {
+      inputRef.current?.focus();
+    }
+  }, [networkId, channelName]);
+
   // Reset completion state when message changes (but not during completion)
   useEffect(() => {
     if (completionIndex === -1) {
