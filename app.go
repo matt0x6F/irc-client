@@ -881,6 +881,13 @@ func (a *App) OpenSettingsDisplay() {
 	}
 }
 
+// OpenSettingsAbout emits an event to open settings to the about section
+func (a *App) OpenSettingsAbout() {
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "open-settings", "about")
+	}
+}
+
 // SearchMessages performs full-text search across stored messages
 func (a *App) SearchMessages(query string, networkID *int64, limit int) ([]storage.SearchResult, error) {
 	if limit <= 0 {

@@ -213,7 +213,7 @@ function App() {
     const interval = setInterval(loadNetworks, 5000);
 
     const unsubscribe = EventsOn('open-settings', (section?: string) => {
-      if (section === 'networks' || section === 'plugins' || section === 'display') {
+      if (section === 'networks' || section === 'plugins' || section === 'display' || section === 'about') {
         openSettings(section);
       } else {
         openSettings(undefined);

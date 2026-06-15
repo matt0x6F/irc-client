@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { main, storage } from '../../wailsjs/go/models';
-import { GetNetworks, SaveNetwork, ConnectNetwork, DeleteNetwork, DisconnectNetwork, GetConnectionStatus, GetServers, ListPlugins, EnablePlugin, DisablePlugin, ReloadPlugin } from '../../wailsjs/go/main/App';
+import { GetNetworks, SaveNetwork, ConnectNetwork, DeleteNetwork, DisconnectNetwork, GetConnectionStatus, GetServers, ListPlugins, EnablePlugin, DisablePlugin, ReloadPlugin, GetBuildInfo } from '../../wailsjs/go/main/App';
 import { PluginConfigForm } from './plugin-config-form';
 import {
   Select,
@@ -11,7 +11,7 @@ import {
 } from './ui/select';
 import { useThemeStore, ACCENTS, type ThemeMode } from '../stores/theme';
 
-type SettingsSection = 'networks' | 'plugins' | 'display';
+type SettingsSection = 'networks' | 'plugins' | 'display' | 'about';
 
 const SETTINGS_LAST_PANE_KEY = 'cascade-chat-settings-last-pane';
 const CONSOLIDATE_JOIN_QUIT_KEY = 'cascade-chat-consolidate-join-quit';
@@ -50,7 +50,7 @@ export function SettingsModal({ onClose, onServerUpdate, initialSection }: Setti
   const loadLastPane = (): SettingsSection => {
     try {
       const saved = localStorage.getItem(SETTINGS_LAST_PANE_KEY);
-      if (saved === 'networks' || saved === 'plugins' || saved === 'display') {
+      if (saved === 'networks' || saved === 'plugins' || saved === 'display' || saved === 'about') {
         return saved as SettingsSection;
       }
     } catch (error) {
@@ -106,10 +106,14 @@ export function SettingsModal({ onClose, onServerUpdate, initialSection }: Setti
   const [connectionStatus, setConnectionStatus] = useState<Record<number, boolean>>({});
   const [showAddForm, setShowAddForm] = useState(false);
   const [networkServers, setNetworkServers] = useState<Record<number, storage.Server[]>>({});
+  const [buildInfo, setBuildInfo] = useState<main.BuildInfo | null>(null);
 
   useEffect(() => {
     loadNetworks();
     loadPlugins();
+    GetBuildInfo()
+      .then(setBuildInfo)
+      .catch((error) => console.error('Failed to load build info:', error));
   }, []);
 
   // Save selected pane to localStorage whenever it changes
@@ -1101,6 +1105,41 @@ export function SettingsModal({ onClose, onServerUpdate, initialSection }: Setti
             </div>
           </div>
         );
+      case 'about':
+        return (
+          <div className="mb-6">
+            <h3 className="text-md font-semibold mb-4">About</h3>
+            <div className="border border-border rounded-lg p-5 bg-card/50 shadow-[var(--shadow-sm)] space-y-4">
+              <div>
+                <div className="text-lg font-semibold">Cascade Chat</div>
+                <div className="text-2xl font-bold mt-1" data-testid="about-version">
+                  {buildInfo?.version ?? '—'}
+                </div>
+              </div>
+              <dl className="space-y-1 text-sm">
+                <div className="flex gap-2">
+                  <dt className="text-muted-foreground w-16">Commit</dt>
+                  <dd className="font-mono" data-testid="about-commit">{buildInfo?.commit ?? '—'}</dd>
+                </div>
+                <div className="flex gap-2">
+                  <dt className="text-muted-foreground w-16">Built</dt>
+                  <dd className="font-mono" data-testid="about-build-date">{buildInfo?.buildDate ?? '—'}</dd>
+                </div>
+              </dl>
+              <div className="pt-3 border-t border-border space-y-1 text-sm">
+                <a
+                  href="https://github.com/matt0x6F/irc-client"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary underline hover:text-primary/80"
+                >
+                  View on GitHub
+                </a>
+                <p className="text-xs text-muted-foreground">BSD 3-Clause License</p>
+              </div>
+            </div>
+          </div>
+        );
       default:
         return null;
     }
@@ -1161,6 +1200,17 @@ export function SettingsModal({ onClose, onServerUpdate, initialSection }: Setti
                 style={{ transition: 'var(--transition-base)' }}
               >
                 Display
+              </button>
+              <button
+                onClick={() => setSelectedSection('about')}
+                className={`w-full text-left px-3 py-2.5 rounded-md text-sm transition-all ${
+                  selectedSection === 'about'
+                    ? 'cc-active-pane text-foreground font-medium'
+                    : 'hover:bg-accent/70 text-foreground'
+                }`}
+                style={{ transition: 'var(--transition-base)' }}
+              >
+                About
               </button>
             </nav>
           </div>

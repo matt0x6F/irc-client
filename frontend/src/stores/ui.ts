@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-type SettingsSection = 'networks' | 'plugins' | 'display' | undefined;
+type SettingsSection = 'networks' | 'plugins' | 'display' | 'about' | undefined;
 
 interface UIState {
   // Settings modal
