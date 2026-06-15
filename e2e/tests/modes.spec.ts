@@ -2,9 +2,9 @@ import { test, expect } from '../lib/fixtures';
 import { addNetworkAndConnect, selectNetwork, joinChannel } from '../lib/actions';
 
 // NOTE: the suite runs serially (workers: 1) against a backend whose SQLite DB persists
-// across specs, and Playwright runs files alphabetically. `connect.spec.ts` adds the
-// network from scratch and must run first on a clean DB, so this file is named to sort
-// *after* it — don't rename it to sort before `connect.spec.ts`.
+// across specs. Specs must therefore be idempotent against shared state — use
+// addNetworkAndConnect (which no-ops if the network is already connected) rather than
+// assuming a clean DB or a particular run order.
 
 // The UI user creates the channel via /join, so Ergo grants it channel-operator
 // status — it may therefore set channel modes. These tests exercise the full loop:
@@ -60,8 +60,11 @@ test('adding a ban persists and reappears when the editor is reopened', async ({
   await page.getByTestId('channel-mode-editor').waitFor({ state: 'hidden', timeout: 15_000 });
 
   // Reopen — the editor fetches the live ban list (RPL_BANLIST 367/368) and should
-  // show the mask we just set.
+  // show the mask we just set. Scope to the editor: the mask also appears in the
+  // channel buffer as the "sets mode: +b <mask>" system line, so an unscoped
+  // getByText(mask) is a strict-mode violation (two matches).
   await modesButton.click();
-  await page.getByTestId('channel-mode-editor').waitFor({ state: 'visible', timeout: 10_000 });
-  await expect(page.getByText(mask, { exact: false })).toBeVisible({ timeout: 15_000 });
+  const editor = page.getByTestId('channel-mode-editor');
+  await editor.waitFor({ state: 'visible', timeout: 10_000 });
+  await expect(editor.getByText(mask, { exact: false })).toBeVisible({ timeout: 15_000 });
 });
