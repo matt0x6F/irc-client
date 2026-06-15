@@ -3,6 +3,7 @@ import { storage, main } from '../../wailsjs/go/models';
 import {
   GetNetworks,
   GetConnectionStatus,
+  GetCurrentNick,
   ConnectNetwork,
   DisconnectNetwork,
   DeleteNetwork,
@@ -95,6 +96,7 @@ interface NetworkState {
   // Data
   networks: storage.Network[];
   connectionStatus: Record<number, boolean>;
+  currentNick: Record<number, string>; // server-assigned nick per network; differs from the configured nick during a collision
   messages: storage.Message[];
   channelInfo: main.ChannelInfo | null;
   unreadCounts: Map<string, number>;
@@ -121,6 +123,7 @@ interface NetworkState {
   onHistoryReceived: (target: string, inserted: number) => boolean;
   loadChannelInfo: () => Promise<void>;
   loadConnectionStatus: (networkId?: number) => Promise<void>;
+  loadCurrentNick: (networkId?: number) => Promise<void>;
 
   // Pinned message actions
   loadPinnedMessages: () => Promise<void>;
@@ -151,6 +154,7 @@ interface NetworkState {
 
   // Connection status
   setConnectionStatus: (networkId: number, connected: boolean) => void;
+  setCurrentNick: (networkId: number, nick: string) => void;
 
   // Pane restoration
   restoreLastPane: () => Promise<void>;
@@ -159,6 +163,7 @@ interface NetworkState {
 export const useNetworkStore = create<NetworkState>((set, get) => ({
   networks: [],
   connectionStatus: {},
+  currentNick: {},
   messages: [],
   channelInfo: null,
   unreadCounts: new Map(),
@@ -456,6 +461,21 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
       }));
     } catch (error) {
       console.error('Failed to load connection status:', error);
+    }
+  },
+
+  loadCurrentNick: async (networkId?: number) => {
+    const id = networkId ?? get().selectedNetwork;
+    if (id === null) return;
+    try {
+      const nick = await GetCurrentNick(id);
+      if (nick) {
+        set((state) => ({
+          currentNick: { ...state.currentNick, [id]: nick },
+        }));
+      }
+    } catch (error) {
+      console.error('Failed to load current nick:', error);
     }
   },
 
@@ -798,6 +818,11 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
   setConnectionStatus: (networkId, connected) =>
     set((state) => ({
       connectionStatus: { ...state.connectionStatus, [networkId]: connected },
+    })),
+
+  setCurrentNick: (networkId, nick) =>
+    set((state) => ({
+      currentNick: { ...state.currentNick, [networkId]: nick },
     })),
 
   restoreLastPane: async () => {

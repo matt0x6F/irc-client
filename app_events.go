@@ -42,6 +42,27 @@ func (a *App) OnEvent(event events.Event) {
 		return
 	}
 
+	// Handle our own nick changing (collision resolved, preferred nick reclaimed,
+	// or a manual /nick). The frontend uses this to show the real current nick.
+	if event.Type == irc.EventNickChanged {
+		networkID, found := a.resolveNetworkID(event.Data)
+		if found {
+			runtime.EventsEmit(a.ctx, "current-nick", map[string]interface{}{
+				"networkId":   networkID,
+				"nick":        event.Data["nick"],
+				"desired":     event.Data["desired"],
+				"isPreferred": event.Data["isPreferred"],
+				"timestamp":   event.Timestamp.Format(time.RFC3339),
+			})
+		} else {
+			logger.Log.Warn().
+				Str("event_type", event.Type).
+				Interface("event_data", event.Data).
+				Msg("Could not determine network ID for nick-changed event")
+		}
+		return
+	}
+
 	// Handle channels changed event
 	if event.Type == irc.EventChannelsChanged {
 		networkID, ok := event.Data["networkId"].(int64)

@@ -9,6 +9,7 @@ const (
 	EventUserQuit              = "user.quit"
 	EventUserKicked            = "user.kicked"
 	EventUserNick              = "user.nick"
+	EventNickChanged           = "nick.changed" // our own nick changed (distinct from EventUserNick, which is anyone)
 	EventChannelTopic          = "channel.topic"
 	EventChannelMode           = "channel.mode"
 	EventChannelUserMode       = "channel.usermode"
