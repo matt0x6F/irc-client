@@ -58,6 +58,7 @@ type IRCClient struct {
 	rateLimiter         *RateLimiter          // Rate limiter for outgoing messages
 	desiredNick         string                // The original nickname the user wanted
 	nickAttempt         int                   // Current nick collision retry attempt (0 = first try with underscore)
+	reconnecting        bool                  // True when this connection is an auto-reconnect after an unexpected drop (guarded by mu)
 }
 
 // ServerCapabilities stores parsed ISUPPORT information
@@ -593,20 +594,17 @@ func (c *IRCClient) setupHandlers() {
 			}
 		}
 
-		// If the current user joined, request fresh NAMES list to update user list
-		// Don't clear channel users - keep ourselves in the list so GetJoinedChannels works immediately
+		// If the current user joined, the server automatically sends the NAMES
+		// list (RPL_NAMREPLY 353 / RPL_ENDOFNAMES 366) as part of the JOIN
+		// response; those handlers clear and repopulate channel_users and emit
+		// channel.names.complete. We deliberately do NOT send an explicit NAMES
+		// here — it's redundant with the server's automatic reply and doubles the
+		// outgoing burst when rejoining a whole session after a reconnect.
 		if strings.EqualFold(user, c.network.Nickname) {
 			logger.Log.Info().
 				Str("channel", channel).
 				Int64("network_id", c.networkID).
-				Msg("Our user joining, requesting NAMES list to update user list")
-			// Request NAMES to get full user list - this will update the channel_users table
-			// We don't clear first because we want GetJoinedChannels to work immediately
-			if err := c.conn.SendRaw(fmt.Sprintf("NAMES %s", channel)); err != nil {
-				logger.Log.Error().Err(err).Str("channel", channel).Msg("Failed to send NAMES command")
-			} else {
-				logger.Log.Debug().Str("channel", channel).Msg("NAMES command sent successfully")
-			}
+				Msg("Our user joined; awaiting server NAMES reply to populate user list")
 
 			// Catch-up: pull recent server-side history for the channel so anything
 			// said while we were away is backfilled. No-op when the server didn't
@@ -2440,33 +2438,31 @@ func (c *IRCClient) Connect() error {
 	// Start the connection loop in a goroutine
 	go c.conn.Loop()
 
-	// Auto-join channels after a short delay to ensure connection is established
-	// Only join channels that have auto_join enabled
-	// Channels with is_open=true but auto_join=false remain OPEN (dialog open but not joined)
+	// Auto-join channels after a short delay to ensure connection is established.
+	// On a fresh startup we join only auto_join channels; on an auto-reconnect we
+	// rejoin every channel we were in so the server resends NAMES (see
+	// channelsToJoin). Each JOIN goes through the rate limiter because rejoining a
+	// full session at once would otherwise burst dozens of commands and trip the
+	// server's flood protection — the underlying library does no throttling itself.
 	go func() {
 		time.Sleep(constants.AutoJoinDelay)
-		channels, err := c.storage.GetChannels(c.networkID)
-		if err == nil {
-			logger.Log.Info().Int("count", len(channels)).Msg("Checking channels for auto-join")
-			for _, channel := range channels {
-				logger.Log.Debug().
-					Str("channel", channel.Name).
-					Bool("auto_join", channel.AutoJoin).
-					Bool("is_open", channel.IsOpen).
-					Msg("Channel auto-join status")
-				// Only auto-join if auto_join is enabled
-				// Channels with is_open=true but auto_join=false remain OPEN (dialog open but not joined)
-				if channel.AutoJoin {
-					logger.Log.Info().Str("channel", channel.Name).Msg("Auto-joining channel (auto_join enabled)")
-					c.conn.Join(channel.Name)
-				} else if channel.IsOpen {
-					logger.Log.Debug().Str("channel", channel.Name).Msg("Channel is open but auto_join disabled - keeping OPEN state (not joining)")
-				} else {
-					logger.Log.Debug().Str("channel", channel.Name).Msg("Skipping channel (not open and auto-join disabled)")
-				}
+
+		c.mu.RLock()
+		reconnect := c.reconnecting
+		c.mu.RUnlock()
+
+		channels, err := c.channelsToJoin(reconnect)
+		if err != nil {
+			logger.Log.Error().Err(err).Bool("reconnect", reconnect).Msg("Failed to get channels to join")
+			return
+		}
+		logger.Log.Info().Int("count", len(channels)).Bool("reconnect", reconnect).Msg("Joining channels")
+		for _, channel := range channels {
+			c.rateLimiter.Wait()
+			logger.Log.Info().Str("channel", channel.Name).Bool("reconnect", reconnect).Msg("Joining channel")
+			if err := c.conn.Join(channel.Name); err != nil {
+				logger.Log.Error().Err(err).Str("channel", channel.Name).Msg("Failed to join channel")
 			}
-		} else {
-			logger.Log.Error().Err(err).Msg("Failed to get channels for auto-join")
 		}
 	}()
 
@@ -2571,6 +2567,58 @@ func (c *IRCClient) SendMessage(target, message string) error {
 	})
 
 	return nil
+}
+
+// SetReconnecting marks whether this connection is an auto-reconnect after an
+// unexpected drop. It must be set before Connect() so the auto-join goroutine
+// can choose the correct rejoin set. See channelsToJoin.
+func (c *IRCClient) SetReconnecting(v bool) {
+	c.mu.Lock()
+	c.reconnecting = v
+	c.mu.Unlock()
+}
+
+// isChannelName reports whether name is an IRC channel (vs. a nick/PM target).
+func isChannelName(name string) bool {
+	return len(name) > 0 && (name[0] == '#' || name[0] == '&')
+}
+
+// channelsToJoin returns the channels the auto-join goroutine should JOIN on this
+// connection.
+//
+//   - On a fresh startup connect (reconnect == false) we honor the user's sticky
+//     preference and join only channels with auto_join enabled.
+//   - On an auto-reconnect after an unexpected drop (reconnect == true) we restore
+//     the session we lost by rejoining every channel we were actually in — those
+//     marked open or where we're still a tracked member (GetOpenChannels). This is
+//     what makes the server resend NAMES so nick lists refresh; gating reconnect on
+//     auto_join is what left most channels stale after sleep/wake.
+func (c *IRCClient) channelsToJoin(reconnect bool) ([]storage.Channel, error) {
+	if reconnect {
+		open, err := c.storage.GetOpenChannels(c.networkID, c.network.Nickname)
+		if err != nil {
+			return nil, err
+		}
+		result := make([]storage.Channel, 0, len(open))
+		for _, ch := range open {
+			if isChannelName(ch.Name) {
+				result = append(result, ch)
+			}
+		}
+		return result, nil
+	}
+
+	all, err := c.storage.GetChannels(c.networkID)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]storage.Channel, 0, len(all))
+	for _, ch := range all {
+		if ch.AutoJoin && isChannelName(ch.Name) {
+			result = append(result, ch)
+		}
+	}
+	return result, nil
 }
 
 // JoinChannel joins an IRC channel
