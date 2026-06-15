@@ -3,6 +3,15 @@ version: '3'
 vars:
   PLUGIN_DIR: "{{.HOME}}/.cascade-chat/plugins"
   DB_PATH: "{{.HOME}}/.cascade-chat/cascade-chat.db"
+  # Build metadata stamped into the binary via -ldflags (see version.go).
+  # git describe falls back to "dev" outside a git checkout / with no tags.
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo dev
+  COMMIT:
+    sh: git rev-parse --short HEAD 2>/dev/null || echo none
+  BUILD_DATE:
+    sh: date -u +%Y-%m-%dT%H:%M:%SZ
+  LDFLAGS: '-X main.version={{.VERSION}} -X main.commit={{.COMMIT}} -X main.buildDate={{.BUILD_DATE}}'
 
 tasks:
   default:
@@ -33,7 +42,7 @@ tasks:
     desc: Build application for current platform
     deps: [icon]
     cmds:
-      - wails build -tags fts5
+      - wails build -tags fts5 -ldflags "{{.LDFLAGS}}"
 
   build-all:
     desc: Build for all platforms
@@ -43,21 +52,21 @@ tasks:
     desc: Build for macOS
     deps: [icon]
     cmds:
-      - wails build -tags fts5 -platform darwin/amd64
-      - wails build -tags fts5 -platform darwin/arm64
+      - wails build -tags fts5 -ldflags "{{.LDFLAGS}}" -platform darwin/amd64
+      - wails build -tags fts5 -ldflags "{{.LDFLAGS}}" -platform darwin/arm64
 
   build-linux:
     desc: Build for Linux
     deps: [icon]
     cmds:
-      - wails build -tags fts5 -platform linux/amd64
-      - wails build -tags fts5 -platform linux/arm64
+      - wails build -tags fts5 -ldflags "{{.LDFLAGS}}" -platform linux/amd64
+      - wails build -tags fts5 -ldflags "{{.LDFLAGS}}" -platform linux/arm64
 
   build-windows:
     desc: Build for Windows
     deps: [icon]
     cmds:
-      - wails build -tags fts5 -platform windows/amd64
+      - wails build -tags fts5 -ldflags "{{.LDFLAGS}}" -platform windows/amd64
 
   # Go Tasks
   test:

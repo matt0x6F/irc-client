@@ -16,6 +16,8 @@ export function DisconnectNetwork(arg1:number):Promise<void>;
 
 export function EnablePlugin(arg1:string):Promise<void>;
 
+export function GetBuildInfo():Promise<main.BuildInfo>;
+
 export function GetCachedChannelList(arg1:number):Promise<main.ChannelListCacheResult>;
 
 export function GetChannelIDByName(arg1:number,arg2:string):Promise<any>;
@@ -69,6 +71,8 @@ export function ListPlugins():Promise<Array<main.PluginInfo>>;
 export function OnEvent(arg1:events.Event):Promise<void>;
 
 export function OpenSettings():Promise<void>;
+
+export function OpenSettingsAbout():Promise<void>;
 
 export function OpenSettingsDisplay():Promise<void>;
 

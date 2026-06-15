@@ -1,13 +1,22 @@
-name: macOS Release
+name: macOS Build & Release
 
-# Fires on every merge to main (build + package to verify, artifact only) and
-# publishes a GitHub Release when a CalVer tag (vYY.MM.PATCH, e.g. v26.06.0) is pushed.
+# Two intentional paths, one build job:
+#   - Every merge to main: build + package the macOS app and upload it as a
+#     45-day workflow artifact (version "dev-<sha7>"). Verifies the app still
+#     builds/packages on macOS and lets a contributor grab a test DMG from the
+#     Actions tab. This is NOT a release.
+#   - Publishing a GitHub Release (incl. pre-releases): build + package and
+#     attach the DMG to that release. The release/tag is created by a human, so
+#     publishing is the deliberate act that ships a build. Version comes from
+#     the release's tag (minus the leading "v"). Drafts don't trigger anything
+#     until published.
 on:
   push:
     branches: [main]
-    tags: ['v[0-9]*']
+  release:
+    types: [published]
 
-# Allow the tag job to create a Release.
+# Required so the release path can upload the DMG asset to the release.
 permissions:
   contents: write
 
@@ -38,24 +47,33 @@ jobs:
           mkdir -p build
           cp build-assets/appicon.png build/appicon.png
 
-      - name: Build universal app
-        # -tags fts5 + CGO are required for the SQLite full-text-search schema.
-        env:
-          CGO_ENABLED: '1'
-        run: wails build -tags fts5 -platform darwin/universal -clean
-
       - name: Derive version
+        # Runs before the build so the version can be stamped into the binary via
+        # -ldflags. Release builds use the release's tag (minus the leading "v");
+        # merge-to-main builds use a short-SHA dev label.
         id: version
         env:
-          REF_NAME: ${{ github.ref_name }}
-          IS_TAG: ${{ startsWith(github.ref, 'refs/tags/') }}
+          EVENT_NAME: ${{ github.event_name }}
+          TAG_NAME: ${{ github.event.release.tag_name }}
           SHA: ${{ github.sha }}
         run: |
-          if [[ "$IS_TAG" == "true" ]]; then
-            echo "value=${REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          if [[ "$EVENT_NAME" == "release" ]]; then
+            echo "value=${TAG_NAME#v}" >> "$GITHUB_OUTPUT"
           else
             echo "value=dev-${SHA::7}" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Build universal app
+        # -tags fts5 + CGO are required for the SQLite full-text-search schema.
+        # -ldflags stamps the build metadata read by GetBuildInfo (see version.go).
+        env:
+          CGO_ENABLED: '1'
+          VERSION: ${{ steps.version.outputs.value }}
+          SHA: ${{ github.sha }}
+        run: |
+          BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          wails build -tags fts5 -platform darwin/universal -clean \
+            -ldflags "-X main.version=${VERSION} -X main.commit=${SHA::7} -X main.buildDate=${BUILD_DATE}"
 
       - name: Package DMG
         env:
@@ -76,24 +94,19 @@ jobs:
           fi
           echo "DMG=$DMG" >> "$GITHUB_ENV"
 
-      - name: Upload build artifact (every merge)
+      - name: Upload build artifact (merge to main)
+        if: github.event_name == 'push'
         uses: actions/upload-artifact@v4
         with:
           name: cascade-macos-universal
           path: ${{ env.DMG }}
-          retention-days: 14
+          retention-days: 45
 
-      - name: Publish Release (tags only)
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Attach DMG to release
+        if: github.event_name == 'release'
+        # The release already exists (a human published it), so we only upload the
+        # asset. --clobber overwrites a stale DMG if the workflow is re-run.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REF_NAME: ${{ github.ref_name }}
-        # Upsert: gh release create is not idempotent and fails if the release
-        # already exists (manual cut or a re-run). Create it only when missing;
-        # otherwise just attach the DMG (--clobber to overwrite a stale asset).
-        run: |
-          if gh release view "$REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$REF_NAME" "$DMG" --clobber
-          else
-            gh release create "$REF_NAME" "$DMG" --generate-notes --title "$REF_NAME"
-          fi
+          TAG_NAME: ${{ github.event.release.tag_name }}
+        run: gh release upload "$TAG_NAME" "$DMG" --clobber

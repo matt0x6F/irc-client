@@ -26,6 +26,10 @@ export function EnablePlugin(arg1) {
   return window['go']['main']['App']['EnablePlugin'](arg1);
 }
 
+export function GetBuildInfo() {
+  return window['go']['main']['App']['GetBuildInfo']();
+}
+
 export function GetCachedChannelList(arg1) {
   return window['go']['main']['App']['GetCachedChannelList'](arg1);
 }
@@ -132,6 +136,10 @@ export function OnEvent(arg1) {
 
 export function OpenSettings() {
   return window['go']['main']['App']['OpenSettings']();
+}
+
+export function OpenSettingsAbout() {
+  return window['go']['main']['App']['OpenSettingsAbout']();
 }
 
 export function OpenSettingsDisplay() {

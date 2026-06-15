@@ -80,6 +80,15 @@ func main() {
 		appMenu.Append(menu.WindowMenu())
 	}
 
+	// Help menu with an About entry that opens the About settings pane.
+	// Added on all platforms; on macOS the Help menu also gains the standard
+	// system-provided search box.
+	helpMenu := menu.NewMenu()
+	helpMenu.AddText("About Cascade", nil, func(_ *menu.CallbackData) {
+		app.OpenSettingsAbout()
+	})
+	appMenu.Append(menu.SubMenu("Help", helpMenu))
+
 	// Create application with options
 	err = wails.Run(&options.App{
 		Title:  "Cascade Chat",
