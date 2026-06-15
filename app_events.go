@@ -72,6 +72,18 @@ func (a *App) OnEvent(event events.Event) {
 		})
 	}
 
+	// Forward CHATHISTORY completion to the frontend so it can re-query the local
+	// store (now backfilled) and decide whether to stop paging. Carries the target
+	// and the count of newly-inserted rows.
+	if event.Type == irc.EventHistoryReceived {
+		runtime.EventsEmit(a.ctx, "history-event", map[string]interface{}{
+			"type":      event.Type,
+			"data":      event.Data,
+			"timestamp": event.Timestamp.Format(time.RFC3339),
+		})
+		return
+	}
+
 	// Forward channel list events to frontend, caching the result first so that
 	// reopening the modal can render instantly without a fresh LIST. This runs after
 	// the IRC 323 handler has cleared its accumulation buffer, so it is race-free.

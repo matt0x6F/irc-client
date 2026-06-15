@@ -11,8 +11,8 @@ ORDER BY timestamp DESC
 LIMIT ?;
 
 -- name: CreateMessage :one
-INSERT INTO messages (network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO messages (network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, msgid)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: GetPrivateMessages :many

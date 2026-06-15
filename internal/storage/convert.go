@@ -182,6 +182,7 @@ func convertMessageFromDB(m db.Message) Message {
 		Timestamp:   m.Timestamp,
 		RawLine:     convertNullString(m.RawLine),
 		PMTarget:    convertNullString(m.PmTarget),
+		MsgID:       convertNullString(m.Msgid),
 	}
 	if m.ChannelID.Valid {
 		result.ChannelID = &m.ChannelID.Int64
@@ -203,6 +204,7 @@ func convertMessageToDBCreateParams(m Message) db.CreateMessageParams {
 		Timestamp:   m.Timestamp,
 		RawLine:     convertToNullString(m.RawLine),
 		PmTarget:    convertToNullString(m.PMTarget),
+		Msgid:       convertToNullString(m.MsgID),
 	}
 }
 

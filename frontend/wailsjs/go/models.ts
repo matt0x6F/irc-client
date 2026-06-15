@@ -345,6 +345,7 @@ export namespace storage {
 	    timestamp: any;
 	    raw_line: string;
 	    pm_target: string;
+	    msgid: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Message(source);
@@ -361,6 +362,7 @@ export namespace storage {
 	        this.timestamp = this.convertValues(source["timestamp"], null);
 	        this.raw_line = source["raw_line"];
 	        this.pm_target = source["pm_target"];
+	        this.msgid = source["msgid"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -456,6 +458,7 @@ export namespace storage {
 	    timestamp: any;
 	    raw_line: string;
 	    pm_target: string;
+	    msgid: string;
 	    pinned_by: string;
 	    // Go type: time
 	    pinned_at: any;
@@ -475,6 +478,7 @@ export namespace storage {
 	        this.timestamp = this.convertValues(source["timestamp"], null);
 	        this.raw_line = source["raw_line"];
 	        this.pm_target = source["pm_target"];
+	        this.msgid = source["msgid"];
 	        this.pinned_by = source["pinned_by"];
 	        this.pinned_at = this.convertValues(source["pinned_at"], null);
 	    }
@@ -508,6 +512,7 @@ export namespace storage {
 	    timestamp: any;
 	    raw_line: string;
 	    pm_target: string;
+	    msgid: string;
 	    channel_name: string;
 	    network_name: string;
 	
@@ -526,6 +531,7 @@ export namespace storage {
 	        this.timestamp = this.convertValues(source["timestamp"], null);
 	        this.raw_line = source["raw_line"];
 	        this.pm_target = source["pm_target"];
+	        this.msgid = source["msgid"];
 	        this.channel_name = source["channel_name"];
 	        this.network_name = source["network_name"];
 	    }

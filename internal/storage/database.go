@@ -177,11 +177,14 @@ func (s *Storage) flushBuffer() {
 				return
 			}
 
-			// Batch insert. NULLIF maps an empty pm_target to NULL so non-PM rows
-			// stay out of the PM-keyed queries (and in the status pane), matching
-			// the SQLC CreateMessage path which converts "" to a NULL string.
-			query := `INSERT INTO messages (network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target)
-			          VALUES (:network_id, :channel_id, :user, :message, :message_type, :timestamp, :raw_line, NULLIF(:pm_target, ''))`
+			// Batch insert. NULLIF maps an empty pm_target/msgid to NULL: non-PM rows
+			// stay out of the PM-keyed queries (and in the status pane), and msgid-less
+			// rows stay out of the partial unique index (so they never collide). The
+			// ON CONFLICT clause makes the live path idempotent against the msgid dedup
+			// index — e.g. an echo and a CHATHISTORY replay of the same line.
+			query := `INSERT INTO messages (network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, msgid)
+			          VALUES (:network_id, :channel_id, :user, :message, :message_type, :timestamp, :raw_line, NULLIF(:pm_target, ''), NULLIF(:msgid, ''))
+			          ON CONFLICT(network_id, msgid) WHERE msgid IS NOT NULL DO NOTHING`
 
 			_, err := s.db.NamedExec(query, messages)
 			if err != nil {
@@ -277,6 +280,45 @@ func (s *Storage) WriteMessageDirect(msg Message) error {
 	params := convertMessageToDBCreateParams(msg)
 	_, err := s.queries.CreateMessage(context.Background(), params)
 	return err
+}
+
+// WriteHistoryMessages bulk-inserts replayed CHATHISTORY messages, deduplicating
+// against existing rows by IRCv3 msgid (the partial unique index on
+// (network_id, msgid)). It returns the number of genuinely-new rows inserted —
+// the caller uses a zero count to detect that the start of available history has
+// been reached and stop paging. This is synchronous and bypasses the write buffer
+// so the inserted rows are immediately queryable for the scrollback re-fetch.
+func (s *Storage) WriteHistoryMessages(msgs []Message) (int, error) {
+	if len(msgs) == 0 {
+		return 0, nil
+	}
+
+	s.closedMu.RLock()
+	if s.closed {
+		s.closedMu.RUnlock()
+		return 0, fmt.Errorf("storage is closed")
+	}
+	s.closedMu.RUnlock()
+
+	// Same NULLIF + ON CONFLICT semantics as flushBuffer: msgid-less rows are
+	// exempt from the dedup index; rows whose msgid already exists are skipped
+	// (and excluded from RowsAffected, so the returned count is new rows only).
+	query := `INSERT INTO messages (network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, msgid)
+	          VALUES (:network_id, :channel_id, :user, :message, :message_type, :timestamp, :raw_line, NULLIF(:pm_target, ''), NULLIF(:msgid, ''))
+	          ON CONFLICT(network_id, msgid) WHERE msgid IS NOT NULL DO NOTHING`
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	result, err := s.db.NamedExec(query, msgs)
+	if err != nil {
+		return 0, fmt.Errorf("failed to write history messages: %w", err)
+	}
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("failed to read history insert count: %w", err)
+	}
+	return int(inserted), nil
 }
 
 // GetMessages retrieves messages for a network and channel
@@ -453,6 +495,52 @@ func (s *Storage) GetMessagesBefore(networkID int64, channelID *int64, beforeID 
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to get messages before: %w", err)
+	}
+
+	// Query returns DESC (newest first); reverse to ascending (chronological).
+	messages := make([]Message, 0, len(dbMessages))
+	for i := len(dbMessages) - 1; i >= 0; i-- {
+		messages = append(messages, convertMessageFromDB(dbMessages[i]))
+	}
+
+	return messages, nil
+}
+
+// GetMessagesBeforeTime returns up to `limit` messages strictly older than
+// `before` (by server-time timestamp), in chronological (ascending) order.
+// Unlike GetMessagesBefore (id-keyed), this paginates by timestamp so it surfaces
+// CHATHISTORY-backfilled rows, which are inserted with high ids but old timestamps.
+// Target selection: a non-empty pmTarget selects a PM conversation; otherwise a
+// non-nil channelID selects a channel; otherwise the status pane.
+func (s *Storage) GetMessagesBeforeTime(networkID int64, channelID *int64, pmTarget string, before time.Time, limit int) ([]Message, error) {
+	var dbMessages []db.Message
+	var err error
+
+	switch {
+	case pmTarget != "":
+		dbMessages, err = s.queries.GetMessagesBeforeTimePM(context.Background(), db.GetMessagesBeforeTimePMParams{
+			NetworkID: networkID,
+			PmTarget:  sql.NullString{String: strings.ToLower(pmTarget), Valid: true},
+			Timestamp: before,
+			Limit:     int64(limit),
+		})
+	case channelID != nil:
+		dbMessages, err = s.queries.GetMessagesBeforeTimeWithChannel(context.Background(), db.GetMessagesBeforeTimeWithChannelParams{
+			NetworkID: networkID,
+			ChannelID: sql.NullInt64{Int64: *channelID, Valid: true},
+			Timestamp: before,
+			Limit:     int64(limit),
+		})
+	default:
+		dbMessages, err = s.queries.GetMessagesBeforeTimeWithoutChannel(context.Background(), db.GetMessagesBeforeTimeWithoutChannelParams{
+			NetworkID: networkID,
+			Timestamp: before,
+			Limit:     int64(limit),
+		})
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get messages before time: %w", err)
 	}
 
 	// Query returns DESC (newest first); reverse to ascending (chronological).

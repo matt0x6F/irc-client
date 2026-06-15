@@ -244,6 +244,28 @@ func (a *App) GetMessagesAfter(networkID int64, channelID *int64, afterID int64,
 	return a.storage.GetMessagesAfter(networkID, channelID, afterID, limit)
 }
 
+// GetMessagesBeforeTime retrieves up to `limit` messages older than `beforeISO`
+// (an ISO8601/RFC3339 timestamp) by server-time, chronological order. Unlike
+// GetMessagesBefore (id-keyed), this surfaces CHATHISTORY-backfilled rows (high
+// id, old timestamp). A non-empty pmTarget selects a PM conversation; otherwise
+// channelID selects a channel (nil = status pane). Used for unified local + server
+// scrollback pagination.
+//
+// The cursor is a string (not time.Time) deliberately: a time.Time parameter in a
+// Wails-bound method makes the binding generator emit a time.Time class for every
+// timestamp field, which breaks `new Date(msg.timestamp)` across the frontend.
+func (a *App) GetMessagesBeforeTime(networkID int64, channelID *int64, pmTarget string, beforeISO string, limit int) ([]storage.Message, error) {
+	before, err := time.Parse(time.RFC3339Nano, beforeISO)
+	if err != nil {
+		// Fall back to second precision (no fractional seconds).
+		before, err = time.Parse(time.RFC3339, beforeISO)
+		if err != nil {
+			return nil, fmt.Errorf("invalid before timestamp %q: %w", beforeISO, err)
+		}
+	}
+	return a.storage.GetMessagesBeforeTime(networkID, channelID, pmTarget, before, limit)
+}
+
 // GetPrivateMessages retrieves private messages for a network and user
 func (a *App) GetPrivateMessages(networkID int64, targetUser string, limit int) ([]storage.Message, error) {
 	network, err := a.storage.GetNetwork(networkID)

@@ -70,6 +70,10 @@ export function GetMessagesBefore(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['GetMessagesBefore'](arg1, arg2, arg3, arg4);
 }
 
+export function GetMessagesBeforeTime(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['GetMessagesBeforeTime'](arg1, arg2, arg3, arg4, arg5);
+}
+
 export function GetNetworks() {
   return window['go']['main']['App']['GetNetworks']();
 }
@@ -160,6 +164,14 @@ export function RequestChannelBans(arg1, arg2) {
 
 export function RequestChannelList(arg1) {
   return window['go']['main']['App']['RequestChannelList'](arg1);
+}
+
+export function RequestChatHistoryBefore(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['RequestChatHistoryBefore'](arg1, arg2, arg3, arg4);
+}
+
+export function RequestChatHistoryLatest(arg1, arg2, arg3) {
+  return window['go']['main']['App']['RequestChatHistoryLatest'](arg1, arg2, arg3);
 }
 
 export function SaveNetwork(arg1) {
