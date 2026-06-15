@@ -67,7 +67,16 @@ type Message struct {
 	Message     string    `db:"message" json:"message"`
 	MessageType string    `db:"message_type" json:"message_type"` // 'privmsg', 'notice', 'action', etc.
 	Timestamp   time.Time `db:"timestamp" json:"timestamp"`
-	RawLine     string    `db:"raw_line" json:"raw_line"` // Original IRC line
+	RawLine     string    `db:"raw_line" json:"raw_line"`   // Original IRC line
+	PMTarget    string    `db:"pm_target" json:"pm_target"` // Conversation peer for PMs ("" for channel/status/server rows)
+	MsgID       string    `db:"msgid" json:"msgid"`         // IRCv3 message id ("" for legacy/local rows); dedup key for CHATHISTORY
+}
+
+// PinnedMessage represents a message that has been pinned, with pin metadata
+type PinnedMessage struct {
+	Message
+	PinnedBy string    `db:"pinned_by" json:"pinned_by"`
+	PinnedAt time.Time `db:"pinned_at" json:"pinned_at"`
 }
 
 // PrivateMessageConversation represents a private message conversation with a user

@@ -26,6 +26,14 @@ export function EnablePlugin(arg1) {
   return window['go']['main']['App']['EnablePlugin'](arg1);
 }
 
+export function GetBuildInfo() {
+  return window['go']['main']['App']['GetBuildInfo']();
+}
+
+export function GetCachedChannelList(arg1) {
+  return window['go']['main']['App']['GetCachedChannelList'](arg1);
+}
+
 export function GetChannelIDByName(arg1, arg2) {
   return window['go']['main']['App']['GetChannelIDByName'](arg1, arg2);
 }
@@ -42,6 +50,10 @@ export function GetConnectionStatus(arg1) {
   return window['go']['main']['App']['GetConnectionStatus'](arg1);
 }
 
+export function GetCurrentNick(arg1) {
+  return window['go']['main']['App']['GetCurrentNick'](arg1);
+}
+
 export function GetJoinedChannels(arg1) {
   return window['go']['main']['App']['GetJoinedChannels'](arg1);
 }
@@ -52,6 +64,22 @@ export function GetLastOpenPane() {
 
 export function GetMessages(arg1, arg2, arg3) {
   return window['go']['main']['App']['GetMessages'](arg1, arg2, arg3);
+}
+
+export function GetMessagesAfter(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['GetMessagesAfter'](arg1, arg2, arg3, arg4);
+}
+
+export function GetMessagesAround(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['GetMessagesAround'](arg1, arg2, arg3, arg4);
+}
+
+export function GetMessagesBefore(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['GetMessagesBefore'](arg1, arg2, arg3, arg4);
+}
+
+export function GetMessagesBeforeTime(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['GetMessagesBeforeTime'](arg1, arg2, arg3, arg4, arg5);
 }
 
 export function GetNetworks() {
@@ -68,6 +96,10 @@ export function GetNicknameColorsBatch(arg1, arg2) {
 
 export function GetOpenChannels(arg1) {
   return window['go']['main']['App']['GetOpenChannels'](arg1);
+}
+
+export function GetPinnedMessages(arg1, arg2) {
+  return window['go']['main']['App']['GetPinnedMessages'](arg1, arg2);
 }
 
 export function GetPluginConfig(arg1) {
@@ -114,6 +146,10 @@ export function OpenSettings() {
   return window['go']['main']['App']['OpenSettings']();
 }
 
+export function OpenSettingsAbout() {
+  return window['go']['main']['App']['OpenSettingsAbout']();
+}
+
 export function OpenSettingsDisplay() {
   return window['go']['main']['App']['OpenSettingsDisplay']();
 }
@@ -126,12 +162,28 @@ export function OpenSettingsPlugins() {
   return window['go']['main']['App']['OpenSettingsPlugins']();
 }
 
+export function PinMessage(arg1, arg2, arg3) {
+  return window['go']['main']['App']['PinMessage'](arg1, arg2, arg3);
+}
+
 export function ReloadPlugin(arg1) {
   return window['go']['main']['App']['ReloadPlugin'](arg1);
 }
 
+export function RequestChannelBans(arg1, arg2) {
+  return window['go']['main']['App']['RequestChannelBans'](arg1, arg2);
+}
+
 export function RequestChannelList(arg1) {
   return window['go']['main']['App']['RequestChannelList'](arg1);
+}
+
+export function RequestChatHistoryBefore(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['RequestChatHistoryBefore'](arg1, arg2, arg3, arg4);
+}
+
+export function RequestChatHistoryLatest(arg1, arg2, arg3) {
+  return window['go']['main']['App']['RequestChatHistoryLatest'](arg1, arg2, arg3);
 }
 
 export function SaveNetwork(arg1) {
@@ -172,4 +224,8 @@ export function ToggleChannelAutoJoin(arg1, arg2) {
 
 export function ToggleNetworkAutoConnect(arg1) {
   return window['go']['main']['App']['ToggleNetworkAutoConnect'](arg1);
+}
+
+export function UnpinMessage(arg1) {
+  return window['go']['main']['App']['UnpinMessage'](arg1);
 }

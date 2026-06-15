@@ -6,6 +6,9 @@ INSERT INTO channel_users (channel_id, nickname, modes, created_at, updated_at)
 VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 ON CONFLICT(channel_id, nickname) DO UPDATE SET modes = excluded.modes, updated_at = CURRENT_TIMESTAMP;
 
+-- name: GetChannelUserModes :one
+SELECT modes FROM channel_users WHERE channel_id = ? AND LOWER(nickname) = LOWER(?);
+
 -- name: RemoveChannelUser :exec
 DELETE FROM channel_users WHERE channel_id = ? AND LOWER(nickname) = LOWER(?);
 

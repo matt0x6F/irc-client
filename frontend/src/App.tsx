@@ -8,12 +8,14 @@ import { MessageView } from './components/message-view';
 import { InputArea } from './components/input-area';
 import { SettingsModal } from './components/settings-modal';
 import { ChannelInfo } from './components/channel-info';
+import { PinnedMessages } from './components/pinned-messages';
 import { TopicEditModal } from './components/topic-edit-modal';
-import { ModeEditModal } from './components/mode-edit-modal';
+import { ChannelModeEditor } from './components/channel-mode-editor';
 import { UserInfo } from './components/user-info';
 import { SearchModal } from './components/search-modal';
 import { ChannelListModal } from './components/channel-list-modal';
 import { KeyboardShortcutsModal } from './components/keyboard-shortcuts-modal';
+import { List, Settings } from 'lucide-react';
 
 function App() {
   // Network store
@@ -22,18 +24,24 @@ function App() {
   const selectedChannel = useNetworkStore((s) => s.selectedChannel);
   const messages = useNetworkStore((s) => s.messages);
   const connectionStatus = useNetworkStore((s) => s.connectionStatus);
+  const currentNick = useNetworkStore((s) => s.currentNick);
   const channelInfo = useNetworkStore((s) => s.channelInfo);
   const unreadCounts = useNetworkStore((s) => s.unreadCounts);
   const loadNetworks = useNetworkStore((s) => s.loadNetworks);
   const loadMessages = useNetworkStore((s) => s.loadMessages);
   const loadChannelInfo = useNetworkStore((s) => s.loadChannelInfo);
   const loadConnectionStatus = useNetworkStore((s) => s.loadConnectionStatus);
+  const loadCurrentNick = useNetworkStore((s) => s.loadCurrentNick);
+  const loadPinnedMessages = useNetworkStore((s) => s.loadPinnedMessages);
+  const noteNewWhileAnchored = useNetworkStore((s) => s.noteNewWhileAnchored);
+  const pinnedCount = useNetworkStore((s) => s.pinnedMessages.length);
   const selectPane = useNetworkStore((s) => s.selectPane);
   const connectNetwork = useNetworkStore((s) => s.connectNetwork);
   const disconnectNetwork = useNetworkStore((s) => s.disconnectNetwork);
   const deleteNetwork = useNetworkStore((s) => s.deleteNetwork);
   const sendMessage = useNetworkStore((s) => s.sendMessage);
   const setConnectionStatus = useNetworkStore((s) => s.setConnectionStatus);
+  const setCurrentNick = useNetworkStore((s) => s.setCurrentNick);
   const markActivity = useNetworkStore((s) => s.markActivity);
   const restoreLastPane = useNetworkStore((s) => s.restoreLastPane);
 
@@ -66,10 +74,18 @@ function App() {
   const toggleRightSidebar = useUIStore((s) => s.toggleRightSidebar);
   const setLeftSidebarCollapsed = useUIStore((s) => s.setLeftSidebarCollapsed);
   const setRightSidebarCollapsed = useUIStore((s) => s.setRightSidebarCollapsed);
+  const rightSidebarTab = useUIStore((s) => s.rightSidebarTab);
+  const setRightSidebarTab = useUIStore((s) => s.setRightSidebarTab);
 
   // Refs
   const hasRestoredPaneRef = useRef(false);
-  const pendingJoinChannelRef = useRef<{ networkId: number; channel: string } | null>(null);
+  // `fromChannel` records the pane the user was on when they issued /join, so the
+  // deferred auto-focus can yield if they navigate elsewhere before it fires.
+  const pendingJoinChannelRef = useRef<{
+    networkId: number;
+    channel: string;
+    fromChannel: string | null;
+  } | null>(null);
   const resizeStartX = useRef(0);
   const resizeStartWidth = useRef(0);
   const isResizingLeftRef = useRef(false);
@@ -174,15 +190,21 @@ function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [openSearch, openSettings, toggleKeyboardShortcuts, closeKeyboardShortcuts, showKeyboardShortcuts, showSearch, closeSearch, showSettings, closeSettings, showTopicModal, setShowTopicModal, showModeModal, setShowModeModal, showUserInfo, setShowUserInfo, showChannelList, closeChannelList, toggleLeftSidebar, toggleRightSidebar]);
 
-  // Responsive sidebar collapse on small windows
+  // Responsive sidebar collapse on small windows.
+  // Only react when the window actually crosses the breakpoint — otherwise a
+  // resize within the same band would overwrite a manual sidebar toggle on every
+  // resize tick, making the sidebar fight the user and the layout look "messed up".
   useEffect(() => {
     const BREAKPOINT = 768;
+    let wasNarrow: boolean | null = null;
     const handleResize = () => {
       const narrow = window.innerWidth < BREAKPOINT;
+      if (narrow === wasNarrow) return;
+      wasNarrow = narrow;
       setLeftSidebarCollapsed(narrow);
       setRightSidebarCollapsed(narrow);
     };
-    // Check on mount
+    // Check on mount (wasNarrow starts null, so this always sets initial state)
     handleResize();
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
@@ -194,7 +216,7 @@ function App() {
     const interval = setInterval(loadNetworks, 5000);
 
     const unsubscribe = EventsOn('open-settings', (section?: string) => {
-      if (section === 'networks' || section === 'plugins' || section === 'display') {
+      if (section === 'networks' || section === 'plugins' || section === 'display' || section === 'about') {
         openSettings(section);
       } else {
         openSettings(undefined);
@@ -220,10 +242,13 @@ function App() {
     if (selectedNetwork !== null) {
       loadMessages();
       loadConnectionStatus();
+      loadCurrentNick();
       loadChannelInfo();
+      loadPinnedMessages();
       const interval = setInterval(() => {
         loadMessages();
         loadConnectionStatus();
+        loadCurrentNick();
         loadChannelInfo();
       }, 2000);
       return () => clearInterval(interval);
@@ -237,6 +262,19 @@ function App() {
       const connected = data?.connected;
       if (networkId !== undefined && typeof connected === 'boolean') {
         setConnectionStatus(networkId, connected);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Current-nick events: track the server-assigned nick so the header reflects
+  // who we actually are, including after an automatic reclaim of our nick.
+  useEffect(() => {
+    const unsubscribe = EventsOn('current-nick', (data: any) => {
+      const networkId = data?.networkId;
+      const nick = data?.nick;
+      if (networkId !== undefined && typeof nick === 'string' && nick) {
+        setCurrentNick(networkId, nick);
       }
     });
     return () => unsubscribe();
@@ -257,7 +295,19 @@ function App() {
           const isChannel = target.startsWith('#') || target.startsWith('&');
           let pmUser: string | null = null;
           if (!isChannel) {
-            pmUser = eventType === 'message.received' ? eventData.user || null : target;
+            // With echo-message, our own sent PMs come back as a 'message.received'
+            // event whose user is *us*. That isn't a new incoming message — the
+            // matching 'message.sent' already tracked the conversation — so don't
+            // badge it (and never key it to our own nick, which created a phantom
+            // self-PM badge). The conversation peer is the target, not the sender.
+            const isEcho =
+              eventType === 'message.received' &&
+              !!networkObj.nickname &&
+              !!eventData.user &&
+              eventData.user.toLowerCase() === networkObj.nickname.toLowerCase();
+            if (!isEcho) {
+              pmUser = eventType === 'message.received' ? eventData.user || null : target;
+            }
           }
           const pmKey = pmUser ? `pm:${pmUser}` : null;
           const activityKey = isChannel
@@ -297,8 +347,16 @@ function App() {
             if (norm(pending.channel) === norm(channel)) {
               const nId = networkObj.id;
               const chName = channel;
+              const fromNetwork = pending.networkId;
+              const fromChannel = pending.fromChannel;
               setTimeout(() => {
-                selectPane(nId, chName);
+                // Auto-focus the just-joined channel only if the user hasn't
+                // navigated away since issuing /join — a manual switch wins.
+                const { selectedNetwork: curNet, selectedChannel: curChan } =
+                  useNetworkStore.getState();
+                if (curNet === fromNetwork && curChan === fromChannel) {
+                  selectPane(nId, chName);
+                }
                 pendingJoinChannelRef.current = null;
               }, 300);
             }
@@ -310,21 +368,51 @@ function App() {
       if (selectedNetwork === null) return;
       const currentNetwork = networks.find((n) => n.id === selectedNetwork);
       if (currentNetwork && network === currentNetwork.address) {
-        if (
-          (eventType === 'message.received' || eventType === 'message.sent') &&
-          target &&
-          selectedChannel === target
-        ) {
-          loadMessages();
-        } else if (target && selectedChannel === target) {
-          loadMessages();
-        } else if (eventData.channel === null && selectedChannel === 'status') {
-          loadMessages();
+        const matchesView =
+          (target && selectedChannel === target) ||
+          (eventData.channel === null && selectedChannel === 'status');
+        if (matchesView) {
+          // While anchored to a pinned/old message, don't reload (which would snap
+          // back to live). Instead count new messages so the badge can show them.
+          if (useNetworkStore.getState().viewMode === 'anchored') {
+            if (eventType === 'message.received' || eventType === 'message.sent') {
+              noteNewWhileAnchored();
+            }
+          } else {
+            loadMessages();
+          }
         }
       }
     });
     return () => unsubscribe();
   }, [selectedNetwork, selectedChannel, networks]);
+
+  // CHATHISTORY completion events. Resolves a parked scrollback request (prepending
+  // older rows while preserving the viewport); for on-join/on-open catch-up there's
+  // no parked request, so refresh the live view to surface the backfilled messages.
+  useEffect(() => {
+    const unsubscribe = EventsOn('history-event', (data: any) => {
+      const eventData = data?.data || {};
+      const target = (eventData.target as string) || '';
+      const inserted = (eventData.inserted as number) || 0;
+      const store = useNetworkStore.getState();
+
+      const handledScrollback = store.onHistoryReceived(target, inserted);
+      if (handledScrollback || inserted === 0) return;
+
+      // Live catch-up: if the backfilled target is the active buffer and we're not
+      // anchored, reload so the new history appears now rather than on the next poll.
+      if (store.viewMode !== 'live' || selectedNetwork === null) return;
+      const currentNetwork = networks.find((n) => n.id === selectedNetwork);
+      if (!currentNetwork || eventData.network !== currentNetwork.address) return;
+      const sel = store.selectedChannel;
+      const matches =
+        sel === target ||
+        (!!sel && sel.startsWith('pm:') && sel.substring(3).toLowerCase() === target.toLowerCase());
+      if (matches) store.loadMessages();
+    });
+    return () => unsubscribe();
+  }, [selectedNetwork, networks]);
 
   // Topic/mode change events
   useEffect(() => {
@@ -381,7 +469,11 @@ function App() {
       const rest = trimmed.substring(5).trim();
       const parts = rest ? rest.split(/\s+/) : [];
       if (parts.length > 0 && (parts[0].startsWith('#') || parts[0].startsWith('&'))) {
-        pendingJoinChannelRef.current = { networkId: selectedNetwork, channel: parts[0] };
+        pendingJoinChannelRef.current = {
+          networkId: selectedNetwork,
+          channel: parts[0],
+          fromChannel: selectedChannel,
+        };
         setTimeout(() => {
           if (
             pendingJoinChannelRef.current &&
@@ -448,11 +540,21 @@ function App() {
 
   // --- Render ---
 
+  // Header nick chip: the nick the server currently knows us by, plus whether it
+  // differs from our configured nick (meaning a reclaim of the preferred nick is
+  // pending — the client retries automatically on each keepalive).
+  const selectedNick = selectedNetwork !== null ? currentNick[selectedNetwork] : undefined;
+  const preferredNick =
+    selectedNetwork !== null ? networks.find((n) => n.id === selectedNetwork)?.nickname : undefined;
+  const nickReclaimPending = !!selectedNick && !!preferredNick && selectedNick !== preferredNick;
+
   return (
-    <div className="flex h-screen bg-background">
+    <div className="flex h-screen bg-background overflow-hidden">
       {/* Network Tree Sidebar */}
       <div
         ref={serverTreeRef}
+        data-testid="left-sidebar"
+        data-collapsed={String(leftSidebarCollapsed)}
         className="border-r border-border overflow-auto flex-shrink-0 relative bg-card/30"
         style={{
           width: leftSidebarCollapsed ? '0px' : `${leftSidebarWidth}px`,
@@ -478,7 +580,8 @@ function App() {
         />
         {!leftSidebarCollapsed && (
           <div
-            className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:w-2 hover:bg-primary/40 bg-border/50 z-10"
+            data-testid="left-resize-handle"
+            className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:w-2 hover:bg-primary/40 bg-transparent z-10"
             style={{ transition: 'var(--transition-base)' }}
             onMouseDown={handleLeftResizeStart}
             title="Drag to resize"
@@ -487,15 +590,19 @@ function App() {
       </div>
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col">
+      <div className="flex-1 flex flex-col min-w-0">
         {/* Header */}
-        <div className="border-b border-border bg-card/50 backdrop-blur-sm">
+        <div
+          className="border-b border-border"
+          style={{ background: 'var(--glass-bg)', backdropFilter: 'blur(var(--backdrop-blur))', WebkitBackdropFilter: 'blur(var(--backdrop-blur))' }}
+        >
           <div className="h-14 flex items-center justify-between px-3 sm:px-5">
             <div className="flex items-center gap-2 min-w-0">
               {/* Hamburger toggle for left sidebar */}
               {leftSidebarCollapsed && (
                 <button
                   onClick={toggleLeftSidebar}
+                  data-testid="toggle-left-sidebar"
                   className="flex-shrink-0 p-1.5 rounded-md hover:bg-accent/50 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
                   title="Show sidebar"
                 >
@@ -509,6 +616,7 @@ function App() {
               {!leftSidebarCollapsed && (
                 <button
                   onClick={toggleLeftSidebar}
+                  data-testid="toggle-left-sidebar"
                   className="flex-shrink-0 p-1.5 rounded-md hover:bg-accent/50 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
                   title="Hide sidebar"
                 >
@@ -524,21 +632,41 @@ function App() {
                     {networks.find((n) => n.id === selectedNetwork)?.name || 'Unknown'}
                   </span>
                   <span
-                    className={`text-xs font-medium px-1.5 py-0.5 rounded ${
+                    className={`inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full ${
                       connectionStatus[selectedNetwork]
-                        ? 'bg-green-500/20 text-green-700 dark:text-green-400'
-                        : 'bg-gray-500/20 text-gray-700 dark:text-gray-400'
+                        ? 'bg-green-500/15 text-green-700 dark:text-green-400'
+                        : 'bg-muted text-muted-foreground'
                     }`}
                     title={connectionStatus[selectedNetwork] ? 'Connected' : 'Disconnected'}
                   >
-                    {connectionStatus[selectedNetwork] ? '●' : '○'}
+                    <span
+                      className="w-1.5 h-1.5 rounded-full"
+                      style={{ background: connectionStatus[selectedNetwork] ? 'var(--presence-online)' : 'var(--presence-offline)' }}
+                    />
+                    {connectionStatus[selectedNetwork] ? 'Connected' : 'Disconnected'}
                   </span>
+                  {connectionStatus[selectedNetwork] && selectedNick && (
+                    <span
+                      data-testid="current-nick"
+                      className={`text-xs font-medium ${
+                        nickReclaimPending ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'
+                      }`}
+                      title={
+                        nickReclaimPending ? `Trying to reclaim ${preferredNick}` : `Your nick: ${selectedNick}`
+                      }
+                    >
+                      · {selectedNick}
+                    </span>
+                  )}
                   {selectedChannel &&
                     selectedChannel !== 'status' &&
                     !selectedChannel.startsWith('pm:') && (
                       <>
                         <span className="text-muted-foreground/50">/</span>
-                        <span className="text-muted-foreground font-medium">
+                        <span
+                          data-testid="active-channel-name"
+                          className="text-muted-foreground font-medium"
+                        >
                           {selectedChannel.startsWith('#') || selectedChannel.startsWith('&')
                             ? selectedChannel
                             : `#${selectedChannel}`}
@@ -582,16 +710,42 @@ function App() {
                   <circle cx="11" cy="11" r="8" />
                   <path d="m21 21-4.3-4.3" />
                 </svg>
+                <span className="hidden sm:inline">Search</span>
                 <kbd className="hidden sm:inline-flex h-5 select-none items-center gap-1 rounded border border-border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-60">
                   {navigator.platform?.includes('Mac') ? '\u2318' : 'Ctrl+'}K
                 </kbd>
               </button>
-              {/* Right sidebar toggle — only show when a channel is selected */}
-              {selectedChannel && selectedChannel !== 'status' && !selectedChannel.startsWith('pm:') && (
+              {/* Browse channels — for the selected network */}
+              {selectedNetwork !== null && (
+                <button
+                  onClick={() => {
+                    if (selectedNetwork !== null) {
+                      useUIStore.getState().openChannelList(selectedNetwork);
+                    }
+                  }}
+                  className="p-1.5 rounded-md hover:bg-accent/50 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                  title="Browse channels"
+                  aria-label="Browse channels"
+                >
+                  <List size={18} />
+                </button>
+              )}
+              {/* Settings */}
+              <button
+                onClick={() => openSettings(undefined)}
+                className="p-1.5 rounded-md hover:bg-accent/50 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                title="Settings"
+                aria-label="Settings"
+              >
+                <Settings size={18} />
+              </button>
+              {/* Right sidebar toggle — show for channels and PMs */}
+              {selectedChannel && selectedChannel !== 'status' && (
                 <button
                   onClick={toggleRightSidebar}
+                  data-testid="toggle-right-sidebar"
                   className="p-1.5 rounded-md hover:bg-accent/50 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-                  title={rightSidebarCollapsed ? 'Show channel info' : 'Hide channel info'}
+                  title={rightSidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <rect x="3" y="3" width="18" height="18" rx="2" />
@@ -606,16 +760,15 @@ function App() {
             !selectedChannel.startsWith('pm:') &&
             channelInfo?.channel && (
               <div className="px-5 pb-3 flex items-center gap-4 text-sm border-t border-border/50 pt-2">
-                {channelInfo.channel.modes && (
-                  <button
-                    onClick={() => setShowModeModal(true)}
-                    className="text-muted-foreground hover:text-foreground cursor-pointer transition-all px-2 py-1 rounded-md hover:bg-accent/50"
-                    style={{ transition: 'var(--transition-base)' }}
-                    title="Click to edit modes"
-                  >
-                    Modes: {channelInfo.channel.modes}
-                  </button>
-                )}
+                <button
+                  data-testid="channel-modes-button"
+                  onClick={() => setShowModeModal(true)}
+                  className="text-muted-foreground hover:text-foreground cursor-pointer transition-all px-2 py-1 rounded-md hover:bg-accent/50 shrink-0"
+                  style={{ transition: 'var(--transition-base)' }}
+                  title="Click to edit channel modes"
+                >
+                  Modes: {channelInfo.channel.modes || '(none)'}
+                </button>
                 <button
                   onClick={() => setShowTopicModal(true)}
                   className="text-muted-foreground hover:text-foreground cursor-pointer italic flex-1 text-left truncate px-2 py-1 rounded-md hover:bg-accent/50 transition-all"
@@ -649,44 +802,93 @@ function App() {
             )}
           </div>
 
-          {/* Channel Info Sidebar */}
+          {/* Right Sidebar — Users (channels only) + Pinned messages */}
           {selectedChannel &&
             selectedChannel !== 'status' &&
-            !selectedChannel.startsWith('pm:') && (
-              <div
-                className="border-l border-border overflow-auto flex-shrink-0 relative"
-                style={{
-                  width: rightSidebarCollapsed ? '0px' : `${rightSidebarWidth}px`,
-                  minWidth: rightSidebarCollapsed ? '0px' : undefined,
-                  overflow: rightSidebarCollapsed ? 'hidden' : undefined,
-                  transition: 'width 0.2s ease',
-                  borderLeftWidth: rightSidebarCollapsed ? '0px' : undefined,
-                }}
-              >
-                {!rightSidebarCollapsed && (
-                  <div
-                    className="absolute top-0 left-0 w-1 h-full cursor-col-resize hover:w-2 hover:bg-primary/40 bg-border/50 z-10"
-                    style={{ transition: 'var(--transition-base)' }}
-                    onMouseDown={handleRightResizeStart}
-                    title="Drag to resize"
-                  />
-                )}
-                <ChannelInfo
-                  networkId={selectedNetwork}
-                  channelName={selectedChannel}
-                  currentNickname={
-                    selectedNetwork !== null
-                      ? networks.find((n) => n.id === selectedNetwork)?.nickname || null
-                      : null
-                  }
-                  onSendCommand={async (command: string) => {
-                    if (selectedNetwork !== null) {
-                      await SendCommand(selectedNetwork, command);
-                    }
+            (() => {
+              const isPM = selectedChannel.startsWith('pm:');
+              // PMs have no user list, so the pinned tab is the only option there.
+              const effectiveTab = isPM ? 'pinned' : rightSidebarTab;
+              return (
+                <div
+                  data-testid="right-sidebar"
+                  data-collapsed={String(rightSidebarCollapsed)}
+                  className="border-l border-border flex-shrink-0 relative"
+                  style={{
+                    width: rightSidebarCollapsed ? '0px' : `${rightSidebarWidth}px`,
+                    minWidth: rightSidebarCollapsed ? '0px' : undefined,
+                    overflow: 'hidden',
+                    transition: 'width 0.2s ease',
+                    borderLeftWidth: rightSidebarCollapsed ? '0px' : undefined,
                   }}
-                />
-              </div>
-            )}
+                >
+                  {!rightSidebarCollapsed && (
+                    <div
+                      data-testid="right-resize-handle"
+                      className="absolute top-0 left-0 w-1 h-full cursor-col-resize hover:w-2 hover:bg-primary/40 bg-transparent z-10"
+                      style={{ transition: 'var(--transition-base)' }}
+                      onMouseDown={handleRightResizeStart}
+                      title="Drag to resize"
+                    />
+                  )}
+                  {!rightSidebarCollapsed && (
+                    <div className="flex flex-col h-full">
+                      {/* Tab header */}
+                      <div className="flex flex-shrink-0 border-b border-border text-sm">
+                        {!isPM && (
+                          <button
+                            onClick={() => setRightSidebarTab('users')}
+                            className={`flex-1 px-3 py-2 cursor-pointer transition-colors ${
+                              effectiveTab === 'users'
+                                ? 'text-foreground border-b-2 border-primary font-medium'
+                                : 'text-muted-foreground hover:text-foreground'
+                            }`}
+                          >
+                            Users
+                          </button>
+                        )}
+                        <button
+                          onClick={() => setRightSidebarTab('pinned')}
+                          className={`flex-1 px-3 py-2 cursor-pointer transition-colors flex items-center justify-center gap-1.5 ${
+                            effectiveTab === 'pinned'
+                              ? 'text-foreground border-b-2 border-primary font-medium'
+                              : 'text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          Pinned
+                          {pinnedCount > 0 && (
+                            <span className="inline-flex items-center justify-center min-w-4 h-4 px-1 rounded-full bg-primary/20 text-primary text-[10px] font-medium">
+                              {pinnedCount}
+                            </span>
+                          )}
+                        </button>
+                      </div>
+                      {/* Body */}
+                      <div className="flex-1 overflow-auto">
+                        {effectiveTab === 'users' && !isPM ? (
+                          <ChannelInfo
+                            networkId={selectedNetwork}
+                            channelName={selectedChannel}
+                            currentNickname={
+                              selectedNetwork !== null
+                                ? networks.find((n) => n.id === selectedNetwork)?.nickname || null
+                                : null
+                            }
+                            onSendCommand={async (command: string) => {
+                              if (selectedNetwork !== null) {
+                                await SendCommand(selectedNetwork, command);
+                              }
+                            }}
+                          />
+                        ) : (
+                          <PinnedMessages networkId={selectedNetwork} />
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
           {showUserInfo && (
             <UserInfo
@@ -743,10 +945,11 @@ function App() {
         selectedChannel !== null &&
         selectedChannel !== 'status' &&
         channelInfo?.channel && (
-          <ModeEditModal
+          <ChannelModeEditor
             networkId={selectedNetwork}
             channelName={selectedChannel}
             currentModes={channelInfo.channel.modes || ''}
+            capabilities={channelInfo.capabilities}
             onClose={() => setShowModeModal(false)}
             onUpdate={loadChannelInfo}
           />

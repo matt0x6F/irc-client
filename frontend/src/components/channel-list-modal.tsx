@@ -1,5 +1,10 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
-import { RequestChannelList, SendCommand } from '../../wailsjs/go/main/App';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { RotateCw } from 'lucide-react';
+import {
+  GetCachedChannelList,
+  RequestChannelList,
+  SendCommand,
+} from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 
 interface ChannelListModalProps {
@@ -17,15 +22,65 @@ interface ChannelListEntry {
 type SortField = 'channel' | 'users';
 type SortDirection = 'asc' | 'desc';
 
+// Cached LIST results older than this are considered stale: the modal still shows
+// them instantly on open, but kicks off a background refresh. This is the single
+// authority for the fresh-vs-stale decision (the backend only stamps fetchedAt).
+const CHANNEL_LIST_TTL_MS = 15 * 60 * 1000;
+
+// formatAgo renders a fetch timestamp as a short, human-readable "time since" string.
+export function formatAgo(ageMs: number): string {
+  if (ageMs < 10_000) return 'just now';
+  const seconds = Math.floor(ageMs / 1000);
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+// mapEntries normalizes both cached and freshly-emitted channel payloads (same shape)
+// into typed entries, defaulting the network id when an item omits it.
+function mapEntries(items: any[], networkId: number): ChannelListEntry[] {
+  return (items || []).map((item: any) => ({
+    channel: item.channel || '',
+    users: item.users || 0,
+    topic: item.topic || '',
+    networkId: item.networkId || networkId,
+  }));
+}
+
 export function ChannelListModal({ networkId, onClose }: ChannelListModalProps) {
   const [channels, setChannels] = useState<ChannelListEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
   const [sortField, setSortField] = useState<SortField>('users');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const [joiningChannel, setJoiningChannel] = useState<string | null>(null);
+  const [fetchedAt, setFetchedAt] = useState<number | null>(null);
+  // Re-render tick so the "Updated X ago" label stays current while the modal is open.
+  const [, setTick] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Ensures the initial fetch decision runs exactly once per open. React StrictMode
+  // (dev) double-invokes effects; two concurrent LIST requests share one backend
+  // accumulation buffer, and the second LISTEND emits an empty list that overwrites
+  // the populated one — making the modal always show "No channels".
+  const requestedRef = useRef(false);
+
+  // Force-fetch a fresh list from the server. Used for stale-cache background
+  // refreshes, cache misses, and the manual refresh button.
+  const doRefresh = useCallback(() => {
+    setRefreshing(true);
+    setError(null);
+    RequestChannelList(networkId).catch((err) => {
+      setError(`Failed to request channel list: ${err}`);
+      setRefreshing(false);
+      setLoading(false);
+    });
+  }, [networkId]);
 
   // Focus input on mount
   useEffect(() => {
@@ -43,35 +98,55 @@ export function ChannelListModal({ networkId, onClose }: ChannelListModalProps) 
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
 
-  // Listen for channel list events and request the list
+  // Keep the "Updated X ago" label fresh while the modal is open.
+  useEffect(() => {
+    if (fetchedAt == null) return;
+    const id = setInterval(() => setTick((t) => t + 1), 30_000);
+    return () => clearInterval(id);
+  }, [fetchedAt]);
+
+  // Subscribe to LIST results and seed from cache on open.
   useEffect(() => {
     const unsubscribe = EventsOn('channel-list', (data: any) => {
       const eventData = data?.data;
       if (!eventData) return;
+      if (eventData.networkId !== networkId) return;
 
-      const eventNetworkId = eventData.networkId;
-      if (eventNetworkId !== networkId) return;
-
-      const channelItems = eventData.channels || [];
-      const entries: ChannelListEntry[] = channelItems.map((item: any) => ({
-        channel: item.channel || '',
-        users: item.users || 0,
-        topic: item.topic || '',
-        networkId: item.networkId || networkId,
-      }));
-
-      setChannels(entries);
+      setChannels(mapEntries(eventData.channels || [], networkId));
+      setFetchedAt(Date.now());
       setLoading(false);
+      setRefreshing(false);
+      setError(null);
     });
 
-    // Request the channel list
-    RequestChannelList(networkId).catch((err) => {
-      setError(`Failed to request channel list: ${err}`);
-      setLoading(false);
-    });
+    // Initial open decision — runs exactly once per open (see requestedRef).
+    if (!requestedRef.current) {
+      requestedRef.current = true;
+      GetCachedChannelList(networkId)
+        .then((res) => {
+          if (res.found) {
+            // Render cached rows instantly; refresh in the background if stale.
+            setChannels(mapEntries(res.channels || [], networkId));
+            setFetchedAt(res.fetchedAt);
+            setLoading(false);
+            if (Date.now() - res.fetchedAt > CHANNEL_LIST_TTL_MS) {
+              doRefresh();
+            }
+          } else {
+            // Cache miss — full fetch.
+            setLoading(true);
+            doRefresh();
+          }
+        })
+        .catch(() => {
+          // If the cache read itself fails, fall back to a plain fetch.
+          setLoading(true);
+          doRefresh();
+        });
+    }
 
     return () => unsubscribe();
-  }, [networkId]);
+  }, [networkId, doRefresh]);
 
   // Filter and sort channels
   const filteredChannels = useMemo(() => {
@@ -121,7 +196,7 @@ export function ChannelListModal({ networkId, onClose }: ChannelListModalProps) 
 
   const sortIndicator = (field: SortField) => {
     if (sortField !== field) return null;
-    return sortDirection === 'asc' ? ' \u25B2' : ' \u25BC';
+    return sortDirection === 'asc' ? ' ▲' : ' ▼';
   };
 
   return (
@@ -135,25 +210,40 @@ export function ChannelListModal({ networkId, onClose }: ChannelListModalProps) 
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-border">
           <h2 className="text-lg font-semibold">Browse Channels</h2>
-          <button
-            onClick={onClose}
-            className="text-muted-foreground hover:text-foreground cursor-pointer p-1 rounded hover:bg-accent/50 transition-colors"
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
+          <div className="flex items-center gap-2">
+            {fetchedAt !== null && (
+              <span className="text-xs text-muted-foreground tabular-nums">
+                Updated {formatAgo(Date.now() - fetchedAt)}
+              </span>
+            )}
+            <button
+              onClick={doRefresh}
+              disabled={refreshing}
+              title="Refresh channel list"
+              className="text-muted-foreground hover:text-foreground cursor-pointer p-1 rounded hover:bg-accent/50 transition-colors disabled:opacity-50 disabled:cursor-default"
             >
-              <path d="M18 6 6 18" />
-              <path d="m6 6 12 12" />
-            </svg>
-          </button>
+              <RotateCw size={16} className={refreshing ? 'animate-spin' : ''} />
+            </button>
+            <button
+              onClick={onClose}
+              className="text-muted-foreground hover:text-foreground cursor-pointer p-1 rounded hover:bg-accent/50 transition-colors"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M18 6 6 18" />
+                <path d="m6 6 12 12" />
+              </svg>
+            </button>
+          </div>
         </div>
 
         {/* Filter */}
@@ -168,9 +258,16 @@ export function ChannelListModal({ networkId, onClose }: ChannelListModalProps) 
           />
         </div>
 
+        {/* Error banner — non-blocking when cached rows are present */}
+        {error && (
+          <div className="px-5 py-2 border-b border-border bg-destructive/10 text-destructive text-sm">
+            {error}
+          </div>
+        )}
+
         {/* Content */}
         <div className="flex-1 overflow-auto min-h-0">
-          {loading && (
+          {loading && channels.length === 0 && !error && (
             <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
               <svg
                 className="animate-spin h-8 w-8 mb-3"
@@ -196,19 +293,13 @@ export function ChannelListModal({ networkId, onClose }: ChannelListModalProps) 
             </div>
           )}
 
-          {error && (
-            <div className="flex items-center justify-center py-16 text-destructive text-sm">
-              {error}
-            </div>
-          )}
-
           {!loading && !error && channels.length === 0 && (
             <div className="flex items-center justify-center py-16 text-muted-foreground text-sm">
               No channels found.
             </div>
           )}
 
-          {!loading && !error && channels.length > 0 && (
+          {channels.length > 0 && (
             <table className="w-full text-sm">
               <thead className="sticky top-0 bg-card border-b border-border">
                 <tr>
@@ -258,7 +349,7 @@ export function ChannelListModal({ networkId, onClose }: ChannelListModalProps) 
         </div>
 
         {/* Footer */}
-        {!loading && channels.length > 0 && (
+        {channels.length > 0 && (
           <div className="px-5 py-2 border-t border-border text-xs text-muted-foreground">
             {filteredChannels.length} of {channels.length} channels
             {filter.trim() ? ' (filtered)' : ''}

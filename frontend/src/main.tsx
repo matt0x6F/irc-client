@@ -3,6 +3,10 @@ import {createRoot} from 'react-dom/client'
 import {EventsEmit} from '../wailsjs/runtime/runtime'
 import './style.css'
 import App from './App'
+import { initTheme } from './stores/theme'
+
+// Apply the persisted theme to <html> before first paint (no flash of wrong theme).
+initTheme()
 
 // Suppress expected Wails dev mode WebSocket errors
 // These occur when Wails tries to connect to the dev server before it's ready

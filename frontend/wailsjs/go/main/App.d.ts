@@ -16,6 +16,10 @@ export function DisconnectNetwork(arg1:number):Promise<void>;
 
 export function EnablePlugin(arg1:string):Promise<void>;
 
+export function GetBuildInfo():Promise<main.BuildInfo>;
+
+export function GetCachedChannelList(arg1:number):Promise<main.ChannelListCacheResult>;
+
 export function GetChannelIDByName(arg1:number,arg2:string):Promise<any>;
 
 export function GetChannelInfo(arg1:number,arg2:string):Promise<main.ChannelInfo>;
@@ -24,11 +28,21 @@ export function GetChannels(arg1:number):Promise<Array<storage.Channel>>;
 
 export function GetConnectionStatus(arg1:number):Promise<boolean>;
 
+export function GetCurrentNick(arg1:number):Promise<string>;
+
 export function GetJoinedChannels(arg1:number):Promise<Array<storage.Channel>>;
 
 export function GetLastOpenPane():Promise<main.LastOpenPane>;
 
 export function GetMessages(arg1:number,arg2:any,arg3:number):Promise<Array<storage.Message>>;
+
+export function GetMessagesAfter(arg1:number,arg2:any,arg3:number,arg4:number):Promise<Array<storage.Message>>;
+
+export function GetMessagesAround(arg1:number,arg2:any,arg3:number,arg4:number):Promise<Array<storage.Message>>;
+
+export function GetMessagesBefore(arg1:number,arg2:any,arg3:number,arg4:number):Promise<Array<storage.Message>>;
+
+export function GetMessagesBeforeTime(arg1:number,arg2:any,arg3:string,arg4:string,arg5:number):Promise<Array<storage.Message>>;
 
 export function GetNetworks():Promise<Array<storage.Network>>;
 
@@ -37,6 +51,8 @@ export function GetNicknameColor(arg1:number,arg2:string):Promise<string>;
 export function GetNicknameColorsBatch(arg1:number,arg2:Array<string>):Promise<Record<string, string>>;
 
 export function GetOpenChannels(arg1:number):Promise<Array<storage.Channel>>;
+
+export function GetPinnedMessages(arg1:number,arg2:any):Promise<Array<storage.PinnedMessage>>;
 
 export function GetPluginConfig(arg1:string):Promise<Record<string, any>>;
 
@@ -60,15 +76,25 @@ export function OnEvent(arg1:events.Event):Promise<void>;
 
 export function OpenSettings():Promise<void>;
 
+export function OpenSettingsAbout():Promise<void>;
+
 export function OpenSettingsDisplay():Promise<void>;
 
 export function OpenSettingsNetworks():Promise<void>;
 
 export function OpenSettingsPlugins():Promise<void>;
 
+export function PinMessage(arg1:number,arg2:number,arg3:any):Promise<void>;
+
 export function ReloadPlugin(arg1:string):Promise<void>;
 
+export function RequestChannelBans(arg1:number,arg2:string):Promise<void>;
+
 export function RequestChannelList(arg1:number):Promise<void>;
+
+export function RequestChatHistoryBefore(arg1:number,arg2:string,arg3:string,arg4:number):Promise<void>;
+
+export function RequestChatHistoryLatest(arg1:number,arg2:string,arg3:number):Promise<void>;
 
 export function SaveNetwork(arg1:main.NetworkConfig):Promise<void>;
 
@@ -89,3 +115,5 @@ export function SetPrivateMessageOpen(arg1:number,arg2:string,arg3:boolean):Prom
 export function ToggleChannelAutoJoin(arg1:number,arg2:string):Promise<void>;
 
 export function ToggleNetworkAutoConnect(arg1:number):Promise<void>;
+
+export function UnpinMessage(arg1:number):Promise<void>;

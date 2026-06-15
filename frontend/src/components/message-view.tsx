@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { storage } from '../../wailsjs/go/models';
 import { IRCFormattedText } from './irc-formatted-text';
 import { useNicknameColors } from '../hooks/useNicknameColors';
@@ -19,12 +19,28 @@ type ConsolidatedMessage = storage.Message & {
 
 const CONSOLIDATE_JOIN_QUIT_KEY = 'cascade-chat-consolidate-join-quit';
 
+// Optimistic messages use `Date.now()` as a placeholder id (~1.7e12) until the real
+// DB row (a small autoincrement id) is loaded. Don't offer pinning on those rows.
+const OPTIMISTIC_ID_THRESHOLD = 1_000_000_000_000;
+
 export function MessageView({ messages, networkId, selectedChannel }: MessageViewProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [isNearBottom, setIsNearBottom] = useState(true);
   const prevMessagesLengthRef = useRef(0);
   const prevChannelRef = useRef<string | null | undefined>(selectedChannel);
+  // Whether the pane should stay pinned to the latest message. Armed on every
+  // channel switch and whenever the user is at the bottom; released when the user
+  // scrolls up. While set, the pane is kept at the bottom across *all* async message
+  // updates — so a channel switch lands on the latest message regardless of how the
+  // load races the render (the original bug), and stale/out-of-order loads can't
+  // strand it part-way up.
+  const stickToBottomRef = useRef(true);
+  // Last observed scrollTop, used to detect the *direction* of a scroll. The pin is
+  // released only on a genuine upward (user) scroll — never on the transient
+  // "not at bottom" readings that our own programmatic scroll-to-bottom and
+  // content-height growth produce, which is what made a naive isNear-based pin flaky.
+  const lastScrollTopRef = useRef(0);
 
   // Load consolidate setting from localStorage and make it reactive
   const [consolidateEnabled, setConsolidateEnabled] = useState(() => {
@@ -202,6 +218,29 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
     return network?.nickname || null;
   });
 
+  // Pinned messages / jump-to-message state
+  const pinnedMessages = useNetworkStore((s) => s.pinnedMessages);
+  const pinMessage = useNetworkStore((s) => s.pinMessage);
+  const unpinMessage = useNetworkStore((s) => s.unpinMessage);
+  const viewMode = useNetworkStore((s) => s.viewMode);
+  const anchoredMessageId = useNetworkStore((s) => s.anchoredMessageId);
+  const clearAnchorFlash = useNetworkStore((s) => s.clearAnchorFlash);
+  const returnToLive = useNetworkStore((s) => s.returnToLive);
+  const newSinceAnchor = useNetworkStore((s) => s.newSinceAnchor);
+  const loadOlderMessages = useNetworkStore((s) => s.loadOlderMessages);
+  const loadNewerMessages = useNetworkStore((s) => s.loadNewerMessages);
+  const loadingHistory = useNetworkStore((s) => s.loadingHistory);
+
+  // Pagination state (refs so they don't trigger re-renders).
+  const loadingOlderRef = useRef(false);
+  const loadingNewerRef = useRef(false);
+  const reachedStartRef = useRef(false);
+
+  const pinnedIds = useMemo(() => new Set(pinnedMessages.map((p) => p.id)), [pinnedMessages]);
+  // Map of message id -> row element, used to scroll/flash a specific message
+  // (there is no virtualization, so every row is in the DOM).
+  const messageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+
   // Check if a message text contains the user's nickname as a whole word (case-insensitive)
   const isMention = useCallback(
     (text: string): boolean => {
@@ -229,50 +268,176 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
     if (!scrollContainerRef.current) return;
     const container = scrollContainerRef.current;
     const threshold = 100; // pixels from bottom
-    const isNear = container.scrollHeight - container.scrollTop - container.clientHeight < threshold;
+    const scrollTop = container.scrollTop;
+    const isNear = container.scrollHeight - scrollTop - container.clientHeight < threshold;
     setIsNearBottom(isNear);
+
+    // Maintain the bottom-pin by scroll *direction*, not by raw position:
+    //  - scrolling up (the user moving away from the latest message) releases it;
+    //  - reaching the bottom re-engages it.
+    // Programmatic scroll-to-bottom and content growth only ever move scrollTop down
+    // (or leave it), so they never spuriously release the pin.
+    if (scrollTop < lastScrollTopRef.current - 4) {
+      stickToBottomRef.current = false;
+    } else if (isNear) {
+      stickToBottomRef.current = true;
+    }
+    lastScrollTopRef.current = scrollTop;
   };
+
+  // When scrolled near the bottom while anchored (after a jump-to-pin or
+  // scrollback), load the next newer page to bridge toward live. When there are
+  // no more newer rows, loadNewerMessages flips back to live (badge clears).
+  // No scroll adjustment needed — appends add content below the viewport.
+  const maybeLoadNewer = () => {
+    const container = scrollContainerRef.current;
+    if (!container || loadingNewerRef.current || loadingOlderRef.current) return;
+    if (useNetworkStore.getState().viewMode !== 'anchored') return;
+    if (container.scrollHeight - container.scrollTop - container.clientHeight > 120) return;
+
+    loadingNewerRef.current = true;
+    loadNewerMessages().finally(() => {
+      loadingNewerRef.current = false;
+    });
+  };
+
+  // When scrolled to the top, load an older page and preserve the viewport so the
+  // content doesn't jump. Stops once the backend reports no more history.
+  const maybeLoadOlder = () => {
+    const container = scrollContainerRef.current;
+    if (!container || loadingOlderRef.current || reachedStartRef.current) return;
+    // While pinned to the bottom (including the channel-switch window, where
+    // selectedChannel and `messages` are briefly out of sync) don't paginate — a
+    // stray scroll event must not page the previous channel's history.
+    if (stickToBottomRef.current) return;
+    if (container.scrollTop > 80) return;
+
+    loadingOlderRef.current = true;
+    const prevHeight = container.scrollHeight;
+    const prevTop = container.scrollTop;
+    loadOlderMessages().then((added) => {
+      if (added > 0) {
+        // Keep the previously-top message visually fixed after prepending.
+        // Bypass the container's smooth scroll-behavior so this is instant.
+        requestAnimationFrame(() => {
+          const c = scrollContainerRef.current;
+          if (!c) return;
+          const prevBehavior = c.style.scrollBehavior;
+          c.style.scrollBehavior = 'auto';
+          c.scrollTop = c.scrollHeight - prevHeight + prevTop;
+          c.style.scrollBehavior = prevBehavior;
+        });
+      } else {
+        reachedStartRef.current = true;
+      }
+      loadingOlderRef.current = false;
+    });
+  };
+
+  const handleScroll = () => {
+    checkIfNearBottom();
+    maybeLoadOlder();
+    maybeLoadNewer();
+  };
+
+  // Reset pagination state when the channel changes.
+  useEffect(() => {
+    reachedStartRef.current = false;
+    loadingOlderRef.current = false;
+    loadingNewerRef.current = false;
+  }, [selectedChannel]);
 
   // Handle scroll events
   useEffect(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
 
-    container.addEventListener('scroll', checkIfNearBottom);
-    return () => container.removeEventListener('scroll', checkIfNearBottom);
+    container.addEventListener('scroll', handleScroll);
+    return () => container.removeEventListener('scroll', handleScroll);
   }, []);
 
-  // Auto-scroll when channel changes - always scroll to bottom when switching channels
+  // Jump-to-message: scroll to the anchored message and flash it briefly.
   useEffect(() => {
-    if (selectedChannel !== undefined && selectedChannel !== prevChannelRef.current) {
+    if (anchoredMessageId == null) return;
+    const el = messageRefs.current.get(anchoredMessageId);
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el.classList.add('pin-flash');
+    const timeout = setTimeout(() => {
+      el.classList.remove('pin-flash');
+      clearAnchorFlash(); // clears the id but keeps viewMode 'anchored' (poll stays frozen)
+    }, 1600);
+    return () => clearTimeout(timeout);
+  }, [anchoredMessageId, messages, clearAnchorFlash]);
+
+  // Keep the pane pinned to the latest message while "stuck to bottom".
+  //
+  // The original bug: selectedChannel updates synchronously on a switch, but
+  // loadMessages() resolves the new channel's messages a round-trip later, so the
+  // first render after a switch still shows the *old* pane. The previous code
+  // advanced prevChannelRef and fired a single 100ms timeout on that first render,
+  // so the scroll raced (and usually lost to) the async load — leaving the pane
+  // stranded at the old scroll position, blank/short of the latest message until
+  // the user scrolled.
+  //
+  // Instead, every channel switch (re-)arms stickToBottom, and this layout effect
+  // re-pins to the bottom on *every* subsequent render while stuck. That makes the
+  // landing position independent of load timing/order: whenever the real content
+  // arrives (or a later poll/new message updates it) we are already at the bottom.
+  // The scroll is instant (behavior: auto) inside a layout effect, so the pane never
+  // paints at a stale position and there's no smooth-scroll-during-swap flicker.
+  // The user scrolling up releases the pin (see checkIfNearBottom).
+  useLayoutEffect(() => {
+    if (viewMode === 'anchored') {
+      // Anchored (jump-to-pin) view manages its own scroll; just track the channel.
       prevChannelRef.current = selectedChannel;
-      // When channel changes, always scroll to bottom
-      // Use a small delay to ensure DOM is updated with new messages
-      setTimeout(() => {
-        if (messagesEndRef.current) {
-          messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-        } else if (scrollContainerRef.current) {
-          // Fallback: scroll container to bottom
-          scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
-        }
-      }, 100);
-      // Reset near-bottom state since we're scrolling to bottom
+      return;
+    }
+
+    if (selectedChannel !== prevChannelRef.current) {
+      prevChannelRef.current = selectedChannel;
+      stickToBottomRef.current = true; // a freshly opened pane starts at the latest message
       setIsNearBottom(true);
     }
-  }, [selectedChannel, messages]);
+
+    if (stickToBottomRef.current) {
+      const container = scrollContainerRef.current;
+      if (container) {
+        const prevBehavior = container.style.scrollBehavior;
+        container.style.scrollBehavior = 'auto';
+        container.scrollTop = container.scrollHeight;
+        container.style.scrollBehavior = prevBehavior;
+      }
+    }
+  }, [selectedChannel, messages, viewMode]);
 
   // Auto-scroll only if user is near bottom and there are new messages
   useEffect(() => {
     const hasNewMessages = messages.length > prevMessagesLengthRef.current;
     prevMessagesLengthRef.current = messages.length;
 
-    if (isNearBottom && hasNewMessages) {
+    if (isNearBottom && hasNewMessages && viewMode !== 'anchored') {
       // Small delay to ensure DOM is updated
       setTimeout(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
       }, 50);
     }
-  }, [messages, isNearBottom]);
+  }, [messages, isNearBottom, viewMode]);
+
+  // Scroll-to-bottom / return-to-live handler for the floating badge.
+  const handleScrollToBottom = useCallback(() => {
+    const wasAnchored = viewMode === 'anchored';
+    if (wasAnchored) {
+      returnToLive(); // reloads the latest messages and flips back to live mode
+    }
+    setTimeout(
+      () => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        setIsNearBottom(true);
+      },
+      wasAnchored ? 150 : 0
+    );
+  }, [viewMode, returnToLive]);
 
   // Listen for setting changes
   useEffect(() => {
@@ -303,11 +468,26 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
     };
   }, [consolidateEnabled]);
 
+  const showScrollBadge = viewMode === 'anchored' || !isNearBottom;
+
   return (
+    <div className="relative h-full">
+    {/* Top-of-list spinner while server-side history (CHATHISTORY) is loading.
+        Absolutely positioned so it overlays without changing scrollHeight, which
+        would otherwise break the scroll-preservation math on prepend. */}
+    {loadingHistory && (
+      <div
+        className="absolute top-2 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2 rounded-full bg-muted/90 px-3 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur"
+        data-testid="history-loading"
+      >
+        <span className="h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+        Loading older messages…
+      </div>
+    )}
     <div
       ref={scrollContainerRef}
       className="h-full overflow-y-auto p-4 space-y-1"
-      onScroll={checkIfNearBottom}
+      onScroll={handleScroll}
       style={{ scrollBehavior: 'smooth' }}
       data-testid="message-list"
     >
@@ -324,7 +504,7 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
           const isError = msg.message_type === 'error';
           const isStatus = msg.message_type === 'status';
           const isCommand = msg.message_type === 'command';
-          const isSystemMessage = msg.message_type === 'join' || msg.message_type === 'part' || msg.message_type === 'quit';
+          const isSystemMessage = msg.message_type === 'join' || msg.message_type === 'part' || msg.message_type === 'quit' || msg.message_type === 'mode';
           const isEven = index % 2 === 0;
           const isRegularMessage = !isError && !isStatus && !isCommand && !isSystemMessage;
           const hasMention = isRegularMessage && isMention(msg.message);
@@ -332,10 +512,14 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
           return (
             <div
               key={msg.id}
+              ref={(el) => {
+                if (el) messageRefs.current.set(msg.id, el);
+                else messageRefs.current.delete(msg.id);
+              }}
               data-testid="message-item"
-              className={`flex space-x-3 py-1 px-2 rounded transition-colors ${
+              className={`group flex space-x-3 py-1 px-2 rounded transition-colors ${
                 hasMention
-                  ? 'bg-yellow-500/10 dark:bg-yellow-400/10 border-l-2 border-yellow-500/50'
+                  ? 'cc-mention border-l-2'
                   : isError
                   ? 'bg-destructive/10 border-l-2 border-destructive shadow-[var(--shadow-sm)]'
                   : isStatus || isCommand
@@ -429,20 +613,76 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
                       )}
                     </span>
                   ) : (
-                    <IRCFormattedText 
-                      text={msg.message} 
+                    <IRCFormattedText
+                      text={msg.message}
                       className={`text-sm flex-1 ${
                         isStatus || isCommand ? 'text-muted-foreground italic' : ''
-                      }`} 
+                      }`}
                     />
                   )}
                 </>
+              )}
+              {isRegularMessage && msg.id < OPTIMISTIC_ID_THRESHOLD && (
+                <button
+                  onClick={() =>
+                    pinnedIds.has(msg.id) ? unpinMessage(msg.id) : pinMessage(msg.id)
+                  }
+                  data-testid="pin-button"
+                  className={`self-start flex-shrink-0 p-0.5 rounded transition-opacity cursor-pointer hover:text-foreground ${
+                    pinnedIds.has(msg.id)
+                      ? 'opacity-100 text-primary'
+                      : 'opacity-0 group-hover:opacity-100 focus:opacity-100 text-muted-foreground'
+                  }`}
+                  title={pinnedIds.has(msg.id) ? 'Unpin message' : 'Pin message'}
+                  aria-label={pinnedIds.has(msg.id) ? 'Unpin message' : 'Pin message'}
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill={pinnedIds.has(msg.id) ? 'currentColor' : 'none'}
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M12 17v5" />
+                    <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
+                  </svg>
+                </button>
               )}
             </div>
           );
         })
       )}
       <div ref={messagesEndRef} />
+    </div>
+
+      {showScrollBadge && (
+        <button
+          onClick={handleScrollToBottom}
+          data-testid="scroll-to-bottom"
+          className="absolute bottom-4 right-4 z-20 flex items-center gap-1.5 rounded-full bg-primary text-primary-foreground shadow-[var(--shadow-md)] px-3 py-1.5 text-xs font-medium hover:opacity-90 transition-opacity cursor-pointer"
+          title={viewMode === 'anchored' ? 'Return to latest messages' : 'Scroll to bottom'}
+        >
+          {newSinceAnchor > 0 && <span>{newSinceAnchor} new</span>}
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M12 5v14" />
+            <path d="m19 12-7 7-7-7" />
+          </svg>
+        </button>
+      )}
     </div>
   );
 }

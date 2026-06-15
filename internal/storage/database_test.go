@@ -980,3 +980,243 @@ func TestDeleteNetworkAndServers(t *testing.T) {
 		t.Errorf("expected 0 networks after delete, got %d", len(nets))
 	}
 }
+
+// ---------- Private message routing (pm_target) ----------
+
+// writePM is a helper that synchronously writes a private-message row with an
+// explicit conversation peer (pm_target), as the IRC client does at write time.
+func writePM(t *testing.T, s *Storage, netID int64, user, peer, body, raw string) {
+	t.Helper()
+	if err := s.WriteMessageSync(Message{
+		NetworkID:   netID,
+		ChannelID:   nil,
+		User:        user,
+		Message:     body,
+		MessageType: "privmsg",
+		Timestamp:   time.Now(),
+		RawLine:     raw,
+		PMTarget:    peer,
+	}); err != nil {
+		t.Fatalf("WriteMessageSync(%s->%s): %v", user, peer, err)
+	}
+}
+
+// TestGetPrivateMessagesRouting is the regression guard for the echo-message
+// routing bug: a PM sent to chanserv must land in the chanserv pane (not the
+// self-PM pane), received PMs route to the sender, and a genuine self-PM stays
+// isolated. Matching is keyed by pm_target and is case-insensitive.
+func TestGetPrivateMessagesRouting(t *testing.T) {
+	s := newTestStorage(t)
+	net := makeNetwork("PMRoute") // Nickname: "testuser"
+	if err := s.CreateNetwork(net); err != nil {
+		t.Fatalf("CreateNetwork: %v", err)
+	}
+
+	// Sent to chanserv (echoed back: stored with User = our nick, peer = chanserv).
+	writePM(t, s, net.ID, "testuser", "chanserv", "help", ":testuser PRIVMSG chanserv :help")
+	// Received from alice (peer = sender).
+	writePM(t, s, net.ID, "alice", "alice", "hi", ":alice PRIVMSG testuser :hi")
+	// Genuine self-PM (we messaged ourselves; peer == our nick).
+	writePM(t, s, net.ID, "testuser", "testuser", "note-to-self", ":testuser PRIVMSG testuser :note-to-self")
+
+	expectOne := func(target, wantBody string) {
+		t.Helper()
+		msgs, err := s.GetPrivateMessages(net.ID, target, "testuser", 50)
+		if err != nil {
+			t.Fatalf("GetPrivateMessages(%s): %v", target, err)
+		}
+		if len(msgs) != 1 {
+			t.Fatalf("GetPrivateMessages(%s): expected 1 message, got %d", target, len(msgs))
+		}
+		if msgs[0].Message != wantBody {
+			t.Fatalf("GetPrivateMessages(%s): expected body %q, got %q", target, wantBody, msgs[0].Message)
+		}
+	}
+
+	// The chanserv pane shows the sent message and nothing else.
+	expectOne("chanserv", "help")
+	// The self-PM pane shows only the genuine self-message, NOT the chanserv one.
+	expectOne("testuser", "note-to-self")
+	// The alice pane shows the received message.
+	expectOne("alice", "hi")
+	// Matching is case-insensitive on the peer.
+	expectOne("ChanServ", "help")
+}
+
+// TestGetMessagesWithoutChannelExcludesPMs verifies the Status/Server pane no
+// longer leaks private messages: it returns only null-channel rows that have no
+// conversation peer (server notices, status messages).
+func TestGetMessagesWithoutChannelExcludesPMs(t *testing.T) {
+	s := newTestStorage(t)
+	net := makeNetwork("StatusNet")
+	if err := s.CreateNetwork(net); err != nil {
+		t.Fatalf("CreateNetwork: %v", err)
+	}
+
+	// A server/status message (no pm_target).
+	if err := s.WriteMessageSync(Message{
+		NetworkID:   net.ID,
+		ChannelID:   nil,
+		User:        "*",
+		Message:     "server notice",
+		MessageType: "notice",
+		Timestamp:   time.Now(),
+	}); err != nil {
+		t.Fatalf("WriteMessageSync(status): %v", err)
+	}
+	// A private message (has a peer) must NOT appear in the status pane.
+	writePM(t, s, net.ID, "alice", "alice", "psst", ":alice PRIVMSG testuser :psst")
+
+	msgs, err := s.GetMessages(net.ID, nil, 50)
+	if err != nil {
+		t.Fatalf("GetMessages(nil channel): %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 status message, got %d", len(msgs))
+	}
+	if msgs[0].Message != "server notice" {
+		t.Fatalf("expected only the server notice, got %q", msgs[0].Message)
+	}
+}
+
+// TestServiceNoticeRoutesToQueryPane is the regression guard for ChanServ/
+// NickServ replies leaking into the Status log. Services reply via NOTICE; a
+// notice carrying a conversation peer (pm_target) must appear in that peer's
+// query pane and must NOT appear in the Status/Server pane. A genuine server
+// notice (no peer) stays in Status.
+func TestServiceNoticeRoutesToQueryPane(t *testing.T) {
+	s := newTestStorage(t)
+	net := makeNetwork("NoticeRoute") // Nickname: "testuser"
+	if err := s.CreateNetwork(net); err != nil {
+		t.Fatalf("CreateNetwork: %v", err)
+	}
+
+	// A ChanServ service notice, stored as a 'notice' row keyed to the ChanServ peer.
+	if err := s.WriteMessageSync(Message{
+		NetworkID:   net.ID,
+		ChannelID:   nil,
+		User:        "ChanServ",
+		Message:     "Invalid ChanServ command.",
+		MessageType: "notice",
+		Timestamp:   time.Now(),
+		RawLine:     ":ChanServ!ChanServ@services. NOTICE testuser :Invalid ChanServ command.",
+		PMTarget:    "ChanServ",
+	}); err != nil {
+		t.Fatalf("WriteMessageSync(notice): %v", err)
+	}
+	// A genuine server notice (no peer) belongs in Status.
+	if err := s.WriteMessageSync(Message{
+		NetworkID:   net.ID,
+		ChannelID:   nil,
+		User:        "irc.example.net",
+		Message:     "*** Looking up your hostname...",
+		MessageType: "notice",
+		Timestamp:   time.Now(),
+	}); err != nil {
+		t.Fatalf("WriteMessageSync(server notice): %v", err)
+	}
+
+	// The ChanServ query pane shows the service notice (case-insensitive peer).
+	pm, err := s.GetPrivateMessages(net.ID, "chanserv", "testuser", 50)
+	if err != nil {
+		t.Fatalf("GetPrivateMessages(chanserv): %v", err)
+	}
+	if len(pm) != 1 || pm[0].Message != "Invalid ChanServ command." {
+		t.Fatalf("ChanServ pane: expected the service notice, got %+v", pm)
+	}
+
+	// The Status pane shows only the genuine server notice, not the ChanServ reply.
+	status, err := s.GetMessages(net.ID, nil, 50)
+	if err != nil {
+		t.Fatalf("GetMessages(status): %v", err)
+	}
+	if len(status) != 1 || status[0].Message != "*** Looking up your hostname..." {
+		t.Fatalf("Status pane: expected only the server notice, got %+v", status)
+	}
+}
+
+// TestChannelNoticeRoutesToChannel verifies a NOTICE addressed to a channel is
+// stored in that channel's buffer (channel_id set, message_type 'notice') and
+// does NOT leak into the Status pane.
+func TestChannelNoticeRoutesToChannel(t *testing.T) {
+	s := newTestStorage(t)
+	net := makeNetwork("ChanNotice")
+	if err := s.CreateNetwork(net); err != nil {
+		t.Fatalf("CreateNetwork: %v", err)
+	}
+	ch := &Channel{NetworkID: net.ID, Name: "#chan", CreatedAt: time.Now()}
+	if err := s.CreateChannel(ch); err != nil {
+		t.Fatalf("CreateChannel: %v", err)
+	}
+
+	// A channel notice (e.g. a bot announcement) keyed to the channel.
+	if err := s.WriteMessageSync(Message{
+		NetworkID:   net.ID,
+		ChannelID:   &ch.ID,
+		User:        "AnnounceBot",
+		Message:     "build #42 passed",
+		MessageType: "notice",
+		Timestamp:   time.Now(),
+	}); err != nil {
+		t.Fatalf("WriteMessageSync(channel notice): %v", err)
+	}
+
+	// The channel buffer shows the notice.
+	chanMsgs, err := s.GetMessages(net.ID, &ch.ID, 50)
+	if err != nil {
+		t.Fatalf("GetMessages(channel): %v", err)
+	}
+	if len(chanMsgs) != 1 || chanMsgs[0].Message != "build #42 passed" {
+		t.Fatalf("channel pane: expected the channel notice, got %+v", chanMsgs)
+	}
+
+	// The Status pane shows nothing (the notice belongs to the channel).
+	status, err := s.GetMessages(net.ID, nil, 50)
+	if err != nil {
+		t.Fatalf("GetMessages(status): %v", err)
+	}
+	if len(status) != 0 {
+		t.Fatalf("status pane: expected no messages, got %+v", status)
+	}
+}
+
+// TestMigratePMTargetBackfill verifies the best-effort backfill of legacy rows
+// that predate the pm_target column (or whose backfill previously rolled back),
+// simulated by inserting null-channel PM rows with pm_target left NULL.
+func TestMigratePMTargetBackfill(t *testing.T) {
+	s := newTestStorage(t)
+	net := makeNetwork("BackfillNet") // Nickname: "testuser"
+	if err := s.CreateNetwork(net); err != nil {
+		t.Fatalf("CreateNetwork: %v", err)
+	}
+
+	insertLegacy := func(user, raw string) {
+		t.Helper()
+		_, err := s.db.Exec(
+			`INSERT INTO messages (network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target)
+			 VALUES (?, NULL, ?, '', 'privmsg', CURRENT_TIMESTAMP, ?, NULL)`,
+			net.ID, user, raw)
+		if err != nil {
+			t.Fatalf("insert legacy row: %v", err)
+		}
+	}
+	// Legacy sent row (peer derived from raw_line) and received row (peer = sender).
+	insertLegacy("testuser", ":testuser PRIVMSG chanserv :help")
+	insertLegacy("alice", ":alice PRIVMSG testuser :hi")
+
+	// Before backfill these are invisible to the new peer-keyed query.
+	if msgs, _ := s.GetPrivateMessages(net.ID, "chanserv", "testuser", 50); len(msgs) != 0 {
+		t.Fatalf("expected 0 messages before backfill, got %d", len(msgs))
+	}
+
+	if err := migratePMTarget(s.db); err != nil {
+		t.Fatalf("migratePMTarget: %v", err)
+	}
+
+	if msgs, _ := s.GetPrivateMessages(net.ID, "chanserv", "testuser", 50); len(msgs) != 1 {
+		t.Fatalf("sent PM not backfilled: expected 1, got %d", len(msgs))
+	}
+	if msgs, _ := s.GetPrivateMessages(net.ID, "alice", "testuser", 50); len(msgs) != 1 {
+		t.Fatalf("received PM not backfilled: expected 1, got %d", len(msgs))
+	}
+}

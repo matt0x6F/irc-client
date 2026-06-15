@@ -177,9 +177,14 @@ func (s *Storage) flushBuffer() {
 				return
 			}
 
-			// Batch insert
-			query := `INSERT INTO messages (network_id, channel_id, user, message, message_type, timestamp, raw_line)
-			          VALUES (:network_id, :channel_id, :user, :message, :message_type, :timestamp, :raw_line)`
+			// Batch insert. NULLIF maps an empty pm_target/msgid to NULL: non-PM rows
+			// stay out of the PM-keyed queries (and in the status pane), and msgid-less
+			// rows stay out of the partial unique index (so they never collide). The
+			// ON CONFLICT clause makes the live path idempotent against the msgid dedup
+			// index — e.g. an echo and a CHATHISTORY replay of the same line.
+			query := `INSERT INTO messages (network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, msgid)
+			          VALUES (:network_id, :channel_id, :user, :message, :message_type, :timestamp, :raw_line, NULLIF(:pm_target, ''), NULLIF(:msgid, ''))
+			          ON CONFLICT(network_id, msgid) WHERE msgid IS NOT NULL DO NOTHING`
 
 			_, err := s.db.NamedExec(query, messages)
 			if err != nil {
@@ -277,6 +282,45 @@ func (s *Storage) WriteMessageDirect(msg Message) error {
 	return err
 }
 
+// WriteHistoryMessages bulk-inserts replayed CHATHISTORY messages, deduplicating
+// against existing rows by IRCv3 msgid (the partial unique index on
+// (network_id, msgid)). It returns the number of genuinely-new rows inserted —
+// the caller uses a zero count to detect that the start of available history has
+// been reached and stop paging. This is synchronous and bypasses the write buffer
+// so the inserted rows are immediately queryable for the scrollback re-fetch.
+func (s *Storage) WriteHistoryMessages(msgs []Message) (int, error) {
+	if len(msgs) == 0 {
+		return 0, nil
+	}
+
+	s.closedMu.RLock()
+	if s.closed {
+		s.closedMu.RUnlock()
+		return 0, fmt.Errorf("storage is closed")
+	}
+	s.closedMu.RUnlock()
+
+	// Same NULLIF + ON CONFLICT semantics as flushBuffer: msgid-less rows are
+	// exempt from the dedup index; rows whose msgid already exists are skipped
+	// (and excluded from RowsAffected, so the returned count is new rows only).
+	query := `INSERT INTO messages (network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, msgid)
+	          VALUES (:network_id, :channel_id, :user, :message, :message_type, :timestamp, :raw_line, NULLIF(:pm_target, ''), NULLIF(:msgid, ''))
+	          ON CONFLICT(network_id, msgid) WHERE msgid IS NOT NULL DO NOTHING`
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	result, err := s.db.NamedExec(query, msgs)
+	if err != nil {
+		return 0, fmt.Errorf("failed to write history messages: %w", err)
+	}
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("failed to read history insert count: %w", err)
+	}
+	return int(inserted), nil
+}
+
 // GetMessages retrieves messages for a network and channel
 func (s *Storage) GetMessages(networkID int64, channelID *int64, limit int) ([]Message, error) {
 	var dbMessages []db.Message
@@ -309,6 +353,237 @@ func (s *Storage) GetMessages(networkID int64, channelID *int64, limit int) ([]M
 	// Reverse to get chronological order
 	for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {
 		messages[i], messages[j] = messages[j], messages[i]
+	}
+
+	return messages, nil
+}
+
+// PinMessage pins a message (idempotent — re-pinning is a no-op)
+func (s *Storage) PinMessage(messageID, networkID int64, channelID *int64, pinnedBy string) error {
+	var channelIDNull sql.NullInt64
+	if channelID != nil {
+		channelIDNull = sql.NullInt64{Int64: *channelID, Valid: true}
+	}
+	err := s.queries.PinMessage(context.Background(), db.PinMessageParams{
+		MessageID: messageID,
+		NetworkID: networkID,
+		ChannelID: channelIDNull,
+		PinnedBy:  pinnedBy,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to pin message: %w", err)
+	}
+	return nil
+}
+
+// UnpinMessage removes a pin
+func (s *Storage) UnpinMessage(messageID int64) error {
+	if err := s.queries.UnpinMessage(context.Background(), messageID); err != nil {
+		return fmt.Errorf("failed to unpin message: %w", err)
+	}
+	return nil
+}
+
+// GetPinnedMessages returns pinned messages for a network and channel (channelID nil = status/PM pane)
+func (s *Storage) GetPinnedMessages(networkID int64, channelID *int64) ([]PinnedMessage, error) {
+	if channelID != nil {
+		rows, err := s.queries.GetPinnedMessagesWithChannel(context.Background(), db.GetPinnedMessagesWithChannelParams{
+			NetworkID: networkID,
+			ChannelID: sql.NullInt64{Int64: *channelID, Valid: true},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to get pinned messages: %w", err)
+		}
+		pinned := make([]PinnedMessage, len(rows))
+		for i, r := range rows {
+			pinned[i] = convertPinnedMessageWithChannelFromDB(r)
+		}
+		return pinned, nil
+	}
+
+	rows, err := s.queries.GetPinnedMessagesWithoutChannel(context.Background(), networkID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get pinned messages: %w", err)
+	}
+	pinned := make([]PinnedMessage, len(rows))
+	for i, r := range rows {
+		pinned[i] = convertPinnedMessageWithoutChannelFromDB(r)
+	}
+	return pinned, nil
+}
+
+// GetMessagesAround returns a window of messages around a target message id:
+// up to `window` messages at or before the target, plus up to `window` after it,
+// in chronological (ascending id) order.
+func (s *Storage) GetMessagesAround(networkID int64, channelID *int64, targetID int64, window int) ([]Message, error) {
+	var before, after []db.Message
+	var err error
+
+	if channelID != nil {
+		channelIDNull := sql.NullInt64{Int64: *channelID, Valid: true}
+		before, err = s.queries.GetMessagesBeforeWithChannel(context.Background(), db.GetMessagesBeforeWithChannelParams{
+			NetworkID: networkID,
+			ChannelID: channelIDNull,
+			ID:        targetID,
+			Limit:     int64(window),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to get messages before target: %w", err)
+		}
+		after, err = s.queries.GetMessagesAfterWithChannel(context.Background(), db.GetMessagesAfterWithChannelParams{
+			NetworkID: networkID,
+			ChannelID: channelIDNull,
+			ID:        targetID,
+			Limit:     int64(window),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to get messages after target: %w", err)
+		}
+	} else {
+		before, err = s.queries.GetMessagesBeforeWithoutChannel(context.Background(), db.GetMessagesBeforeWithoutChannelParams{
+			NetworkID: networkID,
+			ID:        targetID,
+			Limit:     int64(window),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to get messages before target: %w", err)
+		}
+		after, err = s.queries.GetMessagesAfterWithoutChannel(context.Background(), db.GetMessagesAfterWithoutChannelParams{
+			NetworkID: networkID,
+			ID:        targetID,
+			Limit:     int64(window),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to get messages after target: %w", err)
+		}
+	}
+
+	// `before` is DESC (newest first); reverse it to ascending, then append `after` (already ASC).
+	messages := make([]Message, 0, len(before)+len(after))
+	for i := len(before) - 1; i >= 0; i-- {
+		messages = append(messages, convertMessageFromDB(before[i]))
+	}
+	for _, m := range after {
+		messages = append(messages, convertMessageFromDB(m))
+	}
+
+	return messages, nil
+}
+
+// GetMessagesBefore returns up to `limit` messages strictly older than beforeID
+// (exclusive), in chronological (ascending id) order. channelID nil = status pane.
+// Used for scrollback pagination — loading history above the currently-loaded window.
+func (s *Storage) GetMessagesBefore(networkID int64, channelID *int64, beforeID int64, limit int) ([]Message, error) {
+	var dbMessages []db.Message
+	var err error
+
+	if channelID != nil {
+		channelIDNull := sql.NullInt64{Int64: *channelID, Valid: true}
+		dbMessages, err = s.queries.GetMessagesBeforeWithChannel(context.Background(), db.GetMessagesBeforeWithChannelParams{
+			NetworkID: networkID,
+			ChannelID: channelIDNull,
+			ID:        beforeID - 1, // underlying query is id <= ?, so -1 makes it exclusive
+			Limit:     int64(limit),
+		})
+	} else {
+		dbMessages, err = s.queries.GetMessagesBeforeWithoutChannel(context.Background(), db.GetMessagesBeforeWithoutChannelParams{
+			NetworkID: networkID,
+			ID:        beforeID - 1,
+			Limit:     int64(limit),
+		})
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get messages before: %w", err)
+	}
+
+	// Query returns DESC (newest first); reverse to ascending (chronological).
+	messages := make([]Message, 0, len(dbMessages))
+	for i := len(dbMessages) - 1; i >= 0; i-- {
+		messages = append(messages, convertMessageFromDB(dbMessages[i]))
+	}
+
+	return messages, nil
+}
+
+// GetMessagesBeforeTime returns up to `limit` messages strictly older than
+// `before` (by server-time timestamp), in chronological (ascending) order.
+// Unlike GetMessagesBefore (id-keyed), this paginates by timestamp so it surfaces
+// CHATHISTORY-backfilled rows, which are inserted with high ids but old timestamps.
+// Target selection: a non-empty pmTarget selects a PM conversation; otherwise a
+// non-nil channelID selects a channel; otherwise the status pane.
+func (s *Storage) GetMessagesBeforeTime(networkID int64, channelID *int64, pmTarget string, before time.Time, limit int) ([]Message, error) {
+	var dbMessages []db.Message
+	var err error
+
+	switch {
+	case pmTarget != "":
+		dbMessages, err = s.queries.GetMessagesBeforeTimePM(context.Background(), db.GetMessagesBeforeTimePMParams{
+			NetworkID: networkID,
+			PmTarget:  sql.NullString{String: strings.ToLower(pmTarget), Valid: true},
+			Timestamp: before,
+			Limit:     int64(limit),
+		})
+	case channelID != nil:
+		dbMessages, err = s.queries.GetMessagesBeforeTimeWithChannel(context.Background(), db.GetMessagesBeforeTimeWithChannelParams{
+			NetworkID: networkID,
+			ChannelID: sql.NullInt64{Int64: *channelID, Valid: true},
+			Timestamp: before,
+			Limit:     int64(limit),
+		})
+	default:
+		dbMessages, err = s.queries.GetMessagesBeforeTimeWithoutChannel(context.Background(), db.GetMessagesBeforeTimeWithoutChannelParams{
+			NetworkID: networkID,
+			Timestamp: before,
+			Limit:     int64(limit),
+		})
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get messages before time: %w", err)
+	}
+
+	// Query returns DESC (newest first); reverse to ascending (chronological).
+	messages := make([]Message, 0, len(dbMessages))
+	for i := len(dbMessages) - 1; i >= 0; i-- {
+		messages = append(messages, convertMessageFromDB(dbMessages[i]))
+	}
+
+	return messages, nil
+}
+
+// GetMessagesAfter returns up to `limit` messages strictly newer than afterID
+// (exclusive), in chronological (ascending id) order. channelID nil = status pane.
+// The newer-direction counterpart of GetMessagesBefore — used when scrolling down
+// out of an anchored context window (e.g. after jumping to a pinned message).
+func (s *Storage) GetMessagesAfter(networkID int64, channelID *int64, afterID int64, limit int) ([]Message, error) {
+	var dbMessages []db.Message
+	var err error
+
+	if channelID != nil {
+		channelIDNull := sql.NullInt64{Int64: *channelID, Valid: true}
+		dbMessages, err = s.queries.GetMessagesAfterWithChannel(context.Background(), db.GetMessagesAfterWithChannelParams{
+			NetworkID: networkID,
+			ChannelID: channelIDNull,
+			ID:        afterID, // underlying query is id > ?, already exclusive
+			Limit:     int64(limit),
+		})
+	} else {
+		dbMessages, err = s.queries.GetMessagesAfterWithoutChannel(context.Background(), db.GetMessagesAfterWithoutChannelParams{
+			NetworkID: networkID,
+			ID:        afterID,
+			Limit:     int64(limit),
+		})
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get messages after: %w", err)
+	}
+
+	// Query already returns ASC (chronological).
+	messages := make([]Message, len(dbMessages))
+	for i, m := range dbMessages {
+		messages[i] = convertMessageFromDB(m)
 	}
 
 	return messages, nil
@@ -538,6 +813,22 @@ func (s *Storage) GetChannelUsers(channelID int64) ([]ChannelUser, error) {
 	return users, nil
 }
 
+// GetChannelUserModes returns the stored prefix modes (e.g. "@+") for a single user
+// in a channel. Returns sql.ErrNoRows if the user is not currently tracked.
+func (s *Storage) GetChannelUserModes(channelID int64, nickname string) (string, error) {
+	modes, err := s.queries.GetChannelUserModes(context.Background(), db.GetChannelUserModesParams{
+		ChannelID: channelID,
+		LOWER:     nickname,
+	})
+	if err != nil {
+		return "", err
+	}
+	if modes.Valid {
+		return modes.String, nil
+	}
+	return "", nil
+}
+
 // AddChannelUser adds or updates a user in a channel
 func (s *Storage) AddChannelUser(channelID int64, nickname string, modes string) error {
 	err := s.queries.AddChannelUser(context.Background(), db.AddChannelUserParams{
@@ -579,22 +870,17 @@ func (s *Storage) UpdateChannelUserNickname(networkID int64, oldNickname string,
 	return err
 }
 
-// GetPrivateMessages retrieves private messages for a network and user
-// Private messages have channel_id IS NULL and user != '*'
-// Returns both messages FROM the target user (received) and messages TO the target user (sent by currentUser)
-// Uses case-insensitive matching for IRC nicknames
+// GetPrivateMessages retrieves the private-message conversation with targetUser.
+// PM rows carry their conversation peer in pm_target (set when written), so both
+// sent and received messages are matched by a single case-insensitive equality.
+// The currentUser parameter is retained for API compatibility but no longer used.
 func (s *Storage) GetPrivateMessages(networkID int64, targetUser string, currentUser string, limit int) ([]Message, error) {
-	// Normalize usernames to lowercase for case-insensitive comparison
+	_ = currentUser
 	targetUserLower := strings.ToLower(targetUser)
-	currentUserLower := strings.ToLower(currentUser)
 
-	// Get messages FROM targetUser (received) OR messages TO targetUser sent by currentUser (sent)
-	// For sent messages, we check the raw_line to identify the target (case-insensitive)
 	dbMessages, err := s.queries.GetPrivateMessages(context.Background(), db.GetPrivateMessagesParams{
 		NetworkID: networkID,
-		User:      targetUserLower,
-		User_2:    currentUserLower,
-		RawLine:   sql.NullString{String: fmt.Sprintf("privmsg %s%%", targetUserLower), Valid: true},
+		PmTarget:  sql.NullString{String: targetUserLower, Valid: true},
 		Limit:     int64(limit),
 	})
 

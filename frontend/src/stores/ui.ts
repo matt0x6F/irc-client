@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-type SettingsSection = 'networks' | 'plugins' | 'display' | undefined;
+type SettingsSection = 'networks' | 'plugins' | 'display' | 'about' | undefined;
 
 interface UIState {
   // Settings modal
@@ -50,6 +50,10 @@ interface UIState {
   toggleRightSidebar: () => void;
   setLeftSidebarCollapsed: (collapsed: boolean) => void;
   setRightSidebarCollapsed: (collapsed: boolean) => void;
+
+  // Right sidebar tab (users vs pinned messages)
+  rightSidebarTab: 'users' | 'pinned';
+  setRightSidebarTab: (tab: 'users' | 'pinned') => void;
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -93,4 +97,7 @@ export const useUIStore = create<UIState>((set) => ({
   toggleRightSidebar: () => set((state) => ({ rightSidebarCollapsed: !state.rightSidebarCollapsed })),
   setLeftSidebarCollapsed: (collapsed) => set({ leftSidebarCollapsed: collapsed }),
   setRightSidebarCollapsed: (collapsed) => set({ rightSidebarCollapsed: collapsed }),
+
+  rightSidebarTab: 'users',
+  setRightSidebarTab: (tab) => set({ rightSidebarTab: tab }),
 }));

@@ -3,6 +3,7 @@ package irc
 import (
 	"encoding/base64"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -16,89 +17,306 @@ import (
 	"github.com/matt0x6f/irc-client/internal/validation"
 )
 
-// requestedCaps is the list of IRCv3 capabilities this client wants to negotiate.
-var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags"}
+// requestedCaps lists the IRCv3 capabilities this client wants. We list both the
+// ratified "chathistory" and the older "draft/chathistory" names; the contains()
+// filter only requests whichever the server actually advertises. "batch" is
+// required for CHATHISTORY (replays arrive wrapped in a BATCH that the underlying
+// ergochat/irc-go library collects for us).
+var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory"}
 
 // IRCClient manages IRC connections
 type IRCClient struct {
-	conn                *ircevent.Connection
-	eventBus            *events.EventBus
-	storage             *storage.Storage
-	networkID           int64
-	network             *storage.Network
-	mu                  sync.RWMutex
-	connected           bool
-	lastMessageTime     time.Time // Last time we received any message from server (including PING)
-	saslEnabled         bool
-	saslMechanism       string
-	saslUsername        string
-	saslPassword        string
-	saslInProgress      bool
-	saslAuthenticated   bool
-	saslCapRequested    bool
-	saslCapAcknowledged bool
-	scramState          *SCRAMState
-	namesInProgress     map[string]bool       // Track channels currently receiving NAMES list
-	namesMu             sync.Mutex            // Mutex for namesInProgress map
-	serverCapabilities  *ServerCapabilities   // Server capabilities from ISUPPORT
-	whoisInProgress     map[string]*WhoisInfo // Track WHOIS requests in progress (key: nickname)
-	whoisMu             sync.Mutex            // Mutex for whoisInProgress map
-	enabledCaps         map[string]bool       // IRCv3 capabilities granted by the server
-	capNegotiationDone  bool                  // Whether CAP negotiation has finished
-	channelListItems    []ChannelListItem     // Temporary storage for LIST response
-	channelListMu       sync.Mutex            // Mutex for channelListItems
-	rateLimiter         *RateLimiter          // Rate limiter for outgoing messages
-	desiredNick         string                // The original nickname the user wanted
-	nickAttempt         int                   // Current nick collision retry attempt (0 = first try with underscore)
+	conn                  *ircevent.Connection
+	eventBus              *events.EventBus
+	storage               *storage.Storage
+	networkID             int64
+	network               *storage.Network
+	mu                    sync.RWMutex
+	connected             bool
+	lastMessageTime       time.Time // Last time we received any message from server (including PING). Informational only — liveness is owned by the library pingLoop, not this field.
+	saslEnabled           bool
+	saslMechanism         string
+	saslUsername          string
+	saslPassword          string
+	saslInProgress        bool
+	saslAuthenticated     bool
+	saslCapRequested      bool
+	saslCapAcknowledged   bool
+	scramState            *SCRAMState
+	namesInProgress       map[string]bool       // Track channels currently receiving NAMES list
+	namesMu               sync.Mutex            // Mutex for namesInProgress map
+	serverCapabilities    *ServerCapabilities   // Server capabilities from ISUPPORT
+	whoisInProgress       map[string]*WhoisInfo // Track WHOIS requests in progress (key: nickname)
+	whoisMu               sync.Mutex            // Mutex for whoisInProgress map
+	enabledCaps           map[string]bool       // IRCv3 capabilities granted by the server
+	chatHistoryMaxBatch   int                   // Max messages per CHATHISTORY request, from the chathistory=N cap value (0 = unknown, use default)
+	capNegotiationDone    bool                  // Whether CAP negotiation has finished
+	channelListItems      []ChannelListItem     // Temporary storage for LIST response
+	channelListMu         sync.Mutex            // Mutex for channelListItems
+	banLists              map[string][]BanEntry // Per-channel ban entries collected between 367 and 368
+	banListsMu            sync.Mutex            // Mutex for banLists
+	rateLimiter           *RateLimiter          // Rate limiter for outgoing messages
+	currentNick           string                // Nick the server currently knows us by; differs from the preferred nick during a collision (guarded by mu)
+	nickCollisionNotified bool                  // True once we've told the user (one time) that the preferred nick was unavailable (guarded by mu)
+	reconnecting          bool                  // True when this connection is an auto-reconnect after an unexpected drop (guarded by mu)
 }
 
 // ServerCapabilities stores parsed ISUPPORT information
 type ServerCapabilities struct {
 	Prefix       map[rune]rune // Map prefix char to mode char (e.g., '@' -> 'o', '+' -> 'v')
 	PrefixString string        // Raw PREFIX string (e.g., "(ov)@+")
-	ChanModes    string        // Raw CHANMODES string
+	ChanModes    string        // Raw CHANMODES string (e.g., "b,k,l,imnpst")
+	ChanModesA   map[rune]bool // Type A modes (list modes, e.g. b)
+	ChanModesB   map[rune]bool // Type B modes (always parameterized, e.g. k)
+	ChanModesC   map[rune]bool // Type C modes (parameterized only when set, e.g. l)
+	ChanModesD   map[rune]bool // Type D modes (boolean flags, e.g. imnpst)
 	mu           sync.RWMutex  // Mutex for thread-safe access
 }
 
-// IsConnected returns whether the client is connected
-// Also checks if we've received messages recently (including PING from server) to detect dead connections
-// IRC servers send PING regularly, so if we haven't received any message in 5 minutes, the connection is likely dead
-func (c *IRCClient) IsConnected() bool {
-	c.mu.RLock()
-	connected := c.connected
-	lastMessage := c.lastMessageTime
-	c.mu.RUnlock()
-
-	if !connected {
-		return false
+// classification builds an immutable snapshot for the mode parser, combining the
+// classified CHANMODES groups with the membership modes from PREFIX. When the server
+// never advertised CHANMODES, RFC1459-style defaults are substituted so parsing still
+// consumes parameters correctly. Callers should hold the client lock for reads.
+func (sc *ServerCapabilities) classification() ModeClassification {
+	a, b, c, d := sc.ChanModesA, sc.ChanModesB, sc.ChanModesC, sc.ChanModesD
+	if len(a)+len(b)+len(c)+len(d) == 0 {
+		a, b, c, d = classifyChanModes(defaultChanModes)
 	}
-
-	// If we haven't received a message (including PING) in 15 minutes, consider connection dead
-	// IRC servers typically send PING every 2-3 minutes, so 15 minutes indicates a dead connection
-	// This handles cases where disconnect callback wasn't triggered (e.g., network interruption, sleep/wake)
-	if !lastMessage.IsZero() {
-		timeSinceLastMessage := time.Since(lastMessage)
-		if timeSinceLastMessage > 15*time.Minute {
-			logger.Log.Warn().
-				Dur("time_since_last_message", timeSinceLastMessage).
-				Str("network", c.network.Address).
-				Msg("Connection appears dead (no messages including PING received recently)")
-			// Mark as disconnected and clean up
-			c.markConnectionDead()
-			return false
-		}
+	prefix := make(map[rune]bool, len(sc.Prefix))
+	for _, modeLetter := range sc.Prefix {
+		prefix[modeLetter] = true
 	}
-
-	return true
+	return ModeClassification{List: a, Param: b, SetParam: c, Flag: d, Prefix: prefix}
 }
 
-// IsConnectedDirect returns whether the client is connected without checking for dead connections
-// This is used internally to avoid triggering markConnectionDead() which emits events
-// and can create feedback loops during connection state checks
-func (c *IRCClient) IsConnectedDirect() bool {
+// prefixForMode returns the display prefix char for a membership mode letter
+// (e.g. 'o' -> '@'), and whether one exists. Callers should hold the client lock.
+func (sc *ServerCapabilities) prefixForMode(modeLetter rune) (rune, bool) {
+	for prefixChar, letter := range sc.Prefix {
+		if letter == modeLetter {
+			return prefixChar, true
+		}
+	}
+	return 0, false
+}
+
+// prefixRank returns prefix chars ordered by descending privilege, derived from the
+// order they appear in the PREFIX string (e.g. "(ov)@+" -> ['@','+']). Used to keep a
+// user's stored prefix string sorted highest-first. Callers should hold the client lock.
+func (sc *ServerCapabilities) prefixRank() []rune {
+	if close := strings.IndexRune(sc.PrefixString, ')'); close >= 0 {
+		return []rune(sc.PrefixString[close+1:])
+	}
+	return nil
+}
+
+// applyUserPrefix adds or removes the prefix char for the given membership mode letter
+// in a user's stored prefix string, keeping it ordered highest-privilege first.
+// Callers should hold the client lock.
+func (sc *ServerCapabilities) applyUserPrefix(current string, modeLetter rune, add bool) string {
+	prefixChar, ok := sc.prefixForMode(modeLetter)
+	if !ok {
+		return current
+	}
+	present := make(map[rune]bool)
+	for _, r := range current {
+		present[r] = true
+	}
+	if add {
+		present[prefixChar] = true
+	} else {
+		delete(present, prefixChar)
+	}
+
+	var b strings.Builder
+	for _, r := range sc.prefixRank() {
+		if present[r] {
+			b.WriteRune(r)
+			delete(present, r)
+		}
+	}
+	// Preserve any prefix chars not present in PREFIX rank (defensive for exotic servers).
+	for r := range present {
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// IsConnected returns whether the client is connected.
+//
+// This is a pure, side-effect-free read of the connection flag. Liveness
+// detection (dead-connection / timeout handling) is owned entirely by the
+// underlying ergochat/irc-go pingLoop, which PINGs on a KeepAlive interval and
+// treats an unacked PING as fatal, firing the DisconnectCallback. That callback
+// is the single authority that flips connected -> false. Keeping this method a
+// plain getter avoids the old asymmetric latch where a passive staleness check
+// could mark the connection dead while the live read loop kept delivering
+// messages, leaving the UI permanently "disconnected" despite active traffic.
+func (c *IRCClient) IsConnected() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.connected
+}
+
+// IsConnectedDirect is retained for its existing call sites and is now identical
+// to IsConnected (both are pure reads of the connection flag).
+func (c *IRCClient) IsConnectedDirect() bool {
+	return c.IsConnected()
+}
+
+// preferredNick is the nick the user configured and wants to hold. It matches
+// the library's PreferredNick (conn.Nick is initialized from it) and is the one
+// the library re-requests every keepalive while we're on an alternative.
+func (c *IRCClient) preferredNick() string {
+	return c.network.Nickname
+}
+
+// CurrentNick returns the nick the server currently knows us by, which can
+// differ from the preferred nick while a collision is being resolved. Falls
+// back to the preferred nick before registration has assigned one.
+func (c *IRCClient) CurrentNick() string {
+	c.mu.RLock()
+	nick := c.currentNick
+	c.mu.RUnlock()
+	if nick == "" {
+		return c.preferredNick()
+	}
+	return nick
+}
+
+// emitNickChanged notifies subscribers that our own nick changed, carrying both
+// the new nick and the preferred nick so the UI can flag a pending reclaim.
+func (c *IRCClient) emitNickChanged(nick string) {
+	preferred := c.preferredNick()
+	c.eventBus.Emit(events.Event{
+		Type: EventNickChanged,
+		Data: map[string]interface{}{
+			"network":     c.network.Address,
+			"networkId":   c.networkID,
+			"nick":        nick,
+			"desired":     preferred,
+			"isPreferred": nick == preferred,
+		},
+		Timestamp: time.Now(),
+		Source:    events.EventSourceIRC,
+	})
+}
+
+// handleNickInUse handles ERR_NICKNAMEINUSE (433). The library owns nick
+// selection: before registration it cycles through alternatives on its own, and
+// after registration its keepalive loop periodically re-requests the preferred
+// nick (yielding a 433 each time it's still held). We therefore send no NICK of
+// our own and surface only a single, one-time notice while still unregistered —
+// the post-registration reclaim attempts stay silent so the log isn't spammed
+// every keepalive interval.
+func (c *IRCClient) handleNickInUse(_ ircmsg.Message) {
+	c.mu.Lock()
+	registered := c.currentNick != ""
+	alreadyNotified := c.nickCollisionNotified
+	if !registered {
+		c.nickCollisionNotified = true
+	}
+	c.mu.Unlock()
+
+	if registered || alreadyNotified {
+		return
+	}
+	c.storage.WriteMessageSync(storage.Message{
+		NetworkID:   c.networkID,
+		ChannelID:   nil,
+		User:        "*",
+		Message:     fmt.Sprintf("Nick %q is in use — trying alternatives…", c.preferredNick()),
+		MessageType: "status",
+		Timestamp:   time.Now(),
+	})
+}
+
+// handleWelcome records the nick the server actually assigned us on RPL_WELCOME
+// (001). When it isn't our preferred nick, it explains that reclaiming will be
+// retried automatically (the library does this on each keepalive).
+func (c *IRCClient) handleWelcome(e ircmsg.Message) {
+	if len(e.Params) < 1 {
+		return
+	}
+	nick := e.Params[0]
+	preferred := c.preferredNick()
+
+	c.mu.Lock()
+	c.currentNick = nick
+	c.mu.Unlock()
+
+	c.emitNickChanged(nick)
+
+	if nick != preferred {
+		c.storage.WriteMessageSync(storage.Message{
+			NetworkID:   c.networkID,
+			ChannelID:   nil,
+			User:        "*",
+			Message:     fmt.Sprintf("Connected as %q. Cascade will keep trying to reclaim %q automatically.", nick, preferred),
+			MessageType: "status",
+			Timestamp:   time.Now(),
+		})
+	}
+}
+
+// handleNickMessage handles inbound NICK changes. It always updates channel user
+// lists and notifies subscribers (for anyone). When the change is our own —
+// detected because the old nick matches the nick the server currently knows us
+// by — it tracks the new nick and, if we've reclaimed our preferred nick, says
+// so.
+func (c *IRCClient) handleNickMessage(e ircmsg.Message) {
+	oldNick := e.Nick()
+	newNick := e.Params[0]
+
+	// Update nickname in all channels for this network
+	if err := c.storage.UpdateChannelUserNickname(c.networkID, oldNick, newNick); err != nil {
+		logger.Log.Error().Err(err).Str("oldNick", oldNick).Str("newNick", newNick).Msg("Failed to update nickname in channel user lists")
+	} else {
+		logger.Log.Debug().Str("oldNick", oldNick).Str("newNick", newNick).Msg("Updated nickname in channel user lists")
+	}
+
+	c.eventBus.Emit(events.Event{
+		Type: EventUserNick,
+		Data: map[string]interface{}{
+			"network":   c.network.Address,
+			"networkId": c.networkID,
+			"oldNick":   oldNick,
+			"newNick":   newNick,
+		},
+		Timestamp: time.Now(),
+		Source:    events.EventSourceIRC,
+	})
+
+	// Detect when the change is our own and keep our tracked nick in sync.
+	c.mu.RLock()
+	isSelf := strings.EqualFold(oldNick, c.currentNick)
+	c.mu.RUnlock()
+	if !isSelf {
+		return
+	}
+
+	preferred := c.preferredNick()
+	reclaimed := strings.EqualFold(newNick, preferred)
+	c.mu.Lock()
+	c.currentNick = newNick
+	if reclaimed {
+		// Reclaimed the preferred nick; allow a future collision to notify afresh.
+		c.nickCollisionNotified = false
+	}
+	c.mu.Unlock()
+
+	c.emitNickChanged(newNick)
+
+	if reclaimed {
+		c.storage.WriteMessageSync(storage.Message{
+			NetworkID:   c.networkID,
+			ChannelID:   nil,
+			User:        "*",
+			Message:     fmt.Sprintf("Reclaimed your preferred nick %q.", preferred),
+			MessageType: "status",
+			Timestamp:   time.Now(),
+		})
+	}
 }
 
 // NewIRCClient creates a new IRC client
@@ -129,6 +347,7 @@ func NewIRCClient(network *storage.Network, eventBus *events.EventBus, storage *
 		namesInProgress:     make(map[string]bool),
 		whoisInProgress:     make(map[string]*WhoisInfo),
 		enabledCaps:         make(map[string]bool),
+		banLists:            make(map[string][]BanEntry),
 		serverCapabilities: &ServerCapabilities{
 			Prefix:       make(map[rune]rune),
 			PrefixString: "",
@@ -157,6 +376,14 @@ func NewIRCClient(network *storage.Network, eventBus *events.EventBus, storage *
 		UseTLS:        network.TLS,
 		Password:      network.Password,
 		ReconnectFreq: 0, // Disable automatic reconnection - we'll handle it manually
+		// Liveness detection is owned by the library's pingLoop: it sends a
+		// keepalive PING every KeepAlive and treats an unacked PING (within
+		// Timeout, enforced via socket read/write deadlines) as fatal, firing
+		// the DisconnectCallback. This is the single source of truth for whether
+		// the connection is alive, including across OS sleep/wake. Constraint:
+		// KeepAlive must be >= Timeout.
+		Timeout:   1 * time.Minute,
+		KeepAlive: 3 * time.Minute,
 	}
 
 	// Set up event handlers
@@ -233,6 +460,9 @@ func (c *IRCClient) setupHandlers() {
 	c.conn.AddDisconnectCallback(func(e ircmsg.Message) {
 		c.mu.Lock()
 		c.connected = false
+		// Reset nick-collision state so a reconnect starts from a clean slate.
+		c.currentNick = ""
+		c.nickCollisionNotified = false
 		c.mu.Unlock()
 
 		// Write "Disconnected" messages to all open/joined channels BEFORE clearing users
@@ -352,16 +582,18 @@ func (c *IRCClient) setupHandlers() {
 					// CTCP ACTION - already handled, but store as action type
 					// Determine if it's a channel or private message
 					var channelID *int64
+					var pmTarget string
 					if len(channel) > 0 && (channel[0] == '#' || channel[0] == '&') {
 						ch, err := c.storage.GetChannelByName(c.networkID, channel)
 						if err == nil {
 							channelID = &ch.ID
 						}
 					} else {
-						// Private message - create or get PM conversation
-						_, err := c.storage.GetOrCreatePMConversation(c.networkID, user, c.network.Nickname)
+						// Private message - create or get PM conversation keyed by the peer
+						pmTarget = c.pmPeer(user, channel)
+						_, err := c.storage.GetOrCreatePMConversation(c.networkID, pmTarget, c.network.Nickname)
 						if err != nil {
-							logger.Log.Error().Err(err).Str("user", user).Msg("Failed to create/get PM conversation")
+							logger.Log.Error().Err(err).Str("user", user).Str("pmTarget", pmTarget).Msg("Failed to create/get PM conversation")
 						}
 					}
 
@@ -374,6 +606,8 @@ func (c *IRCClient) setupHandlers() {
 						MessageType: "action",
 						Timestamp:   c.getMessageTime(e),
 						RawLine:     rawLine,
+						PMTarget:    pmTarget,
+						MsgID:       c.getMsgID(e),
 					}
 					c.storage.WriteMessageSync(msg)
 				} else {
@@ -402,6 +636,7 @@ func (c *IRCClient) setupHandlers() {
 
 		// Determine if it's a channel or private message
 		var channelID *int64
+		var pmTarget string
 		if len(channel) > 0 && (channel[0] == '#' || channel[0] == '&') {
 			// Channel message - look up channel ID
 			ch, err := c.storage.GetChannelByName(c.networkID, channel)
@@ -413,10 +648,11 @@ func (c *IRCClient) setupHandlers() {
 				logger.Log.Debug().Err(err).Str("channel", channel).Msg("Channel not found in database")
 			}
 		} else {
-			// Private message - create or get PM conversation
-			_, err := c.storage.GetOrCreatePMConversation(c.networkID, user, c.network.Nickname)
+			// Private message - create or get PM conversation keyed by the peer
+			pmTarget = c.pmPeer(user, channel)
+			_, err := c.storage.GetOrCreatePMConversation(c.networkID, pmTarget, c.network.Nickname)
 			if err != nil {
-				logger.Log.Error().Err(err).Str("user", user).Msg("Failed to create/get PM conversation")
+				logger.Log.Error().Err(err).Str("user", user).Str("pmTarget", pmTarget).Msg("Failed to create/get PM conversation")
 			}
 		}
 
@@ -430,6 +666,8 @@ func (c *IRCClient) setupHandlers() {
 			MessageType: "privmsg",
 			Timestamp:   c.getMessageTime(e),
 			RawLine:     rawLine,
+			PMTarget:    pmTarget,
+			MsgID:       c.getMsgID(e),
 		}
 
 		// Store message (use sync write so it appears immediately)
@@ -514,19 +752,26 @@ func (c *IRCClient) setupHandlers() {
 			}
 		}
 
-		// If the current user joined, request fresh NAMES list to update user list
-		// Don't clear channel users - keep ourselves in the list so GetJoinedChannels works immediately
+		// If the current user joined, the server automatically sends the NAMES
+		// list (RPL_NAMREPLY 353 / RPL_ENDOFNAMES 366) as part of the JOIN
+		// response; those handlers clear and repopulate channel_users and emit
+		// channel.names.complete. We deliberately do NOT send an explicit NAMES
+		// here — it's redundant with the server's automatic reply and doubles the
+		// outgoing burst when rejoining a whole session after a reconnect.
 		if strings.EqualFold(user, c.network.Nickname) {
 			logger.Log.Info().
 				Str("channel", channel).
 				Int64("network_id", c.networkID).
-				Msg("Our user joining, requesting NAMES list to update user list")
-			// Request NAMES to get full user list - this will update the channel_users table
-			// We don't clear first because we want GetJoinedChannels to work immediately
-			if err := c.conn.SendRaw(fmt.Sprintf("NAMES %s", channel)); err != nil {
-				logger.Log.Error().Err(err).Str("channel", channel).Msg("Failed to send NAMES command")
-			} else {
-				logger.Log.Debug().Str("channel", channel).Msg("NAMES command sent successfully")
+				Msg("Our user joined; awaiting server NAMES reply to populate user list")
+
+			// Catch-up: pull recent server-side history for the channel so anything
+			// said while we were away is backfilled. No-op when the server didn't
+			// grant CHATHISTORY. Replays arrive via handleChatHistoryBatch and are
+			// deduped by msgid, so re-joining a channel won't duplicate messages.
+			if c.chatHistoryEnabled() {
+				if err := c.RequestChatHistoryLatest(channel, defaultChatHistoryLimit); err != nil {
+					logger.Log.Debug().Err(err).Str("channel", channel).Msg("CHATHISTORY LATEST request skipped")
+				}
 			}
 		}
 
@@ -820,29 +1065,8 @@ func (c *IRCClient) setupHandlers() {
 	})
 
 	// Nick change
-	c.conn.AddCallback("NICK", func(e ircmsg.Message) {
-		oldNick := e.Nick()
-		newNick := e.Params[0]
-
-		// Update nickname in all channels for this network
-		if err := c.storage.UpdateChannelUserNickname(c.networkID, oldNick, newNick); err != nil {
-			logger.Log.Error().Err(err).Str("oldNick", oldNick).Str("newNick", newNick).Msg("Failed to update nickname in channel user lists")
-		} else {
-			logger.Log.Debug().Str("oldNick", oldNick).Str("newNick", newNick).Msg("Updated nickname in channel user lists")
-		}
-
-		c.eventBus.Emit(events.Event{
-			Type: EventUserNick,
-			Data: map[string]interface{}{
-				"network":   c.network.Address,
-				"networkId": c.networkID,
-				"oldNick":   oldNick,
-				"newNick":   newNick,
-			},
-			Timestamp: time.Now(),
-			Source:    events.EventSourceIRC,
-		})
-	})
+	// Inbound NICK changes for everyone, with self-tracking. See handleNickMessage.
+	c.conn.AddCallback("NICK", c.handleNickMessage)
 
 	// Channel topic (RPL_TOPIC = 332) - received when topic is retrieved
 	c.conn.AddCallback("332", func(e ircmsg.Message) {
@@ -1141,29 +1365,190 @@ func (c *IRCClient) setupHandlers() {
 			return
 		}
 		target := e.Params[0]
-		mode := e.Params[1]
+		// Only handle channel modes (target starts with # or &); ignore user modes.
+		if len(target) == 0 || (target[0] != '#' && target[0] != '&') {
+			return
+		}
 
-		// Only handle channel modes (target starts with # or &)
-		if len(target) > 0 && (target[0] == '#' || target[0] == '&') {
-			ch, err := c.storage.GetChannelByName(c.networkID, target)
-			if err == nil {
-				// Update channel modes
-				// Note: This is simplified - full MODE parsing is complex
-				c.storage.UpdateChannelModes(ch.ID, mode)
+		ch, err := c.storage.GetChannelByName(c.networkID, target)
+		if err != nil {
+			return
+		}
 
-				// Emit event for mode change
-				c.eventBus.Emit(events.Event{
-					Type: EventChannelMode,
-					Data: map[string]interface{}{
-						"network": c.network.Address,
-						"channel": target,
-						"modes":   mode,
-					},
-					Timestamp: time.Now(),
-					Source:    events.EventSourceIRC,
-				})
+		// Snapshot the server's mode grammar once under lock, then parse lock-free.
+		c.mu.RLock()
+		cls := c.serverCapabilities.classification()
+		c.mu.RUnlock()
+
+		changes := ParseModeChanges(e.Params[1], e.Params[2:], cls)
+
+		// Surface the change in the channel itself (like join/part/kick), faithfully
+		// mirroring what the server applied: "<actor> sets mode: +o-v+k a b key".
+		// Bare list-mode *queries* (e.g. ban-list fetches) never reach here — the
+		// server answers those with 367/368, not a MODE echo — so this won't fire for them.
+		if len(changes) > 0 {
+			actor := e.Nick()
+			if actor == "" {
+				actor = e.Source
+			}
+			rawLine, _ := e.Line()
+			c.storage.WriteMessageSync(storage.Message{
+				NetworkID:   c.networkID,
+				ChannelID:   &ch.ID,
+				User:        actor,
+				Message:     fmt.Sprintf("%s sets mode: %s", actor, strings.Join(e.Params[1:], " ")),
+				MessageType: "mode",
+				Timestamp:   time.Now(),
+				RawLine:     rawLine,
+			})
+		}
+
+		// Fold channel-level changes (D flags + B/C params) into the canonical mode
+		// string, persisting only when it actually changed.
+		newModes := applyChannelModes(ch.Modes, changes, cls)
+		if newModes != ch.Modes {
+			if err := c.storage.UpdateChannelModes(ch.ID, newModes); err != nil {
+				logger.Log.Warn().Err(err).Str("channel", target).Msg("Failed to persist channel modes")
 			}
 		}
+		// Always announce the mode change so the UI reloads the channel — both the modes
+		// header and the "sets mode" line written above. This fires even for list-mode
+		// changes (e.g. +b) where the canonical string is unchanged, which would otherwise
+		// leave the new line invisible until the next poll.
+		c.eventBus.Emit(events.Event{
+			Type: EventChannelMode,
+			Data: map[string]interface{}{
+				"network": c.network.Address,
+				"channel": target,
+				"modes":   newModes,
+			},
+			Timestamp: time.Now(),
+			Source:    events.EventSourceIRC,
+		})
+
+		// Apply per-user membership (prefix) changes individually, emitting a granular
+		// event per affected user so the member list re-groups live.
+		for _, mc := range changes {
+			if mc.Kind != ModeKindPrefix || mc.Param == "" {
+				continue
+			}
+			current, gerr := c.storage.GetChannelUserModes(ch.ID, mc.Param)
+			if gerr != nil {
+				// User not tracked yet (e.g. NAMES not complete) — skip.
+				continue
+			}
+			c.mu.RLock()
+			updated := c.serverCapabilities.applyUserPrefix(current, mc.Mode, mc.Add)
+			c.mu.RUnlock()
+			if updated == current {
+				continue
+			}
+			if err := c.storage.AddChannelUser(ch.ID, mc.Param, updated); err != nil {
+				logger.Log.Warn().Err(err).Str("nick", mc.Param).Str("channel", target).Msg("Failed to update user modes")
+				continue
+			}
+			added, removed := "", ""
+			if mc.Add {
+				added = string(mc.Mode)
+			} else {
+				removed = string(mc.Mode)
+			}
+			c.eventBus.Emit(events.Event{
+				Type: EventChannelUserMode,
+				Data: map[string]interface{}{
+					"network":   c.network.Address,
+					"networkId": c.networkID,
+					"channel":   target,
+					"nick":      mc.Param,
+					"modes":     updated,
+					"added":     added,
+					"removed":   removed,
+				},
+				Timestamp: time.Now(),
+				Source:    events.EventSourceIRC,
+			})
+		}
+	})
+
+	// RPL_CHANNELMODEIS (324) - authoritative channel modes, typically on join or
+	// in response to a "MODE #channel" query. Replaces the stored canonical string.
+	c.conn.AddCallback("324", func(e ircmsg.Message) {
+		if len(e.Params) < 3 {
+			return
+		}
+		channel := e.Params[1]
+		ch, err := c.storage.GetChannelByName(c.networkID, channel)
+		if err != nil {
+			return
+		}
+		c.mu.RLock()
+		cls := c.serverCapabilities.classification()
+		c.mu.RUnlock()
+
+		changes := ParseModeChanges(e.Params[2], e.Params[3:], cls)
+		newModes := applyChannelModes("", changes, cls) // authoritative: rebuild from scratch
+		if err := c.storage.UpdateChannelModes(ch.ID, newModes); err != nil {
+			logger.Log.Warn().Err(err).Str("channel", channel).Msg("Failed to persist channel modes from 324")
+			return
+		}
+		c.eventBus.Emit(events.Event{
+			Type: EventChannelMode,
+			Data: map[string]interface{}{
+				"network": c.network.Address,
+				"channel": channel,
+				"modes":   newModes,
+			},
+			Timestamp: time.Now(),
+			Source:    events.EventSourceIRC,
+		})
+	})
+
+	// RPL_BANLIST (367) - a single ban entry: <channel> <mask> [<setter> <time>]
+	c.conn.AddCallback("367", func(e ircmsg.Message) {
+		if len(e.Params) < 3 {
+			return
+		}
+		channel := e.Params[1]
+		entry := BanEntry{Mask: e.Params[2]}
+		if len(e.Params) >= 4 {
+			entry.By = e.Params[3]
+		}
+		if len(e.Params) >= 5 {
+			fmt.Sscanf(e.Params[4], "%d", &entry.Time)
+		}
+		key := strings.ToLower(channel)
+		c.banListsMu.Lock()
+		c.banLists[key] = append(c.banLists[key], entry)
+		c.banListsMu.Unlock()
+	})
+
+	// RPL_ENDOFBANLIST (368) - end of ban list; flush collected entries to the frontend.
+	c.conn.AddCallback("368", func(e ircmsg.Message) {
+		if len(e.Params) < 2 {
+			return
+		}
+		channel := e.Params[1]
+		key := strings.ToLower(channel)
+		c.banListsMu.Lock()
+		entries := c.banLists[key]
+		delete(c.banLists, key)
+		c.banListsMu.Unlock()
+
+		bans := make([]interface{}, len(entries))
+		for i, b := range entries {
+			bans[i] = map[string]interface{}{"mask": b.Mask, "by": b.By, "time": b.Time}
+		}
+		c.eventBus.Emit(events.Event{
+			Type: EventChannelBanList,
+			Data: map[string]interface{}{
+				"network":   c.network.Address,
+				"networkId": c.networkID,
+				"channel":   channel,
+				"bans":      bans,
+			},
+			Timestamp: time.Now(),
+			Source:    events.EventSourceIRC,
+		})
 	})
 
 	// MOTD (Message of the Day) - store in status window
@@ -1187,58 +1572,13 @@ func (c *IRCClient) setupHandlers() {
 
 	// NOTICE messages - store in status window if not from a channel
 	// Also handle CTCP responses (CTCP replies come as NOTICE)
-	c.conn.AddCallback("NOTICE", func(e ircmsg.Message) {
-		if len(e.Params) < 2 {
-			return
-		}
-		target := e.Params[0]
-		notice := e.Params[1]
-		user := e.Nick()
+	c.conn.AddCallback("NOTICE", c.handleNotice)
 
-		// Check if this is a CTCP response (wrapped in \001)
-		if len(notice) >= 2 && notice[0] == '\001' && notice[len(notice)-1] == '\001' {
-			ctcpMessage := notice[1 : len(notice)-1] // Remove \001 delimiters
-			parts := strings.Fields(ctcpMessage)
-			if len(parts) > 0 {
-				ctcpCommand := strings.ToUpper(parts[0])
-				ctcpResponse := ""
-				if len(parts) > 1 {
-					ctcpResponse = strings.Join(parts[1:], " ")
-				}
-
-				// Store CTCP response in status window
-				rawLine, _ := e.Line()
-				statusMsg := storage.Message{
-					NetworkID:   c.networkID,
-					ChannelID:   nil, // Status window
-					User:        user,
-					Message:     fmt.Sprintf("CTCP %s reply from %s: %s", ctcpCommand, user, ctcpResponse),
-					MessageType: "ctcp",
-					Timestamp:   c.getMessageTime(e),
-					RawLine:     rawLine,
-				}
-				c.storage.WriteMessage(statusMsg)
-				return
-			}
-		}
-
-		// Regular NOTICE
-		// If target is our nickname or starts with #, it's a channel notice
-		// Otherwise, it's a server notice - store in status window
-		if target == c.network.Nickname || (len(target) > 0 && target[0] != '#' && target[0] != '&') {
-			rawLine, _ := e.Line()
-			statusMsg := storage.Message{
-				NetworkID:   c.networkID,
-				ChannelID:   nil, // Status window
-				User:        user,
-				Message:     notice,
-				MessageType: "notice",
-				Timestamp:   c.getMessageTime(e),
-				RawLine:     rawLine,
-			}
-			c.storage.WriteMessage(statusMsg)
-		}
-	})
+	// CHATHISTORY replays arrive wrapped in a BATCH. The library buffers the whole
+	// group and hands it to batch callbacks; handleChatHistoryBatch claims the
+	// "chathistory" batches (bulk dedup-insert + a single history event) and lets
+	// every other batch type fall through to the library's default dispatch.
+	c.conn.AddBatchCallback(c.handleChatHistoryBatch)
 
 	// Numeric replies (like RPL_WELCOME, etc.) - store important ones in status
 	c.conn.AddCallback("001", func(e ircmsg.Message) {
@@ -1258,6 +1598,11 @@ func (c *IRCClient) setupHandlers() {
 			c.storage.WriteMessage(statusMsg)
 		}
 	})
+
+	// Track the nick the server actually assigned us (an alternative if our
+	// preferred nick was taken). Registered after the welcome-line writer above
+	// so the log shows the welcome first; see handleWelcome.
+	c.conn.AddCallback("001", c.handleWelcome)
 
 	// WHOIS response handlers
 	// RPL_WHOISUSER (311) - Basic user information
@@ -1443,8 +1788,13 @@ func (c *IRCClient) setupHandlers() {
 			// Parse CHANMODES parameter: CHANMODES=b,k,l,imnpst
 			if strings.HasPrefix(param, "CHANMODES=") {
 				chanModesValue := param[10:] // Skip "CHANMODES="
+				a, b, cc, d := classifyChanModes(chanModesValue)
 				c.mu.Lock()
 				c.serverCapabilities.ChanModes = chanModesValue
+				c.serverCapabilities.ChanModesA = a
+				c.serverCapabilities.ChanModesB = b
+				c.serverCapabilities.ChanModesC = cc
+				c.serverCapabilities.ChanModesD = d
 				c.mu.Unlock()
 				logger.Log.Debug().
 					Str("chanmodes", chanModesValue).
@@ -1552,6 +1902,15 @@ func (c *IRCClient) setupHandlers() {
 					capLSBuffer.WriteString(capabilities)
 					allCaps := capLSBuffer.String()
 					capLSBuffer.Reset()
+
+					// Record the advertised CHATHISTORY batch limit (chathistory=N /
+					// draft/chathistory=N) so requests can be clamped to it. Prefer the
+					// ratified name's value if both are present.
+					if v, ok := capValue(allCaps, "chathistory"); ok {
+						c.setChatHistoryMax(v)
+					} else if v, ok := capValue(allCaps, "draft/chathistory"); ok {
+						c.setChatHistoryMax(v)
+					}
 
 					c.storage.WriteMessage(storage.Message{
 						NetworkID:   c.networkID,
@@ -1720,56 +2079,10 @@ func (c *IRCClient) setupHandlers() {
 	})
 
 	// ERR_NICKNAMEINUSE (433) - nick collision handling
-	c.conn.AddCallback("433", func(e ircmsg.Message) {
-		c.mu.Lock()
-		// On first collision, record the desired nick
-		if c.desiredNick == "" {
-			c.desiredNick = c.conn.Nick
-		}
-		attempt := c.nickAttempt
-		c.nickAttempt++
-		c.mu.Unlock()
-
-		const maxAttempts = 5
-
-		if attempt >= maxAttempts {
-			c.storage.WriteMessage(storage.Message{
-				NetworkID:   c.networkID,
-				ChannelID:   nil,
-				User:        "*",
-				Message:     fmt.Sprintf("Nick %q is in use and all %d alternatives failed. Please change your nick manually.", c.desiredNick, maxAttempts),
-				MessageType: "status",
-				Timestamp:   time.Now(),
-			})
-			return
-		}
-
-		var newNick string
-		if attempt == 0 {
-			// First attempt: append underscore
-			newNick = c.desiredNick + "_"
-		} else {
-			// Subsequent attempts: append a number
-			newNick = fmt.Sprintf("%s%d", c.desiredNick, attempt)
-		}
-
-		logger.Log.Info().
-			Str("desired", c.desiredNick).
-			Str("trying", newNick).
-			Int("attempt", attempt+1).
-			Msg("Nickname in use, trying alternative")
-
-		c.storage.WriteMessage(storage.Message{
-			NetworkID:   c.networkID,
-			ChannelID:   nil,
-			User:        "*",
-			Message:     fmt.Sprintf("Nick %q is already in use, trying %q...", c.conn.Nick, newNick),
-			MessageType: "status",
-			Timestamp:   time.Now(),
-		})
-
-		c.conn.SendRaw(fmt.Sprintf("NICK %s", newNick))
-	})
+	// ERR_NICKNAMEINUSE (433). The library already selects an alternative
+	// pre-registration and re-requests the preferred nick on each keepalive, so
+	// we don't send our own NICK here — we only surface a one-time notice.
+	c.conn.AddCallback("433", c.handleNickInUse)
 }
 
 // contains checks if a capability string contains the given capability
@@ -1807,6 +2120,266 @@ func (c *IRCClient) isEchoMessage(e ircmsg.Message) bool {
 	return strings.EqualFold(e.Nick(), c.network.Nickname)
 }
 
+// pmPeer returns the conversation peer (the other party) for a private message.
+// For messages we sent (sender == our nick, e.g. echoed back via echo-message)
+// the peer is the recipient (target); for received messages it is the sender.
+// Uses the same identity comparison as isEchoMessage (c.network.Nickname).
+func (c *IRCClient) pmPeer(sender, target string) string {
+	if strings.EqualFold(sender, c.network.Nickname) {
+		return target
+	}
+	return sender
+}
+
+// noticePMTarget decides whether an inbound NOTICE should be routed to a
+// per-sender query pane and, if so, returns the conversation peer. Services such
+// as ChanServ/NickServ (and ordinary users) reply via NOTICE, so those belong in
+// the sender's query pane rather than the Status log.
+//
+// The source is treated as a user/service when it is a nick rather than a
+// server. Two shapes occur in the wild:
+//   - a full "nick!user@host" hostmask (always a client/service), or
+//   - a bare nick with no '!' and no '.' (e.g. ":ChanServ NOTICE ..." — some
+//     networks/services omit the user@host on service notices).
+//
+// A server source is a bare host name containing a '.' (e.g. "irc.libera.chat")
+// or is empty; those, a "*" target (pre-registration / broadcast), and
+// channel-targeted notices all stay out of any PM pane (returns ""). The peer is
+// computed with the same echo-aware rule as pmPeer so an echoed self-notice keys
+// to the recipient.
+func (c *IRCClient) noticePMTarget(source, sender, target string) string {
+	if !c.sourceIsUser(source) {
+		return "" // server prefix (host name or empty) -> Status
+	}
+	if target == "" || target == "*" {
+		return "" // broadcast / pre-registration notice -> Status
+	}
+	if target[0] == '#' || target[0] == '&' {
+		return "" // channel notice -> not a PM
+	}
+	return c.pmPeer(sender, target)
+}
+
+// sourceIsUser reports whether an IRC message prefix names a user/service (a
+// nick) rather than a server. A hostmask ("nick!user@host") is always a user; a
+// bare token is a user only if it has no '.' (server names are dotted host
+// names). An empty prefix is the server.
+func (c *IRCClient) sourceIsUser(source string) bool {
+	if source == "" {
+		return false
+	}
+	if strings.Contains(source, "!") {
+		return true // nick!user@host
+	}
+	return !strings.Contains(source, ".") // bare nick (no dot) vs dotted server name
+}
+
+// ---- IRCv3 CHATHISTORY ----
+
+// defaultChatHistoryLimit is the per-request message count used when the server
+// doesn't advertise a chathistory=N maximum.
+const defaultChatHistoryLimit = 100
+
+// setChatHistoryMax records the advertised chathistory cap value (e.g. "50").
+// A missing/zero/invalid value leaves the limit unset (0 = unknown, use default).
+func (c *IRCClient) setChatHistoryMax(value string) {
+	n, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || n <= 0 {
+		return
+	}
+	c.mu.Lock()
+	c.chatHistoryMaxBatch = n
+	c.mu.Unlock()
+}
+
+// chatHistoryEnabled reports whether the server granted a CHATHISTORY capability
+// (ratified or draft name).
+func (c *IRCClient) chatHistoryEnabled() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.enabledCaps["chathistory"] || c.enabledCaps["draft/chathistory"]
+}
+
+// clampChatHistoryLimit bounds a requested count to the default (when unset) and
+// to the server-advertised maximum (when known).
+func (c *IRCClient) clampChatHistoryLimit(limit int) int {
+	if limit <= 0 {
+		limit = defaultChatHistoryLimit
+	}
+	c.mu.RLock()
+	max := c.chatHistoryMaxBatch
+	c.mu.RUnlock()
+	if max > 0 && limit > max {
+		limit = max
+	}
+	return limit
+}
+
+// getMsgID returns the IRCv3 @msgid tag, or "" if absent.
+func (c *IRCClient) getMsgID(e ircmsg.Message) string {
+	if present, v := e.GetTag("msgid"); present {
+		return v
+	}
+	return ""
+}
+
+// getHistoryTime extracts the @time server-time tag from a replayed message,
+// falling back to now. Unlike getMessageTime it doesn't gate on the server-time
+// cap: CHATHISTORY items always carry @time and we always want the original time.
+func (c *IRCClient) getHistoryTime(e ircmsg.Message) time.Time {
+	if present, timeTag := e.GetTag("time"); present && timeTag != "" {
+		if t, err := time.Parse(time.RFC3339Nano, timeTag); err == nil {
+			return t
+		}
+		if t, err := time.Parse("2006-01-02T15:04:05Z", timeTag); err == nil {
+			return t
+		}
+	}
+	return time.Now()
+}
+
+// RequestChatHistoryLatest asks the server for the most recent `limit` messages
+// for target (a channel name or nick). Used for on-join / on-open catch-up.
+func (c *IRCClient) RequestChatHistoryLatest(target string, limit int) error {
+	if !c.chatHistoryEnabled() {
+		return fmt.Errorf("server does not support chathistory")
+	}
+	if target == "" {
+		return fmt.Errorf("chathistory target required")
+	}
+	limit = c.clampChatHistoryLimit(limit)
+	return c.conn.SendRaw(fmt.Sprintf("CHATHISTORY LATEST %s * %d", target, limit))
+}
+
+// RequestChatHistoryBefore asks the server for up to `limit` messages older than
+// beforeISO (an ISO8601 timestamp, e.g. 2024-06-14T00:00:00.000Z) for target.
+// Used for scroll-to-top deep backscroll.
+func (c *IRCClient) RequestChatHistoryBefore(target, beforeISO string, limit int) error {
+	if !c.chatHistoryEnabled() {
+		return fmt.Errorf("server does not support chathistory")
+	}
+	if target == "" || beforeISO == "" {
+		return fmt.Errorf("chathistory target and timestamp required")
+	}
+	limit = c.clampChatHistoryLimit(limit)
+	return c.conn.SendRaw(fmt.Sprintf("CHATHISTORY BEFORE %s timestamp=%s %d", target, beforeISO, limit))
+}
+
+// handleChatHistoryBatch is registered via AddBatchCallback. The ergochat/irc-go
+// library collects each "BATCH +id chathistory <target> … -id" group and hands it
+// here as one *Batch (b.Items holds the replayed lines). Returning true "claims"
+// the batch so the library does NOT flatten it into per-message dispatch — that
+// would emit a live message event and re-run notification logic for every replayed
+// line. Non-chathistory batches return false, so the library keeps handling them
+// exactly as before this callback existed.
+func (c *IRCClient) handleChatHistoryBatch(b *ircevent.Batch) bool {
+	if b == nil {
+		return false
+	}
+	// BATCH start params: <+id> <type> [type-specific params…]. For chathistory the
+	// type is at Params[1] and the requested target at Params[2].
+	if len(b.Params) < 2 || b.Params[1] != "chathistory" {
+		return false
+	}
+	target := ""
+	if len(b.Params) >= 3 {
+		target = b.Params[2]
+	}
+
+	msgs := make([]storage.Message, 0, len(b.Items))
+	for _, item := range b.Items {
+		if item == nil {
+			continue
+		}
+		if msg, ok := c.buildHistoryMessage(item.Message); ok {
+			msgs = append(msgs, msg)
+		}
+	}
+
+	inserted := 0
+	if len(msgs) > 0 {
+		n, err := c.storage.WriteHistoryMessages(msgs)
+		if err != nil {
+			logger.Log.Error().Err(err).Str("target", target).Msg("Failed to store chathistory batch")
+		} else {
+			inserted = n
+		}
+	}
+
+	c.eventBus.Emit(events.Event{
+		Type: EventHistoryReceived,
+		Data: map[string]interface{}{
+			"network":   c.network.Address,
+			"networkId": c.networkID,
+			"target":    target,
+			"inserted":  inserted,
+			"returned":  len(msgs),
+		},
+		Timestamp: time.Now(),
+		Source:    events.EventSourceIRC,
+	})
+
+	return true
+}
+
+// buildHistoryMessage converts a single replayed PRIVMSG/NOTICE line from a
+// CHATHISTORY batch into a storage.Message, applying the same channel-vs-PM
+// routing as the live handlers. ok=false for lines we don't persist (malformed,
+// or non-ACTION CTCP).
+func (c *IRCClient) buildHistoryMessage(e ircmsg.Message) (storage.Message, bool) {
+	if len(e.Params) < 2 {
+		return storage.Message{}, false
+	}
+	target := e.Params[0]
+	text := e.Params[1]
+	user := e.Nick()
+
+	messageType := "privmsg"
+	switch e.Command {
+	case "PRIVMSG":
+		// CTCP ACTION -> action (stored like the live handler); other CTCP skipped.
+		if len(text) >= 2 && text[0] == '\001' && text[len(text)-1] == '\001' {
+			parts := strings.Fields(text[1 : len(text)-1])
+			if len(parts) > 0 && strings.ToUpper(parts[0]) == "ACTION" {
+				messageType = "action"
+				text = fmt.Sprintf("* %s %s", user, strings.Join(parts[1:], " "))
+			} else {
+				return storage.Message{}, false
+			}
+		}
+	case "NOTICE":
+		messageType = "notice"
+	default:
+		return storage.Message{}, false
+	}
+
+	var channelID *int64
+	var pmTarget string
+	if len(target) > 0 && (target[0] == '#' || target[0] == '&') {
+		if ch, err := c.storage.GetChannelByName(c.networkID, target); err == nil {
+			channelID = &ch.ID
+		}
+	} else {
+		pmTarget = c.pmPeer(user, target)
+		if _, err := c.storage.GetOrCreatePMConversation(c.networkID, pmTarget, c.network.Nickname); err != nil {
+			logger.Log.Error().Err(err).Str("pmTarget", pmTarget).Msg("Failed to create/get PM conversation for history")
+		}
+	}
+
+	rawLine, _ := e.Line()
+	return storage.Message{
+		NetworkID:   c.networkID,
+		ChannelID:   channelID,
+		User:        user,
+		Message:     text,
+		MessageType: messageType,
+		Timestamp:   c.getHistoryTime(e),
+		RawLine:     rawLine,
+		PMTarget:    pmTarget,
+		MsgID:       c.getMsgID(e),
+	}, true
+}
+
 func contains(capabilities, cap string) bool {
 	// Split by space and check each capability
 	// Capabilities can be in the form "cap" or "cap=value" or "cap=value1,value2"
@@ -1822,6 +2395,25 @@ func contains(capabilities, cap string) bool {
 		}
 	}
 	return false
+}
+
+// capValue returns the value advertised for a capability in a CAP LS list
+// (the part after "=", e.g. "draft/chathistory=50" -> "50"), and whether the
+// capability was present at all. An empty string with present=true means the
+// capability was advertised without a value.
+func capValue(capabilities, cap string) (value string, present bool) {
+	for _, c := range strings.Fields(capabilities) {
+		name := c
+		val := ""
+		if idx := strings.Index(c, "="); idx != -1 {
+			name = c[:idx]
+			val = c[idx+1:]
+		}
+		if name == cap {
+			return val, true
+		}
+	}
+	return "", false
 }
 
 // startSASLAuth initiates SASL authentication
@@ -1942,33 +2534,31 @@ func (c *IRCClient) Connect() error {
 	// Start the connection loop in a goroutine
 	go c.conn.Loop()
 
-	// Auto-join channels after a short delay to ensure connection is established
-	// Only join channels that have auto_join enabled
-	// Channels with is_open=true but auto_join=false remain OPEN (dialog open but not joined)
+	// Auto-join channels after a short delay to ensure connection is established.
+	// On a fresh startup we join only auto_join channels; on an auto-reconnect we
+	// rejoin every channel we were in so the server resends NAMES (see
+	// channelsToJoin). Each JOIN goes through the rate limiter because rejoining a
+	// full session at once would otherwise burst dozens of commands and trip the
+	// server's flood protection — the underlying library does no throttling itself.
 	go func() {
 		time.Sleep(constants.AutoJoinDelay)
-		channels, err := c.storage.GetChannels(c.networkID)
-		if err == nil {
-			logger.Log.Info().Int("count", len(channels)).Msg("Checking channels for auto-join")
-			for _, channel := range channels {
-				logger.Log.Debug().
-					Str("channel", channel.Name).
-					Bool("auto_join", channel.AutoJoin).
-					Bool("is_open", channel.IsOpen).
-					Msg("Channel auto-join status")
-				// Only auto-join if auto_join is enabled
-				// Channels with is_open=true but auto_join=false remain OPEN (dialog open but not joined)
-				if channel.AutoJoin {
-					logger.Log.Info().Str("channel", channel.Name).Msg("Auto-joining channel (auto_join enabled)")
-					c.conn.Join(channel.Name)
-				} else if channel.IsOpen {
-					logger.Log.Debug().Str("channel", channel.Name).Msg("Channel is open but auto_join disabled - keeping OPEN state (not joining)")
-				} else {
-					logger.Log.Debug().Str("channel", channel.Name).Msg("Skipping channel (not open and auto-join disabled)")
-				}
+
+		c.mu.RLock()
+		reconnect := c.reconnecting
+		c.mu.RUnlock()
+
+		channels, err := c.channelsToJoin(reconnect)
+		if err != nil {
+			logger.Log.Error().Err(err).Bool("reconnect", reconnect).Msg("Failed to get channels to join")
+			return
+		}
+		logger.Log.Info().Int("count", len(channels)).Bool("reconnect", reconnect).Msg("Joining channels")
+		for _, channel := range channels {
+			c.rateLimiter.Wait()
+			logger.Log.Info().Str("channel", channel.Name).Bool("reconnect", reconnect).Msg("Joining channel")
+			if err := c.conn.Join(channel.Name); err != nil {
+				logger.Log.Error().Err(err).Str("channel", channel.Name).Msg("Failed to join channel")
 			}
-		} else {
-			logger.Log.Error().Err(err).Msg("Failed to get channels for auto-join")
 		}
 	}()
 
@@ -1992,104 +2582,6 @@ func (c *IRCClient) Disconnect() error {
 	}
 	c.connected = false
 	return nil
-}
-
-// markConnectionDead marks the connection as dead and clears user lists
-// This is called when we detect a dead connection (e.g., no messages received recently)
-func (c *IRCClient) markConnectionDead() {
-	c.mu.Lock()
-	wasConnected := c.connected
-	c.connected = false
-	c.mu.Unlock()
-
-	if !wasConnected {
-		// Already marked as disconnected
-		return
-	}
-
-	logger.Log.Warn().
-		Str("network", c.network.Address).
-		Int64("network_id", c.networkID).
-		Msg("Marking connection as dead (no messages received recently)")
-
-	// Write "Disconnected" messages to all open/joined channels BEFORE clearing users
-	var channelsToNotify []storage.Channel
-	if c.network.Nickname != "" {
-		// Get channels that are open or where we're joined
-		openChannels, err := c.storage.GetOpenChannels(c.networkID, c.network.Nickname)
-		if err == nil && len(openChannels) > 0 {
-			channelsToNotify = openChannels
-		}
-	}
-
-	// Fallback: if GetOpenChannels didn't work or returned nothing, get all channels
-	// and filter to those that are open
-	if len(channelsToNotify) == 0 {
-		allChannels, err := c.storage.GetChannels(c.networkID)
-		if err == nil {
-			for _, ch := range allChannels {
-				if ch.IsOpen {
-					channelsToNotify = append(channelsToNotify, ch)
-				}
-			}
-		}
-	}
-
-	// Write "Disconnected" message to each channel
-	if len(channelsToNotify) > 0 {
-		logger.Log.Info().Int64("network_id", c.networkID).Int("channel_count", len(channelsToNotify)).Msg("Writing disconnect messages to channels (dead connection)")
-		for _, channel := range channelsToNotify {
-			disconnectMsg := storage.Message{
-				NetworkID:   c.networkID,
-				ChannelID:   &channel.ID,
-				User:        "*",
-				Message:     "Disconnected",
-				MessageType: "status",
-				Timestamp:   time.Now(),
-				RawLine:     "",
-			}
-			// Use WriteMessageDirect to ensure immediate persistence
-			if err := c.storage.WriteMessageDirect(disconnectMsg); err != nil {
-				if err.Error() != "storage is closed" {
-					logger.Log.Warn().Err(err).Int64("network_id", c.networkID).Str("channel", channel.Name).Msg("Failed to write disconnect message to channel")
-				}
-			} else {
-				logger.Log.Debug().Int64("network_id", c.networkID).Str("channel", channel.Name).Msg("Wrote disconnect message to channel (dead connection)")
-			}
-		}
-	}
-
-	// Clear all channel user lists for this network since we're disconnected
-	// This prevents showing stale user lists when reconnecting
-	channels, err := c.storage.GetChannels(c.networkID)
-	if err == nil {
-		for _, ch := range channels {
-			if err := c.storage.ClearChannelUsers(ch.ID); err != nil {
-				logger.Log.Error().Err(err).Str("channel", ch.Name).Msg("Failed to clear users for channel")
-			} else {
-				logger.Log.Debug().Str("channel", ch.Name).Msg("Cleared user list for channel (dead connection)")
-			}
-		}
-	}
-
-	// Store disconnection message in status window
-	statusMsg := storage.Message{
-		NetworkID:   c.networkID,
-		ChannelID:   nil, // Status window
-		User:        "*",
-		Message:     "Connection lost (no messages received recently)",
-		MessageType: "status",
-		Timestamp:   time.Now(),
-		RawLine:     "",
-	}
-	c.storage.WriteMessage(statusMsg)
-
-	c.eventBus.Emit(events.Event{
-		Type:      EventConnectionLost,
-		Data:      map[string]interface{}{"network": c.network.Address, "networkId": c.networkID},
-		Timestamp: time.Now(),
-		Source:    events.EventSourceIRC,
-	})
 }
 
 // SendMessage sends a message to a channel or user
@@ -2136,6 +2628,12 @@ func (c *IRCClient) SendMessage(target, message string) error {
 	c.mu.RUnlock()
 
 	if !hasEcho {
+		// For a private message the peer is the recipient (we are the sender);
+		// for channel messages there is no PM peer.
+		var pmTarget string
+		if !(len(target) > 0 && (target[0] == '#' || target[0] == '&')) {
+			pmTarget = target
+		}
 		msg := storage.Message{
 			NetworkID:   c.networkID,
 			ChannelID:   channelID,
@@ -2144,6 +2642,7 @@ func (c *IRCClient) SendMessage(target, message string) error {
 			MessageType: "privmsg",
 			Timestamp:   time.Now(),
 			RawLine:     fmt.Sprintf("PRIVMSG %s :%s", target, message),
+			PMTarget:    pmTarget,
 		}
 		if err := c.storage.WriteMessageSync(msg); err != nil {
 			return fmt.Errorf("failed to store message: %w", err)
@@ -2164,6 +2663,58 @@ func (c *IRCClient) SendMessage(target, message string) error {
 	})
 
 	return nil
+}
+
+// SetReconnecting marks whether this connection is an auto-reconnect after an
+// unexpected drop. It must be set before Connect() so the auto-join goroutine
+// can choose the correct rejoin set. See channelsToJoin.
+func (c *IRCClient) SetReconnecting(v bool) {
+	c.mu.Lock()
+	c.reconnecting = v
+	c.mu.Unlock()
+}
+
+// isChannelName reports whether name is an IRC channel (vs. a nick/PM target).
+func isChannelName(name string) bool {
+	return len(name) > 0 && (name[0] == '#' || name[0] == '&')
+}
+
+// channelsToJoin returns the channels the auto-join goroutine should JOIN on this
+// connection.
+//
+//   - On a fresh startup connect (reconnect == false) we honor the user's sticky
+//     preference and join only channels with auto_join enabled.
+//   - On an auto-reconnect after an unexpected drop (reconnect == true) we restore
+//     the session we lost by rejoining every channel we were actually in — those
+//     marked open or where we're still a tracked member (GetOpenChannels). This is
+//     what makes the server resend NAMES so nick lists refresh; gating reconnect on
+//     auto_join is what left most channels stale after sleep/wake.
+func (c *IRCClient) channelsToJoin(reconnect bool) ([]storage.Channel, error) {
+	if reconnect {
+		open, err := c.storage.GetOpenChannels(c.networkID, c.network.Nickname)
+		if err != nil {
+			return nil, err
+		}
+		result := make([]storage.Channel, 0, len(open))
+		for _, ch := range open {
+			if isChannelName(ch.Name) {
+				result = append(result, ch)
+			}
+		}
+		return result, nil
+	}
+
+	all, err := c.storage.GetChannels(c.networkID)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]storage.Channel, 0, len(all))
+	for _, ch := range all {
+		if ch.AutoJoin && isChannelName(ch.Name) {
+			result = append(result, ch)
+		}
+	}
+	return result, nil
 }
 
 // JoinChannel joins an IRC channel
@@ -2332,6 +2883,22 @@ func (c *IRCClient) GetServerCapabilities() *ServerCapabilities {
 	return cap
 }
 
+// GetChanModeClasses returns the resolved CHANMODES classes as sorted letter strings
+// (A=list, B=param, C=set-param, D=flag), applying RFC1459 defaults when the server
+// never advertised CHANMODES. Used to drive the capability-aware mode editor.
+func (c *IRCClient) GetChanModeClasses() (a, b, cc, d string) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	cls := c.serverCapabilities.classification()
+	return sortedRunes(cls.List), sortedRunes(cls.Param), sortedRunes(cls.SetParam), sortedRunes(cls.Flag)
+}
+
+// RequestChannelBans asks the server for the channel ban list (MODE #channel +b).
+// Results arrive asynchronously via the EventChannelBanList event after RPL_ENDOFBANLIST.
+func (c *IRCClient) RequestChannelBans(channel string) error {
+	return c.SendRawCommand(fmt.Sprintf("MODE %s +b", channel))
+}
+
 // handleCTCPRequest handles incoming CTCP requests and sends appropriate responses
 func (c *IRCClient) handleCTCPRequest(from, command, args string) {
 	c.mu.RLock()
@@ -2407,4 +2974,135 @@ func (c *IRCClient) SendCTCPRequest(target, command, args string) error {
 	c.storage.WriteMessage(statusMsg)
 
 	return nil
+}
+
+// handleNotice routes an inbound NOTICE. Extracted from the connection
+// callback so the routing can be exercised end-to-end in tests by parsing a
+// raw IRC line and calling it directly. Channel notices go to the channel
+// buffer; notices from a user or service (a nick source) go to that sender's
+// query pane keyed by pm_target; genuine server notices stay in Status.
+func (c *IRCClient) handleNotice(e ircmsg.Message) {
+	if len(e.Params) < 2 {
+		return
+	}
+	target := e.Params[0]
+	notice := e.Params[1]
+	user := e.Nick()
+
+	// Check if this is a CTCP response (wrapped in \001)
+	if len(notice) >= 2 && notice[0] == '\001' && notice[len(notice)-1] == '\001' {
+		ctcpMessage := notice[1 : len(notice)-1] // Remove \001 delimiters
+		parts := strings.Fields(ctcpMessage)
+		if len(parts) > 0 {
+			ctcpCommand := strings.ToUpper(parts[0])
+			ctcpResponse := ""
+			if len(parts) > 1 {
+				ctcpResponse = strings.Join(parts[1:], " ")
+			}
+
+			// Store CTCP response in status window
+			rawLine, _ := e.Line()
+			statusMsg := storage.Message{
+				NetworkID:   c.networkID,
+				ChannelID:   nil, // Status window
+				User:        user,
+				Message:     fmt.Sprintf("CTCP %s reply from %s: %s", ctcpCommand, user, ctcpResponse),
+				MessageType: "ctcp",
+				Timestamp:   c.getMessageTime(e),
+				RawLine:     rawLine,
+			}
+			c.storage.WriteMessage(statusMsg)
+			return
+		}
+	}
+
+	// Regular NOTICE.
+	// Channel-targeted notices (e.g. bot/announcement notices) belong in that
+	// channel's buffer, mirroring how channel PRIVMSGs are routed.
+	if len(target) > 0 && (target[0] == '#' || target[0] == '&') {
+		rawLine, _ := e.Line()
+		var channelID *int64
+		if ch, err := c.storage.GetChannelByName(c.networkID, target); err == nil {
+			channelID = &ch.ID
+		} else {
+			logger.Log.Debug().Err(err).Str("channel", target).Msg("Channel not found for notice")
+		}
+		c.storage.WriteMessageSync(storage.Message{
+			NetworkID:   c.networkID,
+			ChannelID:   channelID,
+			User:        user,
+			Message:     notice,
+			MessageType: "notice",
+			Timestamp:   c.getMessageTime(e),
+			RawLine:     rawLine,
+		})
+		c.eventBus.Emit(events.Event{
+			Type: EventMessageReceived,
+			Data: map[string]interface{}{
+				"network":     c.network.Address,
+				"networkId":   c.networkID,
+				"channel":     target,
+				"user":        user,
+				"message":     notice,
+				"messageType": "notice",
+			},
+			Timestamp: time.Now(),
+			Source:    events.EventSourceIRC,
+		})
+		return
+	}
+
+	// Non-channel NOTICE.
+	// Notices from a user/service (ChanServ, NickServ, another nick) carry a
+	// "nick!user@host" prefix and route to that sender's query pane, keyed by
+	// pm_target exactly like a PRIVMSG PM. Notices with a bare server-name
+	// prefix (or addressed to "*") are genuine server notices and stay in the
+	// Status window.
+	if target == c.network.Nickname || (len(target) > 0 && target[0] != '#' && target[0] != '&') {
+		rawLine, _ := e.Line()
+		pmTarget := c.noticePMTarget(e.Source, user, target)
+
+		if pmTarget != "" {
+			// Open/refresh the query conversation so the pane appears in the sidebar.
+			if _, err := c.storage.GetOrCreatePMConversation(c.networkID, pmTarget, c.network.Nickname); err != nil {
+				logger.Log.Error().Err(err).Str("user", user).Str("pmTarget", pmTarget).Msg("Failed to create/get PM conversation for notice")
+			}
+		}
+
+		msg := storage.Message{
+			NetworkID:   c.networkID,
+			ChannelID:   nil, // PM rows and status rows both have a nil channel
+			User:        user,
+			Message:     notice,
+			MessageType: "notice",
+			Timestamp:   c.getMessageTime(e),
+			RawLine:     rawLine,
+			PMTarget:    pmTarget, // "" keeps it in Status; non-empty routes to a query pane
+			MsgID:       c.getMsgID(e),
+		}
+
+		if pmTarget == "" {
+			// Server notice — buffered write into Status, no event (unchanged).
+			c.storage.WriteMessage(msg)
+		} else {
+			// Service/user notice — sync write so it shows immediately, plus a
+			// message event so the query pane badges and updates live. The
+			// messageType marks it a notice so chatty services don't trigger a
+			// desktop notification on every line.
+			c.storage.WriteMessageSync(msg)
+			c.eventBus.Emit(events.Event{
+				Type: EventMessageReceived,
+				Data: map[string]interface{}{
+					"network":     c.network.Address,
+					"networkId":   c.networkID,
+					"channel":     target,
+					"user":        user,
+					"message":     notice,
+					"messageType": "notice",
+				},
+				Timestamp: time.Now(),
+				Source:    events.EventSourceIRC,
+			})
+		}
+	}
 }

@@ -156,8 +156,17 @@ func (a *App) SaveNetwork(config NetworkConfig) error {
 	return err
 }
 
-// ConnectNetwork connects to an IRC network
+// ConnectNetwork connects to an IRC network (fresh connect, e.g. user-initiated
+// or startup auto-connect). Reconnect after an unexpected drop goes through
+// connectNetwork with reconnect=true so the client rejoins its whole session.
 func (a *App) ConnectNetwork(config NetworkConfig) error {
+	return a.connectNetwork(config, false)
+}
+
+// connectNetwork connects to an IRC network. When reconnect is true the new
+// client is flagged so its auto-join goroutine rejoins every channel we were in
+// (not just auto_join channels), restoring nick lists after the drop.
+func (a *App) connectNetwork(config NetworkConfig, reconnect bool) error {
 	servers := a.normalizeServers(config)
 
 	// Validate network configuration
@@ -284,6 +293,7 @@ func (a *App) ConnectNetwork(config NetworkConfig) error {
 
 		ircClient := irc.NewIRCClient(&tempNetwork, a.eventBus, a.storage)
 		ircClient.SetNetworkID(network.ID)
+		ircClient.SetReconnecting(reconnect)
 
 		// Try to connect with timeout
 		logger.Log.Debug().Str("server", serverKey).Msg("Starting connection attempt")
@@ -492,7 +502,7 @@ func (a *App) reconnectWithBackoff(networkID int64, networkName string) {
 			Int("attempt", attempt).
 			Msg("Attempting to reconnect")
 
-		err = a.ConnectNetwork(config)
+		err = a.connectNetwork(config, true)
 		if err != nil {
 			logger.Log.Warn().
 				Err(err).
@@ -761,6 +771,21 @@ func (a *App) GetConnectionStatus(networkID int64) (bool, error) {
 	}
 
 	return client.IsConnected(), nil
+}
+
+// GetCurrentNick returns the nick the server currently knows us by on a network,
+// which can differ from the configured nick while a nick collision is being
+// resolved. Returns an empty string when the network has no active client.
+func (a *App) GetCurrentNick(networkID int64) (string, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	client, exists := a.ircClients[networkID]
+	if !exists {
+		return "", nil
+	}
+
+	return client.CurrentNick(), nil
 }
 
 // DisconnectNetwork disconnects from a network

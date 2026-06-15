@@ -42,6 +42,27 @@ func (a *App) OnEvent(event events.Event) {
 		return
 	}
 
+	// Handle our own nick changing (collision resolved, preferred nick reclaimed,
+	// or a manual /nick). The frontend uses this to show the real current nick.
+	if event.Type == irc.EventNickChanged {
+		networkID, found := a.resolveNetworkID(event.Data)
+		if found {
+			runtime.EventsEmit(a.ctx, "current-nick", map[string]interface{}{
+				"networkId":   networkID,
+				"nick":        event.Data["nick"],
+				"desired":     event.Data["desired"],
+				"isPreferred": event.Data["isPreferred"],
+				"timestamp":   event.Timestamp.Format(time.RFC3339),
+			})
+		} else {
+			logger.Log.Warn().
+				Str("event_type", event.Type).
+				Interface("event_data", event.Data).
+				Msg("Could not determine network ID for nick-changed event")
+		}
+		return
+	}
+
 	// Handle channels changed event
 	if event.Type == irc.EventChannelsChanged {
 		networkID, ok := event.Data["networkId"].(int64)
@@ -63,6 +84,7 @@ func (a *App) OnEvent(event events.Event) {
 		event.Type == irc.EventUserJoined || event.Type == irc.EventUserParted || event.Type == irc.EventUserQuit ||
 		event.Type == irc.EventUserKicked ||
 		event.Type == irc.EventChannelTopic || event.Type == irc.EventChannelMode ||
+		event.Type == irc.EventChannelUserMode || event.Type == irc.EventChannelBanList ||
 		event.Type == irc.EventError || event.Type == "channel.names.complete" {
 		runtime.EventsEmit(a.ctx, "message-event", map[string]interface{}{
 			"type":      event.Type,
@@ -71,8 +93,25 @@ func (a *App) OnEvent(event events.Event) {
 		})
 	}
 
-	// Forward channel list events to frontend
+	// Forward CHATHISTORY completion to the frontend so it can re-query the local
+	// store (now backfilled) and decide whether to stop paging. Carries the target
+	// and the count of newly-inserted rows.
+	if event.Type == irc.EventHistoryReceived {
+		runtime.EventsEmit(a.ctx, "history-event", map[string]interface{}{
+			"type":      event.Type,
+			"data":      event.Data,
+			"timestamp": event.Timestamp.Format(time.RFC3339),
+		})
+		return
+	}
+
+	// Forward channel list events to frontend, caching the result first so that
+	// reopening the modal can render instantly without a fresh LIST. This runs after
+	// the IRC 323 handler has cleared its accumulation buffer, so it is race-free.
 	if event.Type == irc.EventChannelListEnd {
+		if networkID, ok := event.Data["networkId"].(int64); ok {
+			a.cacheChannelList(networkID, channelsFromEventData(event.Data["channels"]))
+		}
 		runtime.EventsEmit(a.ctx, "channel-list", map[string]interface{}{
 			"type":      event.Type,
 			"data":      event.Data,
@@ -147,6 +186,13 @@ func (a *App) handleDesktopNotification(event events.Event) {
 
 		// Do not notify for messages from the current user
 		if strings.EqualFold(user, myNick) {
+			return
+		}
+
+		// Service/user notices (ChanServ, NickServ, …) route to a query pane but
+		// must not raise a desktop notification per line — services are chatty,
+		// especially on connect. They still badge the pane in-app.
+		if mt, _ := event.Data["messageType"].(string); mt == "notice" {
 			return
 		}
 

@@ -31,10 +31,19 @@ type App struct {
 	connectingNetworks   map[string]chan struct{} // Track networks currently connecting by "address:port"
 	reconnectingNetworks map[int64]bool           // Track networks currently reconnecting (by network ID)
 	mu                   sync.RWMutex
+	channelListCache     map[int64]channelListCacheEntry // Cached LIST results keyed by network ID
+	channelListCacheMu   sync.RWMutex                    // Guards channelListCache; separate from mu to avoid contention
 	startupCtx           context.Context
 	startupCancel        context.CancelFunc
 	startupWg            sync.WaitGroup
 	shutdownOnce         sync.Once // Ensure shutdown only runs once
+}
+
+// channelListCacheEntry holds a network's last-fetched LIST result together with
+// the time it was fetched, so the frontend can decide whether it is still fresh.
+type channelListCacheEntry struct {
+	channels  []map[string]interface{}
+	fetchedAt time.Time
 }
 
 // NewApp creates a new App application struct
@@ -80,6 +89,7 @@ func NewApp() (*App, error) {
 		ircClients:           make(map[int64]*irc.IRCClient),
 		connectingNetworks:   make(map[string]chan struct{}),
 		reconnectingNetworks: make(map[int64]bool),
+		channelListCache:     make(map[int64]channelListCacheEntry),
 	}
 
 	// Subscribe to events for frontend forwarding
@@ -95,6 +105,9 @@ func NewApp() (*App, error) {
 	eventBus.Subscribe(irc.EventUserNick, app)
 	eventBus.Subscribe(irc.EventWhoisReceived, app)
 	eventBus.Subscribe(irc.EventChannelListEnd, app)
+	eventBus.Subscribe(irc.EventChannelMode, app)
+	eventBus.Subscribe(irc.EventChannelUserMode, app)
+	eventBus.Subscribe(irc.EventChannelBanList, app)
 
 	go app.processPluginActions()
 
@@ -219,6 +232,40 @@ func (a *App) GetMessages(networkID int64, channelID *int64, limit int) ([]stora
 	return a.storage.GetMessages(networkID, channelID, limit)
 }
 
+// GetMessagesBefore retrieves up to `limit` messages older than beforeID (exclusive),
+// chronological order. Used for scrollback pagination. channelID nil = status pane.
+func (a *App) GetMessagesBefore(networkID int64, channelID *int64, beforeID int64, limit int) ([]storage.Message, error) {
+	return a.storage.GetMessagesBefore(networkID, channelID, beforeID, limit)
+}
+
+// GetMessagesAfter retrieves up to `limit` messages newer than afterID (exclusive),
+// chronological order. Used to scroll forward out of an anchored context window.
+func (a *App) GetMessagesAfter(networkID int64, channelID *int64, afterID int64, limit int) ([]storage.Message, error) {
+	return a.storage.GetMessagesAfter(networkID, channelID, afterID, limit)
+}
+
+// GetMessagesBeforeTime retrieves up to `limit` messages older than `beforeISO`
+// (an ISO8601/RFC3339 timestamp) by server-time, chronological order. Unlike
+// GetMessagesBefore (id-keyed), this surfaces CHATHISTORY-backfilled rows (high
+// id, old timestamp). A non-empty pmTarget selects a PM conversation; otherwise
+// channelID selects a channel (nil = status pane). Used for unified local + server
+// scrollback pagination.
+//
+// The cursor is a string (not time.Time) deliberately: a time.Time parameter in a
+// Wails-bound method makes the binding generator emit a time.Time class for every
+// timestamp field, which breaks `new Date(msg.timestamp)` across the frontend.
+func (a *App) GetMessagesBeforeTime(networkID int64, channelID *int64, pmTarget string, beforeISO string, limit int) ([]storage.Message, error) {
+	before, err := time.Parse(time.RFC3339Nano, beforeISO)
+	if err != nil {
+		// Fall back to second precision (no fractional seconds).
+		before, err = time.Parse(time.RFC3339, beforeISO)
+		if err != nil {
+			return nil, fmt.Errorf("invalid before timestamp %q: %w", beforeISO, err)
+		}
+	}
+	return a.storage.GetMessagesBeforeTime(networkID, channelID, pmTarget, before, limit)
+}
+
 // GetPrivateMessages retrieves private messages for a network and user
 func (a *App) GetPrivateMessages(networkID int64, targetUser string, limit int) ([]storage.Message, error) {
 	network, err := a.storage.GetNetwork(networkID)
@@ -241,6 +288,34 @@ func (a *App) GetPrivateMessageConversations(networkID int64, openOnly bool) ([]
 		return []string{}, nil
 	}
 	return a.storage.GetPrivateMessageConversations(networkID, network.Nickname, openOnly)
+}
+
+// PinMessage pins a message in a network/channel (channelID nil for status/PM panes)
+func (a *App) PinMessage(networkID, messageID int64, channelID *int64) error {
+	var pinnedBy string
+	if network, err := a.storage.GetNetwork(networkID); err == nil {
+		pinnedBy = network.Nickname
+	}
+	return a.storage.PinMessage(messageID, networkID, channelID, pinnedBy)
+}
+
+// UnpinMessage removes a pin
+func (a *App) UnpinMessage(messageID int64) error {
+	return a.storage.UnpinMessage(messageID)
+}
+
+// GetPinnedMessages retrieves pinned messages for a network and channel
+func (a *App) GetPinnedMessages(networkID int64, channelID *int64) ([]storage.PinnedMessage, error) {
+	return a.storage.GetPinnedMessages(networkID, channelID)
+}
+
+// GetMessagesAround retrieves a window of messages around a target message id,
+// so the frontend can "jump" to a pinned message with surrounding context.
+func (a *App) GetMessagesAround(networkID int64, channelID *int64, targetID int64, window int) ([]storage.Message, error) {
+	if window <= 0 {
+		window = 50
+	}
+	return a.storage.GetMessagesAround(networkID, channelID, targetID, window)
 }
 
 // GetChannels retrieves channels for a network
@@ -295,6 +370,12 @@ type ServerCapabilitiesInfo struct {
 	Prefix       map[string]string `json:"prefix"`
 	PrefixString string            `json:"prefix_string"`
 	ChanModes    string            `json:"chanmodes"`
+	// Resolved CHANMODES classes (sorted letters), with RFC1459 defaults applied.
+	// A=list (bans), B=always-param (key), C=param-on-set (limit), D=boolean flag.
+	ChanModesA string `json:"chanmodes_a"`
+	ChanModesB string `json:"chanmodes_b"`
+	ChanModesC string `json:"chanmodes_c"`
+	ChanModesD string `json:"chanmodes_d"`
 }
 
 // GetChannelInfo retrieves channel information including topic and users
@@ -348,11 +429,28 @@ func (a *App) GetServerCapabilities(networkID int64) (*ServerCapabilitiesInfo, e
 		prefixMap[string(k)] = string(v)
 	}
 
+	clsA, clsB, clsC, clsD := client.GetChanModeClasses()
 	return &ServerCapabilitiesInfo{
 		Prefix:       prefixMap,
 		PrefixString: cap.PrefixString,
 		ChanModes:    cap.ChanModes,
+		ChanModesA:   clsA,
+		ChanModesB:   clsB,
+		ChanModesC:   clsC,
+		ChanModesD:   clsD,
 	}, nil
+}
+
+// RequestChannelBans asks the server for a channel's ban list. The result is delivered
+// asynchronously to the frontend via the "channel.banlist" event.
+func (a *App) RequestChannelBans(networkID int64, channelName string) error {
+	a.mu.RLock()
+	client, exists := a.ircClients[networkID]
+	a.mu.RUnlock()
+	if !exists || !client.IsConnected() {
+		return fmt.Errorf("not connected to network %d", networkID)
+	}
+	return client.RequestChannelBans(channelName)
 }
 
 // SetChannelOpen sets the is_open state for a channel
@@ -783,12 +881,71 @@ func (a *App) OpenSettingsDisplay() {
 	}
 }
 
+// OpenSettingsAbout emits an event to open settings to the about section
+func (a *App) OpenSettingsAbout() {
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "open-settings", "about")
+	}
+}
+
 // SearchMessages performs full-text search across stored messages
 func (a *App) SearchMessages(query string, networkID *int64, limit int) ([]storage.SearchResult, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 	return a.storage.SearchMessages(query, networkID, limit)
+}
+
+// ChannelListCacheResult is the cached LIST result returned to the frontend.
+// FetchedAt is unix milliseconds; Found is false when no cache exists for the network.
+type ChannelListCacheResult struct {
+	Channels  []map[string]interface{} `json:"channels"`
+	FetchedAt int64                    `json:"fetchedAt"`
+	Found     bool                     `json:"found"`
+}
+
+// GetCachedChannelList returns the last-fetched LIST result for a network, if any.
+// It never triggers a fetch — callers use RequestChannelList to force a refresh.
+func (a *App) GetCachedChannelList(networkID int64) ChannelListCacheResult {
+	a.channelListCacheMu.RLock()
+	defer a.channelListCacheMu.RUnlock()
+
+	entry, ok := a.channelListCache[networkID]
+	if !ok {
+		return ChannelListCacheResult{Found: false}
+	}
+	return ChannelListCacheResult{
+		Channels:  entry.channels,
+		FetchedAt: entry.fetchedAt.UnixMilli(),
+		Found:     true,
+	}
+}
+
+// channelsFromEventData normalizes the channel slice carried on a LISTEND event
+// (a []interface{} of map[string]interface{}) into the typed form the cache stores.
+func channelsFromEventData(raw interface{}) []map[string]interface{} {
+	items, ok := raw.([]interface{})
+	if !ok {
+		return nil
+	}
+	channels := make([]map[string]interface{}, 0, len(items))
+	for _, it := range items {
+		if m, ok := it.(map[string]interface{}); ok {
+			channels = append(channels, m)
+		}
+	}
+	return channels
+}
+
+// cacheChannelList stores a freshly-fetched LIST result for a network, stamped with
+// the current time. Called when a LISTEND event completes.
+func (a *App) cacheChannelList(networkID int64, channels []map[string]interface{}) {
+	a.channelListCacheMu.Lock()
+	defer a.channelListCacheMu.Unlock()
+	a.channelListCache[networkID] = channelListCacheEntry{
+		channels:  channels,
+		fetchedAt: time.Now(),
+	}
 }
 
 // RequestChannelList sends the LIST command to request available channels from the server
