@@ -1,6 +1,9 @@
 import { useState, useRef, useEffect } from 'react';
 import { GetChannelInfo } from '../../wailsjs/go/main/App';
 import { main, storage } from '../../wailsjs/go/models';
+import { FormattingToolbar } from './formatting-toolbar';
+import { MessagePreview } from './message-preview';
+import { wrapSelection, applyToInput } from '../lib/input-insert';
 
 interface InputAreaProps {
   onSendMessage: (message: string) => Promise<void>;
@@ -221,18 +224,44 @@ export function InputArea({ onSendMessage, placeholder = 'Type a message...', ne
     }
   };
 
+  // Cmd/Ctrl+B / I / U wrap the selection in the matching markup, mirroring the
+  // toolbar buttons (uses the same pure helpers).
+  const handleFormattingShortcut = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+    const delims: Record<string, [string, string]> = {
+      b: ['*', '*'],
+      i: ['_', '_'],
+      u: ['__', '__'],
+    };
+    const pair = delims[e.key.toLowerCase()];
+    if (!pair) return;
+    e.preventDefault();
+    const input = e.currentTarget;
+    const start = input.selectionStart ?? message.length;
+    const end = input.selectionEnd ?? message.length;
+    applyToInput(input, wrapSelection(message, start, end, pair[0], pair[1]), setMessage);
+  };
+
   return (
     <div
       className="border-t border-border p-4"
       style={{ background: 'var(--glass-bg)', backdropFilter: 'blur(var(--backdrop-blur))', WebkitBackdropFilter: 'blur(var(--backdrop-blur))' }}
     >
+      <MessagePreview message={message} />
+      <FormattingToolbar
+        inputRef={inputRef}
+        value={message}
+        setValue={setMessage}
+        networkId={networkId}
+        channelName={channelName}
+      />
       <form onSubmit={handleSubmit} className="flex space-x-3">
         <input
           ref={inputRef}
           type="text"
           value={message}
           onChange={(e) => setMessage(e.target.value)}
-          onKeyDown={(e) => { handleHistoryNavigation(e); performTabCompletion(e); }}
+          onKeyDown={(e) => { handleFormattingShortcut(e); handleHistoryNavigation(e); performTabCompletion(e); }}
           placeholder={placeholder}
           className="flex-1 px-4 py-2.5 border border-border rounded-full bg-background text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all shadow-[var(--shadow-sm)] focus:shadow-[var(--shadow-md)]"
           style={{ transition: 'var(--transition-base)' }}

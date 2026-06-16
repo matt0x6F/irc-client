@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { storage, main } from '../../wailsjs/go/models';
+import { markdownToIrc } from '../lib/irc-markup';
 import {
   GetNetworks,
   GetConnectionStatus,
@@ -704,9 +705,10 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
     if (trimmedMessage.startsWith('/')) {
       let commandToSend = trimmedMessage;
 
-      // Handle /me command — prepend target
+      // Handle /me command — prepend target. The action text is formatting
+      // markup like any other message, so convert it to IRC codes.
       if (trimmedMessage.toLowerCase().startsWith('/me ') && selectedChannel !== 'status') {
-        const parts = trimmedMessage.substring(4).trim();
+        const parts = markdownToIrc(trimmedMessage.substring(4).trim());
         if (selectedChannel.startsWith('pm:')) {
           commandToSend = `/me ${selectedChannel.substring(3)} ${parts}`;
         } else {
@@ -743,11 +745,16 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
       return;
     }
 
+    // Convert formatting markup (*bold*, _italic_, __underline__, #4(color)) to
+    // IRC control codes at the wire boundary. History and the input keep the raw
+    // markup; only what's sent and shown optimistically is converted.
+    const wire = markdownToIrc(message);
+
     // Private messages
     if (selectedChannel.startsWith('pm:')) {
       const user = selectedChannel.substring(3);
       try {
-        await SendMessage(selectedNetwork, user, message);
+        await SendMessage(selectedNetwork, user, wire);
         setTimeout(() => loadMessages(), 100);
       } catch (error) {
         console.error('Failed to send private message:', error);
@@ -765,7 +772,7 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
           network_id: selectedNetwork,
           channel_id: channelId as number,
           user: currentNetwork.nickname || 'You',
-          message: message,
+          message: wire,
           message_type: 'privmsg',
           timestamp: new Date().toISOString(),
           raw_line: '',
@@ -781,7 +788,7 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
         await SendCommand(selectedNetwork, message);
         await loadMessages();
       } else {
-        await SendMessage(selectedNetwork, selectedChannel, message);
+        await SendMessage(selectedNetwork, selectedChannel, wire);
         setTimeout(() => loadMessages(), 100);
       }
     } catch (error) {
