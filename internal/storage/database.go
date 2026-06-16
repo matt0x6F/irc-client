@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -1238,6 +1239,31 @@ func (s *Storage) SetPluginEnabled(name string, enabled bool) error {
 	return nil
 }
 
+// GetSetting returns the value for a key in the settings key/value store.
+// A missing key is not an error: it returns an empty string so callers can fall
+// back to their own defaults.
+func (s *Storage) GetSetting(key string) (string, error) {
+	value, err := s.queries.GetSetting(context.Background(), key)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return "", fmt.Errorf("failed to get setting %q: %w", key, err)
+	}
+	return value, nil
+}
+
+// SetSetting upserts a key/value pair in the settings store.
+func (s *Storage) SetSetting(key, value string) error {
+	if err := s.queries.SetSetting(context.Background(), db.SetSettingParams{
+		Key:   key,
+		Value: value,
+	}); err != nil {
+		return fmt.Errorf("failed to set setting %q: %w", key, err)
+	}
+	return nil
+}
+
 // GetAllPluginConfigs retrieves all plugin configurations
 func (s *Storage) GetAllPluginConfigs() (map[string]*PluginConfig, error) {
 	dbConfigs, err := s.queries.GetAllPluginConfigs(context.Background())
@@ -1290,31 +1316,6 @@ func (s *Storage) SetPluginConfigSchema(name string, schema map[string]interface
 	})
 	if err != nil {
 		return fmt.Errorf("failed to set plugin config_schema: %w", err)
-	}
-	return nil
-}
-
-// GetSetting returns the value stored for key. The bool is false (with a nil
-// error) when the key has never been set, so callers can distinguish "unset"
-// from a legitimately-stored empty string and fall back to their default.
-func (s *Storage) GetSetting(key string) (string, bool, error) {
-	value, err := s.queries.GetSetting(context.Background(), key)
-	if err != nil {
-		if strings.Contains(err.Error(), "no rows") {
-			return "", false, nil
-		}
-		return "", false, fmt.Errorf("failed to get setting %q: %w", key, err)
-	}
-	return value, true, nil
-}
-
-// SetSetting persists value under key, overwriting any existing value (upsert).
-func (s *Storage) SetSetting(key, value string) error {
-	if err := s.queries.SetSetting(context.Background(), db.SetSettingParams{
-		Key:   key,
-		Value: value,
-	}); err != nil {
-		return fmt.Errorf("failed to set setting %q: %w", key, err)
 	}
 	return nil
 }

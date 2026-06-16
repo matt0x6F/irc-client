@@ -1,5 +1,15 @@
 @import "tailwindcss";
 
+/* Wails' WKWebView advertises a coarse/no primary pointer, so `(hover: hover)`
+   evaluates false inside it. Tailwind v4 makes `hover-only-when-supported` the
+   default — it wraps every `hover:`/`group-hover:` utility in
+   `@media (hover: hover)` — so in the desktop webview those rules never match
+   and all hover styling silently dies (most visibly the hover-reveal pin on
+   message rows). Redefine the hover variants without the media gate; on a
+   desktop app the pointer is always fine, so unconditional `:hover` is correct. */
+@custom-variant hover (&:hover);
+@custom-variant group-hover (&:is(:where(.group):hover *));
+
 @font-face {
     font-family: "Nunito";
     font-style: normal;

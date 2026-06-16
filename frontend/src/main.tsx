@@ -7,13 +7,6 @@ import { initTheme } from './stores/theme'
 import { initSettings } from './stores/settings'
 import { installExternalLinkHandler } from './lib/external-links'
 
-// Apply the persisted theme to <html> before first paint (no flash of wrong theme).
-initTheme()
-
-// Hydrate durable UI preferences (consolidate join/quit, …) from the backend.
-// Async — the store carries sensible defaults until this resolves.
-void initSettings()
-
 // Suppress expected Wails dev mode WebSocket errors
 // These occur when Wails tries to connect to the dev server before it's ready
 const originalError = console.error
@@ -65,8 +58,19 @@ const container = document.getElementById('root')
 
 const root = createRoot(container!)
 
-root.render(
-    <React.StrictMode>
-        <App/>
-    </React.StrictMode>
-)
+// Hydrate durable UI preferences (consolidate join/quit, …) from the backend in
+// parallel. Non-blocking — the settings store carries sensible defaults until it
+// resolves, so this never delays first paint.
+void initSettings()
+
+// Load the persisted theme (now stored in the backend DB, not localStorage)
+// before the first paint to avoid a flash of the wrong theme. initTheme applies
+// a synchronous default first and always resolves, so a slow or failed read
+// still renders the app.
+initTheme().finally(() => {
+    root.render(
+        <React.StrictMode>
+            <App/>
+        </React.StrictMode>
+    )
+})

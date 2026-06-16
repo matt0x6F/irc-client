@@ -384,9 +384,10 @@ export function GetServers(networkID) {
 }
 
 /**
- * GetSetting returns the durably-stored value for a UI preference key, or an
- * empty string if it has never been set. The frontend applies its own default
- * for the empty case, so unset and empty are treated identically at this layer.
+ * GetSetting returns a persisted UI/app preference by key. A missing key
+ * returns an empty string (not an error) so the frontend can apply its default.
+ * Used for preferences like theme mode and accent that can't live in the
+ * WKWebView's localStorage because macOS drops it between launches.
  * @param {string} key
  * @returns {$CancellablePromise<string>}
  */
@@ -628,8 +629,7 @@ export function SetPrivateMessageOpen(networkID, targetUser, isOpen) {
 }
 
 /**
- * SetSetting persists a UI preference value under key (upsert). Backs the
- * settings table that replaces the non-durable WKWebView localStorage.
+ * SetSetting persists a UI/app preference by key.
  * @param {string} key
  * @param {string} value
  * @returns {$CancellablePromise<void>}

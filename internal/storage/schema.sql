@@ -92,16 +92,6 @@ CREATE TABLE IF NOT EXISTS plugin_configs (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- Durable key/value store for app-wide UI preferences (theme, consolidate
--- join/quit, last settings pane, …). Replaces the WKWebView localStorage, which
--- macOS does not persist across restarts. Values are stored as opaque text; the
--- frontend owns serialization and defaults.
-CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
 CREATE TABLE IF NOT EXISTS pinned_messages (
     message_id INTEGER PRIMARY KEY,
     network_id INTEGER NOT NULL,
@@ -111,6 +101,16 @@ CREATE TABLE IF NOT EXISTS pinned_messages (
     FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE,
     FOREIGN KEY (network_id) REFERENCES networks(id) ON DELETE CASCADE,
     FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE
+);
+
+-- Durable key/value store for application/UI preferences (theme mode, accent,
+-- etc.). The frontend previously kept these in the WKWebView's localStorage,
+-- which macOS does not persist across app restarts; storing them here keeps them
+-- alongside the rest of the app's state.
+CREATE TABLE IF NOT EXISTS settings (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_network_channel_time ON messages(network_id, channel_id, timestamp);
