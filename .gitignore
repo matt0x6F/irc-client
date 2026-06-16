@@ -1,4 +1,7 @@
-build/
+# Wails v3 build output (the build/ scaffold itself is committed).
+bin/
+# go-task local checksum/state cache.
+.task/
 node_modules
 frontend/dist
 .DS_Store

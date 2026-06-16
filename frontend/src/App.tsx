@@ -949,7 +949,7 @@ function App() {
             networkId={selectedNetwork}
             channelName={selectedChannel}
             currentModes={channelInfo.channel.modes || ''}
-            capabilities={channelInfo.capabilities}
+            capabilities={channelInfo.capabilities ?? undefined}
             onClose={() => setShowModeModal(false)}
             onUpdate={loadChannelInfo}
           />

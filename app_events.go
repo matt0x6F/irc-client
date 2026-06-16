@@ -9,13 +9,12 @@ import (
 	"github.com/matt0x6f/irc-client/internal/irc"
 	"github.com/matt0x6f/irc-client/internal/logger"
 	"github.com/matt0x6f/irc-client/internal/notification"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // OnEvent implements the events.Subscriber interface to forward events to frontend
 func (a *App) OnEvent(event events.Event) {
-	if a.ctx == nil {
-		logger.Log.Debug().Msg("OnEvent: context not yet initialized, skipping event")
+	if a.app == nil {
+		logger.Log.Debug().Msg("OnEvent: application not yet initialized, skipping event")
 		return
 	}
 
@@ -24,7 +23,7 @@ func (a *App) OnEvent(event events.Event) {
 		networkID, found := a.resolveNetworkID(event.Data)
 		if found {
 			isConnected := event.Type == irc.EventConnectionEstablished
-			runtime.EventsEmit(a.ctx, "connection-status", map[string]interface{}{
+			a.emit("connection-status", map[string]interface{}{
 				"networkId": networkID,
 				"connected": isConnected,
 				"timestamp": event.Timestamp.Format(time.RFC3339),
@@ -47,7 +46,7 @@ func (a *App) OnEvent(event events.Event) {
 	if event.Type == irc.EventNickChanged {
 		networkID, found := a.resolveNetworkID(event.Data)
 		if found {
-			runtime.EventsEmit(a.ctx, "current-nick", map[string]interface{}{
+			a.emit("current-nick", map[string]interface{}{
 				"networkId":   networkID,
 				"nick":        event.Data["nick"],
 				"desired":     event.Data["desired"],
@@ -72,7 +71,7 @@ func (a *App) OnEvent(event events.Event) {
 			}
 		}
 
-		runtime.EventsEmit(a.ctx, "channels-changed", map[string]interface{}{
+		a.emit("channels-changed", map[string]interface{}{
 			"networkId": networkID,
 			"timestamp": event.Timestamp.Format(time.RFC3339),
 		})
@@ -86,7 +85,7 @@ func (a *App) OnEvent(event events.Event) {
 		event.Type == irc.EventChannelTopic || event.Type == irc.EventChannelMode ||
 		event.Type == irc.EventChannelUserMode || event.Type == irc.EventChannelBanList ||
 		event.Type == irc.EventError || event.Type == "channel.names.complete" {
-		runtime.EventsEmit(a.ctx, "message-event", map[string]interface{}{
+		a.emit("message-event", map[string]interface{}{
 			"type":      event.Type,
 			"data":      event.Data,
 			"timestamp": event.Timestamp.Format(time.RFC3339),
@@ -97,7 +96,7 @@ func (a *App) OnEvent(event events.Event) {
 	// store (now backfilled) and decide whether to stop paging. Carries the target
 	// and the count of newly-inserted rows.
 	if event.Type == irc.EventHistoryReceived {
-		runtime.EventsEmit(a.ctx, "history-event", map[string]interface{}{
+		a.emit("history-event", map[string]interface{}{
 			"type":      event.Type,
 			"data":      event.Data,
 			"timestamp": event.Timestamp.Format(time.RFC3339),
@@ -112,7 +111,7 @@ func (a *App) OnEvent(event events.Event) {
 		if networkID, ok := event.Data["networkId"].(int64); ok {
 			a.cacheChannelList(networkID, channelsFromEventData(event.Data["channels"]))
 		}
-		runtime.EventsEmit(a.ctx, "channel-list", map[string]interface{}{
+		a.emit("channel-list", map[string]interface{}{
 			"type":      event.Type,
 			"data":      event.Data,
 			"timestamp": event.Timestamp.Format(time.RFC3339),
@@ -121,7 +120,7 @@ func (a *App) OnEvent(event events.Event) {
 
 	// Forward WHOIS events to frontend
 	if event.Type == irc.EventWhoisReceived {
-		runtime.EventsEmit(a.ctx, "whois-event", map[string]interface{}{
+		a.emit("whois-event", map[string]interface{}{
 			"type":      event.Type,
 			"data":      event.Data,
 			"timestamp": event.Timestamp.Format(time.RFC3339),
@@ -130,7 +129,7 @@ func (a *App) OnEvent(event events.Event) {
 
 	// Handle metadata updates
 	if event.Type == events.EventMetadataUpdated {
-		runtime.EventsEmit(a.ctx, "metadata-updated", map[string]interface{}{
+		a.emit("metadata-updated", map[string]interface{}{
 			"type":       event.Data["type"],
 			"network_id": event.Data["network_id"],
 			"channel":    event.Data["channel"],
@@ -142,7 +141,7 @@ func (a *App) OnEvent(event events.Event) {
 
 	// Forward UI pane events
 	if event.Type == events.EventUIPaneFocused || event.Type == events.EventUIPaneBlurred {
-		runtime.EventsEmit(a.ctx, "ui-pane-event", map[string]interface{}{
+		a.emit("ui-pane-event", map[string]interface{}{
 			"type":      event.Type,
 			"networkId": event.Data["networkId"],
 			"paneType":  event.Data["type"],

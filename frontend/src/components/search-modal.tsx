@@ -9,7 +9,7 @@ interface SearchModalProps {
 interface SearchResult {
   id: number;
   network_id: number;
-  channel_id?: number;
+  channel_id?: number | null;
   user: string;
   message: string;
   message_type: string;

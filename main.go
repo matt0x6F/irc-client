@@ -1,112 +1,95 @@
 package main
 
 import (
-	"context"
 	"embed"
-	"fmt"
-	"os"
-	"os/signal"
 	"runtime"
-	"syscall"
 
-	"github.com/wailsapp/wails/v2"
-	"github.com/wailsapp/wails/v2/pkg/menu"
-	"github.com/wailsapp/wails/v2/pkg/menu/keys"
-	"github.com/wailsapp/wails/v2/pkg/options"
-	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 //go:embed all:frontend/dist
 var assets embed.FS
 
 func main() {
-	// Create an instance of the app structure
-	app, err := NewApp()
+	// Create the IRC application backend (storage, event bus, plugins, …).
+	ircApp, err := NewApp()
 	if err != nil {
 		println("Error initializing app:", err.Error())
 		return
 	}
 
-	// Set up signal handling to ensure shutdown is called
-	// This is a backup in case OnShutdown doesn't get called
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		sig := <-sigChan
-		fmt.Printf("Received signal: %v, initiating shutdown\n", sig)
-		// Create a context for shutdown
-		ctx := context.Background()
-		app.shutdown(ctx)
-	}()
+	// Create the Wails application. In v3 the backend is registered as a
+	// service: its ServiceStartup/ServiceShutdown hooks drive connect/cleanup,
+	// and its exported methods are bound for the frontend. v3 installs its own
+	// signal handler, so the manual SIGTERM/SIGINT plumbing from v2 is gone.
+	app := application.New(application.Options{
+		Name:        "Cascade Chat",
+		Description: "Modern multi-platform IRC client",
+		Services: []application.Service{
+			application.NewService(ircApp),
+		},
+		Assets: application.AssetOptions{
+			Handler: application.BundledAssetFileServer(assets),
+		},
+	})
 
-	// Create application menu
-	appMenu := menu.NewMenu()
+	// Build and attach the application menu.
+	app.Menu.SetApplicationMenu(buildMenu(app, ircApp))
 
-	// On macOS, add the standard app menu
+	// Create the main window. v2's options.App size/colour fields move onto the
+	// per-window options struct in v3.
+	app.Window.NewWithOptions(application.WebviewWindowOptions{
+		Title:            "Cascade Chat",
+		Width:            1280,
+		Height:           800,
+		MinWidth:         940,
+		MinHeight:        600,
+		BackgroundColour: application.NewRGB(27, 38, 54),
+	})
+
+	if err := app.Run(); err != nil {
+		println("Error:", err.Error())
+	}
+}
+
+// buildMenu constructs the application menu. The platform-specific role menus
+// (App/Edit/Window) are macOS-only — on Linux/Windows they are populated by the
+// OS and carry no custom items, so we only add the standard roles on darwin.
+// Unlike v2, v3 owns its cross-platform menu builder, so the GTK nil-deref
+// workaround the v2 code needed is no longer required.
+func buildMenu(app *application.App, ircApp *App) *application.Menu {
+	menu := app.NewMenu()
+
 	if runtime.GOOS == "darwin" {
-		appMenu.Append(menu.AppMenu())
+		menu.AddRole(application.AppMenu)
 	}
 
-	// Add File menu with Settings and shortcuts
-	fileMenu := menu.NewMenu()
-	// Parse the comma shortcut (Cmd+, is standard for Settings/Preferences)
-	settingsAccel, err := keys.Parse("CmdOrCtrl+,")
-	if err != nil {
-		// Fallback to CmdOrCtrl+S if comma doesn't work
-		settingsAccel = keys.CmdOrCtrl("S")
-	}
-	fileMenu.AddText("Settings...", settingsAccel, func(_ *menu.CallbackData) {
-		// Emit event to frontend to open settings
-		app.OpenSettings()
+	// File menu with Settings and shortcuts (Cmd+, is standard for Settings).
+	fileMenu := menu.AddSubmenu("File")
+	fileMenu.Add("Settings...").SetAccelerator("CmdOrCtrl+,").OnClick(func(*application.Context) {
+		ircApp.OpenSettings()
 	})
 	fileMenu.AddSeparator()
-	fileMenu.AddText("Networks...", keys.CmdOrCtrl("N"), func(_ *menu.CallbackData) {
-		app.OpenSettingsNetworks()
+	fileMenu.Add("Networks...").SetAccelerator("CmdOrCtrl+N").OnClick(func(*application.Context) {
+		ircApp.OpenSettingsNetworks()
 	})
-	fileMenu.AddText("Plugins...", keys.CmdOrCtrl("P"), func(_ *menu.CallbackData) {
-		app.OpenSettingsPlugins()
+	fileMenu.Add("Plugins...").SetAccelerator("CmdOrCtrl+P").OnClick(func(*application.Context) {
+		ircApp.OpenSettingsPlugins()
 	})
-	fileMenu.AddText("Display...", keys.CmdOrCtrl("D"), func(_ *menu.CallbackData) {
-		app.OpenSettingsDisplay()
+	fileMenu.Add("Display...").SetAccelerator("CmdOrCtrl+D").OnClick(func(*application.Context) {
+		ircApp.OpenSettingsDisplay()
 	})
-	appMenu.Append(menu.SubMenu("File", fileMenu))
 
-	// Edit and Window menus use macOS-only menu roles (the OS populates them).
-	// On Linux/Windows these role items carry no SubMenu, and Wails' GTK menu
-	// builder nil-dereferences them at startup (processSubmenu → menuItem.SubMenu.Items),
-	// crashing the app. So only add them on macOS.
 	if runtime.GOOS == "darwin" {
-		appMenu.Append(menu.EditMenu())
-		appMenu.Append(menu.WindowMenu())
+		menu.AddRole(application.EditMenu)
+		menu.AddRole(application.WindowMenu)
 	}
 
 	// Help menu with an About entry that opens the About settings pane.
-	// Added on all platforms; on macOS the Help menu also gains the standard
-	// system-provided search box.
-	helpMenu := menu.NewMenu()
-	helpMenu.AddText("About Cascade", nil, func(_ *menu.CallbackData) {
-		app.OpenSettingsAbout()
-	})
-	appMenu.Append(menu.SubMenu("Help", helpMenu))
-
-	// Create application with options
-	err = wails.Run(&options.App{
-		Title:  "Cascade Chat",
-		Width:  1024,
-		Height: 768,
-		Menu:   appMenu,
-		AssetServer: &assetserver.Options{
-			Assets: assets,
-		},
-		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
-		OnStartup:        app.startup,
-		OnShutdown:       app.shutdown,
-		Bind: []interface{}{
-			app,
-		},
+	helpMenu := menu.AddSubmenu("Help")
+	helpMenu.Add("About Cascade").OnClick(func(*application.Context) {
+		ircApp.OpenSettingsAbout()
 	})
 
-	if err != nil {
-		println("Error:", err.Error())
-	}
+	return menu
 }

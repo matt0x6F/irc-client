@@ -1,0 +1,15 @@
+{
+	"fixed": {
+		"file_version": "0.0.1"
+	},
+	"info": {
+		"0000": {
+			"ProductVersion": "0.0.1",
+			"CompanyName": "Matt Ouille",
+			"FileDescription": "Modern multi-platform IRC client",
+			"LegalCopyright": "(c) 2026, Matt Ouille",
+			"ProductName": "Cascade Chat",
+			"Comments": "Cascade Chat — modern IRC client built with Wails"
+		}
+	}
+}

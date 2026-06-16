@@ -10,7 +10,7 @@ export default async function globalTeardown(): Promise<void> {
     return; // setup never completed; nothing to tear down
   }
 
-  // 1. Kill the wails dev process group (Go app + vite watcher + build procs).
+  // 1. Kill the wails3 dev process group (Go app + vite watcher + build procs).
   try {
     process.kill(-rt.wailsPid, 'SIGTERM');
   } catch { /* already gone */ }
