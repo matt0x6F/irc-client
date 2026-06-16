@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { main, storage } from '../../wailsjs/go/models';
-import { GetNetworks, SaveNetwork, ConnectNetwork, DeleteNetwork, DisconnectNetwork, GetConnectionStatus, GetServers, ListPlugins, EnablePlugin, DisablePlugin, ReloadPlugin, GetBuildInfo, GetSetting, SetSetting, CheckForUpdates } from '../../wailsjs/go/main/App';
+import { GetNetworks, SaveNetwork, ConnectNetwork, DeleteNetwork, DisconnectNetwork, GetConnectionStatus, GetServers, ListPlugins, EnablePlugin, DisablePlugin, ReloadPlugin, GetBuildInfo, CheckForUpdates } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import { PluginConfigForm } from './plugin-config-form';
 import {
@@ -14,18 +14,16 @@ import { useThemeStore, ACCENTS, type ThemeMode } from '../stores/theme';
 import { useSettingsStore } from '../stores/settings';
 import { usePreferencesStore } from '../stores/preferences';
 
-type SettingsSection = 'networks' | 'plugins' | 'display' | 'about';
+export type SettingsSection = 'networks' | 'plugins' | 'display' | 'about';
 
-// Key in the backend settings(key, value) table for the last-selected pane.
-const SETTINGS_LAST_PANE_KEY = 'settingsLastPane';
-
-const isSettingsSection = (v: string): v is SettingsSection =>
+export const isSettingsSection = (v: string): v is SettingsSection =>
   v === 'networks' || v === 'plugins' || v === 'display' || v === 'about';
 
-interface SettingsModalProps {
-  onClose: () => void;
-  onServerUpdate?: () => void;
-  initialSection?: SettingsSection;
+interface SettingsPanelProps {
+  /** Currently selected pane (controlled by the host window). */
+  section: SettingsSection;
+  /** Called when the user picks a different pane from the left nav. */
+  onSectionChange: (section: SettingsSection) => void;
 }
 
 /** A small on-brand switch toggle (design system uses switches, not checkboxes). */
@@ -51,47 +49,7 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
   );
 }
 
-export function SettingsModal({ onClose, onServerUpdate, initialSection }: SettingsModalProps) {
-  // Start on the caller-pinned section, or 'networks' as a synchronous default;
-  // the persisted last pane is hydrated asynchronously below (settings live in
-  // the backend now, not localStorage, so the initial read can't be synchronous).
-  const [selectedSection, setSelectedSection] = useState<SettingsSection>(
-    initialSection || 'networks'
-  );
-  // Gate last-pane persistence until after hydration, so the default doesn't
-  // clobber the stored value before it loads.
-  const lastPaneHydratedRef = useRef(false);
-
-  // Update section if initialSection prop changes
-  useEffect(() => {
-    if (initialSection) {
-      setSelectedSection(initialSection);
-    }
-  }, [initialSection]);
-
-  // Hydrate the last-selected pane from the backend on mount, unless the caller
-  // pinned an explicit section. Either way we mark hydration complete so the
-  // persist effect below can start writing.
-  useEffect(() => {
-    if (initialSection) {
-      lastPaneHydratedRef.current = true;
-      return;
-    }
-    let cancelled = false;
-    GetSetting(SETTINGS_LAST_PANE_KEY)
-      .then((saved) => {
-        if (!cancelled && isSettingsSection(saved)) {
-          setSelectedSection(saved);
-        }
-      })
-      .catch((error) => console.error('Failed to load last pane preference:', error))
-      .finally(() => {
-        lastPaneHydratedRef.current = true;
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [initialSection]);
+export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) {
   const [networks, setNetworks] = useState<storage.Network[]>([]);
   const [plugins, setPlugins] = useState<main.PluginInfo[]>([]);
   const [editingNetwork, setEditingNetwork] = useState<storage.Network | null>(null);
@@ -148,15 +106,6 @@ export function SettingsModal({ onClose, onServerUpdate, initialSection }: Setti
     });
     return () => unsubscribe();
   }, []);
-
-  // Persist the selected pane whenever it changes (after hydration, so the
-  // default doesn't overwrite the stored value on first mount).
-  useEffect(() => {
-    if (!lastPaneHydratedRef.current) return;
-    SetSetting(SETTINGS_LAST_PANE_KEY, selectedSection).catch((error) =>
-      console.error('Failed to save last pane preference:', error)
-    );
-  }, [selectedSection]);
 
   const loadPlugins = async () => {
     try {
@@ -367,11 +316,7 @@ export function SettingsModal({ onClose, onServerUpdate, initialSection }: Setti
         await loadNetworkServers(editingNetwork.id);
       }
       await loadConnectionStatus();
-      handleCancel();
-      if (onServerUpdate) {
-        onServerUpdate();
-      }
-    } catch (error) {
+      handleCancel();    } catch (error) {
       console.error('Failed to save network:', error);
       alert(`Failed to save network: ${error}`);
     }
@@ -388,11 +333,7 @@ export function SettingsModal({ onClose, onServerUpdate, initialSection }: Setti
       }
       await DeleteNetwork(networkId);
       await loadNetworks();
-      await loadConnectionStatus();
-      if (onServerUpdate) {
-        onServerUpdate();
-      }
-    } catch (error) {
+      await loadConnectionStatus();    } catch (error) {
       console.error('Failed to delete server:', error);
       alert(`Failed to delete server: ${error}`);
     }
@@ -433,11 +374,7 @@ export function SettingsModal({ onClose, onServerUpdate, initialSection }: Setti
       const config = main.NetworkConfig.createFrom(configData);
       await ConnectNetwork(config);
       await loadNetworks();
-      await loadConnectionStatus();
-      if (onServerUpdate) {
-        onServerUpdate();
-      }
-    } catch (error) {
+      await loadConnectionStatus();    } catch (error) {
       console.error('Failed to connect:', error);
       alert(`Failed to connect: ${error}`);
     }
@@ -447,18 +384,14 @@ export function SettingsModal({ onClose, onServerUpdate, initialSection }: Setti
     try {
       await DisconnectNetwork(networkId);
       await loadNetworks();
-      await loadConnectionStatus();
-      if (onServerUpdate) {
-        onServerUpdate();
-      }
-    } catch (error) {
+      await loadConnectionStatus();    } catch (error) {
       console.error('Failed to disconnect:', error);
       alert(`Failed to disconnect: ${error}`);
     }
   };
 
   const renderContent = () => {
-    switch (selectedSection) {
+    switch (section) {
       case 'networks':
         return (
           <div className="mb-6">
@@ -1199,81 +1132,38 @@ export function SettingsModal({ onClose, onServerUpdate, initialSection }: Setti
     }
   };
 
-  return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50" onClick={onClose}>
-      <div 
-        className="bg-card border border-border rounded-lg shadow-[var(--shadow-xl)] w-full max-w-5xl max-h-[85vh] flex flex-col overflow-hidden"
-        style={{ backgroundColor: 'var(--card)' }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="p-4 border-b border-border flex items-center justify-between bg-card/50">
-          <h2 className="text-xl font-semibold">Settings</h2>
-          <button
-            onClick={onClose}
-            data-testid="settings-close-button"
-            className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-accent transition-all shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)]"
-            style={{ transition: 'var(--transition-base)' }}
-          >
-            Close
-          </button>
-        </div>
-        
-        <div className="flex-1 flex overflow-hidden">
-          {/* Left Sidebar Navigation */}
-          <div className="w-48 border-r border-border flex-shrink-0 rounded-bl-lg bg-card/30" style={{ backgroundColor: 'var(--card)' }}>
-            <nav className="p-2">
-              <button
-                onClick={() => setSelectedSection('networks')}
-                className={`w-full text-left px-3 py-2.5 rounded-md text-sm transition-all ${
-                  selectedSection === 'networks'
-                    ? 'cc-active-pane text-foreground font-medium'
-                    : 'hover:bg-accent/70 text-foreground'
-                }`}
-                style={{ transition: 'var(--transition-base)' }}
-              >
-                Networks
-              </button>
-              <button
-                onClick={() => setSelectedSection('plugins')}
-                className={`w-full text-left px-3 py-2.5 rounded-md text-sm transition-all ${
-                  selectedSection === 'plugins'
-                    ? 'cc-active-pane text-foreground font-medium'
-                    : 'hover:bg-accent/70 text-foreground'
-                }`}
-                style={{ transition: 'var(--transition-base)' }}
-              >
-                Plugins
-              </button>
-              <button
-                onClick={() => setSelectedSection('display')}
-                className={`w-full text-left px-3 py-2.5 rounded-md text-sm transition-all ${
-                  selectedSection === 'display'
-                    ? 'cc-active-pane text-foreground font-medium'
-                    : 'hover:bg-accent/70 text-foreground'
-                }`}
-                style={{ transition: 'var(--transition-base)' }}
-              >
-                Display
-              </button>
-              <button
-                onClick={() => setSelectedSection('about')}
-                className={`w-full text-left px-3 py-2.5 rounded-md text-sm transition-all ${
-                  selectedSection === 'about'
-                    ? 'cc-active-pane text-foreground font-medium'
-                    : 'hover:bg-accent/70 text-foreground'
-                }`}
-                style={{ transition: 'var(--transition-base)' }}
-              >
-                About
-              </button>
-            </nav>
-          </div>
+  const navItems: { id: SettingsSection; label: string }[] = [
+    { id: 'networks', label: 'Networks' },
+    { id: 'plugins', label: 'Plugins' },
+    { id: 'display', label: 'Display' },
+    { id: 'about', label: 'About' },
+  ];
 
-          {/* Right Content Area */}
-          <div className="flex-1 overflow-y-auto p-4">
-            {renderContent()}
-          </div>
-        </div>
+  return (
+    <div className="flex-1 flex min-h-0 overflow-hidden">
+      {/* Left Sidebar Navigation */}
+      <div className="w-48 border-r border-border flex-shrink-0 bg-card/30" style={{ backgroundColor: 'var(--card)' }}>
+        <nav className="p-2">
+          {navItems.map((item) => (
+            <button
+              key={item.id}
+              onClick={() => onSectionChange(item.id)}
+              className={`w-full text-left px-3 py-2.5 rounded-md text-sm transition-all ${
+                section === item.id
+                  ? 'cc-active-pane text-foreground font-medium'
+                  : 'hover:bg-accent/70 text-foreground'
+              }`}
+              style={{ transition: 'var(--transition-base)' }}
+            >
+              {item.label}
+            </button>
+          ))}
+        </nav>
+      </div>
+
+      {/* Right Content Area */}
+      <div className="flex-1 overflow-y-auto p-4">
+        {renderContent()}
       </div>
     </div>
   );

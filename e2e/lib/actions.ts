@@ -1,81 +1,92 @@
 import { Page } from '@playwright/test';
 import { Runtime } from './runtime';
 
+/** URL of the standalone Settings window for a given pane. */
+function settingsUrl(runtime: Runtime, section = 'networks'): string {
+  return `${runtime.bridgeUrl}/?view=settings&section=${section}`;
+}
+
 /**
- * Fill and submit the add-network form, pointing the server at the per-run
- * Ergo instance. Opens Settings first. Leaves Settings open on the network list.
+ * Open the Settings window on the given pane and return its Page.
+ *
+ * Settings is its own native window now (not an in-app modal). In e2e server
+ * mode the app is served over HTTP and driven as a web page, so the backend's
+ * native-window OpenSettings() has nothing to show — instead we open Settings as
+ * a second page in the SAME browser context. That shares the single backend
+ * (same SQLite DB, same IRC clients), and crucially leaves the main `page` alive
+ * so it can observe connection state via its live event subscription / 5s poll.
+ */
+export async function openSettings(
+  page: Page,
+  runtime: Runtime,
+  section = 'networks',
+): Promise<Page> {
+  const settings = await page.context().newPage();
+  await settings.goto(settingsUrl(runtime, section));
+  return settings;
+}
+
+/**
+ * Fill and submit the add-network form in an already-open Settings page, pointing
+ * the server at the per-run Ergo instance. Waits for the saved network's Connect
+ * button to confirm the save landed.
  */
 export async function addNetwork(
-  page: Page,
+  settings: Page,
   runtime: Runtime,
   opts: { name?: string; nick?: string } = {},
 ): Promise<void> {
   const name = opts.name ?? 'e2e';
   const nick = opts.nick ?? 'e2euser';
 
-  // Ensure the page body has focus before sending keyboard shortcuts.
-  await page.locator('body').click();
-  await page.keyboard.press('Control+Comma'); // open Settings (defaults to Networks)
+  // "+ Add Network" reveals the add form (the networks pane is the default).
+  await settings.getByTestId('add-network-button').waitFor({ state: 'visible', timeout: 10_000 });
+  await settings.getByTestId('add-network-button').click();
 
-  // Wait for the Settings modal to appear (Close button is the reliable sentinel).
-  await page.getByTestId('settings-close-button').waitFor({ state: 'visible', timeout: 10_000 });
+  await settings.getByTestId('network-name-input').fill(name);
+  await settings.getByTestId('server-address-input').fill('localhost');
+  await settings.getByTestId('server-port-input').fill(String(runtime.ergoPort));
+  await settings.getByTestId('network-nickname-input').fill(nick);
+  await settings.getByTestId('network-username-input').fill(nick);
+  await settings.getByTestId('network-realname-input').fill(nick);
 
-  // Click "+ Add Network" to show the add form.
-  await page.getByTestId('add-network-button').click();
+  await settings.getByTestId('save-network-button').click();
 
-  // Fill the form fields.
-  await page.getByTestId('network-name-input').fill(name);
-  await page.getByTestId('server-address-input').fill('localhost');
-  await page.getByTestId('server-port-input').fill(String(runtime.ergoPort));
-  await page.getByTestId('network-nickname-input').fill(nick);
-  await page.getByTestId('network-username-input').fill(nick);
-  await page.getByTestId('network-realname-input').fill(nick);
-
-  // Submit — the save button has testid "save-network-button".
-  await page.getByTestId('save-network-button').click();
-
-  // Wait for the network to appear in the list (save-network-button disappears after submit).
-  await page.getByTestId('network-connect-button').waitFor({ state: 'visible', timeout: 10_000 });
+  // Network appears in the list (Connect button) after the save.
+  await settings.getByTestId('network-connect-button').waitFor({ state: 'visible', timeout: 10_000 });
 }
 
 /**
- * Click Connect and wait for the server tree to show the connected (green) indicator.
- * The settings modal's local state won't update reactively after ConnectNetwork() returns
- * (the Go side connects asynchronously), but the server tree subscribes to the Wails
- * connection-status event via the Zustand store, so its indicator is authoritative.
+ * Click Connect in the Settings page, then wait for the main app's server tree to
+ * show the connected (green) indicator before closing Settings.
+ *
+ * The server tree on the main page is authoritative: it reflects the Go
+ * `connection-status` event and the periodic network poll, not the Settings
+ * list's local (non-reactive) state. We observe the green indicator BEFORE
+ * closing the Settings page so the asynchronous ConnectNetwork() RPC issued from
+ * that page isn't torn down mid-request.
  */
-export async function connect(page: Page): Promise<void> {
-  await page.getByTestId('network-connect-button').click();
+export async function connect(page: Page, settings: Page): Promise<void> {
+  await settings.getByTestId('network-connect-button').click();
 
-  // Close settings so the server tree is visible — the tree uses the Zustand store
-  // which is updated by the Go `connection-status` event, making it the reliable
-  // indicator of actual connection state.
-  await page.getByTestId('settings-close-button').click();
-  await page.getByTestId('settings-close-button').waitFor({ state: 'hidden', timeout: 5_000 });
+  await page
+    .locator('[data-testid="network-status-indicator"][data-connected="true"]')
+    .first()
+    .waitFor({ state: 'visible', timeout: 30_000 });
 
-  // The server tree shows a connected indicator anchored by data-testid + data-connected attribute.
-  await page.locator('[data-testid="network-status-indicator"][data-connected="true"]').first().waitFor({ state: 'visible', timeout: 30_000 });
+  await settings.close();
 }
 
-/** Close the Settings modal to reach the main chat UI. */
-export async function closeSettings(page: Page): Promise<void> {
-  // If the modal is still open, close it; otherwise this is a no-op.
-  const closeBtn = page.getByTestId('settings-close-button');
-  const isVisible = await closeBtn.isVisible();
-  if (isVisible) {
-    await closeBtn.click();
-    await closeBtn.waitFor({ state: 'hidden', timeout: 5_000 });
-  }
-}
-
-/** Convenience: add + connect + close settings. Used by most specs.
+/** Convenience: add + connect via the Settings window. Used by most specs.
  *
  * When tests run serially in one Playwright run the backend SQLite DB persists
  * across specs. If a previous spec already added and connected the network, the
- * server tree already shows the green indicator — skip the add/connect dance and
- * just make sure Settings is closed so the main UI is usable.
+ * main page's server tree already shows the green indicator — skip the add/connect
+ * dance entirely.
  *
- * Note: the fast-path checks only connection state, not channel membership; specs must (re)join channels they need.
+ * Note: the fast-path checks only connection state, not channel membership; specs
+ * must (re)join channels they need. Specs goto(bridgeUrl) before calling, so the
+ * fast-path observes the main app.
  */
 export async function addNetworkAndConnect(
   page: Page,
@@ -89,14 +100,11 @@ export async function addNetworkAndConnect(
     .waitFor({ state: 'visible', timeout: 1_500 })
     .then(() => true, () => false);
 
-  if (alreadyConnected) {
-    await closeSettings(page);
-    return;
-  }
+  if (alreadyConnected) return;
 
-  await addNetwork(page, runtime, opts);
-  await connect(page);
-  // connect() already closes settings; closeSettings() is idempotent.
+  const settings = await openSettings(page, runtime, 'networks');
+  await addNetwork(settings, runtime, opts);
+  await connect(page, settings);
 }
 
 /** Select the network's status pane so the message input becomes available. */

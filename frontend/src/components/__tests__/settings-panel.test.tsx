@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { SettingsModal } from '../settings-modal'
+import { SettingsPanel } from '../settings-panel'
 
-// Mock the Wails bindings the modal calls on mount. Paths resolve (from this
+// Mock the Wails bindings the panel calls on mount. Paths resolve (from this
 // test file) to the same modules the component imports, so its imports get the
 // mocks too. The models module is left real — the component uses
 // main.NetworkConfig.createFrom() during render.
@@ -33,13 +33,10 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   EnablePlugin: vi.fn(),
   DisablePlugin: vi.fn(),
   ReloadPlugin: vi.fn(),
-  // The modal reads the last-pane preference on mount and writes it back when the
-  // pane changes; both must resolve so the component's .then/.catch chains work.
-  GetSetting: vi.fn(() => Promise.resolve('')),
-  SetSetting: vi.fn(() => Promise.resolve()),
+  CheckForUpdates: vi.fn(),
 }))
 
-describe('SettingsModal About pane', () => {
+describe('SettingsPanel About pane', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     getNetworksMock.mockResolvedValue([])
@@ -54,7 +51,7 @@ describe('SettingsModal About pane', () => {
   })
 
   it('renders version, commit, and build date from GetBuildInfo', async () => {
-    render(<SettingsModal onClose={() => {}} initialSection="about" />)
+    render(<SettingsPanel section="about" onSectionChange={() => {}} />)
 
     expect(await screen.findByTestId('about-version')).toHaveTextContent('v1.2.3')
     expect(screen.getByTestId('about-commit')).toHaveTextContent('abc1234')
@@ -63,7 +60,7 @@ describe('SettingsModal About pane', () => {
   })
 
   it('links to the GitHub repository', async () => {
-    render(<SettingsModal onClose={() => {}} initialSection="about" />)
+    render(<SettingsPanel section="about" onSectionChange={() => {}} />)
 
     const link = await screen.findByRole('link', { name: /view on github/i })
     expect(link).toHaveAttribute('href', 'https://github.com/matt0x6F/irc-client')

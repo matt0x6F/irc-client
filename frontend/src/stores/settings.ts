@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { GetSetting, SetSetting } from '../../wailsjs/go/main/App';
+import { EventsOn } from '../../wailsjs/runtime/runtime';
 
 // Key in the backend settings(key, value) table. Kept stable — renaming it would
 // orphan the previously-persisted value.
@@ -44,4 +45,13 @@ export async function initSettings(): Promise<void> {
   } catch (error) {
     console.error('Failed to load settings:', error);
   }
+
+  // Reconcile when changed from another window (e.g. toggled in the standalone
+  // Settings window → the main window's message view updates live). In-memory
+  // only — never writes back, so there's no loop.
+  EventsOn('setting:changed', (payload: { key: string; value: string }) => {
+    if (payload.key === CONSOLIDATE_JOIN_QUIT_KEY) {
+      useSettingsStore.setState({ consolidateJoinQuit: payload.value === 'true' });
+    }
+  });
 }

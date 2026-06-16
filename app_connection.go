@@ -152,8 +152,14 @@ func (a *App) SaveNetwork(config NetworkConfig) error {
 		return fmt.Errorf("no servers provided")
 	}
 
-	_, err := a.buildNetworkFromConfig(config, servers)
-	return err
+	if _, err := a.buildNetworkFromConfig(config, servers); err != nil {
+		return err
+	}
+	// Broadcast so every window (notably the main window, when the save was made
+	// from the standalone Settings window) refreshes its network list at once
+	// instead of waiting on the periodic poll.
+	a.emit("networks:changed")
+	return nil
 }
 
 // ConnectNetwork connects to an IRC network (fresh connect, e.g. user-initiated
@@ -829,7 +835,11 @@ func (a *App) DeleteNetwork(networkID int64) error {
 	delete(a.connectionGapOpen, networkID)
 	a.mu.Unlock()
 
-	return a.storage.DeleteNetwork(networkID)
+	if err := a.storage.DeleteNetwork(networkID); err != nil {
+		return err
+	}
+	a.emit("networks:changed")
+	return nil
 }
 
 // ToggleNetworkAutoConnect toggles the auto-connect setting for a network
@@ -859,7 +869,11 @@ func (a *App) ToggleNetworkAutoConnect(networkID int64) error {
 		Bool("new_value", newAutoConnect).
 		Msg("Toggling auto-connect for network")
 
-	return a.storage.UpdateNetworkAutoConnect(networkID, newAutoConnect)
+	if err := a.storage.UpdateNetworkAutoConnect(networkID, newAutoConnect); err != nil {
+		return err
+	}
+	a.emit("networks:changed")
+	return nil
 }
 
 // findNetworkIDByAddress looks up a network ID from a server address
