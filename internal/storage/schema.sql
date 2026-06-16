@@ -92,6 +92,16 @@ CREATE TABLE IF NOT EXISTS plugin_configs (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Durable key/value store for app-wide UI preferences (theme, consolidate
+-- join/quit, last settings pane, …). Replaces the WKWebView localStorage, which
+-- macOS does not persist across restarts. Values are stored as opaque text; the
+-- frontend owns serialization and defaults.
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS pinned_messages (
     message_id INTEGER PRIMARY KEY,
     network_id INTEGER NOT NULL,

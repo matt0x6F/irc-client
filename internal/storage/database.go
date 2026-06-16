@@ -1293,3 +1293,28 @@ func (s *Storage) SetPluginConfigSchema(name string, schema map[string]interface
 	}
 	return nil
 }
+
+// GetSetting returns the value stored for key. The bool is false (with a nil
+// error) when the key has never been set, so callers can distinguish "unset"
+// from a legitimately-stored empty string and fall back to their default.
+func (s *Storage) GetSetting(key string) (string, bool, error) {
+	value, err := s.queries.GetSetting(context.Background(), key)
+	if err != nil {
+		if strings.Contains(err.Error(), "no rows") {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("failed to get setting %q: %w", key, err)
+	}
+	return value, true, nil
+}
+
+// SetSetting persists value under key, overwriting any existing value (upsert).
+func (s *Storage) SetSetting(key, value string) error {
+	if err := s.queries.SetSetting(context.Background(), db.SetSettingParams{
+		Key:   key,
+		Value: value,
+	}); err != nil {
+		return fmt.Errorf("failed to set setting %q: %w", key, err)
+	}
+	return nil
+}

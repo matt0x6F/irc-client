@@ -75,6 +75,11 @@ func Migrate(db *sqlx.DB) error {
 		return fmt.Errorf("pinned messages migration failed: %w", err)
 	}
 
+	// Handle settings (key/value) table migration
+	if err := migrateSettings(db); err != nil {
+		return fmt.Errorf("settings migration failed: %w", err)
+	}
+
 	// Handle pm_target column migration (adds column + best-effort backfill)
 	if err := migratePMTarget(db); err != nil {
 		return fmt.Errorf("pm_target migration failed: %w", err)
@@ -678,6 +683,34 @@ func migratePinnedMessages(db *sqlx.DB) error {
 
 	if _, err := db.Exec("CREATE INDEX IF NOT EXISTS idx_pinned_network_channel ON pinned_messages(network_id, channel_id)"); err != nil {
 		return fmt.Errorf("failed to create pinned_messages index: %w", err)
+	}
+
+	return nil
+}
+
+const createSettingsTable = `
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+`
+
+// migrateSettings creates the settings key/value table if it doesn't exist. This
+// is the durable backing store for app-wide UI preferences that previously lived
+// in the WKWebView localStorage (which macOS drops across restarts).
+func migrateSettings(db *sqlx.DB) error {
+	var tableExists int
+	err := db.Get(&tableExists,
+		"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='settings'")
+	if err != nil {
+		return fmt.Errorf("failed to check for settings table: %w", err)
+	}
+
+	if tableExists == 0 {
+		if _, err := db.Exec(createSettingsTable); err != nil {
+			return fmt.Errorf("failed to create settings table: %w", err)
+		}
 	}
 
 	return nil

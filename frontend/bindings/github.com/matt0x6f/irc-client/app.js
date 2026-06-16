@@ -384,6 +384,17 @@ export function GetServers(networkID) {
 }
 
 /**
+ * GetSetting returns the durably-stored value for a UI preference key, or an
+ * empty string if it has never been set. The frontend applies its own default
+ * for the empty case, so unset and empty are treated identically at this layer.
+ * @param {string} key
+ * @returns {$CancellablePromise<string>}
+ */
+export function GetSetting(key) {
+    return $Call.ByID(48053349, key);
+}
+
+/**
  * Greet returns a greeting for the given name (kept for compatibility)
  * @param {string} name
  * @returns {$CancellablePromise<string>}
@@ -614,6 +625,17 @@ export function SetPluginConfig(pluginName, config) {
  */
 export function SetPrivateMessageOpen(networkID, targetUser, isOpen) {
     return $Call.ByID(1106422473, networkID, targetUser, isOpen);
+}
+
+/**
+ * SetSetting persists a UI preference value under key (upsert). Backs the
+ * settings table that replaces the non-durable WKWebView localStorage.
+ * @param {string} key
+ * @param {string} value
+ * @returns {$CancellablePromise<void>}
+ */
+export function SetSetting(key, value) {
+    return $Call.ByID(4214292049, key, value);
 }
 
 /**

@@ -981,6 +981,58 @@ func TestDeleteNetworkAndServers(t *testing.T) {
 	}
 }
 
+// ---------- Settings (key/value) ----------
+
+// TestSettingsPersistAcrossReopen verifies that values written via SetSetting
+// survive a database close/reopen — the durability guarantee the WKWebView's
+// localStorage failed to provide (the bug this table replaces). It also pins the
+// contract for the two edge cases the frontend relies on: an unset key reports
+// ok=false (so the caller can fall back to its default), and SetSetting upserts
+// (re-setting a key overwrites in place rather than erroring or duplicating).
+func TestSettingsPersistAcrossReopen(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "settings_test.db")
+
+	s, err := NewStorage(dbPath, 100, 50*time.Millisecond)
+	if err != nil {
+		t.Fatalf("NewStorage: %v", err)
+	}
+
+	// Unknown key: no error, ok=false, empty value (caller applies its default).
+	if v, ok, err := s.GetSetting("consolidateJoinQuit"); err != nil || ok || v != "" {
+		t.Fatalf(`GetSetting(unset) = (%q, %v, %v); want ("", false, nil)`, v, ok, err)
+	}
+
+	if err := s.SetSetting("consolidateJoinQuit", "true"); err != nil {
+		t.Fatalf("SetSetting(consolidateJoinQuit): %v", err)
+	}
+	if err := s.SetSetting("settingsLastPane", "display"); err != nil {
+		t.Fatalf("SetSetting(settingsLastPane): %v", err)
+	}
+	// Upsert: re-setting an existing key replaces the value (no duplicate row).
+	if err := s.SetSetting("consolidateJoinQuit", "false"); err != nil {
+		t.Fatalf("SetSetting(consolidateJoinQuit overwrite): %v", err)
+	}
+
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// Reopen the same file; both values must still be there with the last writes.
+	s2, err := NewStorage(dbPath, 100, time.Second)
+	if err != nil {
+		t.Fatalf("NewStorage (reopen): %v", err)
+	}
+	defer s2.Close()
+
+	if v, ok, err := s2.GetSetting("consolidateJoinQuit"); err != nil || !ok || v != "false" {
+		t.Fatalf(`GetSetting(consolidateJoinQuit) after reopen = (%q, %v, %v); want ("false", true, nil)`, v, ok, err)
+	}
+	if v, ok, err := s2.GetSetting("settingsLastPane"); err != nil || !ok || v != "display" {
+		t.Fatalf(`GetSetting(settingsLastPane) after reopen = (%q, %v, %v); want ("display", true, nil)`, v, ok, err)
+	}
+}
+
 // ---------- Private message routing (pm_target) ----------
 
 // writePM is a helper that synchronously writes a private-message row with an

@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { main, storage } from '../../wailsjs/go/models';
-import { GetNetworks, SaveNetwork, ConnectNetwork, DeleteNetwork, DisconnectNetwork, GetConnectionStatus, GetServers, ListPlugins, EnablePlugin, DisablePlugin, ReloadPlugin, GetBuildInfo } from '../../wailsjs/go/main/App';
+import { GetNetworks, SaveNetwork, ConnectNetwork, DeleteNetwork, DisconnectNetwork, GetConnectionStatus, GetServers, ListPlugins, EnablePlugin, DisablePlugin, ReloadPlugin, GetBuildInfo, GetSetting, SetSetting } from '../../wailsjs/go/main/App';
 import { PluginConfigForm } from './plugin-config-form';
 import {
   Select,
@@ -10,11 +10,15 @@ import {
   SelectValue,
 } from './ui/select';
 import { useThemeStore, ACCENTS, type ThemeMode } from '../stores/theme';
+import { useSettingsStore } from '../stores/settings';
 
 type SettingsSection = 'networks' | 'plugins' | 'display' | 'about';
 
-const SETTINGS_LAST_PANE_KEY = 'cascade-chat-settings-last-pane';
-const CONSOLIDATE_JOIN_QUIT_KEY = 'cascade-chat-consolidate-join-quit';
+// Key in the backend settings(key, value) table for the last-selected pane.
+const SETTINGS_LAST_PANE_KEY = 'settingsLastPane';
+
+const isSettingsSection = (v: string): v is SettingsSection =>
+  v === 'networks' || v === 'plugins' || v === 'display' || v === 'about';
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -46,33 +50,15 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
 }
 
 export function SettingsModal({ onClose, onServerUpdate, initialSection }: SettingsModalProps) {
-  // Load last selected pane from localStorage, default to 'networks'
-  const loadLastPane = (): SettingsSection => {
-    try {
-      const saved = localStorage.getItem(SETTINGS_LAST_PANE_KEY);
-      if (saved === 'networks' || saved === 'plugins' || saved === 'display' || saved === 'about') {
-        return saved as SettingsSection;
-      }
-    } catch (error) {
-      console.error('Failed to load last pane preference:', error);
-    }
-    return 'networks';
-  };
-
-  // Load consolidate join/quit setting from localStorage
-  const loadConsolidateSetting = (): boolean => {
-    try {
-      const saved = localStorage.getItem(CONSOLIDATE_JOIN_QUIT_KEY);
-      return saved === 'true';
-    } catch (error) {
-      console.error('Failed to load consolidate setting:', error);
-      return false;
-    }
-  };
-
+  // Start on the caller-pinned section, or 'networks' as a synchronous default;
+  // the persisted last pane is hydrated asynchronously below (settings live in
+  // the backend now, not localStorage, so the initial read can't be synchronous).
   const [selectedSection, setSelectedSection] = useState<SettingsSection>(
-    initialSection || loadLastPane()
+    initialSection || 'networks'
   );
+  // Gate last-pane persistence until after hydration, so the default doesn't
+  // clobber the stored value before it loads.
+  const lastPaneHydratedRef = useRef(false);
 
   // Update section if initialSection prop changes
   useEffect(() => {
@@ -80,10 +66,38 @@ export function SettingsModal({ onClose, onServerUpdate, initialSection }: Setti
       setSelectedSection(initialSection);
     }
   }, [initialSection]);
+
+  // Hydrate the last-selected pane from the backend on mount, unless the caller
+  // pinned an explicit section. Either way we mark hydration complete so the
+  // persist effect below can start writing.
+  useEffect(() => {
+    if (initialSection) {
+      lastPaneHydratedRef.current = true;
+      return;
+    }
+    let cancelled = false;
+    GetSetting(SETTINGS_LAST_PANE_KEY)
+      .then((saved) => {
+        if (!cancelled && isSettingsSection(saved)) {
+          setSelectedSection(saved);
+        }
+      })
+      .catch((error) => console.error('Failed to load last pane preference:', error))
+      .finally(() => {
+        lastPaneHydratedRef.current = true;
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [initialSection]);
   const [networks, setNetworks] = useState<storage.Network[]>([]);
   const [plugins, setPlugins] = useState<main.PluginInfo[]>([]);
   const [editingNetwork, setEditingNetwork] = useState<storage.Network | null>(null);
-  const [consolidateJoinQuit, setConsolidateJoinQuit] = useState<boolean>(loadConsolidateSetting);
+
+  // Consolidate join/quit lives in the shared settings store (durable + reactive),
+  // so toggling it here updates the message view live and survives restarts.
+  const consolidateJoinQuit = useSettingsStore((s) => s.consolidateJoinQuit);
+  const setConsolidateJoinQuit = useSettingsStore((s) => s.setConsolidateJoinQuit);
 
   // Theme (appearance + accent)
   const themeMode = useThemeStore((s) => s.mode);
@@ -116,23 +130,14 @@ export function SettingsModal({ onClose, onServerUpdate, initialSection }: Setti
       .catch((error) => console.error('Failed to load build info:', error));
   }, []);
 
-  // Save selected pane to localStorage whenever it changes
+  // Persist the selected pane whenever it changes (after hydration, so the
+  // default doesn't overwrite the stored value on first mount).
   useEffect(() => {
-    try {
-      localStorage.setItem(SETTINGS_LAST_PANE_KEY, selectedSection);
-    } catch (error) {
-      console.error('Failed to save last pane preference:', error);
-    }
+    if (!lastPaneHydratedRef.current) return;
+    SetSetting(SETTINGS_LAST_PANE_KEY, selectedSection).catch((error) =>
+      console.error('Failed to save last pane preference:', error)
+    );
   }, [selectedSection]);
-
-  // Save consolidate setting to localStorage whenever it changes
-  useEffect(() => {
-    try {
-      localStorage.setItem(CONSOLIDATE_JOIN_QUIT_KEY, consolidateJoinQuit.toString());
-    } catch (error) {
-      console.error('Failed to save consolidate setting:', error);
-    }
-  }, [consolidateJoinQuit]);
 
   const loadPlugins = async () => {
     try {
