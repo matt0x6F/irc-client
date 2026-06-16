@@ -10,13 +10,6 @@ jobs:
     # Wails v3 needs the GTK4 / WebKitGTK 6.0 stack, which ships on 24.04
     # (22.04 only has webkit2gtk-4.x).
     runs-on: ubuntu-24.04
-    # KNOWN WIP after the Wails v2 -> v3 migration: the harness still assumes v2
-    # conventions (the `wails dev -devserver` HTTP bridge and `window.go.*` global
-    # bindings), neither of which exists in v3. Porting it (server mode + the
-    # @wailsio/runtime Vite plugin, dropping xvfb) is tracked as a follow-up.
-    # Non-blocking until then so it doesn't gate verified changes; the job still
-    # runs so progress is visible. See the migration PR discussion.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
@@ -49,6 +42,13 @@ jobs:
         working-directory: e2e
 
       - name: Run e2e under xvfb
+        # KNOWN WIP after the Wails v2 -> v3 migration: the harness still assumes
+        # v2 conventions (the `wails dev -devserver` HTTP bridge and `window.go.*`
+        # global bindings), neither of which exists in v3, so the suite currently
+        # fails at the bindings layer. Porting it (server mode + the @wailsio/runtime
+        # Vite plugin, dropping xvfb) is tracked as a follow-up. continue-on-error
+        # keeps the step running (and visible) without failing the job/PR until then.
+        continue-on-error: true
         # A D-Bus session + disabled GPU compositing are required or the WebKitGTK
         # webview panics on init under headless xvfb (no a11y bus / no GPU).
         run: xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24" dbus-run-session -- npx playwright test
