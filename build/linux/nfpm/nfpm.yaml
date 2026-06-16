@@ -3,26 +3,26 @@
 #
 # The lines below are called `modelines`. See `:help modeline`
 
-name: "cascaderef"
+name: "cascade"
 arch: ${GOARCH}
 platform: "linux"
-version: "0.1.0"
+version: "0.0.1"
 section: "default"
 priority: "extra"
 maintainer: ${GIT_COMMITTER_NAME} <${GIT_COMMITTER_EMAIL}>
-description: "A cascaderef application"
-vendor: "My Company"
+description: "Modern multi-platform IRC client"
+vendor: "Matt Ouille"
 homepage: "https://wails.io"
 license: "MIT"
 release: "1"
 
 contents:
-  - src: "./bin/cascaderef"
-    dst: "/usr/local/bin/cascaderef"
+  - src: "./bin/cascade"
+    dst: "/usr/local/bin/cascade"
   - src: "./build/appicon.png"
-    dst: "/usr/share/icons/hicolor/128x128/apps/cascaderef.png"
-  - src: "./build/linux/cascaderef.desktop"
-    dst: "/usr/share/applications/cascaderef.desktop"
+    dst: "/usr/share/icons/hicolor/128x128/apps/cascade.png"
+  - src: "./build/linux/cascade.desktop"
+    dst: "/usr/share/applications/cascade.desktop"
 
 # Default dependencies for the GTK4 + WebKitGTK 6.0 stack (Ubuntu 24.04+ / Debian 13+)
 depends:

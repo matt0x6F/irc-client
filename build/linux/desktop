@@ -1,13 +1,13 @@
 [Desktop Entry]
 Version=1.0
-Name=My Product
-Comment=A cascaderef application
+Name=Cascade Chat
+Comment=Modern multi-platform IRC client
 # The Exec line includes %u to pass the URL to the application
-Exec=/usr/local/bin/cascaderef %u
+Exec=/usr/local/bin/cascade %u
 Terminal=false
 Type=Application
-Icon=cascaderef
+Icon=cascade
 Categories=Utility;
-StartupWMClass=cascaderef
+StartupWMClass=cascade
 
  
