@@ -509,7 +509,7 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
                 else messageRefs.current.delete(msg.id);
               }}
               data-testid="message-item"
-              className={`group flex space-x-3 py-1 px-2 rounded transition-colors ${
+              className={`group flex items-baseline space-x-3 py-1 px-2 rounded transition-colors ${
                 hasMention
                   ? 'cc-mention border-l-2'
                   : isError
