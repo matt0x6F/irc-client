@@ -29,7 +29,7 @@ You only need to do this once; afterwards it launches normally.
 ### Prerequisites
 
 - Go 1.25+ (required by Wails v3)
-- Node.js 20+
+- Node.js 20 (see `.nvmrc`; with nvm run `nvm use` so `task` can find npm)
 - Task: `go install github.com/go-task/task/v3/cmd/task@latest` (or `brew install go-task`)
 - Wails v3 CLI: `go install github.com/wailsapp/wails/v3/cmd/wails3@latest`
 
