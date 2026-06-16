@@ -6,9 +6,6 @@ import App from './App'
 import { initTheme } from './stores/theme'
 import { installExternalLinkHandler } from './lib/external-links'
 
-// Apply the persisted theme to <html> before first paint (no flash of wrong theme).
-initTheme()
-
 // Suppress expected Wails dev mode WebSocket errors
 // These occur when Wails tries to connect to the dev server before it's ready
 const originalError = console.error
@@ -60,8 +57,14 @@ const container = document.getElementById('root')
 
 const root = createRoot(container!)
 
-root.render(
-    <React.StrictMode>
-        <App/>
-    </React.StrictMode>
-)
+// Load the persisted theme (now stored in the backend DB, not localStorage)
+// before the first paint to avoid a flash of the wrong theme. initTheme applies
+// a synchronous default first and always resolves, so a slow or failed read
+// still renders the app.
+initTheme().finally(() => {
+    root.render(
+        <React.StrictMode>
+            <App/>
+        </React.StrictMode>
+    )
+})

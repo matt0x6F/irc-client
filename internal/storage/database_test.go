@@ -1220,3 +1220,61 @@ func TestMigratePMTargetBackfill(t *testing.T) {
 		t.Fatalf("received PM not backfilled: expected 1, got %d", len(msgs))
 	}
 }
+
+// ---------- Settings (durable key/value prefs) ----------
+
+// TestSettingsPersistAcrossReopen is the regression test for theme/accent not
+// surviving an app restart. The UI used to persist these in the WKWebView's
+// localStorage, which macOS does not retain across launches, so the theme reset
+// on every relaunch. They now live in SQLite, so a value written in one session
+// must be readable after the database is closed and reopened — the storage-layer
+// equivalent of relaunching the app.
+func TestSettingsPersistAcrossReopen(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "settings.db")
+
+	s, err := NewStorage(dbPath, 100, 50*time.Millisecond)
+	if err != nil {
+		t.Fatalf("NewStorage: %v", err)
+	}
+
+	// A missing key reads back as empty (not an error) so the frontend can fall
+	// back to its built-in defaults.
+	if got, err := s.GetSetting("theme.mode"); err != nil {
+		t.Fatalf("GetSetting(missing): %v", err)
+	} else if got != "" {
+		t.Errorf("expected empty string for missing key, got %q", got)
+	}
+
+	if err := s.SetSetting("theme.mode", "dark"); err != nil {
+		t.Fatalf("SetSetting(theme.mode): %v", err)
+	}
+	if err := s.SetSetting("theme.accent", "rose"); err != nil {
+		t.Fatalf("SetSetting(theme.accent): %v", err)
+	}
+	// Upsert: writing the same key again replaces the value.
+	if err := s.SetSetting("theme.mode", "light"); err != nil {
+		t.Fatalf("SetSetting(theme.mode update): %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// Reopen the same database file — the storage-layer equivalent of relaunching.
+	s2, err := NewStorage(dbPath, 100, 50*time.Millisecond)
+	if err != nil {
+		t.Fatalf("NewStorage(reopen): %v", err)
+	}
+	t.Cleanup(func() { _ = s2.Close() })
+
+	if mode, err := s2.GetSetting("theme.mode"); err != nil {
+		t.Fatalf("GetSetting(theme.mode): %v", err)
+	} else if mode != "light" {
+		t.Errorf("theme.mode: expected %q after reopen, got %q", "light", mode)
+	}
+	if accent, err := s2.GetSetting("theme.accent"); err != nil {
+		t.Fatalf("GetSetting(theme.accent): %v", err)
+	} else if accent != "rose" {
+		t.Errorf("theme.accent: expected %q after reopen, got %q", "rose", accent)
+	}
+}

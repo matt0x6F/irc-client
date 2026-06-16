@@ -91,6 +91,11 @@ func Migrate(db *sqlx.DB) error {
 		return fmt.Errorf("timestamp normalization migration failed: %w", err)
 	}
 
+	// Handle settings table migration (durable key/value prefs: theme, accent, ...)
+	if err := migrateSettings(db); err != nil {
+		return fmt.Errorf("settings migration failed: %w", err)
+	}
+
 	return nil
 }
 
@@ -740,5 +745,23 @@ func migrateFTS5(db *sqlx.DB) error {
 		}
 	}
 
+	return nil
+}
+
+const createSettingsTable = `
+CREATE TABLE IF NOT EXISTS settings (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+`
+
+// migrateSettings creates the settings key/value table if it doesn't exist.
+// This is the durable home for UI preferences (theme mode, accent) that the
+// frontend can no longer persist in the WKWebView's localStorage.
+func migrateSettings(db *sqlx.DB) error {
+	if _, err := db.Exec(createSettingsTable); err != nil {
+		return fmt.Errorf("failed to create settings table: %w", err)
+	}
 	return nil
 }

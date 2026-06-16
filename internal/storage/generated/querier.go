@@ -54,11 +54,13 @@ type Querier interface {
 	GetPrivateMessageConversationsOpen(ctx context.Context, networkID int64) ([]string, error)
 	GetPrivateMessages(ctx context.Context, arg GetPrivateMessagesParams) ([]Message, error)
 	GetServers(ctx context.Context, networkID int64) ([]Server, error)
+	GetSetting(ctx context.Context, key string) (string, error)
 	PinMessage(ctx context.Context, arg PinMessageParams) error
 	RemoveChannelUser(ctx context.Context, arg RemoveChannelUserParams) error
 	SetPluginConfig(ctx context.Context, arg SetPluginConfigParams) error
 	SetPluginConfigSchema(ctx context.Context, arg SetPluginConfigSchemaParams) error
 	SetPluginEnabled(ctx context.Context, arg SetPluginEnabledParams) error
+	SetSetting(ctx context.Context, arg SetSettingParams) error
 	UnpinMessage(ctx context.Context, messageID int64) error
 	UpdateChannelAutoJoin(ctx context.Context, arg UpdateChannelAutoJoinParams) error
 	UpdateChannelIsOpen(ctx context.Context, arg UpdateChannelIsOpenParams) error

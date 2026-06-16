@@ -338,6 +338,19 @@ func (a *App) GetMessagesAround(networkID int64, channelID *int64, targetID int6
 	return a.storage.GetMessagesAround(networkID, channelID, targetID, window)
 }
 
+// GetSetting returns a persisted UI/app preference by key. A missing key
+// returns an empty string (not an error) so the frontend can apply its default.
+// Used for preferences like theme mode and accent that can't live in the
+// WKWebView's localStorage because macOS drops it between launches.
+func (a *App) GetSetting(key string) (string, error) {
+	return a.storage.GetSetting(key)
+}
+
+// SetSetting persists a UI/app preference by key.
+func (a *App) SetSetting(key, value string) error {
+	return a.storage.SetSetting(key, value)
+}
+
 // GetChannels retrieves channels for a network
 func (a *App) GetChannels(networkID int64) ([]storage.Channel, error) {
 	return a.storage.GetChannels(networkID)
