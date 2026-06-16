@@ -144,15 +144,16 @@ export function useNicknameColors(networkId: number | null, nicknames: string[])
           if (nicknames.includes(user) && !colors.has(user)) {
             // Fetch colors for this specific user
             GetNicknameColorsBatch(networkId, [user]).then(colorMap => {
-              if (colorMap[user]) {
+              const color = colorMap[user];
+              if (color) {
                 setColors(prev => {
                   const next = new Map(prev);
-                  next.set(user, colorMap[user]);
+                  next.set(user, color);
                   // Update cache
                   if (!cacheRef.current[networkId]) {
                     cacheRef.current[networkId] = { colors: {}, lastUpdate: Date.now() };
                   }
-                  cacheRef.current[networkId].colors[user] = colorMap[user];
+                  cacheRef.current[networkId].colors[user] = color;
                   cacheRef.current[networkId].lastUpdate = Date.now();
                   return next;
                 });

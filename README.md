@@ -28,9 +28,10 @@ You only need to do this once; afterwards it launches normally.
 
 ### Prerequisites
 
-- Go 1.21+
-- Node.js 18+
-- Wails CLI: `go install github.com/wailsapp/wails/v2/cmd/wails@latest`
+- Go 1.25+ (required by Wails v3)
+- Node.js 20+
+- Task: `go install github.com/go-task/task/v3/cmd/task@latest` (or `brew install go-task`)
+- Wails v3 CLI: `go install github.com/wailsapp/wails/v3/cmd/wails3@latest`
 
 ### Installation
 
@@ -49,7 +50,7 @@ task dev
 
 Or use Wails directly:
 ```bash
-wails dev
+wails3 dev
 ```
 
 ### Building
@@ -59,9 +60,9 @@ Build for your current platform:
 task build
 ```
 
-Build for all platforms:
+Package a distributable `.app` bundle / installer:
 ```bash
-task build-all
+task package
 ```
 
 ## Taskfile Commands

@@ -23,17 +23,22 @@ export default async function globalSetup(): Promise<void> {
   if (up.status !== 0) throw new Error('docker compose up failed');
   await waitForTcp('localhost', ergoPort, 60_000);
 
-  // 2. Spawn `wails dev` (own process group so teardown can kill the whole tree).
-  //    `-tags fts5` is REQUIRED: without it the Go app crashes at startup on the
-  //    SQLite FTS5 migration. `-frontenddevserverurl` is REQUIRED for per-worktree
-  //    isolation: wails.json hardcodes `frontend:dev:serverUrl: http://localhost:5173`,
-  //    so without this override Wails proxies the bridge to the fixed 5173 instead of
-  //    our dynamic VITE_PORT, breaking parallel runs. Vite reads VITE_PORT (see
-  //    frontend/vite.config.ts), so the watcher and this URL resolve to the same port.
+  // 2. Spawn `wails3 dev` (own process group so teardown can kill the whole tree).
+  //    Wails v3 dev model: `-port` sets the Vite dev-server port and `wails3 dev`
+  //    exports FRONTEND_DEVSERVER_URL=http://localhost:<port>, which the app loads
+  //    its frontend from. The fts5 tag is no longer passed here — it is hardcoded
+  //    in the platform build Taskfiles (build/<os>/Taskfile.yml), which `wails3 dev`
+  //    invokes via `wails3 build DEV=true`. Vite reads VITE_PORT (frontend/vite.config.ts)
+  //    so the watcher and the dev-server URL resolve to the same per-worktree port.
+  //
+  //    NOTE: v3 replaces v2's standalone `-devserver` HTTP bridge with the Vite
+  //    dev server. The Playwright connection below targets the Vite origin. This
+  //    harness was migrated to the v3 invocation but must be validated on a host
+  //    that can run the full headless GUI stack (Docker Ergo + xvfb + WebKitGTK).
   const logFd = fs.openSync(logFile, 'w');
   const child = spawn(
-    'wails',
-    ['dev', '-tags', 'fts5', '-devserver', `localhost:${bridgePort}`, '-frontenddevserverurl', `http://localhost:${vitePort}`, '-loglevel', 'Warning'],
+    'wails3',
+    ['dev', '-config', './build/config.yml', '-port', String(vitePort)],
     {
       cwd: repoRoot,
       env: { ...process.env, CASCADE_DATA_DIR: dataDir, VITE_PORT: String(vitePort), CGO_ENABLED: '1' },
@@ -65,7 +70,7 @@ export default async function globalSetup(): Promise<void> {
   // the full timeout. The trailing .catch avoids an unhandledRejection once
   // readiness wins the race.
   const spawnFailed = new Promise<never>((_, reject) => {
-    child.on('error', (err) => reject(new Error(`failed to spawn wails dev: ${err.message}`)));
+    child.on('error', (err) => reject(new Error(`failed to spawn wails3 dev: ${err.message}`)));
   });
   spawnFailed.catch(() => {});
 
@@ -74,15 +79,18 @@ export default async function globalSetup(): Promise<void> {
   // immediately on exit instead of blindly polling until the readiness timeout.
   const processExited = new Promise<never>((_, reject) => {
     child.on('exit', (code, signal) =>
-      reject(new Error(`wails dev exited before becoming ready (code=${code}, signal=${signal})`)),
+      reject(new Error(`wails3 dev exited before becoming ready (code=${code}, signal=${signal})`)),
     );
   });
   processExited.catch(() => {});
 
-  const bridgeUrl = `http://localhost:${bridgePort}`;
+  // In v3 the app's frontend is served by the Vite dev server on vitePort; there
+  // is no separate v2 `-devserver` bridge. Playwright connects to the Vite origin.
+  const bridgeUrl = `http://localhost:${vitePort}`;
   try {
-    // 3. Wait for the bridge (Go compile can take a while on first run).
-    const ready = waitForHttp200(`${bridgeUrl}/wails/ipc.js`, 180_000);
+    // 3. Wait for the Vite dev server to serve the app (Go compile + Vite start
+    //    can take a while on first run).
+    const ready = waitForHttp200(`${bridgeUrl}/`, 180_000);
     await Promise.race([ready, spawnFailed, processExited]);
   } catch (err) {
     cleanupPartial();

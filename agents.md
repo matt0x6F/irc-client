@@ -202,16 +202,19 @@ IRC Event → EventBus → [Subscribers]
 2. **Development**:
    ```bash
    # Run in dev mode (hot reload)
-   wails dev
+   task dev          # or: wails3 dev -config ./build/config.yml
    ```
 
 3. **Building**:
    ```bash
    # Build for current platform
-   wails build
-   
-   # Build for specific platform
-   wails build -platform darwin/amd64
+   task build
+
+   # Package a distributable .app / installer
+   task package
+
+   # macOS universal binary
+   task darwin:package:universal
    ```
 
 4. **Testing**:

@@ -16,12 +16,12 @@ import (
 	"github.com/matt0x6f/irc-client/internal/plugin"
 	"github.com/matt0x6f/irc-client/internal/security"
 	"github.com/matt0x6f/irc-client/internal/storage"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 // App struct
 type App struct {
-	ctx                  context.Context
+	app                  *application.App // Wired in ServiceStartup; nil until the app is running.
 	storage              *storage.Storage
 	eventBus             *events.EventBus
 	pluginManager        *plugin.Manager
@@ -116,18 +116,30 @@ func NewApp() (*App, error) {
 	return app, nil
 }
 
-// startup is called when the app starts
-func (a *App) startup(ctx context.Context) {
-	a.ctx = ctx
+// emit forwards an event to the frontend. It is a no-op until the Wails
+// application reference is wired up in ServiceStartup, which centralises the
+// readiness guard that v2 spread across every runtime.EventsEmit call site.
+func (a *App) emit(name string, data ...any) {
+	if a.app == nil {
+		return
+	}
+	a.app.Event.Emit(name, data...)
+}
+
+// ServiceStartup is the v3 service lifecycle hook, replacing v2's OnStartup.
+// It receives a context valid for the application's lifetime; returning an
+// error aborts application startup.
+func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) error {
+	a.app = application.Get()
 	a.startupCtx, a.startupCancel = context.WithCancel(context.Background())
 	logger.Log.Info().Msg("App startup function called")
 
 	// Track window focus state for notification suppression.
 	// The frontend emits these events via window focus/blur DOM listeners.
-	runtime.EventsOn(ctx, "window-focused", func(optionalData ...interface{}) {
+	a.app.Event.On("window-focused", func(_ *application.CustomEvent) {
 		a.notifier.SetFocused(true)
 	})
-	runtime.EventsOn(ctx, "window-blurred", func(optionalData ...interface{}) {
+	a.app.Event.On("window-blurred", func(_ *application.CustomEvent) {
 		a.notifier.SetFocused(false)
 	})
 
@@ -152,10 +164,14 @@ func (a *App) startup(ctx context.Context) {
 		defer a.startupWg.Done()
 		a.autoConnect(a.startupCtx)
 	}()
+
+	return nil
 }
 
-// shutdown is called when the app shuts down
-func (a *App) shutdown(ctx context.Context) {
+// ServiceShutdown is the v3 service lifecycle hook, replacing v2's OnShutdown.
+// v3 calls it during graceful shutdown (including on OS signals, which v3
+// handles itself). The shutdownOnce guard keeps it idempotent.
+func (a *App) ServiceShutdown() error {
 	a.shutdownOnce.Do(func() {
 		logger.Log.Info().Msg("App shutdown initiated")
 
@@ -215,6 +231,8 @@ func (a *App) shutdown(ctx context.Context) {
 
 		logger.Log.Info().Msg("App shutdown complete")
 	})
+
+	return nil
 }
 
 // --- Data retrieval methods (thin wrappers over storage) ---
@@ -857,37 +875,27 @@ func (a *App) GetPluginConfigSchema(pluginName string) (map[string]interface{}, 
 // OpenSettings emits an event to open the settings modal
 func (a *App) OpenSettings() {
 	logger.Log.Debug().Msg("OpenSettings called")
-	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "open-settings")
-	}
+	a.emit("open-settings")
 }
 
 // OpenSettingsNetworks emits an event to open settings to the networks section
 func (a *App) OpenSettingsNetworks() {
-	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "open-settings", "networks")
-	}
+	a.emit("open-settings", "networks")
 }
 
 // OpenSettingsPlugins emits an event to open settings to the plugins section
 func (a *App) OpenSettingsPlugins() {
-	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "open-settings", "plugins")
-	}
+	a.emit("open-settings", "plugins")
 }
 
 // OpenSettingsDisplay emits an event to open settings to the display section
 func (a *App) OpenSettingsDisplay() {
-	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "open-settings", "display")
-	}
+	a.emit("open-settings", "display")
 }
 
 // OpenSettingsAbout emits an event to open settings to the about section
 func (a *App) OpenSettingsAbout() {
-	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "open-settings", "about")
-	}
+	a.emit("open-settings", "about")
 }
 
 // SearchMessages performs full-text search across stored messages
