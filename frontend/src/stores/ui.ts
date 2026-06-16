@@ -1,14 +1,9 @@
 import { create } from 'zustand';
 
-type SettingsSection = 'networks' | 'plugins' | 'display' | 'about' | undefined;
+// Settings is now its own native window (opened from the Go backend via
+// App.OpenSettings), not an in-app modal — so no settings state lives here.
 
 interface UIState {
-  // Settings modal
-  showSettings: boolean;
-  settingsSection: SettingsSection;
-  openSettings: (section?: SettingsSection) => void;
-  closeSettings: () => void;
-
   // Topic modal
   showTopicModal: boolean;
   setShowTopicModal: (show: boolean) => void;
@@ -57,13 +52,6 @@ interface UIState {
 }
 
 export const useUIStore = create<UIState>((set) => ({
-  showSettings: false,
-  settingsSection: undefined,
-  openSettings: (section) =>
-    set({ showSettings: true, settingsSection: section }),
-  closeSettings: () =>
-    set({ showSettings: false, settingsSection: undefined }),
-
   showTopicModal: false,
   setShowTopicModal: (show) => set({ showTopicModal: show }),
 

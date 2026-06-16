@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { GetSetting, SetSetting } from '../../wailsjs/go/main/App';
+import { EventsOn } from '../../wailsjs/runtime/runtime';
 
 export type ThemeMode = 'light' | 'dark' | 'system';
 export type Accent = 'blue' | 'purple' | 'emerald' | 'rose' | 'amber';
@@ -98,6 +99,21 @@ export async function initTheme(): Promise<void> {
     // Only react when following the system; explicit light/dark are untouched.
     if (useThemeStore.getState().mode === 'system') {
       applyTheme('system', useThemeStore.getState().accent);
+    }
+  });
+
+  // Reconcile when theme is changed from another window (e.g. the standalone
+  // Settings window changes the accent → the main window re-themes live). This
+  // only updates in-memory state + re-applies to <html>; it must never call
+  // SetSetting back, or it would loop. The echo to the originating window is
+  // idempotent (same value, same DOM write).
+  EventsOn('setting:changed', (payload: { key: string; value: string }) => {
+    if (payload.key === MODE_KEY && isMode(payload.value)) {
+      useThemeStore.setState({ mode: payload.value });
+      applyTheme(payload.value, useThemeStore.getState().accent);
+    } else if (payload.key === ACCENT_KEY && isAccent(payload.value)) {
+      useThemeStore.setState({ accent: payload.value });
+      applyTheme(useThemeStore.getState().mode, payload.value);
     }
   });
 }

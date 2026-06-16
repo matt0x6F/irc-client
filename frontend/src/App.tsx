@@ -1,12 +1,11 @@
 import { useEffect, useCallback, useRef } from 'react';
-import { SendCommand } from '../wailsjs/go/main/App';
+import { SendCommand, OpenSettings } from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime/runtime';
 import { useNetworkStore } from './stores/network';
 import { useUIStore } from './stores/ui';
 import { ServerTree } from './components/server-tree';
 import { MessageView } from './components/message-view';
 import { InputArea } from './components/input-area';
-import { SettingsModal } from './components/settings-modal';
 import { ChannelInfo } from './components/channel-info';
 import { PinnedMessages } from './components/pinned-messages';
 import { TopicEditModal } from './components/topic-edit-modal';
@@ -46,10 +45,6 @@ function App() {
   const restoreLastPane = useNetworkStore((s) => s.restoreLastPane);
 
   // UI store
-  const showSettings = useUIStore((s) => s.showSettings);
-  const settingsSection = useUIStore((s) => s.settingsSection);
-  const openSettings = useUIStore((s) => s.openSettings);
-  const closeSettings = useUIStore((s) => s.closeSettings);
   const showTopicModal = useUIStore((s) => s.showTopicModal);
   const setShowTopicModal = useUIStore((s) => s.setShowTopicModal);
   const showModeModal = useUIStore((s) => s.showModeModal);
@@ -108,10 +103,10 @@ function App() {
         return;
       }
 
-      // Cmd/Ctrl+, — Open settings
+      // Cmd/Ctrl+, — Open the standalone Settings window
       if (mod && e.key === ',') {
         e.preventDefault();
-        openSettings(undefined);
+        void OpenSettings();
         return;
       }
 
@@ -164,10 +159,6 @@ function App() {
           closeSearch();
           return;
         }
-        if (showSettings) {
-          closeSettings();
-          return;
-        }
         if (showTopicModal) {
           setShowTopicModal(false);
           return;
@@ -188,7 +179,7 @@ function App() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [openSearch, openSettings, toggleKeyboardShortcuts, closeKeyboardShortcuts, showKeyboardShortcuts, showSearch, closeSearch, showSettings, closeSettings, showTopicModal, setShowTopicModal, showModeModal, setShowModeModal, showUserInfo, setShowUserInfo, showChannelList, closeChannelList, toggleLeftSidebar, toggleRightSidebar]);
+  }, [openSearch, toggleKeyboardShortcuts, closeKeyboardShortcuts, showKeyboardShortcuts, showSearch, closeSearch, showTopicModal, setShowTopicModal, showModeModal, setShowModeModal, showUserInfo, setShowUserInfo, showChannelList, closeChannelList, toggleLeftSidebar, toggleRightSidebar]);
 
   // Responsive sidebar collapse on small windows.
   // Only react when the window actually crosses the breakpoint — otherwise a
@@ -215,12 +206,12 @@ function App() {
     loadNetworks();
     const interval = setInterval(loadNetworks, 5000);
 
-    const unsubscribe = EventsOn('open-settings', (section?: string) => {
-      if (section === 'networks' || section === 'plugins' || section === 'display' || section === 'about') {
-        openSettings(section);
-      } else {
-        openSettings(undefined);
-      }
+    // The backend broadcasts networks:changed after a save/delete/auto-connect
+    // toggle. When the change was made in the standalone Settings window, this is
+    // how the main window's list refreshes immediately rather than waiting on the
+    // poll above.
+    const unsubscribe = EventsOn('networks:changed', () => {
+      loadNetworks();
     });
 
     return () => {
@@ -732,7 +723,7 @@ function App() {
               )}
               {/* Settings */}
               <button
-                onClick={() => openSettings(undefined)}
+                onClick={() => void OpenSettings()}
                 className="p-1.5 rounded-md hover:bg-accent/50 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
                 title="Settings"
                 aria-label="Settings"
@@ -915,17 +906,6 @@ function App() {
       </div>
 
       {/* Modals */}
-      {showSettings && (
-        <SettingsModal
-          onClose={closeSettings}
-          initialSection={settingsSection}
-          onServerUpdate={() => {
-            loadNetworks();
-            loadConnectionStatus();
-          }}
-        />
-      )}
-
       {showTopicModal &&
         selectedNetwork !== null &&
         selectedChannel !== null &&

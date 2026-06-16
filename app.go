@@ -351,9 +351,17 @@ func (a *App) GetSetting(key string) (string, error) {
 	return a.storage.GetSetting(key)
 }
 
-// SetSetting persists a UI/app preference by key.
+// SetSetting persists a UI/app preference by key. After a successful write it
+// broadcasts a setting:changed event so every open window (e.g. the main window
+// and the standalone Settings window) can reconcile its in-memory copy live —
+// each webview is a separate JS context, so this is the only way a change in one
+// window reaches the others.
 func (a *App) SetSetting(key, value string) error {
-	return a.storage.SetSetting(key, value)
+	if err := a.storage.SetSetting(key, value); err != nil {
+		return err
+	}
+	a.emit("setting:changed", map[string]string{"key": key, "value": value})
+	return nil
 }
 
 // GetChannels retrieves channels for a network
@@ -890,30 +898,70 @@ func (a *App) GetPluginConfigSchema(pluginName string) (map[string]interface{}, 
 
 // --- Settings UI ---
 
-// OpenSettings emits an event to open the settings modal
+// settingsWindowName is the unique window name used to create/find the single
+// Settings window via the Wails window manager.
+const settingsWindowName = "settings"
+
+// openSettingsSection opens the Settings window to a given pane, or focuses the
+// existing one if it's already open. Settings is a standalone native window
+// (not an in-app modal): it loads the same embedded frontend bundle at
+// /?view=settings, which main.tsx branches on to render the settings UI. The
+// section is delivered two ways on purpose — via the URL for a cold open (the
+// webview isn't mounted yet, so an event would be missed) and via a
+// settings:navigate event when the window already exists.
+func (a *App) openSettingsSection(section string) {
+	if a.app == nil {
+		return
+	}
+	if w, ok := a.app.Window.GetByName(settingsWindowName); ok {
+		w.Show()
+		w.Focus()
+		a.emit("settings:navigate", section)
+		return
+	}
+
+	url := "/?view=settings"
+	if section != "" {
+		url += "&section=" + section
+	}
+	a.app.Window.NewWithOptions(application.WebviewWindowOptions{
+		Name:      settingsWindowName,
+		Title:     "Settings",
+		URL:       url,
+		Width:     900,
+		Height:    680,
+		MinWidth:  720,
+		MinHeight: 520,
+		// Match the main window so the native chrome doesn't flash white while
+		// the webview boots and applies the persisted theme.
+		BackgroundColour: application.NewRGB(27, 38, 54),
+	})
+}
+
+// OpenSettings opens (or focuses) the standalone Settings window.
 func (a *App) OpenSettings() {
 	logger.Log.Debug().Msg("OpenSettings called")
-	a.emit("open-settings")
+	a.openSettingsSection("")
 }
 
-// OpenSettingsNetworks emits an event to open settings to the networks section
+// OpenSettingsNetworks opens the Settings window to the networks section.
 func (a *App) OpenSettingsNetworks() {
-	a.emit("open-settings", "networks")
+	a.openSettingsSection("networks")
 }
 
-// OpenSettingsPlugins emits an event to open settings to the plugins section
+// OpenSettingsPlugins opens the Settings window to the plugins section.
 func (a *App) OpenSettingsPlugins() {
-	a.emit("open-settings", "plugins")
+	a.openSettingsSection("plugins")
 }
 
-// OpenSettingsDisplay emits an event to open settings to the display section
+// OpenSettingsDisplay opens the Settings window to the display section.
 func (a *App) OpenSettingsDisplay() {
-	a.emit("open-settings", "display")
+	a.openSettingsSection("display")
 }
 
-// OpenSettingsAbout emits an event to open settings to the about section
+// OpenSettingsAbout opens the Settings window to the about section.
 func (a *App) OpenSettingsAbout() {
-	a.emit("open-settings", "about")
+	a.openSettingsSection("about")
 }
 
 // SearchMessages performs full-text search across stored messages
