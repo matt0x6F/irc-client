@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -1234,6 +1235,31 @@ func (s *Storage) SetPluginEnabled(name string, enabled bool) error {
 	})
 	if err != nil {
 		return fmt.Errorf("failed to set plugin enabled state: %w", err)
+	}
+	return nil
+}
+
+// GetSetting returns the value for a key in the settings key/value store.
+// A missing key is not an error: it returns an empty string so callers can fall
+// back to their own defaults.
+func (s *Storage) GetSetting(key string) (string, error) {
+	value, err := s.queries.GetSetting(context.Background(), key)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return "", fmt.Errorf("failed to get setting %q: %w", key, err)
+	}
+	return value, nil
+}
+
+// SetSetting upserts a key/value pair in the settings store.
+func (s *Storage) SetSetting(key, value string) error {
+	if err := s.queries.SetSetting(context.Background(), db.SetSettingParams{
+		Key:   key,
+		Value: value,
+	}); err != nil {
+		return fmt.Errorf("failed to set setting %q: %w", key, err)
 	}
 	return nil
 }

@@ -384,6 +384,18 @@ export function GetServers(networkID) {
 }
 
 /**
+ * GetSetting returns a persisted UI/app preference by key. A missing key
+ * returns an empty string (not an error) so the frontend can apply its default.
+ * Used for preferences like theme mode and accent that can't live in the
+ * WKWebView's localStorage because macOS drops it between launches.
+ * @param {string} key
+ * @returns {$CancellablePromise<string>}
+ */
+export function GetSetting(key) {
+    return $Call.ByID(48053349, key);
+}
+
+/**
  * Greet returns a greeting for the given name (kept for compatibility)
  * @param {string} name
  * @returns {$CancellablePromise<string>}
@@ -614,6 +626,16 @@ export function SetPluginConfig(pluginName, config) {
  */
 export function SetPrivateMessageOpen(networkID, targetUser, isOpen) {
     return $Call.ByID(1106422473, networkID, targetUser, isOpen);
+}
+
+/**
+ * SetSetting persists a UI/app preference by key.
+ * @param {string} key
+ * @param {string} value
+ * @returns {$CancellablePromise<void>}
+ */
+export function SetSetting(key, value) {
+    return $Call.ByID(4214292049, key, value);
 }
 
 /**
