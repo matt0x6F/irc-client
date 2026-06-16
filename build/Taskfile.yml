@@ -194,17 +194,21 @@ tasks:
       - wails3 generate bindings -f '{{.BUILD_FLAGS}}' -clean=true{{if eq .OBFUSCATED "true"}} -obfuscated{{end}}
 
   generate:icons:
-    summary: Generates Windows `.ico` and Mac `.icns` from an image; on macOS, `-iconcomposerinput appicon.icon -macassetdir darwin` also produces `Assets.car` from a `.icon` file (skipped on other platforms).
+    summary: Generates the macOS `.icns` and Windows `.ico` from build/appicon.png.
+    # We deliberately do NOT generate an Assets.car from a `.icon` source: that
+    # path requires an Icon Composer document, and the scaffold ships the Wails
+    # default. Since modern macOS prefers Assets.car/CFBundleIconName over the
+    # .icns, a default Assets.car would override our real Cascade icon. Using the
+    # .icns (CFBundleIconFile) alone renders the correct logo everywhere.
     run: once
     dir: build
     sources:
       - "appicon.png"
-      - "appicon.icon"
     generates:
       - "darwin/icons.icns"
       - "windows/icon.ico"
     cmds:
-      - wails3 generate icons -input appicon.png -macfilename darwin/icons.icns -windowsfilename windows/icon.ico -iconcomposerinput appicon.icon -macassetdir darwin
+      - wails3 generate icons -input appicon.png -macfilename darwin/icons.icns -windowsfilename windows/icon.ico
 
   dev:frontend:
     summary: Runs the frontend in development mode
