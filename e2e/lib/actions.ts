@@ -113,6 +113,77 @@ export async function selectNetwork(page: Page, name = 'e2e'): Promise<void> {
   await page.getByTestId('message-input').waitFor({ state: 'visible', timeout: 10_000 });
 }
 
+/** Right-click a network node to open its context menu. */
+export async function openNetworkContextMenu(page: Page, name = 'e2e'): Promise<void> {
+  await page.getByTestId('server-tree').getByText(name, { exact: true }).click({ button: 'right' });
+  await page.getByTestId('context-menu').waitFor({ state: 'visible', timeout: 5_000 });
+}
+
+/** Dismiss any open context menu (Escape is wired to close it). */
+async function dismissContextMenu(page: Page): Promise<void> {
+  await page.keyboard.press('Escape');
+  await page
+    .getByTestId('context-menu')
+    .waitFor({ state: 'hidden', timeout: 5_000 })
+    .catch(() => {});
+}
+
+/**
+ * Read the network's persisted auto-connect preference by opening its context
+ * menu and reading the toggle button's reflected state, then closing the menu.
+ * After a page reload this reflects the value the backend persisted to SQLite.
+ */
+export async function readAutoConnect(page: Page, name = 'e2e'): Promise<boolean> {
+  await openNetworkContextMenu(page, name);
+  const value = await page
+    .getByTestId('toggle-auto-connect-button')
+    .getAttribute('data-auto-connect');
+  await dismissContextMenu(page);
+  return value === 'true';
+}
+
+/** Toggle the auto-connect preference for a network via its context menu. */
+export async function toggleAutoConnect(page: Page, name = 'e2e'): Promise<void> {
+  await openNetworkContextMenu(page, name);
+  await page.getByTestId('toggle-auto-connect-button').click();
+  // The menu closes itself after the toggle + network refresh completes.
+  await page.getByTestId('context-menu').waitFor({ state: 'hidden', timeout: 5_000 });
+}
+
+/**
+ * Connect to a network via its context-menu "Connect" entry (only present when
+ * the network is disconnected) and wait for its green indicator. This is the
+ * manual-connect path that historically clobbered the stored auto_connect flag.
+ * The indicator is scoped to the named network's row so it's unambiguous when
+ * other networks are also present in the shared-DB run.
+ */
+export async function connectViaContextMenu(page: Page, name = 'e2e'): Promise<void> {
+  await openNetworkContextMenu(page, name);
+  await page.getByTestId('context-menu').getByText('Connect', { exact: true }).click();
+  await page
+    .locator(
+      `xpath=//span[normalize-space(text())=${JSON.stringify(name)}]` +
+        `/preceding-sibling::span[@data-testid="network-status-indicator" and @data-connected="true"]`,
+    )
+    .waitFor({ state: 'visible', timeout: 30_000 });
+}
+
+/**
+ * Delete a network via its context-menu "Delete" entry and confirm the dialog,
+ * then wait for the node to disappear. Used to keep a dedicated network fully
+ * hermetic: the shared-DB suite assumes a single `e2e` network, so a spec that
+ * adds its own network must remove it (connection state and DB row) afterward.
+ * Best-effort no-op if the network isn't present.
+ */
+export async function deleteNetwork(page: Page, name: string): Promise<void> {
+  const node = page.getByTestId('server-tree').getByText(name, { exact: true });
+  if (!(await node.isVisible().catch(() => false))) return;
+  await openNetworkContextMenu(page, name);
+  await page.getByTestId('context-menu').getByText('Delete', { exact: true }).click();
+  await page.getByTestId('confirm-delete-network-button').click();
+  await node.waitFor({ state: 'hidden', timeout: 15_000 });
+}
+
 /** Join a channel via the /join command and open its pane. */
 export async function joinChannel(page: Page, channel: string): Promise<void> {
   const input = page.getByTestId('message-input');

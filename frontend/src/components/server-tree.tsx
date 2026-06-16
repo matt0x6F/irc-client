@@ -484,6 +484,7 @@ export function ServerTree({
       {contextMenu.type && (
         <div
           ref={contextMenuRef}
+          data-testid="context-menu"
           className="fixed border border-border rounded-lg shadow-[var(--shadow-lg)] z-50 w-auto py-1 bg-card/95 backdrop-blur-md"
           style={{ 
             left: contextMenu.x, 
@@ -583,6 +584,8 @@ export function ServerTree({
               )}
               <div className="border-t border-border my-1" />
               <button
+                data-testid="toggle-auto-connect-button"
+                data-auto-connect={contextMenuNetworkData?.auto_connect ? 'true' : 'false'}
                 className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
                 style={{ transition: 'var(--transition-base)' }}
                 onClick={async () => {
@@ -979,6 +982,7 @@ export function ServerTree({
                 Cancel
               </button>
               <button
+                data-testid="confirm-delete-network-button"
                 className="px-4 py-2 text-sm bg-destructive text-destructive-foreground rounded hover:bg-destructive/90 font-medium"
                 onClick={async () => {
                   const { serverId } = showDeleteConfirm;
