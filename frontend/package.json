@@ -33,6 +33,7 @@
     "@wailsio/runtime": "^3.0.0-alpha.79",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "emoji-picker-react": "^4.19.1",
     "lucide-react": "^0.562.0",
     "tailwind-merge": "^3.4.0",
     "zustand": "^5.0.12"
