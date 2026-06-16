@@ -168,6 +168,22 @@ export async function connectViaContextMenu(page: Page, name = 'e2e'): Promise<v
     .waitFor({ state: 'visible', timeout: 30_000 });
 }
 
+/**
+ * Delete a network via its context-menu "Delete" entry and confirm the dialog,
+ * then wait for the node to disappear. Used to keep a dedicated network fully
+ * hermetic: the shared-DB suite assumes a single `e2e` network, so a spec that
+ * adds its own network must remove it (connection state and DB row) afterward.
+ * Best-effort no-op if the network isn't present.
+ */
+export async function deleteNetwork(page: Page, name: string): Promise<void> {
+  const node = page.getByTestId('server-tree').getByText(name, { exact: true });
+  if (!(await node.isVisible().catch(() => false))) return;
+  await openNetworkContextMenu(page, name);
+  await page.getByTestId('context-menu').getByText('Delete', { exact: true }).click();
+  await page.getByTestId('confirm-delete-network-button').click();
+  await node.waitFor({ state: 'hidden', timeout: 15_000 });
+}
+
 /** Join a channel via the /join command and open its pane. */
 export async function joinChannel(page: Page, channel: string): Promise<void> {
   const input = page.getByTestId('message-input');

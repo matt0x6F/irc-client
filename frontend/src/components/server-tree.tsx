@@ -982,6 +982,7 @@ export function ServerTree({
                 Cancel
               </button>
               <button
+                data-testid="confirm-delete-network-button"
                 className="px-4 py-2 text-sm bg-destructive text-destructive-foreground rounded hover:bg-destructive/90 font-medium"
                 onClick={async () => {
                   const { serverId } = showDeleteConfirm;
