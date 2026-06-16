@@ -58,6 +58,14 @@ tasks:
     cmds:
       - task: darwin:dmg:universal
 
+  zip-universal:
+    desc: Build a universal macOS .zip + SHA256SUMS for the self-updater (arm64 + amd64; macOS only)
+    preconditions:
+      - sh: test "{{OS}}" = "darwin"
+        msg: "Zip packaging is macOS-only."
+    cmds:
+      - task: darwin:zip:universal
+
   run:
     desc: Run the built application
     cmds:

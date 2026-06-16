@@ -56,7 +56,7 @@ jobs:
             echo "value=dev-${SHA::7}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Build universal app & DMG
+      - name: Build universal app, DMG & update zip
         # The fts5 tag + CGO (SQLite FTS) and version ldflags are applied by the v3
         # platform Taskfile (build/darwin/Taskfile.yml). It reads APP_VERSION/
         # APP_COMMIT/APP_BUILD_DATE env overrides to stamp the release metadata
@@ -65,6 +65,7 @@ jobs:
           CGO_ENABLED: '1'
           APP_VERSION: ${{ steps.version.outputs.value }}
           APP_COMMIT: ${{ github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           export APP_COMMIT="${APP_COMMIT::7}"
           export APP_BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -73,6 +74,16 @@ jobs:
           # Uses hdiutil; run `brew install create-dmg` first for a prettier layout.
           wails3 task darwin:dmg:universal
           echo "DMG=bin/Cascade-${APP_VERSION}-universal.dmg" >> "$GITHUB_ENV"
+          # On a published release also produce the updater artifact: a .zip of the
+          # .app (the self-updater rejects .dmg) plus a SHA256SUMS sidecar the github
+          # provider verifies downloads against. Skipped on merge-to-main builds —
+          # the updater only ever runs against published releases — so routine pushes
+          # don't pay for a second packaging pass.
+          if [ "$EVENT_NAME" = "release" ]; then
+            wails3 task darwin:zip:universal
+            echo "ZIP=bin/Cascade-${APP_VERSION}-universal.zip" >> "$GITHUB_ENV"
+            echo "SUMS=bin/SHA256SUMS" >> "$GITHUB_ENV"
+          fi
 
       - name: Upload build artifact (merge to main)
         if: github.event_name == 'push'
@@ -82,11 +93,13 @@ jobs:
           path: ${{ env.DMG }}
           retention-days: 45
 
-      - name: Attach DMG to release
+      - name: Attach DMG, update zip & checksums to release
         if: github.event_name == 'release'
         # The release already exists (a human published it), so we only upload the
-        # asset. --clobber overwrites a stale DMG if the workflow is re-run.
+        # assets. The DMG is the first-time human download; the .zip + SHA256SUMS are
+        # what app.Updater pulls and verifies. --clobber overwrites stale assets if
+        # the workflow is re-run.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG_NAME: ${{ github.event.release.tag_name }}
-        run: gh release upload "$TAG_NAME" "$DMG" --clobber
+        run: gh release upload "$TAG_NAME" "$DMG" "$ZIP" "$SUMS" --clobber

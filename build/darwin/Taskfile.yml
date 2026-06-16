@@ -220,6 +220,15 @@ tasks:
         vars:
           LABEL: "-universal"
 
+  zip:universal:
+    summary: Build a universal (arm64 + amd64) .zip + SHA256SUMS for the self-updater
+    deps:
+      - task: package:universal
+    cmds:
+      - task: create:zip
+        vars:
+          LABEL: "-universal"
+
   create:dmg:
     summary: Wraps bin/<app>.app into a compressed .dmg (create-dmg if available, else hdiutil)
     internal: true
@@ -258,3 +267,36 @@ tasks:
         fi
         rm -rf "$STAGE"
         echo "Built $DMG"
+
+  create:zip:
+    summary: Zips bin/<app>.app into a .zip (single top-level entry) + SHA256SUMS for the self-updater
+    internal: true
+    vars:
+      # Match the binary's version stamp: APP_VERSION env override, else git.
+      VERSION:
+        sh: echo "${APP_VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo dev)}"
+      ZIP_NAME: 'Cascade-{{.VERSION}}{{.LABEL}}.zip'
+    cmds:
+      - |
+        set -euo pipefail
+        APP="{{.BIN_DIR}}/{{.APP_NAME}}.app"
+        ZIP_NAME="{{.ZIP_NAME}}"
+        ZIP="{{.BIN_DIR}}/$ZIP_NAME"
+        if [ ! -d "$APP" ]; then
+          echo "missing $APP — run 'task package' first" >&2
+          exit 1
+        fi
+        rm -f "$ZIP"
+        # ditto --keepParent makes the .app the single top-level entry in the archive,
+        # which is exactly what the Wails updater requires (it rejects archives with
+        # more than one top-level entry) and gives the helper a real .app directory to
+        # swap into place. ditto also preserves the bundle's symlinks and ad-hoc
+        # codesignature, which a plain `zip` would corrupt.
+        ditto -c -k --keepParent "$APP" "$ZIP"
+        # SHA256SUMS must list the artifact by BASENAME so the github provider's
+        # ChecksumAsset lookup matches the line to the downloaded asset. Generating it
+        # from inside bin/ keeps the path a bare filename, and the file is rewritten
+        # fresh each run so stale entries never accumulate.
+        ( cd "{{.BIN_DIR}}" && shasum -a 256 "$ZIP_NAME" > SHA256SUMS )
+        echo "Built $ZIP"
+        echo "Wrote {{.BIN_DIR}}/SHA256SUMS"
