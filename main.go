@@ -3,8 +3,11 @@ package main
 import (
 	"embed"
 	"runtime"
+	"strings"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/updater"
+	"github.com/wailsapp/wails/v3/pkg/updater/providers/github"
 )
 
 //go:embed all:frontend/dist
@@ -32,6 +35,33 @@ func main() {
 			Handler: application.BundledAssetFileServer(assets),
 		},
 	})
+
+	// Wire up in-app self-updates. The updater is only configured for real
+	// release builds: dev and CI-merge builds carry a non-release version
+	// string (see isReleaseVersion) and must never replace themselves with a
+	// published release. When configured, app.Updater drives the framework's
+	// download → verify → atomic-swap → relaunch flow against GitHub Releases,
+	// authenticating each download against the release's SHA256SUMS sidecar.
+	// The window is themed to the user's persisted accent. The periodic check
+	// is started later from ServiceStartup (see app_updater.go) rather than via
+	// Config.CheckInterval, so background polling never pops the window unless
+	// an update is actually found.
+	if isReleaseVersion(version) {
+		gh, err := github.New(github.Config{
+			Repository:    "matt0x6f/irc-client",
+			ChecksumAsset: "SHA256SUMS",
+			AssetMatcher:  matchDarwinUniversalZip,
+		})
+		if err != nil {
+			println("Error creating updater provider:", err.Error())
+		} else if err := app.Updater.Init(updater.Config{
+			CurrentVersion: version,
+			Providers:      []updater.Provider{gh},
+			Window:         &updater.BuiltinWindow{CSS: ircApp.updaterAccentCSS()},
+		}); err != nil {
+			println("Error initializing updater:", err.Error())
+		}
+	}
 
 	// Build and attach the application menu.
 	app.Menu.SetApplicationMenu(buildMenu(app, ircApp))
@@ -85,11 +115,43 @@ func buildMenu(app *application.App, ircApp *App) *application.Menu {
 		menu.AddRole(application.WindowMenu)
 	}
 
-	// Help menu with an About entry that opens the About settings pane.
+	// Help menu with a manual update check and an About entry that opens the
+	// About settings pane. CheckForUpdates is a no-op (with a frontend toast)
+	// on dev builds where the updater was never configured.
 	helpMenu := menu.AddSubmenu("Help")
+	helpMenu.Add("Check for Updates…").OnClick(func(*application.Context) {
+		ircApp.CheckForUpdates()
+	})
 	helpMenu.Add("About Cascade").OnClick(func(*application.Context) {
 		ircApp.OpenSettingsAbout()
 	})
 
 	return menu
+}
+
+// matchDarwinUniversalZip selects the universal macOS .zip asset the updater
+// should download from a GitHub release. The stock github.DefaultAssetMatcher
+// keys on GOOS+GOARCH substrings, but Cascade ships a single universal binary
+// whose asset name carries neither "arm64" nor "amd64" — so we match the darwin
+// .zip explicitly and let the .dmg and SHA256SUMS siblings fall through.
+func matchDarwinUniversalZip(req updater.CheckRequest, assets []github.ReleaseAsset) int {
+	if req.Platform != "darwin" {
+		return -1
+	}
+	for i, a := range assets {
+		name := strings.ToLower(a.Name)
+		if strings.Contains(name, "universal") && strings.HasSuffix(name, ".zip") {
+			return i
+		}
+	}
+	return -1
+}
+
+// isReleaseVersion reports whether v looks like a published release version
+// rather than a dev build. version.go defaults to "dev"; CI merge-to-main
+// builds stamp "dev-<sha>". Only real releases (e.g. "1.2.0") enable the
+// updater, so a dev build never tries to swap itself toward a published
+// artifact.
+func isReleaseVersion(v string) bool {
+	return v != "" && v != "dev" && !strings.HasPrefix(v, "dev-")
 }

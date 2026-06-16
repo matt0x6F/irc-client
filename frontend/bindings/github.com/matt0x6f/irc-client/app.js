@@ -23,6 +23,21 @@ import * as storage$0 from "./internal/storage/models.js";
 import * as $models from "./models.js";
 
 /**
+ * CheckForUpdates is the Wails-bound manual update trigger, called from the
+ * "Check for Updates…" menu item and the About-pane button. On a dev build the
+ * updater was never configured (see isReleaseVersion in main.go); rather than
+ * silently doing nothing, we emit updater:unavailable so the frontend can toast
+ * a friendly explanation. Otherwise CheckAndInstall opens the framework's themed
+ * updater window, checks GitHub, and downloads/verifies/stages a newer release
+ * if one exists. A manual check intentionally always shows the window (including
+ * the reassuring "You're Up to Date" state).
+ * @returns {$CancellablePromise<void>}
+ */
+export function CheckForUpdates() {
+    return $Call.ByID(2675659504);
+}
+
+/**
  * ClearPaneFocus clears focus from a pane and emits an event
  * @param {number} networkID
  * @param {string} paneType

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { main, storage } from '../../wailsjs/go/models';
-import { GetNetworks, SaveNetwork, ConnectNetwork, DeleteNetwork, DisconnectNetwork, GetConnectionStatus, GetServers, ListPlugins, EnablePlugin, DisablePlugin, ReloadPlugin, GetBuildInfo, GetSetting, SetSetting } from '../../wailsjs/go/main/App';
+import { GetNetworks, SaveNetwork, ConnectNetwork, DeleteNetwork, DisconnectNetwork, GetConnectionStatus, GetServers, ListPlugins, EnablePlugin, DisablePlugin, ReloadPlugin, GetBuildInfo, GetSetting, SetSetting, CheckForUpdates } from '../../wailsjs/go/main/App';
+import { EventsOn } from '../../wailsjs/runtime/runtime';
 import { PluginConfigForm } from './plugin-config-form';
 import {
   Select,
@@ -126,6 +127,9 @@ export function SettingsModal({ onClose, onServerUpdate, initialSection }: Setti
   const [showAddForm, setShowAddForm] = useState(false);
   const [networkServers, setNetworkServers] = useState<Record<number, storage.Server[]>>({});
   const [buildInfo, setBuildInfo] = useState<main.BuildInfo | null>(null);
+  // Set when the backend reports the updater is unavailable (dev builds where
+  // it was never configured). Shown inline under the "Check for Updates…" button.
+  const [updateNotice, setUpdateNotice] = useState<string | null>(null);
 
   useEffect(() => {
     loadNetworks();
@@ -133,6 +137,16 @@ export function SettingsModal({ onClose, onServerUpdate, initialSection }: Setti
     GetBuildInfo()
       .then(setBuildInfo)
       .catch((error) => console.error('Failed to load build info:', error));
+  }, []);
+
+  // The backend emits updater:unavailable when "Check for Updates…" is pressed
+  // on a dev build (the updater is only configured for installed releases). In
+  // a real release build the framework's own updater window takes over instead.
+  useEffect(() => {
+    const unsubscribe = EventsOn('updater:unavailable', () => {
+      setUpdateNotice('Updates are only available in installed release builds.');
+    });
+    return () => unsubscribe();
   }, []);
 
   // Persist the selected pane whenever it changes (after hydration, so the
@@ -1147,6 +1161,25 @@ export function SettingsModal({ onClose, onServerUpdate, initialSection }: Setti
                   <dd className="font-mono" data-testid="about-build-date">{buildInfo?.buildDate ?? '—'}</dd>
                 </div>
               </dl>
+              <div className="pt-3 border-t border-border">
+                <button
+                  type="button"
+                  onClick={() => { void CheckForUpdates(); }}
+                  data-testid="check-for-updates-button"
+                  className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-accent transition-all shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)]"
+                  style={{ transition: 'var(--transition-base)' }}
+                >
+                  Check for Updates…
+                </button>
+                <p className="text-xs text-muted-foreground mt-2">
+                  Checks GitHub for a newer release and walks you through installing it. Available in installed release builds.
+                </p>
+                {updateNotice && (
+                  <p className="text-xs text-amber-500 mt-2" data-testid="update-notice">
+                    {updateNotice}
+                  </p>
+                )}
+              </div>
               <div className="pt-3 border-t border-border space-y-1 text-sm">
                 <a
                   href="https://github.com/matt0x6F/irc-client"
