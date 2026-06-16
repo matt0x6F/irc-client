@@ -10,6 +10,7 @@ import {
   SelectValue,
 } from './ui/select';
 import { useThemeStore, ACCENTS, type ThemeMode } from '../stores/theme';
+import { usePreferencesStore } from '../stores/preferences';
 
 type SettingsSection = 'networks' | 'plugins' | 'display' | 'about';
 
@@ -90,6 +91,10 @@ export function SettingsModal({ onClose, onServerUpdate, initialSection }: Setti
   const accent = useThemeStore((s) => s.accent);
   const setThemeMode = useThemeStore((s) => s.setMode);
   const setAccent = useThemeStore((s) => s.setAccent);
+
+  // Composer formatting toolbar visibility (shared live with the in-composer "Aa" toggle)
+  const showFormattingToolbar = usePreferencesStore((s) => s.showFormattingToolbar);
+  const setShowFormattingToolbar = usePreferencesStore((s) => s.setShowFormattingToolbar);
   const [pluginLoading, setPluginLoading] = useState<Set<string>>(new Set());
   const [expandedPlugins, setExpandedPlugins] = useState<Set<string>>(new Set());
   const [formData, setFormData] = useState<main.NetworkConfig>(main.NetworkConfig.createFrom({
@@ -1100,6 +1105,17 @@ export function SettingsModal({ onClose, onServerUpdate, initialSection }: Setti
                 </div>
                 <p className="text-xs text-muted-foreground mt-2">
                   When enabled, consecutive join, part, or quit messages of the same type will be combined into a single line (e.g., "A, B, C joins" instead of three separate lines).
+                </p>
+              </div>
+
+              {/* Composer */}
+              <div className="border border-border rounded-lg p-4 bg-card/50 shadow-[var(--shadow-sm)]">
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-sm font-medium">Show formatting toolbar</span>
+                  <Toggle checked={showFormattingToolbar} onChange={setShowFormattingToolbar} />
+                </div>
+                <p className="text-xs text-muted-foreground mt-2">
+                  Show the bold/italic/underline/colour buttons above the message input. Emoji and mention buttons stay available either way, and you can also toggle this with the "Aa" button in the composer.
                 </p>
               </div>
             </div>

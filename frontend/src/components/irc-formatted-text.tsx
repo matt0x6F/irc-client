@@ -10,7 +10,7 @@ interface IRCFormatState {
 }
 
 // IRC color palette (standard 16 colors)
-const IRC_COLORS: Record<number, string> = {
+export const IRC_COLORS: Record<number, string> = {
   0: '#FFFFFF', // White
   1: '#000000', // Black
   2: '#00007F', // Blue
@@ -159,8 +159,11 @@ function parseIRCFormatting(text: string): FormattedSegment[] {
   return segments;
 }
 
-// URL regex pattern to detect http and https URLs in text
-const URL_REGEX = /https?:\/\/[^\s<>"{}|\\^`\[\]]+/g;
+// URL regex pattern to detect http and https URLs in text.
+// The source is exported so other modules (e.g. irc-markup) can build their own
+// anchored matcher from the same pattern without sharing mutable lastIndex state.
+export const URL_REGEX_SOURCE = 'https?:\\/\\/[^\\s<>"{}|\\\\^`\\[\\]]+';
+const URL_REGEX = new RegExp(URL_REGEX_SOURCE, 'g');
 
 // Renders a text string, replacing URLs with clickable <a> tags.
 // Returns an array of React nodes (strings and <a> elements).
