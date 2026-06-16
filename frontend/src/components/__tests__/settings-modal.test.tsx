@@ -33,6 +33,10 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   EnablePlugin: vi.fn(),
   DisablePlugin: vi.fn(),
   ReloadPlugin: vi.fn(),
+  // The modal reads the last-pane preference on mount and writes it back when the
+  // pane changes; both must resolve so the component's .then/.catch chains work.
+  GetSetting: vi.fn(() => Promise.resolve('')),
+  SetSetting: vi.fn(() => Promise.resolve()),
 }))
 
 describe('SettingsModal About pane', () => {

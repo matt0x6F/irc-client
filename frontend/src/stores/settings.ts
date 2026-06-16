@@ -1,0 +1,47 @@
+import { create } from 'zustand';
+import { GetSetting, SetSetting } from '../../wailsjs/go/main/App';
+
+// Key in the backend settings(key, value) table. Kept stable — renaming it would
+// orphan the previously-persisted value.
+const CONSOLIDATE_JOIN_QUIT_KEY = 'consolidateJoinQuit';
+
+interface SettingsState {
+  consolidateJoinQuit: boolean;
+  setConsolidateJoinQuit: (value: boolean) => void;
+}
+
+/**
+ * App-wide UI preferences backed by the durable SQLite settings table (via the
+ * Wails App.GetSetting / App.SetSetting bindings), replacing the WKWebView
+ * localStorage that macOS drops across restarts.
+ *
+ * Mirrors the theme store: the store carries a synchronous default for first
+ * paint, initSettings() hydrates the real value asynchronously once the backend
+ * is reachable, and the setter writes through to the backend. Components
+ * subscribe to slices, so toggling the preference in Settings updates the
+ * message view live — no localStorage poll / storage event needed.
+ */
+export const useSettingsStore = create<SettingsState>((set) => ({
+  consolidateJoinQuit: false, // sensible default until initSettings() hydrates
+  setConsolidateJoinQuit: (value) => {
+    // Optimistically update the UI, then persist. A failed write logs but leaves
+    // the in-memory value so the toggle still feels responsive.
+    set({ consolidateJoinQuit: value });
+    SetSetting(CONSOLIDATE_JOIN_QUIT_KEY, value ? 'true' : 'false').catch((error) => {
+      console.error('Failed to persist consolidateJoinQuit:', error);
+    });
+  },
+}));
+
+/**
+ * Hydrate persisted UI preferences from the backend into the store. Call once at
+ * startup. On failure the synchronous defaults are kept.
+ */
+export async function initSettings(): Promise<void> {
+  try {
+    const value = await GetSetting(CONSOLIDATE_JOIN_QUIT_KEY);
+    useSettingsStore.setState({ consolidateJoinQuit: value === 'true' });
+  } catch (error) {
+    console.error('Failed to load settings:', error);
+  }
+}

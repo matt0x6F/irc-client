@@ -4,6 +4,7 @@ import {EventsEmit} from '../wailsjs/runtime/runtime'
 import './style.css'
 import App from './App'
 import { initTheme } from './stores/theme'
+import { initSettings } from './stores/settings'
 import { installExternalLinkHandler } from './lib/external-links'
 
 // Suppress expected Wails dev mode WebSocket errors
@@ -56,6 +57,11 @@ window.addEventListener('blur', () => {
 const container = document.getElementById('root')
 
 const root = createRoot(container!)
+
+// Hydrate durable UI preferences (consolidate join/quit, …) from the backend in
+// parallel. Non-blocking — the settings store carries sensible defaults until it
+// resolves, so this never delays first paint.
+void initSettings()
 
 // Load the persisted theme (now stored in the backend DB, not localStorage)
 // before the first paint to avoid a flash of the wrong theme. initTheme applies

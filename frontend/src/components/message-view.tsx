@@ -3,6 +3,7 @@ import { storage } from '../../wailsjs/go/models';
 import { IRCFormattedText } from './irc-formatted-text';
 import { useNicknameColors } from '../hooks/useNicknameColors';
 import { useNetworkStore } from '../stores/network';
+import { useSettingsStore } from '../stores/settings';
 
 interface MessageViewProps {
   messages: storage.Message[];
@@ -16,8 +17,6 @@ type ConsolidatedMessage = storage.Message & {
   _nicknames?: string[];
   _actionText?: string;
 }
-
-const CONSOLIDATE_JOIN_QUIT_KEY = 'cascade-chat-consolidate-join-quit';
 
 // Optimistic messages use `Date.now()` as a placeholder id (~1.7e12) until the real
 // DB row (a small autoincrement id) is loaded. Don't offer pinning on those rows.
@@ -42,15 +41,10 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
   // content-height growth produce, which is what made a naive isNear-based pin flaky.
   const lastScrollTopRef = useRef(0);
 
-  // Load consolidate setting from localStorage and make it reactive
-  const [consolidateEnabled, setConsolidateEnabled] = useState(() => {
-    try {
-      const saved = localStorage.getItem(CONSOLIDATE_JOIN_QUIT_KEY);
-      return saved === 'true';
-    } catch (error) {
-      return false;
-    }
-  });
+  // Consolidate join/quit preference, sourced from the durable settings store.
+  // Subscribing here makes the message view update live when the toggle changes
+  // in Settings (the store writes through to the backend settings table).
+  const consolidateEnabled = useSettingsStore((s) => s.consolidateJoinQuit);
 
   // Consolidate messages if enabled
   const processedMessages = useMemo(() => {
@@ -438,35 +432,6 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
       wasAnchored ? 150 : 0
     );
   }, [viewMode, returnToLive]);
-
-  // Listen for setting changes
-  useEffect(() => {
-    const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === CONSOLIDATE_JOIN_QUIT_KEY) {
-        setConsolidateEnabled(e.newValue === 'true');
-      }
-    };
-    
-    // Listen for storage events (changes from other tabs/windows)
-    window.addEventListener('storage', handleStorageChange);
-    
-    // Also poll for changes in the same window (localStorage events don't fire in same window)
-    const interval = setInterval(() => {
-      try {
-        const current = localStorage.getItem(CONSOLIDATE_JOIN_QUIT_KEY) === 'true';
-        if (current !== consolidateEnabled) {
-          setConsolidateEnabled(current);
-        }
-      } catch (e) {
-        // Ignore
-      }
-    }, 200);
-
-    return () => {
-      window.removeEventListener('storage', handleStorageChange);
-      clearInterval(interval);
-    };
-  }, [consolidateEnabled]);
 
   const showScrollBadge = viewMode === 'anchored' || !isNearBottom;
 

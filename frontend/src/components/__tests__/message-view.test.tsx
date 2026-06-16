@@ -28,6 +28,13 @@ vi.mock('../../stores/network', () => ({
   useNetworkStore: (selector: (s: typeof storeState) => unknown) => selector(storeState),
 }))
 
+// The consolidate-join/quit preference now comes from the settings store. Stub it
+// (default off) so these marker tests don't pull in the real Wails bindings.
+vi.mock('../../stores/settings', () => ({
+  useSettingsStore: (selector: (s: { consolidateJoinQuit: boolean }) => unknown) =>
+    selector({ consolidateJoinQuit: false }),
+}))
+
 const makeMessage = (overrides: Partial<storage.Message>) =>
   storage.Message.createFrom({
     id: 1,
