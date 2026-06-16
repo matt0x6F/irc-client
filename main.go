@@ -36,6 +36,12 @@ func main() {
 		},
 	})
 
+	// Opt out of macOS automatic window tabbing so the framework's updater
+	// window opens as its own standalone window instead of being merged into
+	// the main window's tab bar (which resizes the unified window). No-op off
+	// macOS. See window_tabbing_darwin.go.
+	configurePlatformWindowBehavior(app)
+
 	// Wire up in-app self-updates. The updater is only configured for real
 	// release builds: dev and CI-merge builds carry a non-release version
 	// string (see isReleaseVersion) and must never replace themselves with a
