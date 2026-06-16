@@ -42,6 +42,22 @@ tasks:
     cmds:
       - task: "{{OS}}:package"
 
+  dmg:
+    desc: Build a distributable macOS .dmg from the current-arch app (macOS only)
+    preconditions:
+      - sh: test "{{OS}}" = "darwin"
+        msg: "DMG packaging is macOS-only."
+    cmds:
+      - task: darwin:dmg
+
+  dmg-universal:
+    desc: Build a distributable universal macOS .dmg (arm64 + amd64; macOS only)
+    preconditions:
+      - sh: test "{{OS}}" = "darwin"
+        msg: "DMG packaging is macOS-only."
+    cmds:
+      - task: darwin:dmg:universal
+
   run:
     desc: Run the built application
     cmds:

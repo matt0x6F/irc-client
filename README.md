@@ -65,6 +65,13 @@ Package a distributable `.app` bundle / installer:
 task package
 ```
 
+Build a macOS `.dmg` (output in `bin/`; `brew install create-dmg` for a nicer
+layout, otherwise `hdiutil` is used):
+```bash
+task dmg            # current architecture
+task dmg-universal  # arm64 + amd64 universal
+```
+
 ## Taskfile Commands
 
 This project uses [Task](https://taskfile.dev) for workflow automation. Common commands:

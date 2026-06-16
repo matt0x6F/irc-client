@@ -203,3 +203,58 @@ tasks:
       - task: package
     cmds:
       - wails3 tool sign --input "{{.BIN_DIR}}/{{.APP_NAME}}.app" --notarize {{.CLI_ARGS}}
+
+  dmg:
+    summary: Build a distributable .dmg from the current-arch .app bundle
+    deps:
+      - task: package
+    cmds:
+      - task: create:dmg
+
+  dmg:universal:
+    summary: Build a distributable universal (arm64 + amd64) .dmg
+    deps:
+      - task: package:universal
+    cmds:
+      - task: create:dmg
+        vars:
+          LABEL: "-universal"
+
+  create:dmg:
+    summary: Wraps bin/<app>.app into a compressed .dmg (create-dmg if available, else hdiutil)
+    internal: true
+    vars:
+      # Match the binary's version stamp: APP_VERSION env override, else git.
+      VERSION:
+        sh: echo "${APP_VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo dev)}"
+      DMG: '{{.BIN_DIR}}/Cascade-{{.VERSION}}{{.LABEL}}.dmg'
+    cmds:
+      - |
+        set -euo pipefail
+        APP="{{.BIN_DIR}}/{{.APP_NAME}}.app"
+        DMG="{{.DMG}}"
+        if [ ! -d "$APP" ]; then
+          echo "missing $APP — run 'task package' first" >&2
+          exit 1
+        fi
+        # Stage the .app (plus an /Applications drop target) so the .dmg presents a
+        # proper drag-to-install layout instead of the app's raw contents.
+        STAGE="{{.BIN_DIR}}/.dmg-staging"
+        rm -rf "$STAGE" "$DMG"
+        mkdir -p "$STAGE"
+        cp -R "$APP" "$STAGE/"
+        if command -v create-dmg >/dev/null 2>&1; then
+          # create-dmg adds its own Applications link via --app-drop-link.
+          create-dmg \
+            --volname "Cascade {{.VERSION}}" \
+            --app-drop-link 450 180 \
+            --icon "{{.APP_NAME}}.app" 150 180 \
+            --window-size 600 360 \
+            "$DMG" "$STAGE"
+        else
+          echo "create-dmg not found (brew install create-dmg for a nicer layout); using hdiutil"
+          ln -s /Applications "$STAGE/Applications"
+          hdiutil create -volname "Cascade {{.VERSION}}" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
+        fi
+        rm -rf "$STAGE"
+        echo "Built $DMG"
