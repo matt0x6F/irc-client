@@ -40,8 +40,10 @@ func main() {
 	// per-window options struct in v3.
 	app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:            "Cascade Chat",
-		Width:            1024,
-		Height:           768,
+		Width:            1280,
+		Height:           800,
+		MinWidth:         940,
+		MinHeight:        600,
 		BackgroundColour: application.NewRGB(27, 38, 54),
 	})
 

@@ -206,7 +206,7 @@ export function ChannelListModal({ networkId, onClose }: ChannelListModalProps) 
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="bg-card border border-border rounded-lg shadow-lg w-[800px] max-w-[90vw] max-h-[80vh] flex flex-col">
+      <div className="bg-card border border-border rounded-lg shadow-lg w-[1040px] max-w-[92vw] max-h-[80vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-border">
           <h2 className="text-lg font-semibold">Browse Channels</h2>
@@ -266,7 +266,7 @@ export function ChannelListModal({ networkId, onClose }: ChannelListModalProps) 
         )}
 
         {/* Content */}
-        <div className="flex-1 overflow-auto min-h-0">
+        <div className="flex-1 overflow-y-auto min-h-0">
           {loading && channels.length === 0 && !error && (
             <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
               <svg
@@ -300,11 +300,11 @@ export function ChannelListModal({ networkId, onClose }: ChannelListModalProps) 
           )}
 
           {channels.length > 0 && (
-            <table className="w-full text-sm">
+            <table className="w-full text-sm table-fixed">
               <thead className="sticky top-0 bg-card border-b border-border">
                 <tr>
                   <th
-                    className="text-left px-5 py-2 font-medium text-muted-foreground cursor-pointer hover:text-foreground select-none"
+                    className="text-left px-5 py-2 font-medium text-muted-foreground cursor-pointer hover:text-foreground select-none w-56"
                     onClick={() => handleSort('channel')}
                   >
                     Channel{sortIndicator('channel')}
@@ -328,7 +328,7 @@ export function ChannelListModal({ networkId, onClose }: ChannelListModalProps) 
                     onClick={() => handleJoin(ch.channel)}
                     title={`Click to join ${ch.channel}`}
                   >
-                    <td className="px-5 py-2 font-medium text-primary whitespace-nowrap">
+                    <td className="px-5 py-2 font-medium text-primary truncate">
                       {joiningChannel === ch.channel ? (
                         <span className="text-muted-foreground italic">Joining...</span>
                       ) : (
@@ -338,7 +338,7 @@ export function ChannelListModal({ networkId, onClose }: ChannelListModalProps) 
                     <td className="text-right px-4 py-2 text-muted-foreground tabular-nums">
                       {ch.users}
                     </td>
-                    <td className="px-4 py-2 text-muted-foreground truncate max-w-[400px]">
+                    <td className="px-4 py-2 text-muted-foreground truncate" title={ch.topic}>
                       {ch.topic}
                     </td>
                   </tr>
