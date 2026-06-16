@@ -67,7 +67,12 @@ func (a *App) normalizeServers(config NetworkConfig) []ServerConfig {
 }
 
 // buildNetworkFromConfig creates or updates a storage.Network from a NetworkConfig
-func (a *App) buildNetworkFromConfig(config NetworkConfig, servers []ServerConfig) (*storage.Network, error) {
+// persistAutoConnect controls whether the network's auto_connect preference is
+// written from the config. It must be true only for explicit user edits
+// (SaveNetwork); connect operations pass false so they preserve the stored
+// value instead of clobbering it with a connect-time config that doesn't carry
+// the preference.
+func (a *App) buildNetworkFromConfig(config NetworkConfig, servers []ServerConfig, persistAutoConnect bool) (*storage.Network, error) {
 	var network *storage.Network
 
 	// Check if network already exists (by name)
@@ -97,7 +102,7 @@ func (a *App) buildNetworkFromConfig(config NetworkConfig, servers []ServerConfi
 			SASLUsername:     stringPtr(config.SASLUsername),
 			SASLPassword:     stringPtr(config.SASLPassword),
 			SASLExternalCert: stringPtr(config.SASLExternalCert),
-			AutoConnect:      config.AutoConnect,
+			AutoConnect:      persistAutoConnect && config.AutoConnect,
 			CreatedAt:        time.Now(),
 			UpdatedAt:        time.Now(),
 		}
@@ -117,7 +122,11 @@ func (a *App) buildNetworkFromConfig(config NetworkConfig, servers []ServerConfi
 		network.SASLUsername = stringPtr(config.SASLUsername)
 		network.SASLPassword = stringPtr(config.SASLPassword)
 		network.SASLExternalCert = stringPtr(config.SASLExternalCert)
-		network.AutoConnect = config.AutoConnect
+		// Only an explicit user edit may change the auto_connect preference;
+		// a connect operation must preserve the stored value.
+		if persistAutoConnect {
+			network.AutoConnect = config.AutoConnect
+		}
 		network.UpdatedAt = time.Now()
 		if err := a.storage.UpdateNetwork(network); err != nil {
 			return nil, fmt.Errorf("failed to update network: %w", err)
@@ -152,7 +161,8 @@ func (a *App) SaveNetwork(config NetworkConfig) error {
 		return fmt.Errorf("no servers provided")
 	}
 
-	if _, err := a.buildNetworkFromConfig(config, servers); err != nil {
+	// SaveNetwork is the explicit-edit path: honor the auto_connect checkbox.
+	if _, err := a.buildNetworkFromConfig(config, servers, true); err != nil {
 		return err
 	}
 	// Broadcast so every window (notably the main window, when the save was made
@@ -194,7 +204,8 @@ func (a *App) connectNetwork(config NetworkConfig, reconnect bool) error {
 		return fmt.Errorf("no servers provided")
 	}
 
-	network, err := a.buildNetworkFromConfig(config, servers)
+	// Connecting must never mutate the stored auto_connect preference.
+	network, err := a.buildNetworkFromConfig(config, servers, false)
 	if err != nil {
 		return err
 	}
