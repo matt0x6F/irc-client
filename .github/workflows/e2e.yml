@@ -7,8 +7,6 @@ on:
 
 jobs:
   e2e:
-    # Wails v3 needs the GTK4 / WebKitGTK 6.0 stack, which ships on 24.04
-    # (22.04 only has webkit2gtk-4.x).
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -21,19 +19,36 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install system deps (GTK4 / WebKitGTK 6.0, xvfb, dbus, build tools)
+      # The suite drives the Wails v3 server-mode build (`-tags server`): a
+      # headless HTTP server. At RUNTIME it opens no window — no xvfb, no D-Bus,
+      # no X server — which removes the old "XIO: fatal IO error on X server"
+      # flakiness. The BUILD, however, still links GTK4/WebKitGTK: wails' internal
+      # operatingsystem/assetserver packages aren't guarded by the `server` tag in
+      # this alpha, so their cgo (gtk4/webkitgtk-6.0) compiles whenever CGO is on —
+      # and CGO is required for the SQLite fts5 driver. The binary never *calls*
+      # GTK in server mode (no init, no display), so it still runs headless; we
+      # just need the dev headers to link. Docker (for the Ergo IRCd) is
+      # preinstalled on GitHub's ubuntu runners.
+      - name: Install build deps (GTK/WebKit headers for the cgo link + C toolchain)
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libgtk-4-dev libwebkitgtk-6.0-dev build-essential pkg-config \
-            xvfb dbus dbus-x11 at-spi2-core libgl1-mesa-dri
-
-      - name: Install Wails CLI
-        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha2.103
+            build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev
 
       - name: Install frontend deps
         run: npm ci
         working-directory: frontend
+
+      # Build the headless binary once, explicitly, so a build break is reported
+      # here rather than inside the Playwright run. Uses the committed bindings +
+      # production frontend build embedded into the Go binary. Export its path so
+      # global-setup uses it instead of rebuilding ($GITHUB_WORKSPACE is the
+      # checkout root; $GITHUB_ENV passes the var to later steps).
+      - name: Build headless server binary (-tags "server fts5")
+        run: |
+          npm --prefix frontend run build
+          CGO_ENABLED=1 go build -tags "server fts5" -o bin/cascade-server .
+          echo "CASCADE_SERVER_BIN=$GITHUB_WORKSPACE/bin/cascade-server" >> "$GITHUB_ENV"
 
       - name: Install e2e deps + browser
         run: |
@@ -41,23 +56,9 @@ jobs:
           npx playwright install --with-deps chromium
         working-directory: e2e
 
-      - name: Run e2e under xvfb
-        # KNOWN WIP after the Wails v2 -> v3 migration: the harness still assumes
-        # v2 conventions (the `wails dev -devserver` HTTP bridge and `window.go.*`
-        # global bindings), neither of which exists in v3, so the suite currently
-        # fails at the bindings layer. Porting it (server mode + the @wailsio/runtime
-        # Vite plugin, dropping xvfb) is tracked as a follow-up. continue-on-error
-        # keeps the step running (and visible) without failing the job/PR until then.
-        continue-on-error: true
-        # A D-Bus session + disabled GPU compositing are required or the WebKitGTK
-        # webview panics on init under headless xvfb (no a11y bus / no GPU).
-        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24" dbus-run-session -- npx playwright test
+      - name: Run e2e
+        run: npx playwright test
         working-directory: e2e
-        env:
-          CGO_ENABLED: '1'
-          WEBKIT_DISABLE_COMPOSITING_MODE: '1'
-          WEBKIT_DISABLE_DMABUF_RENDERER: '1'
-          LIBGL_ALWAYS_SOFTWARE: '1'
 
       - name: Upload Playwright report
         if: always()

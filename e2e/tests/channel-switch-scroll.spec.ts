@@ -21,9 +21,10 @@ import type { Page } from '@playwright/test';
 //   1. message-view's *other* auto-scroll path scrolls to the bottom whenever the
 //      message count grows. We switch FROM a channel with MORE messages so the
 //      count does not grow on switch and that path stays silent.
-//   2. With instant local IPC the 100ms timeout wins the race by luck. We wrap the
-//      Wails GetMessages binding to add latency, mirroring the real (WebKit) app
-//      where the load + render reliably outlasts the timeout.
+//   2. With instant local IPC the 100ms timeout wins the race by luck. We delay
+//      the Wails GetMessages binding call (intercepted at the HTTP layer) to add
+//      latency, mirroring the real (WebKit) app where the load + render reliably
+//      outlasts the timeout.
 // The target channel is made TALLER (long, wrapping messages) than the source so a
 // retained source-scroll position is unambiguously short of the latest message.
 
@@ -36,19 +37,37 @@ const TARGET_LINES = 80; // fewer rows, but each much taller (wraps) -> taller p
 const PAD = 'lorem ipsum '.repeat(20).trim(); // ~240 chars of *wrappable* words → tall rows
 const IPC_LATENCY_MS = 400; // > the buggy 100ms scroll timeout; < assertion timeouts
 
-/** Wrap window.go.main.App.GetMessages to resolve after `ms`, simulating real load latency. */
-async function injectMessageLoadLatency(page: Page, ms: number): Promise<void> {
-  await page.evaluate((delay) => {
-    const app = (window as any).go?.main?.App;
-    if (!app || typeof app.GetMessages !== 'function') {
-      throw new Error('Wails App.GetMessages binding not available to instrument');
+// Wails v3 binding ID for App.GetMessages. The runtime POSTs binding calls to
+// /wails/runtime with this numeric methodID in the JSON body. The ID is an FNV
+// hash of the fully-qualified method name (github.com/matt0x6f/irc-client.App.
+// GetMessages), so it is stable across signature changes — only a rename/move
+// would change it. Regenerate via `wails3 generate bindings` and read it from
+// frontend/bindings/.../app.js ($Call.ByID(...)) if App.GetMessages is renamed.
+const GET_MESSAGES_METHOD_ID = 3832618599;
+
+/**
+ * Delay the GetMessages binding call by `ms`, simulating real load latency.
+ * In v3 a binding call is a fetch POST to `/wails/runtime` whose body carries the
+ * numeric method ID, so we intercept that request and hold it before letting it
+ * through. Returns a probe whose `count()` reports how many GetMessages calls
+ * were delayed — the test asserts it fired, guarding against a stale method ID
+ * silently disabling the latency (the v3 equivalent of the old "binding not
+ * available to instrument" throw).
+ */
+async function injectMessageLoadLatency(
+  page: Page,
+  ms: number,
+): Promise<{ count: () => number }> {
+  let intercepted = 0;
+  await page.route('**/wails/runtime', async (route) => {
+    const body = route.request().postData() ?? '';
+    if (body.includes(String(GET_MESSAGES_METHOD_ID))) {
+      intercepted++;
+      await new Promise((r) => setTimeout(r, ms));
     }
-    if (app.__getMessagesDelayed) return;
-    const orig = app.GetMessages.bind(app);
-    app.GetMessages = (...args: unknown[]) =>
-      new Promise((resolve, reject) => setTimeout(() => orig(...args).then(resolve, reject), delay));
-    app.__getMessagesDelayed = true;
-  }, ms);
+    await route.continue();
+  });
+  return { count: () => intercepted };
 }
 
 function distanceFromBottom(page: Page): Promise<number> {
@@ -104,13 +123,21 @@ test('switching to a backlogged channel lands scrolled at the latest message', a
 
     // Now make message loads outlast the buggy 100ms scroll timeout, then switch
     // to the taller backlogged channel.
-    await injectMessageLoadLatency(page, IPC_LATENCY_MS);
+    const latency = await injectMessageLoadLatency(page, IPC_LATENCY_MS);
     await openChannel(page, TARGET);
 
     const lastLine = list.getByText(`t-${TARGET_LINES - 1}`, { exact: false });
 
     // Wait for the backlog to finish loading into the pane.
     await expect(lastLine).toBeAttached({ timeout: 20_000 });
+
+    // Guard: the latency injection must have actually delayed a GetMessages call.
+    // If the method ID went stale the route would never match and this test would
+    // silently stop exercising the race — fail loudly instead.
+    expect(
+      latency.count(),
+      'GetMessages was never intercepted — stale binding method ID?',
+    ).toBeGreaterThan(0);
 
     // Sanity: the target pane must overflow AND be taller than one viewport, else
     // the regression assertion would be vacuous.

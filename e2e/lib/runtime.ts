@@ -2,12 +2,15 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 export interface Runtime {
-  bridgeUrl: string;   // e.g. http://localhost:34567
-  vitePort: number;
+  // The cascade-server HTTP origin Playwright drives, e.g. http://localhost:34567.
+  // In Wails v3 server mode the Go binary serves the frontend + bindings over
+  // HTTP itself, so this is the app origin directly (no v2 -devserver bridge).
+  bridgeUrl: string;
+  serverPort: number;
   ergoPort: number;
   dataDir: string;
   composeProject: string;
-  wailsPid: number;
+  serverPid: number;
   logFile: string;
 }
 

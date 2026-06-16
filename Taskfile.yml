@@ -129,8 +129,23 @@ tasks:
   # ---------------------------------------------------------------------------
   # End-to-End Tests
   # ---------------------------------------------------------------------------
+  build-server:
+    desc: Build the headless Wails v3 server-mode binary (-tags "server fts5") used by e2e
+    summary: |
+      Builds bin/cascade-server: the GUI-less HTTP server build the Playwright
+      suite drives. Embeds frontend/dist, so the frontend is built first. This is
+      the same recipe global-setup runs on its own; CI uses it as an explicit
+      step (then sets CASCADE_SERVER_BIN so the suite skips rebuilding).
+    cmds:
+      - npm --prefix frontend run build
+      - CGO_ENABLED=1 go build -tags "server fts5" -o {{.BIN_DIR}}/cascade-server{{exeExt}} .
+
   e2e:
-    desc: Run full-stack e2e tests (Docker Ergo + wails3 dev + Playwright)
+    desc: Run full-stack e2e tests (Docker Ergo + headless server build + Playwright)
+    summary: |
+      global-setup builds bin/cascade-server (server mode) and spawns it; no GUI,
+      so no xvfb/GTK needed. Set CASCADE_SERVER_BIN to a prebuilt binary to skip
+      the build.
     dir: "e2e"
     cmds:
       - npm install
