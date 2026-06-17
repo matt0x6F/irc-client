@@ -76,24 +76,24 @@ are requested whenever the server advertises them.
 ### Capability negotiation (CAP LS 302)
 
 Cascade negotiates capabilities using `CAP LS 302`, sent immediately after the connection
-opens and before registration completes (`client.go:441`, `client.go:2524`). The handler
-implements the full lifecycle (`client.go:1875-1998`):
+opens and before registration completes (`client.go:441`, `client.go:2542`). The `CAP`
+handler implements the full lifecycle (`client.go:1875`):
 
-1. **LS** — the advertised list is buffered across multi-line continuations
-   (`client.go:1893-1922`), then intersected with `requestedCaps`; only capabilities that are
-   both wanted *and* offered are requested via `CAP REQ` (`client.go:1924-1945`).
-2. **ACK** — acknowledged capabilities are recorded in `enabledCaps` (`client.go:1962-1969`),
+1. **LS** — the advertised list is assembled across multi-line continuations by
+   `accumulateCapLS` (`client.go:2384`, called at `client.go:1896`), then intersected with
+   `requestedCaps`; only capabilities that are both wanted *and* offered are requested via
+   `CAP REQ`. A long list split across lines (as Ergo and Libera send) is handled correctly —
+   each non-final line carries a `*` marker and its capabilities are still collected.
+2. **ACK** — acknowledged capabilities are recorded in `enabledCaps` (`client.go:1955`),
    which every feature gate consults at runtime.
-3. **NAK / no-overlap** — negotiation ends gracefully with `CAP END`
-   (`client.go:1949-1958`, `client.go:1987-1996`).
+3. **NAK / no-overlap** — negotiation ends gracefully with `CAP END` (`client.go:1980`).
 
-When SASL is in use, `CAP END` is deferred until authentication finishes
-(`client.go:1980-1985`).
+When SASL is in use, `CAP END` is deferred until authentication finishes.
 
 **In the client:** the full negotiation is logged to the network's Status buffer ("Requesting
 capabilities…", "Capabilities enabled…"), so you can see exactly what was negotiated.
 
-_Screenshot: Status buffer showing CAP negotiation — `docs/images/ircv3/cap-negotiation.png`_
+![Status buffer showing the CAP LS / REQ / ACK exchange](images/ircv3/cap-negotiation.png)
 
 ### SASL authentication
 
@@ -115,7 +115,7 @@ the Status buffer.
 **In the client:** SASL is configured per network in Settings (mechanism, username,
 password / certificate). Success and failure are reported in the network's Status buffer.
 
-_Screenshot: SASL configuration in network settings — `docs/images/ircv3/sasl-settings.png`_
+![SASL Authentication section of the network settings form](images/ircv3/sasl-settings.png)
 
 ### server-time
 
@@ -129,7 +129,7 @@ to local time only if the tag is missing or unparseable (`getMessageTime`,
 (`message-view.tsx:496`, `:528`, `:537`). With `server-time`, these reflect when the message
 was sent on the network — important for history and bouncer backlog.
 
-_Screenshot: messages with server-time timestamps — `docs/images/ircv3/server-time.png`_
+![Channel messages, each prefixed with a server-time timestamp](images/ircv3/server-time.png)
 
 ### message-tags
 
@@ -186,7 +186,7 @@ Coverage lives in `internal/irc/chathistory_test.go` and `internal/storage/chath
 **In the client:** joining a channel shows recent backlog immediately, and scrolling up loads
 older messages seamlessly without duplicates.
 
-_Screenshot: channel showing replayed history on join — `docs/images/ircv3/chathistory.png`_
+![Channel showing six messages replayed via CHATHISTORY on join, before the user's own join line](images/ircv3/chathistory.png)
 
 ### Supporting features
 
@@ -200,7 +200,9 @@ with the IRCv3 features above.
   captured (`client.go:1748-1762`) and shown in the user info panel
   (`user-info.tsx:128-130`).
 
-_Screenshot: user info panel showing account name — `docs/images/ircv3/whois-account.png`_
+> Screenshot pending: capturing the account name requires a NickServ-registered,
+> SASL-authenticated peer on the test server. Tracked as a follow-up; the behavior is
+> covered by the code references above.
 
 ## Not yet supported
 
@@ -242,11 +244,12 @@ regenerate as the UI evolves and can't silently drift from real behavior.
   helpers in `e2e/lib/actions.ts` drive connect/join/select.
 - **Output:** committed under `docs/images/ircv3/` and referenced from this document.
 
-Run: `task e2e`, or just the screenshot specs:
+The specs are gated behind the `CASCADE_SCREENSHOTS` env var, so a normal `task e2e` / CI run
+skips them and never rewrites the committed PNGs. Regenerate them intentionally:
 
 ```bash
-cd e2e && npx playwright test tests/screenshots-ircv3.spec.ts
+cd e2e && CASCADE_SCREENSHOTS=1 npx playwright test tests/screenshots-ircv3.spec.ts
 ```
 
-> Note: timestamps and idle counters vary per run; the screenshot specs mask or fix those
-> regions so committed images stay stable.
+> Note: because regeneration is explicit (not part of the default suite), the committed images
+> only change when someone deliberately re-runs the specs and commits the result.
