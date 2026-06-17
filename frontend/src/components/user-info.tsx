@@ -66,7 +66,7 @@ export function UserInfo({ networkId, nickname, onClose }: UserInfoProps) {
 
   if (loading && !whoisInfo) {
     return (
-      <div className="w-80 border-l border-border p-4">
+      <div data-testid="user-info-panel" className="w-80 border-l border-border p-4">
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-semibold">User Info</h3>
           <button
@@ -83,7 +83,7 @@ export function UserInfo({ networkId, nickname, onClose }: UserInfoProps) {
 
   if (!whoisInfo) {
     return (
-      <div className="w-80 border-l border-border p-4">
+      <div data-testid="user-info-panel" className="w-80 border-l border-border p-4">
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-semibold">User Info</h3>
           <button
@@ -112,7 +112,7 @@ export function UserInfo({ networkId, nickname, onClose }: UserInfoProps) {
   };
 
   return (
-    <div className="w-80 border-l border-border p-4 overflow-y-auto">
+    <div data-testid="user-info-panel" className="w-80 border-l border-border p-4 overflow-y-auto">
       <div className="flex items-center justify-between mb-4">
         <h3 className="font-semibold">User Info</h3>
         <button

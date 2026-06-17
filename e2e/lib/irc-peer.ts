@@ -5,6 +5,7 @@ export class IrcPeer {
   private sock!: net.Socket;
   private buffer = '';
   private joinWaiters: Array<{ channel: string; resolve: () => void }> = [];
+  private lineWaiters: Array<{ test: RegExp; resolve: () => void; timer: NodeJS.Timeout }> = [];
 
   constructor(private host: string, private port: number, private nick: string) {}
 
@@ -59,6 +60,32 @@ export class IrcPeer {
         return true;
       });
     }
+
+    // Generic line waiters (e.g. RPL_LOGGEDIN / NickServ confirmations).
+    this.lineWaiters = this.lineWaiters.filter((w) => {
+      if (w.test.test(line)) {
+        clearTimeout(w.timer);
+        w.resolve();
+        return false;
+      }
+      return true;
+    });
+  }
+
+  /** Send an arbitrary raw IRC line (e.g. a NickServ PRIVMSG). */
+  sendRaw(line: string): void {
+    this.send(line);
+  }
+
+  /** Resolve once a received line matches `pattern`. Rejects on timeout. */
+  waitForLine(pattern: RegExp, timeoutMs = 15_000): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error(`IrcPeer: timed out waiting for line matching ${pattern}`)),
+        timeoutMs,
+      );
+      this.lineWaiters.push({ test: pattern, resolve: () => { clearTimeout(timer); resolve(); }, timer });
+    });
   }
 
   /** Resolve once the server echoes our JOIN for `channel`. Call after join(). */

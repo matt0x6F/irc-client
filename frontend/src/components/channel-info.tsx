@@ -486,7 +486,7 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
   );
 
   return (
-    <div className="w-full flex flex-col h-full bg-card/30">
+    <div data-testid="channel-user-list" className="w-full flex flex-col h-full bg-card/30">
       {/* Users List — flat, role-ordered */}
       <div className="flex-1 overflow-y-auto p-3">
         <div className="px-1 pb-2 text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground/80">

@@ -50,6 +50,15 @@ Complete guide to the plugin architecture, protocol, and how to write plugins.
 - UI metadata system
 - JSON-RPC protocol details
 
+### [IRCv3 Support](./ircv3-support.md)
+Reference for every IRCv3 capability Cascade negotiates, what it does with each, and how each surfaces in the client. Includes a full capability status matrix (supported and not-yet-supported) that doubles as a roadmap.
+
+**Use this for:**
+- Seeing which IRCv3 capabilities are supported
+- Understanding how each capability maps backend → UI (`file:line`)
+- Tracking unsupported capabilities and what blocks them
+- Knowing how the capability screenshots are generated
+
 ## Quick Start
 
 1. **New to the project?** Start with the [Technical Documentation](../agents.md) to understand the architecture.
