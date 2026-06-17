@@ -11,6 +11,7 @@ vi.mock('../../hooks/useNicknameColors', () => ({
 
 const storeState = {
   networks: [],
+  botNicks: {} as Record<number, Set<string>>,
   pinnedMessages: [],
   pinMessage: vi.fn(),
   unpinMessage: vi.fn(),
@@ -73,5 +74,27 @@ describe('MessageView connection markers', () => {
     // Only the regular privmsg is a standard, pinnable row.
     expect(screen.getAllByTestId('message-item')).toHaveLength(1)
     expect(screen.getAllByTestId('pin-button')).toHaveLength(1)
+  })
+})
+
+describe('MessageView bot badge', () => {
+  it('badges a message whose author is a recognized bot (case-insensitive)', () => {
+    storeState.botNicks = { 1: new Set(['buildbot']) }
+    const msg = makeMessage({ id: 3, user: 'BuildBot', message: 'build passed', message_type: 'privmsg' })
+
+    render(<MessageView messages={[msg]} networkId={1} selectedChannel="#chan" />)
+
+    expect(screen.getByText('bot')).toBeInTheDocument()
+    storeState.botNicks = {}
+  })
+
+  it('does not badge a message from a non-bot author', () => {
+    storeState.botNicks = { 1: new Set(['buildbot']) }
+    const msg = makeMessage({ id: 4, user: 'alice', message: 'hi', message_type: 'privmsg' })
+
+    render(<MessageView messages={[msg]} networkId={1} selectedChannel="#chan" />)
+
+    expect(screen.queryByText('bot')).toBeNull()
+    storeState.botNicks = {}
   })
 })

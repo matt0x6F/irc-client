@@ -26,6 +26,7 @@ const (
 	EventChannelListItem       = "channel.list.item"
 	EventChannelListEnd        = "channel.list.end"
 	EventHistoryReceived       = "history.received"
+	EventBotDetected           = "bot.detected" // a nick was recognized as an IRCv3 bot (bot tag or RPL_WHOISBOT)
 )
 
 // BanEntry represents a single entry from a channel ban list (RPL_BANLIST 367)
@@ -56,4 +57,5 @@ type WhoisInfo struct {
 	SignOnTime  int64    `json:"sign_on_time"` // unix timestamp
 	AccountName string   `json:"account_name"` // if logged in
 	Network     string   `json:"network"`
+	IsBot       bool     `json:"is_bot"` // true if the server returned RPL_WHOISBOT (335)
 }

@@ -275,12 +275,26 @@ export function GetMessagesBeforeTime(networkID, channelID, pmTarget, beforeISO,
 }
 
 /**
+ * GetNetworkBots returns the lowercased nicks recognized as IRCv3 bots for a
+ * network this session. The frontend calls this to hydrate its bot set when a
+ * window opens or reloads; live additions arrive via the "bot-event" event.
+ * Returns an empty slice when the network is not currently connected.
+ * @param {number} networkID
+ * @returns {$CancellablePromise<string[]>}
+ */
+export function GetNetworkBots(networkID) {
+    return $Call.ByID(1037950925, networkID).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType10($result);
+    }));
+}
+
+/**
  * GetNetworks retrieves all networks
  * @returns {$CancellablePromise<storage$0.Network[]>}
  */
 export function GetNetworks() {
     return $Call.ByID(366685148).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType11($result);
+        return $$createType12($result);
     }));
 }
 
@@ -302,7 +316,7 @@ export function GetNicknameColor(networkID, nickname) {
  */
 export function GetNicknameColorsBatch(networkID, nicknames) {
     return $Call.ByID(4229567593, networkID, nicknames).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType12($result);
+        return $$createType13($result);
     }));
 }
 
@@ -325,7 +339,7 @@ export function GetOpenChannels(networkID) {
  */
 export function GetPinnedMessages(networkID, channelID) {
     return $Call.ByID(380870585, networkID, channelID).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType14($result);
+        return $$createType15($result);
     }));
 }
 
@@ -336,7 +350,7 @@ export function GetPinnedMessages(networkID, channelID) {
  */
 export function GetPluginConfig(pluginName) {
     return $Call.ByID(1436487730, pluginName).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType15($result);
+        return $$createType16($result);
     }));
 }
 
@@ -347,7 +361,7 @@ export function GetPluginConfig(pluginName) {
  */
 export function GetPluginConfigSchema(pluginName) {
     return $Call.ByID(249168125, pluginName).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType15($result);
+        return $$createType16($result);
     }));
 }
 
@@ -359,7 +373,7 @@ export function GetPluginConfigSchema(pluginName) {
  */
 export function GetPrivateMessageConversations(networkID, openOnly) {
     return $Call.ByID(839521643, networkID, openOnly).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType16($result);
+        return $$createType10($result);
     }));
 }
 
@@ -449,7 +463,7 @@ export function OnEvent(event) {
 }
 
 /**
- * OpenSettings emits an event to open the settings modal
+ * OpenSettings opens (or focuses) the standalone Settings window.
  * @returns {$CancellablePromise<void>}
  */
 export function OpenSettings() {
@@ -457,7 +471,7 @@ export function OpenSettings() {
 }
 
 /**
- * OpenSettingsAbout emits an event to open settings to the about section
+ * OpenSettingsAbout opens the Settings window to the about section.
  * @returns {$CancellablePromise<void>}
  */
 export function OpenSettingsAbout() {
@@ -465,7 +479,7 @@ export function OpenSettingsAbout() {
 }
 
 /**
- * OpenSettingsDisplay emits an event to open settings to the display section
+ * OpenSettingsDisplay opens the Settings window to the display section.
  * @returns {$CancellablePromise<void>}
  */
 export function OpenSettingsDisplay() {
@@ -473,7 +487,7 @@ export function OpenSettingsDisplay() {
 }
 
 /**
- * OpenSettingsNetworks emits an event to open settings to the networks section
+ * OpenSettingsNetworks opens the Settings window to the networks section.
  * @returns {$CancellablePromise<void>}
  */
 export function OpenSettingsNetworks() {
@@ -481,7 +495,7 @@ export function OpenSettingsNetworks() {
 }
 
 /**
- * OpenSettingsPlugins emits an event to open settings to the plugins section
+ * OpenSettingsPlugins opens the Settings window to the plugins section.
  * @returns {$CancellablePromise<void>}
  */
 export function OpenSettingsPlugins() {
@@ -644,7 +658,11 @@ export function SetPrivateMessageOpen(networkID, targetUser, isOpen) {
 }
 
 /**
- * SetSetting persists a UI/app preference by key.
+ * SetSetting persists a UI/app preference by key. After a successful write it
+ * broadcasts a setting:changed event so every open window (e.g. the main window
+ * and the standalone Settings window) can reconcile its in-memory copy live —
+ * each webview is a separate JS context, so this is the only way a change in one
+ * window reaches the others.
  * @param {string} key
  * @param {string} value
  * @returns {$CancellablePromise<void>}
@@ -692,13 +710,13 @@ const $$createType6 = $models.LastOpenPane.createFrom;
 const $$createType7 = $Create.Nullable($$createType6);
 const $$createType8 = storage$0.Message.createFrom;
 const $$createType9 = $Create.Array($$createType8);
-const $$createType10 = storage$0.Network.createFrom;
-const $$createType11 = $Create.Array($$createType10);
-const $$createType12 = $Create.Map($Create.Any, $Create.Any);
-const $$createType13 = storage$0.PinnedMessage.createFrom;
-const $$createType14 = $Create.Array($$createType13);
-const $$createType15 = $Create.Map($Create.Any, $Create.Any);
-const $$createType16 = $Create.Array($Create.Any);
+const $$createType10 = $Create.Array($Create.Any);
+const $$createType11 = storage$0.Network.createFrom;
+const $$createType12 = $Create.Array($$createType11);
+const $$createType13 = $Create.Map($Create.Any, $Create.Any);
+const $$createType14 = storage$0.PinnedMessage.createFrom;
+const $$createType15 = $Create.Array($$createType14);
+const $$createType16 = $Create.Map($Create.Any, $Create.Any);
 const $$createType17 = $models.ServerCapabilitiesInfo.createFrom;
 const $$createType18 = $Create.Nullable($$createType17);
 const $$createType19 = storage$0.Server.createFrom;

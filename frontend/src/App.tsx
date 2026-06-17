@@ -41,6 +41,8 @@ function App() {
   const sendMessage = useNetworkStore((s) => s.sendMessage);
   const setConnectionStatus = useNetworkStore((s) => s.setConnectionStatus);
   const setCurrentNick = useNetworkStore((s) => s.setCurrentNick);
+  const loadNetworkBots = useNetworkStore((s) => s.loadNetworkBots);
+  const addBot = useNetworkStore((s) => s.addBot);
   const markActivity = useNetworkStore((s) => s.markActivity);
   const restoreLastPane = useNetworkStore((s) => s.restoreLastPane);
 
@@ -236,6 +238,7 @@ function App() {
       loadCurrentNick();
       loadChannelInfo();
       loadPinnedMessages();
+      loadNetworkBots();
       const interval = setInterval(() => {
         loadMessages();
         loadConnectionStatus();
@@ -266,6 +269,20 @@ function App() {
       const nick = data?.nick;
       if (networkId !== undefined && typeof nick === 'string' && nick) {
         setCurrentNick(networkId, nick);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Bot-detected events (IRCv3 bot mode): a nick was recognized as a bot via the
+  // `bot` message tag or RPL_WHOISBOT. Add it to the per-network bot set so the
+  // chat rows, nick list, and WHOIS panel can badge it.
+  useEffect(() => {
+    const unsubscribe = EventsOn('bot-event', (data: any) => {
+      const networkId = data?.data?.networkId;
+      const nick = data?.data?.nickname;
+      if (typeof networkId === 'number' && typeof nick === 'string' && nick) {
+        addBot(networkId, nick);
       }
     });
     return () => unsubscribe();

@@ -369,6 +369,20 @@ func (a *App) GetChannels(networkID int64) ([]storage.Channel, error) {
 	return a.storage.GetChannels(networkID)
 }
 
+// GetNetworkBots returns the lowercased nicks recognized as IRCv3 bots for a
+// network this session. The frontend calls this to hydrate its bot set when a
+// window opens or reloads; live additions arrive via the "bot-event" event.
+// Returns an empty slice when the network is not currently connected.
+func (a *App) GetNetworkBots(networkID int64) ([]string, error) {
+	a.mu.RLock()
+	client, exists := a.ircClients[networkID]
+	a.mu.RUnlock()
+	if !exists {
+		return []string{}, nil
+	}
+	return client.BotNicks(), nil
+}
+
 // GetJoinedChannels retrieves channels where the current user is still a member
 func (a *App) GetJoinedChannels(networkID int64) ([]storage.Channel, error) {
 	network, err := a.storage.GetNetwork(networkID)

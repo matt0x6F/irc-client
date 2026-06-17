@@ -14,6 +14,7 @@ interface WhoisInfo {
   sign_on_time: number;
   account_name: string;
   network: string;
+  is_bot: boolean;
 }
 
 interface UserInfoProps {
@@ -124,7 +125,17 @@ export function UserInfo({ networkId, nickname, onClose }: UserInfoProps) {
 
       <div className="space-y-4 text-sm">
         <div>
-          <div className="font-semibold text-lg mb-2">{whoisInfo.nickname}</div>
+          <div className="font-semibold text-lg mb-2 flex items-center gap-2">
+            {whoisInfo.nickname}
+            {whoisInfo.is_bot && (
+              <span
+                className="text-[10px] uppercase font-semibold tracking-wide px-1.5 py-0.5 rounded bg-primary text-primary-foreground"
+                title="This user is a bot (IRCv3 bot mode)"
+              >
+                bot
+              </span>
+            )}
+          </div>
           {whoisInfo.account_name && (
             <div className="text-muted-foreground">
               Account: <span className="text-foreground">{whoisInfo.account_name}</span>

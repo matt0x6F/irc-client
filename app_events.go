@@ -127,6 +127,15 @@ func (a *App) OnEvent(event events.Event) {
 		})
 	}
 
+	// Forward bot-detected events to frontend (IRCv3 bot mode)
+	if event.Type == irc.EventBotDetected {
+		a.emit("bot-event", map[string]interface{}{
+			"type":      event.Type,
+			"data":      event.Data,
+			"timestamp": event.Timestamp.Format(time.RFC3339),
+		})
+	}
+
 	// Handle metadata updates
 	if event.Type == events.EventMetadataUpdated {
 		a.emit("metadata-updated", map[string]interface{}{

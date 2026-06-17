@@ -213,6 +213,9 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
   });
 
   // Pinned messages / jump-to-message state
+  // Bot set for this network: badge messages whose author is a recognized bot.
+  // Subscribing to the Set reference re-renders when addBot replaces it.
+  const botSet = useNetworkStore((s) => (networkId !== null ? s.botNicks[networkId] : undefined));
   const pinnedMessages = useNetworkStore((s) => s.pinnedMessages);
   const pinMessage = useNetworkStore((s) => s.pinMessage);
   const unpinMessage = useNetworkStore((s) => s.unpinMessage);
@@ -546,6 +549,14 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
                       }}
                     >
                       {msg.user}
+                    </span>
+                  )}
+                  {msg.user !== '*' && !isSystemMessage && botSet?.has(msg.user.toLowerCase()) && (
+                    <span
+                      className="text-[10px] uppercase font-semibold tracking-wide px-1 py-0.5 rounded bg-accent text-muted-foreground flex-shrink-0"
+                      title="This user is a bot (IRCv3 bot mode)"
+                    >
+                      bot
                     </span>
                   )}
                   {isSystemMessage ? (
