@@ -48,6 +48,8 @@ type IRCClient struct {
 	serverCapabilities    *ServerCapabilities   // Server capabilities from ISUPPORT
 	whoisInProgress       map[string]*WhoisInfo // Track WHOIS requests in progress (key: nickname)
 	whoisMu               sync.Mutex            // Mutex for whoisInProgress map
+	knownBots             map[string]bool       // Nicks recognized as IRCv3 bots this session (key: lowercased nick)
+	knownBotsMu           sync.Mutex            // Mutex for knownBots map
 	enabledCaps           map[string]bool       // IRCv3 capabilities granted by the server
 	chatHistoryMaxBatch   int                   // Max messages per CHATHISTORY request, from the chathistory=N cap value (0 = unknown, use default)
 	capNegotiationDone    bool                  // Whether CAP negotiation has finished
@@ -346,6 +348,7 @@ func NewIRCClient(network *storage.Network, eventBus *events.EventBus, storage *
 		saslCapAcknowledged: false,
 		namesInProgress:     make(map[string]bool),
 		whoisInProgress:     make(map[string]*WhoisInfo),
+		knownBots:           make(map[string]bool),
 		enabledCaps:         make(map[string]bool),
 		banLists:            make(map[string][]BanEntry),
 		serverCapabilities: &ServerCapabilities{
@@ -390,6 +393,79 @@ func NewIRCClient(network *storage.Network, eventBus *events.EventBus, storage *
 	client.setupHandlers()
 
 	return client
+}
+
+// markBot records that a nick is an IRCv3 bot (learned from the `bot` message tag
+// or RPL_WHOISBOT). It is idempotent: the EventBotDetected event is emitted only
+// on first discovery so repeated bot messages do not spam the frontend. Nicks are
+// stored lowercased so lookups are case-insensitive (IRC nicks are case-folding).
+func (c *IRCClient) markBot(nick string) {
+	if nick == "" {
+		return
+	}
+	key := strings.ToLower(nick)
+
+	c.knownBotsMu.Lock()
+	if c.knownBots[key] {
+		c.knownBotsMu.Unlock()
+		return
+	}
+	c.knownBots[key] = true
+	c.knownBotsMu.Unlock()
+
+	c.eventBus.Emit(events.Event{
+		Type: EventBotDetected,
+		Data: map[string]interface{}{
+			"network":   c.network.Address,
+			"networkId": c.networkID,
+			"nickname":  key,
+		},
+		Timestamp: time.Now(),
+		Source:    events.EventSourceIRC,
+	})
+}
+
+// maybeMarkBotFromTag recognizes the sender as a bot when an incoming message
+// carries the IRCv3 `bot` tag. Per spec the tag is valueless and any value is
+// ignored, so we only check presence. Shared by the PRIVMSG, NOTICE, and JOIN
+// handlers.
+func (c *IRCClient) maybeMarkBotFromTag(e ircmsg.Message) {
+	if present, _ := e.GetTag("bot"); present {
+		c.markBot(e.Nick())
+	}
+}
+
+// handleWhoisBot processes RPL_WHOISBOT (335): it flags the in-progress WHOIS as
+// a bot and records the nick in the session bot set. nick is e.Params[1].
+func (c *IRCClient) handleWhoisBot(e ircmsg.Message) {
+	if len(e.Params) < 2 {
+		return
+	}
+	nickname := e.Params[1]
+
+	c.whoisMu.Lock()
+	if c.whoisInProgress[nickname] == nil {
+		c.whoisInProgress[nickname] = &WhoisInfo{
+			Nickname: nickname,
+			Network:  c.network.Address,
+		}
+	}
+	c.whoisInProgress[nickname].IsBot = true
+	c.whoisMu.Unlock()
+
+	c.markBot(nickname)
+}
+
+// BotNicks returns the lowercased nicks recognized as bots this session. Used by
+// the App layer to hydrate the frontend when a window opens or reloads.
+func (c *IRCClient) BotNicks() []string {
+	c.knownBotsMu.Lock()
+	defer c.knownBotsMu.Unlock()
+	nicks := make([]string, 0, len(c.knownBots))
+	for nick := range c.knownBots {
+		nicks = append(nicks, nick)
+	}
+	return nicks
 }
 
 // setupHandlers sets up IRC event handlers
@@ -566,6 +642,10 @@ func (c *IRCClient) setupHandlers() {
 		message := e.Params[1]
 		user := e.Nick()
 
+		// IRCv3 bot mode: servers tag messages from bots with a valueless `bot`
+		// tag. Recognize the sender as a bot (covers plain PRIVMSG and CTCP ACTION).
+		c.maybeMarkBotFromTag(e)
+
 		// Check if this is a CTCP message (wrapped in \001)
 		if len(message) >= 2 && message[0] == '\001' && message[len(message)-1] == '\001' {
 			ctcpMessage := message[1 : len(message)-1] // Remove \001 delimiters
@@ -699,6 +779,11 @@ func (c *IRCClient) setupHandlers() {
 	c.conn.AddCallback("JOIN", func(e ircmsg.Message) {
 		channel := e.Params[0]
 		user := e.Nick()
+
+		// IRCv3 bot mode: a bot's JOIN carries the `bot` tag too, so we can
+		// recognize it before it speaks.
+		c.maybeMarkBotFromTag(e)
+
 		logger.Log.Debug().
 			Str("user", user).
 			Str("channel", channel).
@@ -1762,6 +1847,9 @@ func (c *IRCClient) setupHandlers() {
 		c.whoisInProgress[nickname].AccountName = accountName
 		c.whoisMu.Unlock()
 	})
+
+	// RPL_WHOISBOT (335) - Target is a bot (IRCv3 bot mode)
+	c.conn.AddCallback("335", c.handleWhoisBot)
 
 	// ISUPPORT (005) - Server capabilities
 	c.conn.AddCallback("005", func(e ircmsg.Message) {
@@ -2988,6 +3076,9 @@ func (c *IRCClient) handleNotice(e ircmsg.Message) {
 	target := e.Params[0]
 	notice := e.Params[1]
 	user := e.Nick()
+
+	// IRCv3 bot mode: recognize a bot sender from the valueless `bot` tag.
+	c.maybeMarkBotFromTag(e)
 
 	// Check if this is a CTCP response (wrapped in \001)
 	if len(notice) >= 2 && notice[0] == '\001' && notice[len(notice)-1] == '\001' {

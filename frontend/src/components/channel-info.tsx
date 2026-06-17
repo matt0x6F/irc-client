@@ -4,6 +4,7 @@ import { main, storage } from '../../wailsjs/go/models';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import { UserInfo } from './user-info';
 import { useNicknameColors } from '../hooks/useNicknameColors';
+import { useNetworkStore } from '../stores/network';
 import { Shield, Crown, Star, Mic, ShieldCheck } from 'lucide-react';
 
 interface ChannelInfoProps {
@@ -41,9 +42,12 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
   // Get users list for nickname colors (must be called before any conditional returns)
   const users = (channelInfo?.users || []) as storage.ChannelUser[];
   const nicknameColors = useNicknameColors(
-    networkId, 
+    networkId,
     users.map(u => u.nickname)
   );
+  // Bot set for this network: badge bot members. Subscribing to the Set
+  // reference re-renders the list when addBot replaces it.
+  const botSet = useNetworkStore((s) => (networkId !== null ? s.botNicks[networkId] : undefined));
 
   const loadChannelInfo = useCallback(async () => {
     if (networkId === null || channelName === null || channelName === 'status') {
@@ -504,6 +508,14 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
             >
               {user.nickname}
             </span>
+            {botSet?.has(user.nickname.toLowerCase()) && (
+              <span
+                className="ml-auto text-[10px] uppercase font-semibold tracking-wide px-1 py-0.5 rounded bg-accent text-muted-foreground flex-shrink-0"
+                title="This user is a bot (IRCv3 bot mode)"
+              >
+                bot
+              </span>
+            )}
           </div>
         ))}
 

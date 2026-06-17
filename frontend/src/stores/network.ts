@@ -29,6 +29,7 @@ import {
   UnpinMessage,
   SendMessage,
   SendCommand,
+  GetNetworkBots,
 } from '../../wailsjs/go/main/App';
 
 // How many messages of surrounding context to load when jumping to a pinned message.
@@ -102,6 +103,10 @@ interface NetworkState {
   channelInfo: main.ChannelInfo | null;
   unreadCounts: Map<string, number>;
 
+  // Bot mode (IRCv3): nicks recognized as bots this session, per network.
+  // Keys are lowercased nicks; the set is in-memory and re-accrues per session.
+  botNicks: Record<number, Set<string>>;
+
   // Pinned messages / jump-to-message
   pinnedMessages: storage.PinnedMessage[];
   viewMode: 'live' | 'anchored'; // 'anchored' = viewing a context window, live updates paused
@@ -157,6 +162,11 @@ interface NetworkState {
   setConnectionStatus: (networkId: number, connected: boolean) => void;
   setCurrentNick: (networkId: number, nick: string) => void;
 
+  // Bot mode
+  loadNetworkBots: (networkId?: number) => Promise<void>;
+  addBot: (networkId: number, nick: string) => void;
+  isBot: (networkId: number, nick: string) => boolean;
+
   // Pane restoration
   restoreLastPane: () => Promise<void>;
 }
@@ -168,6 +178,7 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
   messages: [],
   channelInfo: null,
   unreadCounts: new Map(),
+  botNicks: {},
   pinnedMessages: [],
   viewMode: 'live',
   anchoredMessageId: null,
@@ -831,6 +842,34 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
     set((state) => ({
       currentNick: { ...state.currentNick, [networkId]: nick },
     })),
+
+  // Hydrate the bot set for a network from the backend (e.g. on window open or
+  // network select). Live additions arrive via the 'bot-event' event -> addBot.
+  loadNetworkBots: async (networkId?: number) => {
+    const id = networkId ?? get().selectedNetwork;
+    if (id === null) return;
+    try {
+      const nicks = await GetNetworkBots(id);
+      set((state) => ({
+        botNicks: { ...state.botNicks, [id]: new Set((nicks || []).map((n) => n.toLowerCase())) },
+      }));
+    } catch (error) {
+      console.error('Failed to load network bots:', error);
+    }
+  },
+
+  addBot: (networkId, nick) =>
+    set((state) => {
+      const key = nick.toLowerCase();
+      const existing = state.botNicks[networkId];
+      if (existing?.has(key)) return state; // no-op: avoid needless re-render
+      const next = new Set(existing ?? []);
+      next.add(key);
+      return { botNicks: { ...state.botNicks, [networkId]: next } };
+    }),
+
+  isBot: (networkId, nick) =>
+    get().botNicks[networkId]?.has(nick.toLowerCase()) ?? false,
 
   restoreLastPane: async () => {
     const { networks } = get();
