@@ -200,9 +200,7 @@ with the IRCv3 features above.
   captured (`client.go:1748-1762`) and shown in the user info panel
   (`user-info.tsx:128-130`).
 
-> Screenshot pending: capturing the account name requires a NickServ-registered,
-> SASL-authenticated peer on the test server. Tracked as a follow-up; the behavior is
-> covered by the code references above.
+![User info panel showing the WHOIS account name (RPL_WHOISACCOUNT / 330)](images/ircv3/whois-account.png)
 
 ## Not yet supported
 

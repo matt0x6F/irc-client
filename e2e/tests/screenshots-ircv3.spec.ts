@@ -157,4 +157,37 @@ test.describe('IRCv3 documentation screenshots', () => {
       await settings.close();
     }
   });
+
+  test('WHOIS account name in the user info panel', async ({ page, runtime }) => {
+    // RPL_WHOISACCOUNT (330) only appears for a user logged into a services account,
+    // and the test Ergo starts with none — so register one at runtime. With
+    // email-verification disabled and allow-before-connect enabled, NickServ REGISTER
+    // completes instantly and logs the peer in, so a later WHOIS reports its account.
+    const peer = new IrcPeer('localhost', runtime.ergoPort, 'alice');
+    await peer.connect();
+    peer.sendRaw('PRIVMSG NickServ :REGISTER s3cret-passw0rd alice@example.com');
+    await peer.waitForLine(/ 900 |logged in as|registered/i);
+    peer.join('#cc-account');
+    await peer.waitForJoin('#cc-account');
+    try {
+      await page.goto(runtime.bridgeUrl);
+      await addNetworkAndConnect(page, runtime);
+      await selectNetwork(page);
+      await joinChannel(page, '#cc-account');
+
+      // Right-click the member in the user list, then choose Whois to open the panel.
+      const member = page.getByTestId('channel-user-list').getByText('alice', { exact: true });
+      await member.waitFor({ state: 'visible', timeout: 15_000 });
+      await member.click({ button: 'right' });
+      await page.getByRole('button', { name: 'Whois' }).click();
+
+      // The panel renders the account name from RPL_WHOISACCOUNT (330).
+      const panel = page.getByTestId('user-info-panel');
+      await expect(panel.getByText(/Account:/)).toBeVisible({ timeout: 15_000 });
+
+      await shoot(panel, 'whois-account.png');
+    } finally {
+      peer.close();
+    }
+  });
 });
