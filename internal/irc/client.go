@@ -1891,72 +1891,65 @@ func (c *IRCClient) setupHandlers() {
 
 		switch subcommand {
 		case "LS":
-			if len(e.Params) >= 3 {
-				capabilities := e.Params[2]
-				isContinuation := len(e.Params) > 3 && e.Params[2] == "*"
+			// CAP LS 302 may split the advertisement across multiple lines; only
+			// the final line (no "*" continuation marker) completes the list.
+			allCaps, complete := accumulateCapLS(e.Params, &capLSBuffer)
+			if complete {
+				capLSBuffer.Reset()
 
-				if isContinuation {
-					capLSBuffer.WriteString(capabilities)
-					capLSBuffer.WriteString(" ")
-				} else {
-					capLSBuffer.WriteString(capabilities)
-					allCaps := capLSBuffer.String()
-					capLSBuffer.Reset()
+				// Record the advertised CHATHISTORY batch limit (chathistory=N /
+				// draft/chathistory=N) so requests can be clamped to it. Prefer the
+				// ratified name's value if both are present.
+				if v, ok := capValue(allCaps, "chathistory"); ok {
+					c.setChatHistoryMax(v)
+				} else if v, ok := capValue(allCaps, "draft/chathistory"); ok {
+					c.setChatHistoryMax(v)
+				}
 
-					// Record the advertised CHATHISTORY batch limit (chathistory=N /
-					// draft/chathistory=N) so requests can be clamped to it. Prefer the
-					// ratified name's value if both are present.
-					if v, ok := capValue(allCaps, "chathistory"); ok {
-						c.setChatHistoryMax(v)
-					} else if v, ok := capValue(allCaps, "draft/chathistory"); ok {
-						c.setChatHistoryMax(v)
+				c.storage.WriteMessage(storage.Message{
+					NetworkID:   c.networkID,
+					ChannelID:   nil,
+					User:        "*",
+					Message:     fmt.Sprintf("CAP LS response: %s", allCaps),
+					MessageType: "status",
+					Timestamp:   time.Now(),
+				})
+
+				// Build list of caps to request: only those both wanted and offered
+				var toRequest []string
+				for _, wantedCap := range requestedCaps {
+					if wantedCap == "sasl" && !c.saslEnabled {
+						continue
 					}
+					if contains(allCaps, wantedCap) {
+						toRequest = append(toRequest, wantedCap)
+					}
+				}
 
+				if len(toRequest) > 0 {
+					reqStr := strings.Join(toRequest, " ")
 					c.storage.WriteMessage(storage.Message{
 						NetworkID:   c.networkID,
 						ChannelID:   nil,
 						User:        "*",
-						Message:     fmt.Sprintf("CAP LS response: %s", allCaps),
+						Message:     fmt.Sprintf("Requesting capabilities: %s", reqStr),
 						MessageType: "status",
 						Timestamp:   time.Now(),
 					})
-
-					// Build list of caps to request: only those both wanted and offered
-					var toRequest []string
-					for _, wantedCap := range requestedCaps {
-						if wantedCap == "sasl" && !c.saslEnabled {
-							continue
-						}
-						if contains(allCaps, wantedCap) {
-							toRequest = append(toRequest, wantedCap)
-						}
+					c.conn.SendRaw("CAP REQ :" + reqStr)
+					if c.saslEnabled && contains(allCaps, "sasl") {
+						c.saslCapRequested = true
 					}
-
-					if len(toRequest) > 0 {
-						reqStr := strings.Join(toRequest, " ")
-						c.storage.WriteMessage(storage.Message{
-							NetworkID:   c.networkID,
-							ChannelID:   nil,
-							User:        "*",
-							Message:     fmt.Sprintf("Requesting capabilities: %s", reqStr),
-							MessageType: "status",
-							Timestamp:   time.Now(),
-						})
-						c.conn.SendRaw("CAP REQ :" + reqStr)
-						if c.saslEnabled && contains(allCaps, "sasl") {
-							c.saslCapRequested = true
-						}
-					} else {
-						c.storage.WriteMessage(storage.Message{
-							NetworkID:   c.networkID,
-							ChannelID:   nil,
-							User:        "*",
-							Message:     "No requested capabilities supported, ending CAP negotiation",
-							MessageType: "status",
-							Timestamp:   time.Now(),
-						})
-						c.conn.SendRaw("CAP END")
-					}
+				} else {
+					c.storage.WriteMessage(storage.Message{
+						NetworkID:   c.networkID,
+						ChannelID:   nil,
+						User:        "*",
+						Message:     "No requested capabilities supported, ending CAP negotiation",
+						MessageType: "status",
+						Timestamp:   time.Now(),
+					})
+					c.conn.SendRaw("CAP END")
 				}
 			}
 		case "ACK":
@@ -2378,6 +2371,31 @@ func (c *IRCClient) buildHistoryMessage(e ircmsg.Message) (storage.Message, bool
 		PMTarget:    pmTarget,
 		MsgID:       c.getMsgID(e),
 	}, true
+}
+
+// accumulateCapLS appends one CAP LS line's capability tokens to buf and reports
+// whether the advertisement is complete. CAP LS 302 lets a server split a long
+// list across lines: non-final lines carry a "*" continuation marker, so their
+// params are [nick, "LS", "*", caps] and the cap tokens live in params[3]; a
+// single or final line is [nick, "LS", caps] with the tokens in params[2]. The
+// tokens are always the FINAL param — reading params[2] unconditionally would
+// drop every capability on a continuation line (there params[2] is the literal
+// "*"). Returns (fullList, true) only on the final line; ("", false) otherwise.
+func accumulateCapLS(params []string, buf *strings.Builder) (string, bool) {
+	if len(params) < 3 {
+		return "", false
+	}
+	continuation := len(params) > 3 && params[2] == "*"
+	tokens := params[2]
+	if continuation {
+		tokens = params[3]
+	}
+	buf.WriteString(tokens)
+	buf.WriteString(" ")
+	if continuation {
+		return "", false
+	}
+	return buf.String(), true
 }
 
 func contains(capabilities, cap string) bool {
