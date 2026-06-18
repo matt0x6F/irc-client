@@ -205,11 +205,16 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
   // Get nickname colors - this will fetch colors and listen for updates
   const nicknameColors = useNicknameColors(networkId, uniqueNicknames);
 
-  // Get the current user's nickname for mention highlighting
+  // Get the current user's nickname for mention highlighting. Prefer the live
+  // server-assigned nick (kept current through /nick and collision reclaims) and
+  // fall back to the configured nick before the live one is known.
   const currentNickname = useNetworkStore((state) => {
     if (networkId === null) return null;
-    const network = state.networks.find((n) => n.id === networkId);
-    return network?.nickname || null;
+    return (
+      state.currentNick[networkId] ??
+      state.networks.find((n) => n.id === networkId)?.nickname ??
+      null
+    );
   });
 
   // Pinned messages / jump-to-message state

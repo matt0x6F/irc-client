@@ -87,7 +87,7 @@ func (a *App) OnEvent(event events.Event) {
 	// Forward message and user events to frontend for real-time updates
 	if event.Type == irc.EventMessageSent || event.Type == irc.EventMessageReceived ||
 		event.Type == irc.EventUserJoined || event.Type == irc.EventUserParted || event.Type == irc.EventUserQuit ||
-		event.Type == irc.EventUserKicked ||
+		event.Type == irc.EventUserKicked || event.Type == irc.EventUserNick ||
 		event.Type == irc.EventChannelTopic || event.Type == irc.EventChannelMode ||
 		event.Type == irc.EventChannelUserMode || event.Type == irc.EventChannelBanList ||
 		event.Type == irc.EventError || event.Type == "channel.names.complete" {
