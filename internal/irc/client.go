@@ -28,7 +28,7 @@ import (
 // CAP DEL; it is implicitly enabled by CAP LS 302, but we request it explicitly
 // so it surfaces in enabledCaps. The away-notify/account-notify/extended-join/
 // chghost/account-tag cluster keeps the live roster current (see UserMeta).
-var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "multi-prefix", "cap-notify", "away-notify", "account-notify", "extended-join", "chghost", "account-tag", "userhost-in-names", "setname"}
+var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "multi-prefix", "cap-notify", "away-notify", "account-notify", "extended-join", "chghost", "account-tag", "userhost-in-names", "setname", "invite-notify"}
 
 // IRCClient manages IRC connections
 type IRCClient struct {
@@ -665,6 +665,57 @@ func (c *IRCClient) maybeApplyExtendedJoin(e ircmsg.Message) {
 		if realname != "" {
 			m.Realname = realname
 		}
+	})
+}
+
+// handleInvite surfaces an inbound INVITE in the network status buffer. The
+// invitee form (":inviter INVITE you #chan") arrives whether or not invite-notify
+// is negotiated; with invite-notify the server additionally relays invites of
+// *other* users to a channel's operators (":inviter INVITE someone #chan"). Both
+// are written as a clickable status line so the channel can be joined directly.
+func (c *IRCClient) handleInvite(e ircmsg.Message) {
+	if len(e.Params) < 2 {
+		return
+	}
+	target := e.Params[0]
+	channel := e.Params[1]
+	inviter := e.Nick()
+
+	var text string
+	if strings.EqualFold(target, c.CurrentNick()) {
+		text = fmt.Sprintf("%s invited you to %s", inviter, channel)
+	} else {
+		text = fmt.Sprintf("%s invited %s to %s", inviter, target, channel)
+	}
+
+	rawLine, _ := e.Line()
+	// Sync write so the row is committed before the event below tells the
+	// frontend to reload the status buffer (avoids a write/notify race).
+	if err := c.storage.WriteMessageSync(storage.Message{
+		NetworkID:   c.networkID,
+		ChannelID:   nil, // status buffer
+		User:        "*",
+		Message:     text,
+		MessageType: "invite",
+		Timestamp:   time.Now(),
+		RawLine:     rawLine,
+	}); err != nil {
+		logger.Log.Warn().Err(err).Msg("Failed to write INVITE status line")
+	}
+
+	// channel:nil routes the line to the status buffer and refreshes it live
+	// (see the message-event handler in App.tsx).
+	c.eventBus.Emit(events.Event{
+		Type: EventMessageReceived,
+		Data: map[string]interface{}{
+			"network":   c.network.Address,
+			"networkId": c.networkID,
+			"channel":   nil,
+			"user":      "*",
+			"message":   text,
+		},
+		Timestamp: time.Now(),
+		Source:    events.EventSourceIRC,
 	})
 }
 
@@ -1420,6 +1471,7 @@ func (c *IRCClient) setupHandlers() {
 	c.conn.AddCallback("ACCOUNT", c.handleAccount)
 	c.conn.AddCallback("CHGHOST", c.handleChghost)
 	c.conn.AddCallback("SETNAME", c.handleSetname)
+	c.conn.AddCallback("INVITE", c.handleInvite)
 
 	// Channel topic (RPL_TOPIC = 332) - received when topic is retrieved
 	c.conn.AddCallback("332", func(e ircmsg.Message) {

@@ -58,7 +58,7 @@ Legend: ✅ Supported · ◐ Partial · ⛔ Not yet
 | `chghost` | ✅ | Yes | User host changes update the roster |
 | `userhost-in-names` | ✅ | Yes | NAMES carries `nick!user@host`; the host seeds the roster |
 | `account-tag` | ✅ | Yes | `@account` on messages keeps the roster account current |
-| `invite-notify` | ⛔ | No | — |
+| `invite-notify` | ✅ | Yes | Inbound INVITEs shown as a clickable status line |
 | `setname` | ✅ | Yes | Live realname changes update the roster + WHOIS panel |
 | `monitor` | ⛔ | No | No presence monitoring of offline nicks |
 | `labeled-response` | ⛔ | No | — |
@@ -69,7 +69,7 @@ Legend: ✅ Supported · ◐ Partial · ⛔ Not yet
 The set of requested capabilities lives in one place — `internal/irc/client.go:31`:
 
 ```go
-var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "multi-prefix", "cap-notify", "away-notify", "account-notify", "extended-join", "chghost", "account-tag", "userhost-in-names", "setname"}
+var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "multi-prefix", "cap-notify", "away-notify", "account-notify", "extended-join", "chghost", "account-tag", "userhost-in-names", "setname", "invite-notify"}
 ```
 
 `sasl` is only requested when the network has SASL configured (`client.go:1927`); the others
@@ -287,6 +287,22 @@ kept current by `SETNAME`. Coverage: `internal/irc/setname_test.go`.
 point-in-time `WHOIS` reply (`user-info.tsx`), so it updates the moment a `SETNAME` arrives while
 the panel is open — mirroring how the live account is shown.
 
+### invite-notify
+
+The invitee form of `INVITE` (`:inviter INVITE you #chan`) is delivered whether or not this cap
+is negotiated. With `invite-notify`, the server *additionally* relays invites of other users to a
+channel's operators (`:inviter INVITE someone #chan`), so ops can see who is being invited.
+
+`handleInvite` (`client.go`) handles both: it compares the target to `CurrentNick()` and writes a
+status-buffer line — "*inviter* invited **you** to #chan" or "*inviter* invited *someone* to
+#chan". The line is written with `WriteMessageSync` (so the row is committed before the refresh
+event fires, avoiding a write/notify race) under a dedicated `invite` message type, then an
+`EventMessageReceived` with `channel: nil` routes it to the status buffer and refreshes it live.
+Coverage: `internal/irc/invite_test.go`.
+
+**In the client:** invites render as a dimmed status line in which the channel name is a clickable
+link that issues `/join` (`message-view.tsx`), so you can accept an invite with one click.
+
 ### Bot mode
 
 [Bot mode](https://ircv3.net/specs/extensions/bot-mode) lets a server mark certain users as
@@ -361,9 +377,9 @@ by theme with the main blocker.
 **Message metadata** — `draft/message-redaction` (handle REDACT/DELETE), which needs
 message-mutation handling.
 
-**Connection & protocol niceties** — `labeled-response` (correlate replies via `@label`), `standard-replies` (uniform
-`FAIL`/`WARN`/`NOTE`), `invite-notify`, `monitor` (presence for offline nicks), `WHOX`
-(extended WHO). Independent of each other; each is a self-contained addition.
+**Connection & protocol niceties** — `labeled-response` (correlate replies via `@label`),
+`standard-replies` (uniform `FAIL`/`WARN`/`NOTE`), `monitor` (presence for offline nicks),
+`WHOX` (extended WHO). Independent of each other; each is a self-contained addition.
 
 When implementing any of these, add the cap to `requestedCaps` (`client.go:31`), gate
 behavior on `enabledCaps`, and update this matrix.
