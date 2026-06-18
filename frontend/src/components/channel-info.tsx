@@ -502,14 +502,20 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
         {orderedUsers.map(({ user, Icon, color }) => {
           const meta = userMetaMap?.[user.nickname.toLowerCase()];
           const away = !!meta?.away;
-          // Away users are dimmed; their away message (if any) shows on hover.
-          const nickTitle = away
-            ? meta?.away_message
-              ? `Away: ${meta.away_message}`
-              : 'Away'
-            : nicknameColors.get(user.nickname)
-              ? `Color: ${nicknameColors.get(user.nickname)}`
-              : 'No color';
+          // Tooltip: away status (with reason) takes priority over color, and the
+          // user@host (from userhost-in-names on join, or a later chghost) is
+          // appended when known.
+          const titleParts = [
+            away
+              ? meta?.away_message
+                ? `Away: ${meta.away_message}`
+                : 'Away'
+              : nicknameColors.get(user.nickname)
+                ? `Color: ${nicknameColors.get(user.nickname)}`
+                : 'No color',
+          ];
+          if (meta?.host) titleParts.push(meta.host);
+          const nickTitle = titleParts.join(' · ');
           return (
           <div
             key={user.id}

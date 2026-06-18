@@ -28,7 +28,7 @@ import (
 // CAP DEL; it is implicitly enabled by CAP LS 302, but we request it explicitly
 // so it surfaces in enabledCaps. The away-notify/account-notify/extended-join/
 // chghost/account-tag cluster keeps the live roster current (see UserMeta).
-var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "multi-prefix", "cap-notify", "away-notify", "account-notify", "extended-join", "chghost", "account-tag"}
+var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "multi-prefix", "cap-notify", "away-notify", "account-notify", "extended-join", "chghost", "account-tag", "userhost-in-names"}
 
 // IRCClient manages IRC connections
 type IRCClient struct {
@@ -171,6 +171,18 @@ func splitMembershipPrefixes(entry, validPrefixes string) (modes, nick string) {
 		i++
 	}
 	return entry[:i], entry[i:]
+}
+
+// splitNickUserHost separates a NAMES (353) entry of the form "nick!user@host"
+// into the bare nick and the "user@host" portion. With the userhost-in-names
+// capability the server appends "!user@host" to each nick in NAMES; without it,
+// entries are bare nicks. The membership prefixes must already have been peeled
+// off. A missing "!" yields an empty userhost (the plain-NAMES case). Because
+// "!" is not a valid nick character, splitting is safe whether or not the cap is
+// active — its presence is itself the signal.
+func splitNickUserHost(entry string) (nick, userhost string) {
+	nick, userhost, _ = strings.Cut(entry, "!")
+	return nick, userhost
 }
 
 // IsConnected returns whether the client is connected.
@@ -1492,12 +1504,18 @@ func (c *IRCClient) setupHandlers() {
 		for _, nameWithMode := range names {
 			// Extract mode prefixes (@, +, etc.) and nickname. With multi-prefix
 			// enabled this captures every prefix the user holds, highest first.
-			modes, nickname := splitMembershipPrefixes(nameWithMode, validPrefixes)
+			modes, rest := splitMembershipPrefixes(nameWithMode, validPrefixes)
+			// With userhost-in-names the remainder is "nick!user@host"; otherwise
+			// it is a bare nick. Store the bare nick and seed the roster host.
+			nickname, userhost := splitNickUserHost(rest)
 			if len(nickname) > 0 {
 				if err := c.storage.AddChannelUser(ch.ID, nickname, modes); err != nil {
 					logger.Log.Warn().Err(err).Str("nickname", nickname).Str("channel", channel).Msg("Failed to add user from NAMES")
 				} else {
 					addedCount++
+				}
+				if userhost != "" {
+					c.applyUserMeta(nickname, func(m *UserMeta) { m.Host = userhost })
 				}
 			}
 		}

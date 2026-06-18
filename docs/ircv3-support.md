@@ -56,7 +56,7 @@ Legend: ✅ Supported · ◐ Partial · ⛔ Not yet
 | `away-notify` | ✅ | Yes | Live away state dims members in the nick list |
 | `extended-join` | ✅ | Yes | JOIN's account is recorded into the roster |
 | `chghost` | ✅ | Yes | User host changes update the roster |
-| `userhost-in-names` | ⛔ | No | NAMES carries nicks only |
+| `userhost-in-names` | ✅ | Yes | NAMES carries `nick!user@host`; the host seeds the roster |
 | `account-tag` | ✅ | Yes | `@account` on messages keeps the roster account current |
 | `invite-notify` | ⛔ | No | — |
 | `setname` | ⛔ | No | Live realname changes not tracked |
@@ -69,7 +69,7 @@ Legend: ✅ Supported · ◐ Partial · ⛔ Not yet
 The set of requested capabilities lives in one place — `internal/irc/client.go:31`:
 
 ```go
-var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "multi-prefix", "cap-notify", "away-notify", "account-notify", "extended-join", "chghost", "account-tag"}
+var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "multi-prefix", "cap-notify", "away-notify", "account-notify", "extended-join", "chghost", "account-tag", "userhost-in-names"}
 ```
 
 `sasl` is only requested when the network has SASL configured (`client.go:1927`); the others
@@ -212,6 +212,23 @@ rest per a Display setting (**Settings → Display → Member role display**): *
 single icon for the highest role; *Text* shows the full prefix string (e.g. `@+`), making
 every role visible. The preference is durable (SQLite settings table) and updates live.
 
+### userhost-in-names
+
+Without this cap a `NAMES` (`353`) reply lists bare nicks, so a user's `user@host` is unknown
+until a `WHOIS` or a later `chghost`. With `userhost-in-names` negotiated, the server appends
+`!user@host` to every nick in `NAMES` (after any membership prefixes, e.g. `@alice!~alice@host`).
+
+The `353` handler peels prefixes with `splitMembershipPrefixes`, then splits the remainder with
+`splitNickUserHost` (`client.go`): the bare nick is stored as the channel member (unchanged),
+and the `user@host` is fed into the live roster via `applyUserMeta` — the *same* `Host` field
+`chghost` maintains, so the two paths converge. No `enabledCaps` gate is needed: `!` is not a
+valid nick character, so its presence is itself the signal. Parsing is covered by
+`internal/irc/userhost_test.go`.
+
+**In the client:** hovering a member in the nick list shows their `user@host` in the tooltip
+(`channel-info.tsx`), alongside away/colour info, so hosts are visible immediately on join
+rather than only after a WHOIS.
+
 ### Live roster (away-notify / account-notify / extended-join / chghost / account-tag)
 
 These five capabilities keep the channel member list current as people go away, log in or
@@ -328,9 +345,6 @@ by theme with the main blocker.
 cluster (`account-notify`, `away-notify`, `chghost`, `extended-join`) is now supported — see
 [Live roster](#live-roster-away-notify--account-notify--extended-join--chghost--account-tag).
 `setname` is the remaining gap: the roster does not yet track mid-session realname changes.
-
-**Richer NAMES / membership** — `userhost-in-names` (user@host in NAMES). Lower effort; mostly
-NAMES parsing and display changes. (`multi-prefix` is now supported — see above.)
 
 **Message metadata** — `draft/message-redaction` (handle REDACT/DELETE), which needs
 message-mutation handling. (`account-tag` is now consumed — see the roster section above.)
