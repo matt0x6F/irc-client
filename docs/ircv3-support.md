@@ -49,6 +49,7 @@ Legend: ✅ Supported · ◐ Partial · ⛔ Not yet
 | CAP LS 302 negotiation | ✅ | n/a | Full LS/REQ/ACK/NAK/END lifecycle |
 | ISUPPORT (`005`) | ✅ | n/a | PREFIX / CHANMODES parsing for mode handling |
 | WHOIS account (`330`) | ✅ | n/a | Shows the account a user is logged in as |
+| Bot mode | ✅ | n/a (via `message-tags` + `335`) | Bots flagged from the `bot` tag and RPL_WHOISBOT; badged in the nick list and WHOIS |
 | `multi-prefix` | ✅ | Yes | All membership prefixes parsed; shown as icon (highest) or text (full) per setting |
 | `cap-notify` | ✅ | Yes | `CAP NEW` auto-requests newly-offered wanted caps; `CAP DEL` disables withdrawn caps live |
 | `account-notify` | ✅ | Yes | Live account login/logout drives the roster + WHOIS |
@@ -65,7 +66,7 @@ Legend: ✅ Supported · ◐ Partial · ⛔ Not yet
 | `draft/message-redaction` | ⛔ | No | No REDACT handling |
 | `WHOX` (`354`) | ⛔ | No | Plain WHO/WHOIS only |
 
-The set of requested capabilities lives in one place — `internal/irc/client.go:25`:
+The set of requested capabilities lives in one place — `internal/irc/client.go:31`:
 
 ```go
 var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "multi-prefix", "cap-notify", "away-notify", "account-notify", "extended-join", "chghost", "account-tag"}
@@ -169,7 +170,7 @@ unchanged.
 ### chathistory
 
 Cascade requests both the ratified `chathistory` and legacy `draft/chathistory` names and
-uses whichever the server advertises (`client.go:25`, `chatHistoryEnabled`,
+uses whichever the server advertises (`client.go:31`, `chatHistoryEnabled`,
 `client.go:2197-2201`). It reads the advertised per-request maximum (`chathistory=N`) and
 clamps requests to it (`setChatHistoryMax`/`clampChatHistoryLimit`, `client.go:2185-2216`),
 defaulting to 100 when unadvertised (`client.go:2181`).
@@ -252,6 +253,30 @@ that builds the roster) now fires on registration completion — `RPL_ENDOFMOTD`
 2-second timer that could send JOINs before the server was ready (`triggerAutoJoin` /
 `doAutoJoin`, `client.go`).
 
+### Bot mode
+
+[Bot mode](https://ircv3.net/specs/extensions/bot-mode) lets a server mark certain users as
+automated bots. Cascade recognizes a bot from two signals, neither of which needs a capability
+beyond `message-tags`:
+
+- the valueless `bot` message tag on an incoming PRIVMSG / NOTICE or JOIN
+  (`maybeMarkBotFromTag`, `client.go:471`, called from the PRIVMSG, JOIN, and notice paths at
+  `client.go:864`, `:1004`, `:3584`), and
+- `RPL_WHOISBOT` (`335`) in a WHOIS reply (`handleWhoisBot`, `client.go:479`).
+
+Both funnel into `markBot` (`client.go:441`), which is idempotent: it records the nick in a
+session-local per-network set and emits `EventBotDetected` (`"bot.detected"`) only the first
+time, so repeated bot traffic never re-notifies. Like the live-roster attributes, the set is
+**not** persisted — it re-accrues on reconnect.
+
+The backend forwards the event to the frontend as `bot-event` (`app_events.go:137`), and the
+store keeps a per-network `botNicks` set (`frontend/src/stores/network.ts:119`), hydrated on
+select via `GetNetworkBots`.
+
+**In the client:** bot users get a "bot" badge in the nick list (`channel-info.tsx:534`) and
+in the WHOIS panel (`user-info.tsx:138`), so automated participants are visually distinct from
+people.
+
 ### Strict Transport Security (STS)
 
 [STS](https://ircv3.net/specs/extensions/sts) lets a server tell the client to always use
@@ -314,7 +339,7 @@ message-mutation handling. (`account-tag` is now consumed — see the roster sec
 `FAIL`/`WARN`/`NOTE`), `invite-notify`, `monitor` (presence for offline nicks), `WHOX`
 (extended WHO). Independent of each other; each is a self-contained addition.
 
-When implementing any of these, add the cap to `requestedCaps` (`client.go:25`), gate
+When implementing any of these, add the cap to `requestedCaps` (`client.go:31`), gate
 behavior on `enabledCaps`, and update this matrix.
 
 ## How the screenshots are made
