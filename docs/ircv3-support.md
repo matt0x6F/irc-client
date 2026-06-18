@@ -61,7 +61,7 @@ Legend: ✅ Supported · ◐ Partial · ⛔ Not yet
 | `invite-notify` | ✅ | Yes | Inbound INVITEs shown as a clickable status line |
 | `setname` | ✅ | Yes | Live realname changes update the roster + WHOIS panel |
 | `monitor` | ⛔ | No | No presence monitoring of offline nicks |
-| `labeled-response` | ⛔ | No | — |
+| `labeled-response` | ✅ | Yes | Correlates the WHOX roster query's reply by `@label` |
 | `standard-replies` | ✅ | Yes | FAIL/WARN/NOTE shown as error/warning/status lines |
 | `draft/message-redaction` | ⛔ | No | No REDACT handling |
 | `WHOX` (`354`) | ✅ | n/a (ISUPPORT) | Extended WHO on join bulk-seeds the roster |
@@ -69,7 +69,7 @@ Legend: ✅ Supported · ◐ Partial · ⛔ Not yet
 The set of requested capabilities lives in one place — `internal/irc/client.go:31`:
 
 ```go
-var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "multi-prefix", "cap-notify", "away-notify", "account-notify", "extended-join", "chghost", "account-tag", "userhost-in-names", "setname", "invite-notify", "standard-replies"}
+var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "multi-prefix", "cap-notify", "away-notify", "account-notify", "extended-join", "chghost", "account-tag", "userhost-in-names", "setname", "invite-notify", "standard-replies", "labeled-response"}
 ```
 
 `sasl` is only requested when the network has SASL configured (`client.go:1927`); the others
@@ -280,15 +280,40 @@ every member's attributes in one shot.
 
 On our own JOIN, when the server advertised `WHOX` (`c.supportsWHOX`, set in the `005` handler),
 `requestWHOX` issues `WHO <channel> %tcuhnfar,<token>` (`client.go`). The reply rows arrive as
-`354` (RPL_WHOSPCRPL) and are parsed by `handleWhoxReply` in WHOX's canonical field order —
-token, channel, user, host, nick, flags, account, realname. A fixed token (`whoxRosterToken`)
-lets the handler ignore `354`s from any user-initiated `WHO`. Each row is folded into the live
-roster via `applyUserMeta`: host (`user@host`), away (the `flags` field begins with `G`), account
-(`"0"`/`"*"` → none), and realname. Coverage: `internal/irc/whox_test.go`.
+`354` (RPL_WHOSPCRPL) in WHOX's canonical field order — token, channel, user, host, nick, flags,
+account, realname — and each is folded into the live roster by `applyWhoxRow` via `applyUserMeta`:
+host (`user@host`), away (the `flags` field begins with `G`), account (`"0"`/`"*"` → none), and
+realname. Correlation uses one of two paths: when `labeled-response` is available the reply is a
+label-correlated batch (see [labeled-response](#labeled-response)); otherwise the fixed
+`whoxRosterToken` lets `handleWhoxReply` ignore `354`s from any user-initiated `WHO`. Coverage:
+`internal/irc/whox_test.go`.
 
 **In the client:** there is no dedicated UI — WHOX simply makes the existing roster surfaces
 (nick-list away dimming, host tooltip, WHOIS account/realname) accurate the instant you join,
 rather than after the first event for each user.
+
+### labeled-response
+
+[labeled-response](https://ircv3.net/specs/extensions/labeled-response) lets a client tag an
+outbound command with `@label=<id>`; the server echoes that label on the reply (wrapped in a
+`batch`), so the reply can be matched to the request even when several are outstanding.
+
+Cascade's underlying `ergochat/irc-go` implements this around `SendWithLabel`: a labeled command's
+reply is **collected** into a `*Batch` and delivered to a callback rather than the normal
+handlers. (Inbound labels the library didn't generate are dropped, so labels must only be sent
+this way.) The library learns the cap is active by passively observing our `CAP ACK`, and gates it
+on `batch` also being enabled — the reply is delivered *as* a batch.
+
+Cascade's consumer is the **WHOX roster query**: when `labeled-response` is negotiated,
+`requestWHOX` sends the `WHO` via `SendWithLabel`, and `handleWhoxBatch` folds the collected `354`
+rows into the roster — no token matching needed. Without the cap, WHOX falls back to token
+correlation. This is a deliberate fit: WHOX is a command whose whole multi-line reply we want
+collected, which is exactly the shape labeled-response is built for. Cascade processes ordinary
+server messages globally, so it does not label every command — only this one, where correlation
+adds value. Coverage: the batch path in `internal/irc/whox_test.go`.
+
+**In the client:** no visible surface — labeled-response only makes the WHOX reply correlation
+exact. It is the one ratified cap with no direct UI.
 
 ### setname
 
@@ -412,9 +437,7 @@ by theme with the main blocker.
 **Message metadata** — `draft/message-redaction` (handle REDACT/DELETE), which needs
 message-mutation handling.
 
-**Connection & protocol niceties** — `labeled-response` (correlate replies via `@label`),
-`monitor` (presence for offline nicks). Independent of each other; each is a self-contained
-addition.
+**Connection & protocol niceties** — `monitor` (presence for offline nicks).
 
 When implementing any of these, add the cap to `requestedCaps` (`client.go:31`), gate
 behavior on `enabledCaps`, and update this matrix.

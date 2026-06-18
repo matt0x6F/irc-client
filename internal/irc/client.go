@@ -28,7 +28,7 @@ import (
 // CAP DEL; it is implicitly enabled by CAP LS 302, but we request it explicitly
 // so it surfaces in enabledCaps. The away-notify/account-notify/extended-join/
 // chghost/account-tag cluster keeps the live roster current (see UserMeta).
-var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "multi-prefix", "cap-notify", "away-notify", "account-notify", "extended-join", "chghost", "account-tag", "userhost-in-names", "setname", "invite-notify", "standard-replies"}
+var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "multi-prefix", "cap-notify", "away-notify", "account-notify", "extended-join", "chghost", "account-tag", "userhost-in-names", "setname", "invite-notify", "standard-replies", "labeled-response"}
 
 // IRCClient manages IRC connections
 type IRCClient struct {
@@ -2876,28 +2876,73 @@ func (c *IRCClient) whoxSupported() bool {
 // (account / host / away / realname) on join, instead of waiting for live churn
 // to fill it in. The field set "%tcuhnfar" yields, in WHOX's canonical order:
 // token, channel, user, host, nick, flags, account, realname.
+//
+// When labeled-response is negotiated, the request is sent via the library's
+// SendWithLabel: the server's reply is collected into a batch correlated by an
+// IRCv3 @label and delivered to handleWhoxBatch — no token matching needed. The
+// token is still included so the reply layout is identical to the fallback path.
+// Without labeled-response, a plain WHO is sent and the 354 rows are correlated
+// by whoxRosterToken in handleWhoxReply.
 func (c *IRCClient) requestWHOX(channel string) error {
 	if channel == "" {
 		return fmt.Errorf("whox channel required")
 	}
-	return c.conn.SendRaw(fmt.Sprintf("WHO %s %%tcuhnfar,%s", channel, whoxRosterToken))
+	fields := fmt.Sprintf("%%tcuhnfar,%s", whoxRosterToken)
+	if c.capEnabled("labeled-response") {
+		if err := c.conn.SendWithLabel(c.handleWhoxBatch, nil, "WHO", channel, fields); err == nil {
+			return nil
+		}
+		// Fall through to the unlabeled path if the label send was refused.
+	}
+	return c.conn.SendRaw(fmt.Sprintf("WHO %s %s", channel, fields))
 }
 
-// handleWhoxReply folds a RPL_WHOSPCRPL (354) row from our roster-seeding WHO
-// into the live roster. Replies whose token doesn't match ours (a user-initiated
-// WHO) are ignored. Params match the "%tcuhnfar" request:
-//
-//	[ourNick, token, channel, user, host, nick, flags, account, realname]
+// handleWhoxBatch receives the labeled-response batch for a roster-seeding WHO
+// (see requestWHOX) and folds each 354 row into the roster. b is nil if the
+// server failed to send a proper labeled response.
+func (c *IRCClient) handleWhoxBatch(b *ircevent.Batch) {
+	if b == nil {
+		return
+	}
+	// A multi-row reply nests the 354s in Items; a single-row reply may arrive as
+	// the batch Message itself. Handle both.
+	if b.Command == "354" {
+		c.applyWhoxRow(b.Params)
+	}
+	for _, item := range b.Items {
+		if item == nil {
+			continue
+		}
+		if item.Command == "354" {
+			c.applyWhoxRow(item.Params)
+		}
+	}
+}
+
+// handleWhoxReply folds a RPL_WHOSPCRPL (354) row from an unlabeled roster WHO
+// into the roster. Replies whose token doesn't match ours (a user-initiated WHO)
+// are ignored. Used only when labeled-response is unavailable.
 func (c *IRCClient) handleWhoxReply(e ircmsg.Message) {
 	if len(e.Params) < 9 || e.Params[1] != whoxRosterToken {
 		return
 	}
-	user := e.Params[3]
-	host := e.Params[4]
-	nick := e.Params[5]
-	flags := e.Params[6]
-	account := e.Params[7]
-	realname := e.Params[8]
+	c.applyWhoxRow(e.Params)
+}
+
+// applyWhoxRow parses one 354 row and folds it into the live roster. Params match
+// the "%tcuhnfar" request:
+//
+//	[ourNick, token, channel, user, host, nick, flags, account, realname]
+func (c *IRCClient) applyWhoxRow(params []string) {
+	if len(params) < 9 {
+		return
+	}
+	user := params[3]
+	host := params[4]
+	nick := params[5]
+	flags := params[6]
+	account := params[7]
+	realname := params[8]
 
 	// WHOX uses "0" (ircu) or "*" for "no account".
 	if account == "0" || account == "*" {

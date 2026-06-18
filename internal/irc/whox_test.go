@@ -1,6 +1,10 @@
 package irc
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/ergochat/irc-go/ircevent"
+)
 
 // 354 field order for our "%tcuhnfar" query:
 //   [ourNick, token, channel, user, host, nick, flags, account, realname]
@@ -57,4 +61,31 @@ func TestWhoxReplyIgnoresForeignToken(t *testing.T) {
 	if _, ok := c.UserMetaFor("nobody"); ok {
 		t.Fatal("short 354 must not create entries")
 	}
+}
+
+// labeled-response path: the 354 rows arrive collected in a batch (no per-row
+// token check) and are folded into the roster by handleWhoxBatch.
+func TestWhoxBatchSeedsRosterFromItems(t *testing.T) {
+	c, _ := newUserMetaTestClient(t)
+
+	batch := &ircevent.Batch{
+		Message: parse(t, ":srv BATCH +x labeled-response"),
+		Items: []*ircevent.Batch{
+			{Message: parse(t, ":srv 354 me 332 #chan ~u host.a alice H acctA :Alice")},
+			{Message: parse(t, ":srv 354 me 332 #chan ~v host.b bob G*@ 0 :Bob")},
+		},
+	}
+	c.handleWhoxBatch(batch)
+
+	if m, ok := c.UserMetaFor("alice"); !ok || m.Account != "acctA" || m.Host != "~u@host.a" || m.Away {
+		t.Fatalf("alice from batch: ok=%v %+v", ok, m)
+	}
+	if m, _ := c.UserMetaFor("bob"); !m.Away || m.Account != "" {
+		t.Fatalf("bob from batch: %+v", m)
+	}
+}
+
+func TestWhoxBatchNilSafe(t *testing.T) {
+	c, _ := newUserMetaTestClient(t)
+	c.handleWhoxBatch(nil) // must not panic
 }
