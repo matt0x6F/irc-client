@@ -63,7 +63,7 @@ func (c *IRCClient) handleSCRAMAuth(response string) {
 		c.saslInProgress = false
 		c.scramState = nil
 		c.mu.Unlock()
-		c.conn.SendRaw("CAP END")
+		c.endCapNegotiation()
 	} else {
 		// Server response: decode and process
 		decoded, err := base64.StdEncoding.DecodeString(response)
@@ -250,7 +250,7 @@ func (c *IRCClient) abortSASL(reason string) {
 	c.storage.WriteMessage(statusMsg)
 
 	c.conn.SendRaw("AUTHENTICATE *")
-	c.conn.SendRaw("CAP END")
+	c.endCapNegotiation()
 
 	c.eventBus.Emit(events.Event{
 		Type:      EventSASLAborted,
