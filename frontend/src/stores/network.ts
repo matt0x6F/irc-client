@@ -41,6 +41,7 @@ export interface UserMetaT {
   away_message: string;
   account: string;
   host: string;
+  realname: string;
 }
 
 // How many messages of surrounding context to load when jumping to a pinned message.
@@ -909,6 +910,7 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
           away_message: m?.away_message ?? '',
           account: m?.account ?? '',
           host: m?.host ?? '',
+          realname: m?.realname ?? '',
         };
       }
       set((state) => ({ userMeta: { ...state.userMeta, [id]: map } }));
@@ -927,7 +929,8 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
         existing.away === meta.away &&
         existing.away_message === meta.away_message &&
         existing.account === meta.account &&
-        existing.host === meta.host
+        existing.host === meta.host &&
+        existing.realname === meta.realname
       ) {
         return state;
       }

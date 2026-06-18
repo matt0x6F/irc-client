@@ -69,11 +69,12 @@ describe('network store: bot mode', () => {
 // extended-join / chghost / account-tag) that the nick list dims on and the
 // WHOIS panel reads. setUserMeta is fed by the 'usermeta-event' handler.
 describe('network store: user meta', () => {
-  const meta = (over: Partial<{ away: boolean; away_message: string; account: string; host: string }> = {}) => ({
+  const meta = (over: Partial<{ away: boolean; away_message: string; account: string; host: string; realname: string }> = {}) => ({
     away: false,
     away_message: '',
     account: '',
     host: '',
+    realname: '',
     ...over,
   });
 

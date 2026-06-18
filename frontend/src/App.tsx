@@ -306,6 +306,7 @@ function App() {
           away_message: typeof d.away_message === 'string' ? d.away_message : '',
           account: typeof d.account === 'string' ? d.account : '',
           host: typeof d.host === 'string' ? d.host : '',
+          realname: typeof d.realname === 'string' ? d.realname : '',
         });
       }
     });

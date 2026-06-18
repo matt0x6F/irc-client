@@ -59,7 +59,7 @@ Legend: ✅ Supported · ◐ Partial · ⛔ Not yet
 | `userhost-in-names` | ✅ | Yes | NAMES carries `nick!user@host`; the host seeds the roster |
 | `account-tag` | ✅ | Yes | `@account` on messages keeps the roster account current |
 | `invite-notify` | ⛔ | No | — |
-| `setname` | ⛔ | No | Live realname changes not tracked |
+| `setname` | ✅ | Yes | Live realname changes update the roster + WHOIS panel |
 | `monitor` | ⛔ | No | No presence monitoring of offline nicks |
 | `labeled-response` | ⛔ | No | — |
 | `standard-replies` | ⛔ | No | — |
@@ -69,7 +69,7 @@ Legend: ✅ Supported · ◐ Partial · ⛔ Not yet
 The set of requested capabilities lives in one place — `internal/irc/client.go:31`:
 
 ```go
-var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "multi-prefix", "cap-notify", "away-notify", "account-notify", "extended-join", "chghost", "account-tag", "userhost-in-names"}
+var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "multi-prefix", "cap-notify", "away-notify", "account-notify", "extended-join", "chghost", "account-tag", "userhost-in-names", "setname"}
 ```
 
 `sasl` is only requested when the network has SASL configured (`client.go:1927`); the others
@@ -234,9 +234,10 @@ rather than only after a WHOIS.
 These five capabilities keep the channel member list current as people go away, log in or
 out of an account, or change host — without a manual `/who`. They all feed one piece of
 session-local state: a per-network map of lowercased nick → `UserMeta{Away, AwayMessage,
-Account, Host}` (`internal/irc/events.go`, `internal/irc/client.go`). The map is deliberately
-**not** persisted — a nick's away/account/host is only meaningful for the current session and
-re-accrues on reconnect (same rationale as bot mode).
+Account, Host, Realname}` (`internal/irc/events.go`, `internal/irc/client.go`). The map is
+deliberately **not** persisted — a nick's attributes are only meaningful for the current
+session and re-accrue on reconnect (same rationale as bot mode). `Realname` is fed by
+[setname](#setname) and `extended-join`.
 
 Each signal updates the map through `applyUserMeta`, which is idempotent: it only stores and
 emits `EventUserMetaChanged` when an attribute actually changed, so high-frequency traffic
@@ -269,6 +270,22 @@ that builds the roster) now fires on registration completion — `RPL_ENDOFMOTD`
 `ERR_NOMOTD` (422), with a fallback timer armed at `RPL_WELCOME` (001) — instead of a fixed
 2-second timer that could send JOINs before the server was ready (`triggerAutoJoin` /
 `doAutoJoin`, `client.go`).
+
+### setname
+
+[setname](https://ircv3.net/specs/extensions/setname) lets a user change their realname (GECOS)
+mid-session; the server announces it as `:nick SETNAME :new real name`. Without it, a realname is
+fixed at connect and only seen via `WHOIS`.
+
+`handleSetname` (`client.go`) records the new realname into the live roster's `Realname` field
+via `applyUserMeta` — the same idempotent path the rest of the roster uses. The same field is
+also seeded by `extended-join`, whose third parameter is the joiner's realname
+(`maybeApplyExtendedJoin`), so a user's realname is often known from the moment they join, then
+kept current by `SETNAME`. Coverage: `internal/irc/setname_test.go`.
+
+**In the client:** the WHOIS panel's *Real Name* row prefers the live roster value over the
+point-in-time `WHOIS` reply (`user-info.tsx`), so it updates the moment a `SETNAME` arrives while
+the panel is open — mirroring how the live account is shown.
 
 ### Bot mode
 
@@ -341,13 +358,8 @@ with the IRCv3 features above.
 The capabilities below are recognized as desirable but not yet negotiated. They are grouped
 by theme with the main blocker.
 
-**Live presence / roster updates** — `setname` (live realname changes). The rest of this
-cluster (`account-notify`, `away-notify`, `chghost`, `extended-join`) is now supported — see
-[Live roster](#live-roster-away-notify--account-notify--extended-join--chghost--account-tag).
-`setname` is the remaining gap: the roster does not yet track mid-session realname changes.
-
 **Message metadata** — `draft/message-redaction` (handle REDACT/DELETE), which needs
-message-mutation handling. (`account-tag` is now consumed — see the roster section above.)
+message-mutation handling.
 
 **Connection & protocol niceties** — `labeled-response` (correlate replies via `@label`), `standard-replies` (uniform
 `FAIL`/`WARN`/`NOTE`), `invite-notify`, `monitor` (presence for offline nicks), `WHOX`

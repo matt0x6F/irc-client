@@ -28,7 +28,7 @@ import (
 // CAP DEL; it is implicitly enabled by CAP LS 302, but we request it explicitly
 // so it surfaces in enabledCaps. The away-notify/account-notify/extended-join/
 // chghost/account-tag cluster keeps the live roster current (see UserMeta).
-var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "multi-prefix", "cap-notify", "away-notify", "account-notify", "extended-join", "chghost", "account-tag", "userhost-in-names"}
+var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "multi-prefix", "cap-notify", "away-notify", "account-notify", "extended-join", "chghost", "account-tag", "userhost-in-names", "setname"}
 
 // IRCClient manages IRC connections
 type IRCClient struct {
@@ -561,6 +561,7 @@ func (c *IRCClient) emitUserMeta(nick string, meta UserMeta) {
 			"away_message": meta.AwayMessage,
 			"account":      meta.Account,
 			"host":         meta.Host,
+			"realname":     meta.Realname,
 		},
 		Timestamp: time.Now(),
 		Source:    events.EventSourceIRC,
@@ -643,10 +644,10 @@ func (c *IRCClient) handleChghost(e ircmsg.Message) {
 	c.applyUserMeta(e.Nick(), func(m *UserMeta) { m.Host = host })
 }
 
-// maybeApplyExtendedJoin records the joiner's account from an extended-join
-// JOIN. When that cap is negotiated, JOIN carries the account as the 2nd param
-// ("*" = not logged in) and realname as the 3rd (realname is out of scope —
-// that's setname). No-op on a plain JOIN or when the cap isn't enabled.
+// maybeApplyExtendedJoin records the joiner's account and realname from an
+// extended-join JOIN. When that cap is negotiated, JOIN carries the account as
+// the 2nd param ("*" = not logged in) and the realname as the 3rd. No-op on a
+// plain JOIN or when the cap isn't enabled.
 func (c *IRCClient) maybeApplyExtendedJoin(e ircmsg.Message) {
 	if !c.capEnabled("extended-join") || len(e.Params) < 2 {
 		return
@@ -655,7 +656,27 @@ func (c *IRCClient) maybeApplyExtendedJoin(e ircmsg.Message) {
 	if account == "*" {
 		account = ""
 	}
-	c.applyUserMeta(e.Nick(), func(m *UserMeta) { m.Account = account })
+	realname := ""
+	if len(e.Params) >= 3 {
+		realname = e.Params[2]
+	}
+	c.applyUserMeta(e.Nick(), func(m *UserMeta) {
+		m.Account = account
+		if realname != "" {
+			m.Realname = realname
+		}
+	})
+}
+
+// handleSetname processes the setname capability: ":nick SETNAME :new real name"
+// announces that a user changed their realname mid-session. The new realname is
+// the (possibly multi-word) trailing parameter.
+func (c *IRCClient) handleSetname(e ircmsg.Message) {
+	if len(e.Params) < 1 {
+		return
+	}
+	realname := e.Params[0]
+	c.applyUserMeta(e.Nick(), func(m *UserMeta) { m.Realname = realname })
 }
 
 // maybeApplyAccountTag records the sender's account when an incoming message
@@ -1398,6 +1419,7 @@ func (c *IRCClient) setupHandlers() {
 	c.conn.AddCallback("AWAY", c.handleAway)
 	c.conn.AddCallback("ACCOUNT", c.handleAccount)
 	c.conn.AddCallback("CHGHOST", c.handleChghost)
+	c.conn.AddCallback("SETNAME", c.handleSetname)
 
 	// Channel topic (RPL_TOPIC = 332) - received when topic is retrieved
 	c.conn.AddCallback("332", func(e ircmsg.Message) {
