@@ -64,7 +64,7 @@ Legend: ✅ Supported · ◐ Partial · ⛔ Not yet
 | `labeled-response` | ⛔ | No | — |
 | `standard-replies` | ⛔ | No | — |
 | `draft/message-redaction` | ⛔ | No | No REDACT handling |
-| `WHOX` (`354`) | ⛔ | No | Plain WHO/WHOIS only |
+| `WHOX` (`354`) | ✅ | n/a (ISUPPORT) | Extended WHO on join bulk-seeds the roster |
 
 The set of requested capabilities lives in one place — `internal/irc/client.go:31`:
 
@@ -271,6 +271,25 @@ that builds the roster) now fires on registration completion — `RPL_ENDOFMOTD`
 2-second timer that could send JOINs before the server was ready (`triggerAutoJoin` /
 `doAutoJoin`, `client.go`).
 
+### WHOX (extended WHO)
+
+The live-roster caps fill in attributes *as they change*, but a freshly-joined channel starts
+blank until someone goes away or speaks. [WHOX](https://ircv3.net/specs/extensions/whox) — an
+extended `WHO` advertised by the `WHOX` ISUPPORT token (not a CAP) — closes that gap by fetching
+every member's attributes in one shot.
+
+On our own JOIN, when the server advertised `WHOX` (`c.supportsWHOX`, set in the `005` handler),
+`requestWHOX` issues `WHO <channel> %tcuhnfar,<token>` (`client.go`). The reply rows arrive as
+`354` (RPL_WHOSPCRPL) and are parsed by `handleWhoxReply` in WHOX's canonical field order —
+token, channel, user, host, nick, flags, account, realname. A fixed token (`whoxRosterToken`)
+lets the handler ignore `354`s from any user-initiated `WHO`. Each row is folded into the live
+roster via `applyUserMeta`: host (`user@host`), away (the `flags` field begins with `G`), account
+(`"0"`/`"*"` → none), and realname. Coverage: `internal/irc/whox_test.go`.
+
+**In the client:** there is no dedicated UI — WHOX simply makes the existing roster surfaces
+(nick-list away dimming, host tooltip, WHOIS account/realname) accurate the instant you join,
+rather than after the first event for each user.
+
 ### setname
 
 [setname](https://ircv3.net/specs/extensions/setname) lets a user change their realname (GECOS)
@@ -378,8 +397,8 @@ by theme with the main blocker.
 message-mutation handling.
 
 **Connection & protocol niceties** — `labeled-response` (correlate replies via `@label`),
-`standard-replies` (uniform `FAIL`/`WARN`/`NOTE`), `monitor` (presence for offline nicks),
-`WHOX` (extended WHO). Independent of each other; each is a self-contained addition.
+`standard-replies` (uniform `FAIL`/`WARN`/`NOTE`), `monitor` (presence for offline nicks).
+Independent of each other; each is a self-contained addition.
 
 When implementing any of these, add the cap to `requestedCaps` (`client.go:31`), gate
 behavior on `enabledCaps`, and update this matrix.

@@ -52,6 +52,7 @@ type IRCClient struct {
 	namesInProgress       map[string]bool       // Track channels currently receiving NAMES list
 	namesMu               sync.Mutex            // Mutex for namesInProgress map
 	serverCapabilities    *ServerCapabilities   // Server capabilities from ISUPPORT
+	supportsWHOX          bool                  // Server advertised the WHOX token in ISUPPORT (guarded by mu)
 	whoisInProgress       map[string]*WhoisInfo // Track WHOIS requests in progress (key: nickname)
 	whoisMu               sync.Mutex            // Mutex for whoisInProgress map
 	knownBots             map[string]bool       // Nicks recognized as IRCv3 bots this session (key: lowercased nick)
@@ -1165,6 +1166,14 @@ func (c *IRCClient) setupHandlers() {
 					logger.Log.Debug().Err(err).Str("channel", channel).Msg("CHATHISTORY LATEST request skipped")
 				}
 			}
+
+			// Bulk-seed the roster (account/host/away/realname) with one extended
+			// WHO when the server supports WHOX, instead of waiting for live churn.
+			if c.whoxSupported() {
+				if err := c.requestWHOX(channel); err != nil {
+					logger.Log.Debug().Err(err).Str("channel", channel).Msg("WHOX request skipped")
+				}
+			}
 		}
 
 		// Store join message in the channel (use sync write so it appears immediately)
@@ -1472,6 +1481,7 @@ func (c *IRCClient) setupHandlers() {
 	c.conn.AddCallback("CHGHOST", c.handleChghost)
 	c.conn.AddCallback("SETNAME", c.handleSetname)
 	c.conn.AddCallback("INVITE", c.handleInvite)
+	c.conn.AddCallback("354", c.handleWhoxReply) // RPL_WHOSPCRPL (WHOX)
 
 	// Channel topic (RPL_TOPIC = 332) - received when topic is retrieved
 	c.conn.AddCallback("332", func(e ircmsg.Message) {
@@ -2225,6 +2235,13 @@ func (c *IRCClient) setupHandlers() {
 				c.parsePREFIX(prefixValue)
 			}
 
+			// WHOX is a valueless token announcing extended-WHO (354) support.
+			if param == "WHOX" {
+				c.mu.Lock()
+				c.supportsWHOX = true
+				c.mu.Unlock()
+			}
+
 			// Parse CHANMODES parameter: CHANMODES=b,k,l,imnpst
 			if strings.HasPrefix(param, "CHANMODES=") {
 				chanModesValue := param[10:] // Skip "CHANMODES="
@@ -2783,6 +2800,68 @@ func (c *IRCClient) RequestChatHistoryLatest(target string, limit int) error {
 	}
 	limit = c.clampChatHistoryLimit(limit)
 	return c.conn.SendRaw(fmt.Sprintf("CHATHISTORY LATEST %s * %d", target, limit))
+}
+
+// whoxRosterToken tags the WHO query Cascade issues on join so its 354 replies
+// can be distinguished from a user-initiated WHO. WHOX echoes the token back as
+// the first field of every reply row.
+const whoxRosterToken = "332"
+
+// whoxSupported reports whether the server advertised the WHOX token in ISUPPORT.
+func (c *IRCClient) whoxSupported() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.supportsWHOX
+}
+
+// requestWHOX issues an extended WHO for a channel to bulk-seed the live roster
+// (account / host / away / realname) on join, instead of waiting for live churn
+// to fill it in. The field set "%tcuhnfar" yields, in WHOX's canonical order:
+// token, channel, user, host, nick, flags, account, realname.
+func (c *IRCClient) requestWHOX(channel string) error {
+	if channel == "" {
+		return fmt.Errorf("whox channel required")
+	}
+	return c.conn.SendRaw(fmt.Sprintf("WHO %s %%tcuhnfar,%s", channel, whoxRosterToken))
+}
+
+// handleWhoxReply folds a RPL_WHOSPCRPL (354) row from our roster-seeding WHO
+// into the live roster. Replies whose token doesn't match ours (a user-initiated
+// WHO) are ignored. Params match the "%tcuhnfar" request:
+//
+//	[ourNick, token, channel, user, host, nick, flags, account, realname]
+func (c *IRCClient) handleWhoxReply(e ircmsg.Message) {
+	if len(e.Params) < 9 || e.Params[1] != whoxRosterToken {
+		return
+	}
+	user := e.Params[3]
+	host := e.Params[4]
+	nick := e.Params[5]
+	flags := e.Params[6]
+	account := e.Params[7]
+	realname := e.Params[8]
+
+	// WHOX uses "0" (ircu) or "*" for "no account".
+	if account == "0" || account == "*" {
+		account = ""
+	}
+	// The flags field begins with H (here) or G (gone/away).
+	away := len(flags) > 0 && flags[0] == 'G'
+	userhost := ""
+	if user != "" && host != "" {
+		userhost = user + "@" + host
+	}
+
+	c.applyUserMeta(nick, func(m *UserMeta) {
+		m.Away = away
+		m.Account = account
+		if userhost != "" {
+			m.Host = userhost
+		}
+		if realname != "" {
+			m.Realname = realname
+		}
+	})
 }
 
 // RequestChatHistoryBefore asks the server for up to `limit` messages older than
