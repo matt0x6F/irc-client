@@ -29,6 +29,8 @@ Because of its IRCv3 support, Cascade gives you:
   duplicates filtered out by message ID.
 - **No echoed duplicates** — when the server supports `echo-message`, your own messages are
   reconciled with the server's canonical copy instead of appearing twice.
+- **Every role at a glance** — with `multi-prefix`, the nick list shows all of a user's channel
+  roles (e.g. an op who is also voiced), not just the highest one.
 
 ## Capability status matrix
 
@@ -46,12 +48,12 @@ Legend: ✅ Supported · ◐ Partial · ⛔ Not yet
 | CAP LS 302 negotiation | ✅ | n/a | Full LS/REQ/ACK/NAK/END lifecycle |
 | ISUPPORT (`005`) | ✅ | n/a | PREFIX / CHANMODES parsing for mode handling |
 | WHOIS account (`330`) | ✅ | n/a | Shows the account a user is logged in as |
+| `multi-prefix` | ✅ | Yes | All membership prefixes parsed; shown as icon (highest) or text (full) per setting |
 | `cap-notify` | ⛔ | No | No mid-session `CAP NEW`/`CAP DEL` handling |
 | `account-notify` | ⛔ | No | Account login/logout not tracked live |
 | `away-notify` | ⛔ | No | Per-user away state not tracked live |
 | `extended-join` | ⛔ | No | JOIN doesn't carry account/realname |
 | `chghost` | ⛔ | No | User host changes not tracked |
-| `multi-prefix` | ⛔ | No | Only the highest membership prefix is shown |
 | `userhost-in-names` | ⛔ | No | NAMES carries nicks only |
 | `account-tag` | ⛔ | No | `@account` tag on messages not consumed |
 | `invite-notify` | ⛔ | No | — |
@@ -65,7 +67,7 @@ Legend: ✅ Supported · ◐ Partial · ⛔ Not yet
 The set of requested capabilities lives in one place — `internal/irc/client.go:25`:
 
 ```go
-var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory"}
+var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "multi-prefix"}
 ```
 
 `sasl` is only requested when the network has SASL configured (`client.go:1927`); the others
@@ -188,6 +190,26 @@ older messages seamlessly without duplicates.
 
 ![Channel showing six messages replayed via CHATHISTORY on join, before the user's own join line](images/ircv3/chathistory.png)
 
+### multi-prefix
+
+Without `multi-prefix`, a `NAMES` (`353`) reply carries only the single highest membership
+prefix for each user, so someone who is both op and voiced appears as `@nick` and the voice is
+invisible. With the cap negotiated, the server sends every prefix the user holds,
+highest-privilege first (e.g. `@+nick`).
+
+The `353` handler parses all leading prefix characters off each entry with
+`splitMembershipPrefixes` (`client.go`), using the prefix set advertised in ISUPPORT `PREFIX`
+(falling back to the standard `~&@%+` set before `005` is seen) and preserving the server's
+order. The result is stored in the existing `ChannelUser.Modes` *string*
+(`internal/storage/models.go`), which already accommodates several prefixes; `MODE` changes
+keep that string ordered via `applyUserPrefix` (`client.go`). No `enabledCaps` runtime gate is
+needed — the parser stores whatever the server sends.
+
+**In the client:** the nick list groups each user under their highest role and surfaces the
+rest per a Display setting (**Settings → Display → Member role display**): *Icons* shows a
+single icon for the highest role; *Text* shows the full prefix string (e.g. `@+`), making
+every role visible. The preference is durable (SQLite settings table) and updates live.
+
 ### Supporting features
 
 These are not CAP capabilities but are part of Cascade's modern-IRC behavior and interact
@@ -213,9 +235,8 @@ or change host/realname. Blocker: Cascade does not yet maintain a live per-user 
 these attributes; adding them is mostly additive (new command callbacks + roster fields + UI
 indicators) and is the most natural next step.
 
-**Richer NAMES / membership** — `multi-prefix` (show all of a user's membership prefixes, not
-just the highest), `userhost-in-names` (user@host in NAMES). Lower effort; mostly NAMES
-parsing and display changes.
+**Richer NAMES / membership** — `userhost-in-names` (user@host in NAMES). Lower effort; mostly
+NAMES parsing and display changes. (`multi-prefix` is now supported — see above.)
 
 **Message metadata** — `account-tag` (per-message `@account`), `draft/message-redaction`
 (handle REDACT/DELETE). Depend on roster/account plumbing and message-mutation handling

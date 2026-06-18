@@ -11,7 +11,7 @@ import {
   SelectValue,
 } from './ui/select';
 import { useThemeStore, ACCENTS, type ThemeMode } from '../stores/theme';
-import { useSettingsStore } from '../stores/settings';
+import { useSettingsStore, type PrefixDisplayMode } from '../stores/settings';
 import { usePreferencesStore } from '../stores/preferences';
 
 export type SettingsSection = 'networks' | 'plugins' | 'display' | 'about';
@@ -58,6 +58,8 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
   // so toggling it here updates the message view live and survives restarts.
   const consolidateJoinQuit = useSettingsStore((s) => s.consolidateJoinQuit);
   const setConsolidateJoinQuit = useSettingsStore((s) => s.setConsolidateJoinQuit);
+  const prefixDisplayMode = useSettingsStore((s) => s.prefixDisplayMode);
+  const setPrefixDisplayMode = useSettingsStore((s) => s.setPrefixDisplayMode);
 
   // Theme (appearance + accent)
   const themeMode = useThemeStore((s) => s.mode);
@@ -1068,6 +1070,32 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
                 </div>
                 <p className="text-xs text-muted-foreground mt-2">
                   Show the bold/italic/underline/colour buttons above the message input. Emoji and mention buttons stay available either way, and you can also toggle this with the "Aa" button in the composer.
+                </p>
+              </div>
+
+              {/* Nick list — membership prefix display */}
+              <div className="border border-border rounded-lg p-4 bg-card/50 shadow-[var(--shadow-sm)]">
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-sm font-medium">Member role display</span>
+                  <div className="inline-flex rounded-lg border border-border p-0.5 bg-muted/40">
+                    {(['icon', 'text'] as PrefixDisplayMode[]).map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => setPrefixDisplayMode(m)}
+                        className={`px-3 py-1.5 text-sm rounded-md capitalize cursor-pointer transition-colors ${
+                          prefixDisplayMode === m
+                            ? 'bg-primary text-primary-foreground font-medium shadow-[var(--shadow-sm)]'
+                            : 'text-muted-foreground hover:text-foreground'
+                        }`}
+                      >
+                        {m === 'icon' ? 'Icons' : 'Text'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground mt-2">
+                  Show a user's channel role in the nick list as an icon (their highest role only) or as text prefixes (e.g. <span className="font-mono">@+</span>, showing every role when the server supports multi-prefix).
                 </p>
               </div>
             </div>
