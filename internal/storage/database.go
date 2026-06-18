@@ -1264,6 +1264,62 @@ func (s *Storage) SetSetting(key, value string) error {
 	return nil
 }
 
+// UpsertSTSPolicy stores (or refreshes) an STS policy for a host. expiresAt is a
+// unix timestamp in seconds. Called only after a policy is advertised over TLS.
+func (s *Storage) UpsertSTSPolicy(hostname string, port int, expiresAt int64) error {
+	if err := s.queries.UpsertSTSPolicy(context.Background(), db.UpsertSTSPolicyParams{
+		Hostname:  hostname,
+		Port:      int64(port),
+		ExpiresAt: expiresAt,
+	}); err != nil {
+		return fmt.Errorf("failed to upsert STS policy for %q: %w", hostname, err)
+	}
+	return nil
+}
+
+// GetSTSPolicy returns the active (non-expired) STS policy for a host. The bool is
+// false when no policy exists OR the stored policy has expired (a stale row is left
+// in place and simply treated as absent — it is overwritten on the next secure
+// advertisement and pruned by PruneExpiredSTSPolicies). nowUnix is the current unix
+// time in seconds, passed in so callers and tests control the clock.
+func (s *Storage) GetSTSPolicy(hostname string, nowUnix int64) (*STSPolicy, bool, error) {
+	row, err := s.queries.GetSTSPolicy(context.Background(), hostname)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("failed to get STS policy for %q: %w", hostname, err)
+	}
+	if row.ExpiresAt <= nowUnix {
+		return nil, false, nil
+	}
+	policy := convertSTSPolicyFromDB(row)
+	return &policy, true, nil
+}
+
+// GetSTSPolicies returns every stored STS policy (including expired ones) for
+// display/management in the UI.
+func (s *Storage) GetSTSPolicies() ([]STSPolicy, error) {
+	rows, err := s.queries.GetSTSPolicies(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("failed to get STS policies: %w", err)
+	}
+	policies := make([]STSPolicy, len(rows))
+	for i, r := range rows {
+		policies[i] = convertSTSPolicyFromDB(r)
+	}
+	return policies, nil
+}
+
+// DeleteSTSPolicy removes the STS policy for a host (used by duration=0 clears and
+// the user-facing "Clear STS policy" control).
+func (s *Storage) DeleteSTSPolicy(hostname string) error {
+	if err := s.queries.DeleteSTSPolicy(context.Background(), hostname); err != nil {
+		return fmt.Errorf("failed to delete STS policy for %q: %w", hostname, err)
+	}
+	return nil
+}
+
 // GetAllPluginConfigs retrieves all plugin configurations
 func (s *Storage) GetAllPluginConfigs() (map[string]*PluginConfig, error) {
 	dbConfigs, err := s.queries.GetAllPluginConfigs(context.Background())

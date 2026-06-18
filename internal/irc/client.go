@@ -2230,6 +2230,13 @@ func (c *IRCClient) setupHandlers() {
 					c.setChatHistoryMax(v)
 				}
 
+				// STS is informational metadata advertised in CAP LS — it is read
+				// here and acted on by the App, never CAP REQ'd (so it is absent
+				// from requestedCaps above).
+				if v, ok := capValue(allCaps, "sts"); ok {
+					c.handleSTSAdvertisement(v)
+				}
+
 				c.storage.WriteMessage(storage.Message{
 					NetworkID:   c.networkID,
 					ChannelID:   nil,
@@ -2789,6 +2796,67 @@ func (c *IRCClient) buildHistoryMessage(e ircmsg.Message) (storage.Message, bool
 		PMTarget:    pmTarget,
 		MsgID:       c.getMsgID(e),
 	}, true
+}
+
+// handleSTSAdvertisement reacts to an `sts` capability seen in CAP LS. It parses
+// the policy and emits EventSTSPolicy for the App to act on; the protocol layer
+// deliberately does not perform the reconnect or persistence itself (those need
+// connection-lifecycle and storage access the App owns). The `secure` field tells
+// the App which half of the spec applies: over plaintext only the port is honored
+// (as an upgrade target), over TLS the duration is trusted and persisted.
+//
+// Per the spec, STS never applies to a connection made to an IP literal, so those
+// are dropped here before any event is emitted.
+func (c *IRCClient) handleSTSAdvertisement(value string) {
+	if IsIPLiteral(c.network.Address) {
+		return
+	}
+	p := parseSTS(value)
+
+	secure := c.network.TLS
+	var msg string
+	if secure {
+		if p.Duration == 0 {
+			msg = "Server cleared its STS policy (duration=0)"
+		} else {
+			// The policy's secure port is the advertised port, or the port we're already
+			// connected on when the directive is omitted (valid over TLS).
+			port := p.Port
+			if port <= 0 {
+				port = c.network.Port
+			}
+			msg = fmt.Sprintf("Server advertised STS policy: enforce TLS for %d seconds (port %d)", p.Duration, port)
+		}
+	} else if p.Port > 0 {
+		msg = fmt.Sprintf("Server advertised STS policy: upgrading to TLS on port %d", p.Port)
+	} else {
+		// Plaintext advertisement with no port is not actionable.
+		return
+	}
+
+	c.storage.WriteMessage(storage.Message{
+		NetworkID:   c.networkID,
+		ChannelID:   nil,
+		User:        "*",
+		Message:     msg,
+		MessageType: "status",
+		Timestamp:   time.Now(),
+	})
+
+	c.eventBus.Emit(events.Event{
+		Type: EventSTSPolicy,
+		Data: map[string]interface{}{
+			"networkId":   c.networkID,
+			"network":     c.network.Address,
+			"host":        c.network.Address,
+			"port":        p.Port,
+			"currentPort": c.network.Port,
+			"duration":    p.Duration,
+			"secure":      secure,
+		},
+		Timestamp: time.Now(),
+		Source:    events.EventSourceIRC,
+	})
 }
 
 // accumulateCapLS appends one CAP LS line's capability tokens to buf and reports

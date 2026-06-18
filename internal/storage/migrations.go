@@ -96,6 +96,11 @@ func Migrate(db *sqlx.DB) error {
 		return fmt.Errorf("settings migration failed: %w", err)
 	}
 
+	// Handle STS policies table migration (durable per-host TLS enforcement)
+	if err := migrateSTSPolicies(db); err != nil {
+		return fmt.Errorf("STS policies migration failed: %w", err)
+	}
+
 	return nil
 }
 
@@ -762,6 +767,26 @@ CREATE TABLE IF NOT EXISTS settings (
 func migrateSettings(db *sqlx.DB) error {
 	if _, err := db.Exec(createSettingsTable); err != nil {
 		return fmt.Errorf("failed to create settings table: %w", err)
+	}
+	return nil
+}
+
+const createSTSPoliciesTable = `
+CREATE TABLE IF NOT EXISTS sts_policies (
+    hostname   TEXT PRIMARY KEY,
+    port       INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+`
+
+// migrateSTSPolicies creates the sts_policies table if it doesn't exist. It is the
+// durable store for IRCv3 STS policies (hostname -> secure port + expiry) that
+// force future connections to a host onto TLS.
+func migrateSTSPolicies(db *sqlx.DB) error {
+	if _, err := db.Exec(createSTSPoliciesTable); err != nil {
+		return fmt.Errorf("failed to create sts_policies table: %w", err)
 	}
 	return nil
 }

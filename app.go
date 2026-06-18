@@ -32,6 +32,8 @@ type App struct {
 	connectingNetworks   map[string]chan struct{} // Track networks currently connecting by "address:port"
 	reconnectingNetworks map[int64]bool           // Track networks currently reconnecting (by network ID)
 	connectionGapOpen    map[int64]bool           // Networks with an open disconnect→reconnect gap (by network ID)
+	stsUpgrades          map[int64]stsTarget      // Pending plaintext→TLS STS upgrades (by network ID)
+	stsUpgrading         map[int64]bool           // Networks mid-STS-upgrade; suppresses auto-reconnect (by network ID)
 	mu                   sync.RWMutex
 	channelListCache     map[int64]channelListCacheEntry // Cached LIST results keyed by network ID
 	channelListCacheMu   sync.RWMutex                    // Guards channelListCache; separate from mu to avoid contention
@@ -39,6 +41,15 @@ type App struct {
 	startupCancel        context.CancelFunc
 	startupWg            sync.WaitGroup
 	shutdownOnce         sync.Once // Ensure shutdown only runs once
+}
+
+// stsTarget is a pending plaintext→TLS upgrade: a host advertised STS over an
+// insecure connection, so the next connect to that host must use TLS on Port. It
+// is held in memory only (never persisted — an insecure advertisement is not
+// trusted to outlive the session) and cleared once the secure connection lands.
+type stsTarget struct {
+	host string
+	port int
 }
 
 // channelListCacheEntry holds a network's last-fetched LIST result together with
@@ -97,6 +108,8 @@ func NewApp() (*App, error) {
 		connectingNetworks:   make(map[string]chan struct{}),
 		reconnectingNetworks: make(map[int64]bool),
 		connectionGapOpen:    make(map[int64]bool),
+		stsUpgrades:          make(map[int64]stsTarget),
+		stsUpgrading:         make(map[int64]bool),
 		channelListCache:     make(map[int64]channelListCacheEntry),
 	}
 
@@ -116,6 +129,7 @@ func NewApp() (*App, error) {
 	eventBus.Subscribe(irc.EventChannelMode, app)
 	eventBus.Subscribe(irc.EventChannelUserMode, app)
 	eventBus.Subscribe(irc.EventChannelBanList, app)
+	eventBus.Subscribe(irc.EventSTSPolicy, app)
 
 	go app.processPluginActions()
 
@@ -370,6 +384,24 @@ func (a *App) SetSetting(key, value string) error {
 		return err
 	}
 	a.emit("setting:changed", map[string]string{"key": key, "value": value})
+	return nil
+}
+
+// GetSTSPolicies returns every stored IRCv3 STS policy (host → enforced TLS port +
+// expiry), for the settings panel to render an "enforced until" badge per server.
+func (a *App) GetSTSPolicies() ([]storage.STSPolicy, error) {
+	return a.storage.GetSTSPolicies()
+}
+
+// ClearSTSPolicy removes the STS policy for a host. This is a deliberate security
+// downgrade (the next connection to that host may go plaintext again) exposed for
+// recovery/testing; the frontend gates it behind a confirmation. It broadcasts a
+// sts-policy event so any open window refreshes its badge.
+func (a *App) ClearSTSPolicy(hostname string) error {
+	if err := a.storage.DeleteSTSPolicy(hostname); err != nil {
+		return err
+	}
+	a.emit("sts-policy", map[string]interface{}{"host": hostname, "active": false})
 	return nil
 }
 

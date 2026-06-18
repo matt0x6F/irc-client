@@ -526,6 +526,53 @@ export class PinnedMessage {
 }
 
 /**
+ * STSPolicy is a persisted IRCv3 STS (Strict Transport Security) policy: a host
+ * the client has learned (over TLS) must always be reached via TLS on Port until
+ * ExpiresAt. Keyed by hostname, UA-wide. ExpiresAt is unix seconds.
+ */
+export class STSPolicy {
+    /**
+     * Creates a new STSPolicy instance.
+     * @param {Partial<STSPolicy>} [$$source = {}] - The source object to create the STSPolicy.
+     */
+    constructor($$source = {}) {
+        if (!("hostname" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["hostname"] = "";
+        }
+        if (!("port" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["port"] = 0;
+        }
+        if (!("expires_at" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["expires_at"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new STSPolicy instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {STSPolicy}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new STSPolicy(/** @type {Partial<STSPolicy>} */($$parsedSource));
+    }
+}
+
+/**
  * SearchResult extends Message with additional context for search results
  */
 export class SearchResult {

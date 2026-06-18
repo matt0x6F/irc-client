@@ -113,6 +113,18 @@ CREATE TABLE IF NOT EXISTS settings (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- IRCv3 STS (Strict Transport Security) policies. Keyed by hostname (UA-wide, per
+-- spec) and independent of any network row, so a policy learned on one network
+-- entry protects every connection to that host. expires_at is stored as unix
+-- seconds for unambiguous numeric comparison against time.Now().Unix().
+CREATE TABLE IF NOT EXISTS sts_policies (
+    hostname   TEXT PRIMARY KEY,
+    port       INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_messages_network_channel_time ON messages(network_id, channel_id, timestamp);
 CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
 -- Partial unique index: dedup CHATHISTORY replays by IRCv3 msgid, while leaving
