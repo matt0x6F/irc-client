@@ -27,7 +27,19 @@ const (
 	EventChannelListEnd        = "channel.list.end"
 	EventHistoryReceived       = "history.received"
 	EventBotDetected           = "bot.detected" // a nick was recognized as an IRCv3 bot (bot tag or RPL_WHOISBOT)
+	EventUserMetaChanged       = "user.meta"    // a user's live roster attributes changed (away/account/host)
 )
+
+// UserMeta holds the live, session-local roster attributes Cascade tracks for a
+// nick via the IRCv3 caps away-notify, account-notify, extended-join, chghost,
+// and account-tag. It is deliberately not persisted: a nick's away/account/host
+// is only meaningful for the current session and is rebuilt on reconnect.
+type UserMeta struct {
+	Away        bool   `json:"away"`         // true while the user is marked away (away-notify)
+	AwayMessage string `json:"away_message"` // the away reason, if any
+	Account     string `json:"account"`      // account the user is logged in as; "" when not logged in
+	Host        string `json:"host"`         // user@host learned from chghost; "" until seen
+}
 
 // BanEntry represents a single entry from a channel ban list (RPL_BANLIST 367)
 type BanEntry struct {

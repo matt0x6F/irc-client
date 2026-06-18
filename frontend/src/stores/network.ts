@@ -30,7 +30,18 @@ import {
   SendMessage,
   SendCommand,
   GetNetworkBots,
+  GetNetworkUserMeta,
 } from '../../wailsjs/go/main/App';
+
+// UserMetaT mirrors the Go irc.UserMeta JSON shape: the live, session-local
+// roster attributes Cascade tracks per nick via away-notify / account-notify /
+// extended-join / chghost / account-tag.
+export interface UserMetaT {
+  away: boolean;
+  away_message: string;
+  account: string;
+  host: string;
+}
 
 // How many messages of surrounding context to load when jumping to a pinned message.
 const JUMP_WINDOW = 50;
@@ -107,6 +118,11 @@ interface NetworkState {
   // Keys are lowercased nicks; the set is in-memory and re-accrues per session.
   botNicks: Record<number, Set<string>>;
 
+  // Live roster (IRCv3 away-notify / account-notify / extended-join / chghost /
+  // account-tag): per-network map of lowercased nick -> attributes. In-memory,
+  // re-accrues per session.
+  userMeta: Record<number, Record<string, UserMetaT>>;
+
   // Pinned messages / jump-to-message
   pinnedMessages: storage.PinnedMessage[];
   viewMode: 'live' | 'anchored'; // 'anchored' = viewing a context window, live updates paused
@@ -167,6 +183,12 @@ interface NetworkState {
   addBot: (networkId: number, nick: string) => void;
   isBot: (networkId: number, nick: string) => boolean;
 
+  // Live roster metadata
+  loadNetworkUserMeta: (networkId?: number) => Promise<void>;
+  setUserMeta: (networkId: number, nick: string, meta: UserMetaT) => void;
+  getUserMeta: (networkId: number, nick: string) => UserMetaT | undefined;
+  isAway: (networkId: number, nick: string) => boolean;
+
   // Pane restoration
   restoreLastPane: () => Promise<void>;
 }
@@ -179,6 +201,7 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
   channelInfo: null,
   unreadCounts: new Map(),
   botNicks: {},
+  userMeta: {},
   pinnedMessages: [],
   viewMode: 'live',
   anchoredMessageId: null,
@@ -870,6 +893,53 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
 
   isBot: (networkId, nick) =>
     get().botNicks[networkId]?.has(nick.toLowerCase()) ?? false,
+
+  // Hydrate the roster metadata for a network from the backend (e.g. on window
+  // open or network select). Live changes arrive via 'usermeta-event' ->
+  // setUserMeta. Keys from the backend are already lowercased.
+  loadNetworkUserMeta: async (networkId?: number) => {
+    const id = networkId ?? get().selectedNetwork;
+    if (id === null) return;
+    try {
+      const meta = await GetNetworkUserMeta(id);
+      const map: Record<string, UserMetaT> = {};
+      for (const [nick, m] of Object.entries(meta || {})) {
+        map[nick.toLowerCase()] = {
+          away: !!m?.away,
+          away_message: m?.away_message ?? '',
+          account: m?.account ?? '',
+          host: m?.host ?? '',
+        };
+      }
+      set((state) => ({ userMeta: { ...state.userMeta, [id]: map } }));
+    } catch (error) {
+      console.error('Failed to load network user metadata:', error);
+    }
+  },
+
+  setUserMeta: (networkId, nick, meta) =>
+    set((state) => {
+      const key = nick.toLowerCase();
+      const existing = state.userMeta[networkId]?.[key];
+      // No-op when nothing changed, to avoid needless re-renders.
+      if (
+        existing &&
+        existing.away === meta.away &&
+        existing.away_message === meta.away_message &&
+        existing.account === meta.account &&
+        existing.host === meta.host
+      ) {
+        return state;
+      }
+      const networkMeta = { ...(state.userMeta[networkId] ?? {}), [key]: meta };
+      return { userMeta: { ...state.userMeta, [networkId]: networkMeta } };
+    }),
+
+  getUserMeta: (networkId, nick) =>
+    get().userMeta[networkId]?.[nick.toLowerCase()],
+
+  isAway: (networkId, nick) =>
+    get().userMeta[networkId]?.[nick.toLowerCase()]?.away ?? false,
 
   restoreLastPane: async () => {
     const { networks } = get();

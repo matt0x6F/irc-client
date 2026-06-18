@@ -136,6 +136,16 @@ func (a *App) OnEvent(event events.Event) {
 		})
 	}
 
+	// Forward live-roster metadata changes to frontend (away-notify /
+	// account-notify / extended-join / chghost / account-tag)
+	if event.Type == irc.EventUserMetaChanged {
+		a.emit("usermeta-event", map[string]interface{}{
+			"type":      event.Type,
+			"data":      event.Data,
+			"timestamp": event.Timestamp.Format(time.RFC3339),
+		})
+	}
+
 	// Handle metadata updates
 	if event.Type == events.EventMetadataUpdated {
 		a.emit("metadata-updated", map[string]interface{}{

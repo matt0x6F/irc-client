@@ -392,6 +392,21 @@ func (a *App) GetNetworkBots(networkID int64) ([]string, error) {
 	return client.BotNicks(), nil
 }
 
+// GetNetworkUserMeta returns the live roster attributes (away/account/host) for
+// a network this session, keyed by lowercased nick. The frontend calls this to
+// hydrate its roster metadata when a window opens or reloads; live changes
+// arrive via the "usermeta-event" event. Returns an empty map when the network
+// is not currently connected.
+func (a *App) GetNetworkUserMeta(networkID int64) (map[string]irc.UserMeta, error) {
+	a.mu.RLock()
+	client, exists := a.ircClients[networkID]
+	a.mu.RUnlock()
+	if !exists {
+		return map[string]irc.UserMeta{}, nil
+	}
+	return client.AllUserMeta(), nil
+}
+
 // GetJoinedChannels retrieves channels where the current user is still a member
 func (a *App) GetJoinedChannels(networkID int64) ([]storage.Channel, error) {
 	network, err := a.storage.GetNetwork(networkID)

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { SendCommand } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
+import { useNetworkStore } from '../stores/network';
 
 interface WhoisInfo {
   nickname: string;
@@ -26,6 +27,13 @@ interface UserInfoProps {
 export function UserInfo({ networkId, nickname, onClose }: UserInfoProps) {
   const [whoisInfo, setWhoisInfo] = useState<WhoisInfo | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // Live roster attributes (away-notify / account-notify / chghost). WHOIS gives
+  // a point-in-time snapshot; this stays current as the user goes away/back or
+  // logs in/out while the panel is open.
+  const meta = useNetworkStore((s) =>
+    networkId !== null ? s.userMeta[networkId]?.[nickname.toLowerCase()] : undefined
+  );
 
   useEffect(() => {
     if (networkId === null) return;
@@ -135,10 +143,23 @@ export function UserInfo({ networkId, nickname, onClose }: UserInfoProps) {
                 bot
               </span>
             )}
+            {meta?.away && (
+              <span
+                className="text-[10px] uppercase font-semibold tracking-wide px-1.5 py-0.5 rounded bg-accent text-muted-foreground"
+                title={meta.away_message ? `Away: ${meta.away_message}` : 'Away'}
+              >
+                away
+              </span>
+            )}
           </div>
-          {whoisInfo.account_name && (
+          {(whoisInfo.account_name || meta?.account) && (
             <div className="text-muted-foreground">
-              Account: <span className="text-foreground">{whoisInfo.account_name}</span>
+              Account: <span className="text-foreground">{whoisInfo.account_name || meta?.account}</span>
+            </div>
+          )}
+          {meta?.away && meta.away_message && (
+            <div className="text-muted-foreground">
+              Away: <span className="text-foreground">{meta.away_message}</span>
             </div>
           )}
         </div>
