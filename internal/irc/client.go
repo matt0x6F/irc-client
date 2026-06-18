@@ -24,7 +24,10 @@ import (
 // ergochat/irc-go library collects for us). "multi-prefix" makes the server send
 // every membership prefix a user holds (e.g. "@+") in NAMES/WHO, not just the
 // highest; the 353 parser already accumulates all of them into the stored modes.
-var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "multi-prefix"}
+// "cap-notify" lets the server announce runtime capability changes via CAP NEW /
+// CAP DEL; it is implicitly enabled by CAP LS 302, but we request it explicitly
+// so it surfaces in enabledCaps.
+var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "multi-prefix", "cap-notify"}
 
 // IRCClient manages IRC connections
 type IRCClient struct {
@@ -2027,16 +2030,15 @@ func (c *IRCClient) setupHandlers() {
 					Timestamp:   time.Now(),
 				})
 
-				// Build list of caps to request: only those both wanted and offered
-				var toRequest []string
-				for _, wantedCap := range requestedCaps {
-					if wantedCap == "sasl" && !c.saslEnabled {
-						continue
-					}
-					if contains(allCaps, wantedCap) {
-						toRequest = append(toRequest, wantedCap)
-					}
-				}
+				// A CAP LS can arrive twice: the initial pre-registration handshake
+				// and a redundant re-advertisement after registration (the connect
+				// callback re-sends CAP LS 302 on RPL_ENDOFMOTD). On the re-LS,
+				// negotiation is already done — treat it like CAP NEW: request only
+				// genuinely-new wanted caps, exclude SASL, and never re-send CAP END.
+				c.mu.RLock()
+				done := c.capNegotiationDone
+				toRequest := capsToRequest(allCaps, c.enabledCaps, c.saslEnabled && !done)
+				c.mu.RUnlock()
 
 				if len(toRequest) > 0 {
 					reqStr := strings.Join(toRequest, " ")
@@ -2049,10 +2051,12 @@ func (c *IRCClient) setupHandlers() {
 						Timestamp:   time.Now(),
 					})
 					c.conn.SendRaw("CAP REQ :" + reqStr)
-					if c.saslEnabled && contains(allCaps, "sasl") {
+					if !done && c.saslEnabled && contains(allCaps, "sasl") {
 						c.saslCapRequested = true
 					}
-				} else {
+				} else if !done {
+					// Only the initial handshake ends with CAP END when we want
+					// nothing on offer; a post-registration re-LS just no-ops.
 					c.storage.WriteMessage(storage.Message{
 						NetworkID:   c.networkID,
 						ChannelID:   nil,
@@ -2061,7 +2065,7 @@ func (c *IRCClient) setupHandlers() {
 						MessageType: "status",
 						Timestamp:   time.Now(),
 					})
-					c.conn.SendRaw("CAP END")
+					c.endCapNegotiation()
 				}
 			}
 		case "ACK":
@@ -2082,23 +2086,109 @@ func (c *IRCClient) setupHandlers() {
 					Timestamp:   time.Now(),
 				})
 
-				if contains(acked, "sasl") && c.saslEnabled {
-					c.saslCapAcknowledged = true
-					c.startSASLAuth()
-				} else {
-					c.conn.SendRaw("CAP END")
+				// Only the initial handshake ends with CAP END / starts SASL. A
+				// post-registration ACK (the server's reply to a CAP NEW request)
+				// just records the caps above — negotiation is already complete.
+				c.mu.RLock()
+				negotiationDone := c.capNegotiationDone
+				c.mu.RUnlock()
+				if !negotiationDone {
+					if contains(acked, "sasl") && c.saslEnabled {
+						c.saslCapAcknowledged = true
+						c.startSASLAuth()
+					} else {
+						c.endCapNegotiation()
+					}
 				}
 			}
 		case "NAK":
+			// A NAK during the initial handshake ends negotiation; a NAK for a
+			// post-registration CAP NEW request just means we don't get that cap.
+			c.mu.RLock()
+			negotiationDone := c.capNegotiationDone
+			c.mu.RUnlock()
+			rejected := ""
+			if len(e.Params) >= 3 {
+				rejected = e.Params[2]
+			}
+			msg := fmt.Sprintf("Capability request rejected (NAK): %s", rejected)
+			if !negotiationDone {
+				msg = "Capability request rejected (NAK), ending CAP negotiation"
+			}
 			c.storage.WriteMessage(storage.Message{
 				NetworkID:   c.networkID,
 				ChannelID:   nil,
 				User:        "*",
-				Message:     "Capability request rejected (NAK), ending CAP negotiation",
+				Message:     msg,
 				MessageType: "status",
 				Timestamp:   time.Now(),
 			})
-			c.conn.SendRaw("CAP END")
+			if !negotiationDone {
+				c.endCapNegotiation()
+			}
+		case "NEW":
+			if len(e.Params) >= 3 {
+				offered := e.Params[2]
+
+				// Record an updated CHATHISTORY batch limit if the server now
+				// advertises one (mirrors the CAP LS handling above).
+				if v, ok := capValue(offered, "chathistory"); ok {
+					c.setChatHistoryMax(v)
+				} else if v, ok := capValue(offered, "draft/chathistory"); ok {
+					c.setChatHistoryMax(v)
+				}
+
+				c.storage.WriteMessage(storage.Message{
+					NetworkID:   c.networkID,
+					ChannelID:   nil,
+					User:        "*",
+					Message:     fmt.Sprintf("New capabilities available: %s", offered),
+					MessageType: "status",
+					Timestamp:   time.Now(),
+				})
+
+				// Request any newly-offered caps we want but don't yet have. SASL
+				// is excluded: mid-session (re)authentication is out of scope.
+				c.mu.RLock()
+				toRequest := capsToRequest(offered, c.enabledCaps, false)
+				c.mu.RUnlock()
+				if len(toRequest) > 0 {
+					reqStr := strings.Join(toRequest, " ")
+					c.storage.WriteMessage(storage.Message{
+						NetworkID:   c.networkID,
+						ChannelID:   nil,
+						User:        "*",
+						Message:     fmt.Sprintf("Requesting capabilities: %s", reqStr),
+						MessageType: "status",
+						Timestamp:   time.Now(),
+					})
+					// No CAP END here: negotiation already ended. The server's
+					// CAP ACK/NAK is handled by the cases above.
+					c.conn.SendRaw("CAP REQ :" + reqStr)
+				}
+			}
+		case "DEL":
+			if len(e.Params) >= 3 {
+				removed := strings.Fields(e.Params[2])
+				c.mu.Lock()
+				for _, capName := range removed {
+					// CAP DEL lists bare names, but strip any value defensively.
+					if idx := strings.Index(capName, "="); idx != -1 {
+						capName = capName[:idx]
+					}
+					delete(c.enabledCaps, capName)
+				}
+				c.mu.Unlock()
+
+				c.storage.WriteMessage(storage.Message{
+					NetworkID:   c.networkID,
+					ChannelID:   nil,
+					User:        "*",
+					Message:     fmt.Sprintf("Capabilities removed: %s", e.Params[2]),
+					MessageType: "status",
+					Timestamp:   time.Now(),
+				})
+			}
 		}
 	})
 
@@ -2126,7 +2216,7 @@ func (c *IRCClient) setupHandlers() {
 			MessageType: "status",
 			Timestamp:   time.Now(),
 		})
-		c.conn.SendRaw("CAP END")
+		c.endCapNegotiation()
 		c.eventBus.Emit(events.Event{
 			Type:      EventSASLSuccess,
 			Data:      map[string]interface{}{"network": c.network.Address},
@@ -2150,7 +2240,7 @@ func (c *IRCClient) setupHandlers() {
 			MessageType: "status",
 			Timestamp:   time.Now(),
 		})
-		c.conn.SendRaw("CAP END")
+		c.endCapNegotiation()
 		c.eventBus.Emit(events.Event{
 			Type:      EventSASLFailed,
 			Data:      map[string]interface{}{"network": c.network.Address, "error": "Authentication failed"},
@@ -2174,7 +2264,7 @@ func (c *IRCClient) setupHandlers() {
 			MessageType: "status",
 			Timestamp:   time.Now(),
 		})
-		c.conn.SendRaw("CAP END")
+		c.endCapNegotiation()
 		c.eventBus.Emit(events.Event{
 			Type:      EventSASLFailed,
 			Data:      map[string]interface{}{"network": c.network.Address, "error": "SASL authentication failed"},
@@ -2546,6 +2636,37 @@ func capValue(capabilities, cap string) (value string, present bool) {
 	return "", false
 }
 
+// endCapNegotiation marks the initial CAP handshake complete and sends CAP END.
+// Setting capNegotiationDone lets the ACK handler tell a registration ACK (which
+// must be followed by CAP END) apart from a post-registration ACK triggered by a
+// CAP NEW request (which must NOT send CAP END again).
+func (c *IRCClient) endCapNegotiation() {
+	c.mu.Lock()
+	c.capNegotiationDone = true
+	c.mu.Unlock()
+	c.conn.SendRaw("CAP END")
+}
+
+// capsToRequest returns the subset of requestedCaps that the server has offered
+// and we don't already have enabled. sasl is included only during the initial
+// handshake (includeSASL); CAP NEW never re-runs SASL, so callers pass false
+// there. The result preserves requestedCaps order for stable CAP REQ output.
+func capsToRequest(offered string, enabled map[string]bool, includeSASL bool) []string {
+	var toRequest []string
+	for _, wantedCap := range requestedCaps {
+		if wantedCap == "sasl" && !includeSASL {
+			continue
+		}
+		if enabled[wantedCap] {
+			continue
+		}
+		if contains(offered, wantedCap) {
+			toRequest = append(toRequest, wantedCap)
+		}
+	}
+	return toRequest
+}
+
 // startSASLAuth initiates SASL authentication
 func (c *IRCClient) startSASLAuth() {
 	c.mu.Lock()
@@ -2615,7 +2736,7 @@ func (c *IRCClient) handlePLAINAuth(response string) {
 		c.mu.Lock()
 		c.saslInProgress = false
 		c.mu.Unlock()
-		c.conn.SendRaw("CAP END")
+		c.endCapNegotiation()
 	}
 }
 
@@ -2629,7 +2750,7 @@ func (c *IRCClient) handleEXTERNALAuth(response string) {
 		c.mu.Lock()
 		c.saslInProgress = false
 		c.mu.Unlock()
-		c.conn.SendRaw("CAP END")
+		c.endCapNegotiation()
 	}
 }
 
@@ -2649,6 +2770,15 @@ func (c *IRCClient) Connect() error {
 		})
 		return fmt.Errorf("failed to connect: %w", err)
 	}
+
+	// Reset capability state before negotiation so a reused client (reconnect)
+	// renegotiates from a clean slate. This runs before Loop() starts, so no CAP
+	// response can have been processed yet — unlike the post-registration connect
+	// callback (which fires on RPL_ENDOFMOTD), this point is race-free.
+	c.mu.Lock()
+	c.enabledCaps = make(map[string]bool)
+	c.capNegotiationDone = false
+	c.mu.Unlock()
 
 	// Always send CAP LS 302 for IRCv3 capability negotiation
 	c.conn.SendRaw("CAP LS 302")

@@ -12,12 +12,16 @@ const {
   getBuildInfoMock,
   getConnectionStatusMock,
   getServersMock,
+  getLogConfigMock,
+  getDefaultLogPathMock,
 } = vi.hoisted(() => ({
   getNetworksMock: vi.fn(),
   listPluginsMock: vi.fn(),
   getBuildInfoMock: vi.fn(),
   getConnectionStatusMock: vi.fn(),
   getServersMock: vi.fn(),
+  getLogConfigMock: vi.fn(),
+  getDefaultLogPathMock: vi.fn(),
 }))
 
 vi.mock('../../../wailsjs/go/main/App', () => ({
@@ -26,6 +30,9 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   GetBuildInfo: getBuildInfoMock,
   GetConnectionStatus: getConnectionStatusMock,
   GetServers: getServersMock,
+  GetLogConfig: getLogConfigMock,
+  GetDefaultLogPath: getDefaultLogPathMock,
+  SetLogConfig: vi.fn(),
   SaveNetwork: vi.fn(),
   ConnectNetwork: vi.fn(),
   DeleteNetwork: vi.fn(),
@@ -43,6 +50,8 @@ describe('SettingsPanel About pane', () => {
     listPluginsMock.mockResolvedValue([])
     getConnectionStatusMock.mockResolvedValue({})
     getServersMock.mockResolvedValue([])
+    getLogConfigMock.mockResolvedValue({ enabled: false, path: '/tmp/cascade.log', level: 'info' })
+    getDefaultLogPathMock.mockResolvedValue('/tmp/cascade.log')
     getBuildInfoMock.mockResolvedValue({
       version: 'v1.2.3',
       commit: 'abc1234',
