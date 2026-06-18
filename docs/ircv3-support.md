@@ -46,7 +46,7 @@ Legend: ✅ Supported · ◐ Partial · ⛔ Not yet
 | CAP LS 302 negotiation | ✅ | n/a | Full LS/REQ/ACK/NAK/END lifecycle |
 | ISUPPORT (`005`) | ✅ | n/a | PREFIX / CHANMODES parsing for mode handling |
 | WHOIS account (`330`) | ✅ | n/a | Shows the account a user is logged in as |
-| `cap-notify` | ⛔ | No | No mid-session `CAP NEW`/`CAP DEL` handling |
+| `cap-notify` | ✅ | Yes | `CAP NEW` auto-requests newly-offered wanted caps; `CAP DEL` disables withdrawn caps live |
 | `account-notify` | ⛔ | No | Account login/logout not tracked live |
 | `away-notify` | ⛔ | No | Per-user away state not tracked live |
 | `extended-join` | ⛔ | No | JOIN doesn't carry account/realname |
@@ -221,8 +221,7 @@ parsing and display changes.
 (handle REDACT/DELETE). Depend on roster/account plumbing and message-mutation handling
 respectively.
 
-**Connection & protocol niceties** — `cap-notify` (handle `CAP NEW`/`CAP DEL` mid-session),
-`labeled-response` (correlate replies via `@label`), `standard-replies` (uniform
+**Connection & protocol niceties** — `labeled-response` (correlate replies via `@label`), `standard-replies` (uniform
 `FAIL`/`WARN`/`NOTE`), `invite-notify`, `monitor` (presence for offline nicks), `WHOX`
 (extended WHO). Independent of each other; each is a self-contained addition.
 
