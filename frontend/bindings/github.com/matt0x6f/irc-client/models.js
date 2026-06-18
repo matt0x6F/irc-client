@@ -212,6 +212,52 @@ export class LastOpenPane {
 }
 
 /**
+ * LogConfig is the file-logging configuration exposed to the frontend.
+ */
+export class LogConfig {
+    /**
+     * Creates a new LogConfig instance.
+     * @param {Partial<LogConfig>} [$$source = {}] - The source object to create the LogConfig.
+     */
+    constructor($$source = {}) {
+        if (!("enabled" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["enabled"] = false;
+        }
+        if (!("path" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["path"] = "";
+        }
+        if (!("level" in $$source)) {
+            /**
+             * "debug" | "info" | "warn" | "error"
+             * @member
+             * @type {string}
+             */
+            this["level"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new LogConfig instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {LogConfig}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new LogConfig(/** @type {Partial<LogConfig>} */($$parsedSource));
+    }
+}
+
+/**
  * NetworkConfig represents network configuration
  */
 export class NetworkConfig {

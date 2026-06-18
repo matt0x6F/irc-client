@@ -34,6 +34,7 @@ require (
 	github.com/wailsapp/wails/webview2 v1.0.24 // indirect
 	golang.org/x/mod v0.35.0 // indirect
 	golang.org/x/sys v0.43.0 // indirect
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 )
 
 // replace github.com/wailsapp/wails/v2 v2.10.2 => /Users/matt/go/pkg/mod
