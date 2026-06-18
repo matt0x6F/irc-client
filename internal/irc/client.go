@@ -53,6 +53,9 @@ type IRCClient struct {
 	namesMu               sync.Mutex            // Mutex for namesInProgress map
 	serverCapabilities    *ServerCapabilities   // Server capabilities from ISUPPORT
 	supportsWHOX          bool                  // Server advertised the WHOX token in ISUPPORT (guarded by mu)
+	supportsMonitor       bool                  // Server advertised the MONITOR token in ISUPPORT (guarded by mu)
+	monitorStatus         map[string]bool       // MONITOR presence: lowercased nick -> online (guarded by monitorMu)
+	monitorMu             sync.Mutex            // Mutex for monitorStatus
 	whoisInProgress       map[string]*WhoisInfo // Track WHOIS requests in progress (key: nickname)
 	whoisMu               sync.Mutex            // Mutex for whoisInProgress map
 	knownBots             map[string]bool       // Nicks recognized as IRCv3 bots this session (key: lowercased nick)
@@ -396,6 +399,7 @@ func NewIRCClient(network *storage.Network, eventBus *events.EventBus, storage *
 		whoisInProgress:     make(map[string]*WhoisInfo),
 		knownBots:           make(map[string]bool),
 		userMeta:            make(map[string]*UserMeta),
+		monitorStatus:       make(map[string]bool),
 		autoJoinOnce:        &sync.Once{},
 		enabledCaps:         make(map[string]bool),
 		banLists:            make(map[string][]BanEntry),
@@ -1536,6 +1540,9 @@ func (c *IRCClient) setupHandlers() {
 	c.conn.AddCallback("SETNAME", c.handleSetname)
 	c.conn.AddCallback("INVITE", c.handleInvite)
 	c.conn.AddCallback("354", c.handleWhoxReply) // RPL_WHOSPCRPL (WHOX)
+	// MONITOR presence: 730 RPL_MONONLINE, 731 RPL_MONOFFLINE.
+	c.conn.AddCallback("730", func(e ircmsg.Message) { c.handleMonitorPresence(e, true) })
+	c.conn.AddCallback("731", func(e ircmsg.Message) { c.handleMonitorPresence(e, false) })
 	// IRCv3 standard-replies: FAIL (error), WARN (warning), NOTE (status).
 	c.conn.AddCallback("FAIL", func(e ircmsg.Message) { c.handleStandardReply(e, "error") })
 	c.conn.AddCallback("WARN", func(e ircmsg.Message) { c.handleStandardReply(e, "warning") })
@@ -2300,6 +2307,14 @@ func (c *IRCClient) setupHandlers() {
 				c.mu.Unlock()
 			}
 
+			// MONITOR=<limit> announces presence-monitoring support. We only need
+			// to know it's present; the limit is advisory.
+			if param == "MONITOR" || strings.HasPrefix(param, "MONITOR=") {
+				c.mu.Lock()
+				c.supportsMonitor = true
+				c.mu.Unlock()
+			}
+
 			// Parse CHANMODES parameter: CHANMODES=b,k,l,imnpst
 			if strings.HasPrefix(param, "CHANMODES=") {
 				chanModesValue := param[10:] // Skip "CHANMODES="
@@ -2967,6 +2982,117 @@ func (c *IRCClient) applyWhoxRow(params []string) {
 	})
 }
 
+// monitorSupported reports whether the server advertised MONITOR in ISUPPORT.
+func (c *IRCClient) monitorSupported() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.supportsMonitor
+}
+
+// MonitorAdd asks the server to track a nick's presence (MONITOR + nick). The
+// online/offline result arrives asynchronously via 730/731.
+func (c *IRCClient) MonitorAdd(nick string) error {
+	if nick == "" {
+		return fmt.Errorf("monitor nick required")
+	}
+	return c.conn.SendRaw("MONITOR + " + nick)
+}
+
+// MonitorRemove stops tracking a nick (MONITOR - nick) and drops its cached state.
+func (c *IRCClient) MonitorRemove(nick string) error {
+	if nick == "" {
+		return fmt.Errorf("monitor nick required")
+	}
+	c.monitorMu.Lock()
+	delete(c.monitorStatus, strings.ToLower(nick))
+	c.monitorMu.Unlock()
+	return c.conn.SendRaw("MONITOR - " + nick)
+}
+
+// sendInitialMonitor re-arms the server-side MONITOR list from the durable
+// per-network buddy list on (re)connect. No-op when the server lacks MONITOR or
+// the list is empty. Nicks are sent comma-separated in chunks to respect line
+// length.
+func (c *IRCClient) sendInitialMonitor() {
+	if !c.monitorSupported() {
+		return
+	}
+	nicks, err := c.storage.GetMonitoredNicks(c.networkID)
+	if err != nil {
+		logger.Log.Warn().Err(err).Msg("Failed to load monitored nicks")
+		return
+	}
+	const chunkSize = 20
+	for i := 0; i < len(nicks); i += chunkSize {
+		end := i + chunkSize
+		if end > len(nicks) {
+			end = len(nicks)
+		}
+		if err := c.conn.SendRaw("MONITOR + " + strings.Join(nicks[i:end], ",")); err != nil {
+			logger.Log.Warn().Err(err).Msg("Failed to send initial MONITOR list")
+			return
+		}
+	}
+}
+
+// setMonitorPresence records a monitored nick's online state and emits
+// EventMonitorChanged on a real change (idempotent, like applyUserMeta).
+func (c *IRCClient) setMonitorPresence(nick string, online bool) {
+	if nick == "" {
+		return
+	}
+	key := strings.ToLower(nick)
+	c.monitorMu.Lock()
+	prev, existed := c.monitorStatus[key]
+	if existed && prev == online {
+		c.monitorMu.Unlock()
+		return
+	}
+	c.monitorStatus[key] = online
+	c.monitorMu.Unlock()
+
+	c.eventBus.Emit(events.Event{
+		Type: EventMonitorChanged,
+		Data: map[string]interface{}{
+			"network":   c.network.Address,
+			"networkId": c.networkID,
+			"nickname":  nick,
+			"online":    online,
+		},
+		Timestamp: time.Now(),
+		Source:    events.EventSourceIRC,
+	})
+}
+
+// handleMonitorPresence parses a 730 (RPL_MONONLINE) or 731 (RPL_MONOFFLINE)
+// reply, whose second parameter is a comma-separated target list ("nick!user@host"
+// or bare nick), and updates each nick's presence.
+func (c *IRCClient) handleMonitorPresence(e ircmsg.Message, online bool) {
+	if len(e.Params) < 2 {
+		return
+	}
+	for _, target := range strings.Split(e.Params[1], ",") {
+		target = strings.TrimSpace(target)
+		if target == "" {
+			continue
+		}
+		nick, _, _ := strings.Cut(target, "!") // strip any !user@host
+		c.setMonitorPresence(nick, online)
+	}
+}
+
+// MonitorPresence returns a snapshot of known monitored-nick presence
+// (lowercased nick -> online) for hydrating the frontend on demand.
+func (c *IRCClient) MonitorPresence() map[string]bool {
+	c.monitorMu.Lock()
+	defer c.monitorMu.Unlock()
+	out := make(map[string]bool, len(c.monitorStatus))
+	for k, v := range c.monitorStatus {
+		out[k] = v
+	}
+	return out
+}
+
 // RequestChatHistoryBefore asks the server for up to `limit` messages older than
 // beforeISO (an ISO8601 timestamp, e.g. 2024-06-14T00:00:00.000Z) for target.
 // Used for scroll-to-top deep backscroll.
@@ -3414,6 +3540,10 @@ func (c *IRCClient) doAutoJoin() {
 	c.mu.RLock()
 	reconnect := c.reconnecting
 	c.mu.RUnlock()
+
+	// Re-arm the server-side MONITOR list from the durable buddy list now that
+	// registration is complete (same trigger as auto-join).
+	c.sendInitialMonitor()
 
 	channels, err := c.channelsToJoin(reconnect)
 	if err != nil {
