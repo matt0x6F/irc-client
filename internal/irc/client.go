@@ -26,8 +26,9 @@ import (
 // highest; the 353 parser already accumulates all of them into the stored modes.
 // "cap-notify" lets the server announce runtime capability changes via CAP NEW /
 // CAP DEL; it is implicitly enabled by CAP LS 302, but we request it explicitly
-// so it surfaces in enabledCaps.
-var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "multi-prefix", "cap-notify"}
+// so it surfaces in enabledCaps. The away-notify/account-notify/extended-join/
+// chghost/account-tag cluster keeps the live roster current (see UserMeta).
+var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "multi-prefix", "cap-notify", "away-notify", "account-notify", "extended-join", "chghost", "account-tag"}
 
 // IRCClient manages IRC connections
 type IRCClient struct {
@@ -55,6 +56,10 @@ type IRCClient struct {
 	whoisMu               sync.Mutex            // Mutex for whoisInProgress map
 	knownBots             map[string]bool       // Nicks recognized as IRCv3 bots this session (key: lowercased nick)
 	knownBotsMu           sync.Mutex            // Mutex for knownBots map
+	userMeta              map[string]*UserMeta  // Live roster attributes (away/account/host) this session (key: lowercased nick)
+	userMetaMu            sync.Mutex            // Mutex for userMeta map
+	autoJoinOnce          *sync.Once            // Guards the one auto-join per connection; re-created each Connect (guarded by mu)
+	autoJoinAction        func()                // What triggerAutoJoin runs once per connection; defaults to doAutoJoin (injectable for tests)
 	enabledCaps           map[string]bool       // IRCv3 capabilities granted by the server
 	chatHistoryMaxBatch   int                   // Max messages per CHATHISTORY request, from the chathistory=N cap value (0 = unknown, use default)
 	capNegotiationDone    bool                  // Whether CAP negotiation has finished
@@ -301,6 +306,10 @@ func (c *IRCClient) handleNickMessage(e ircmsg.Message) {
 		logger.Log.Debug().Str("oldNick", oldNick).Str("newNick", newNick).Msg("Updated nickname in channel user lists")
 	}
 
+	// Carry live roster attributes (away/account/host) over to the new nick so
+	// badges and dimming don't go stale on a rename.
+	c.renameUserMeta(oldNick, newNick)
+
 	c.eventBus.Emit(events.Event{
 		Type: EventUserNick,
 		Data: map[string]interface{}{
@@ -373,6 +382,8 @@ func NewIRCClient(network *storage.Network, eventBus *events.EventBus, storage *
 		namesInProgress:     make(map[string]bool),
 		whoisInProgress:     make(map[string]*WhoisInfo),
 		knownBots:           make(map[string]bool),
+		userMeta:            make(map[string]*UserMeta),
+		autoJoinOnce:        &sync.Once{},
 		enabledCaps:         make(map[string]bool),
 		banLists:            make(map[string][]BanEntry),
 		serverCapabilities: &ServerCapabilities{
@@ -412,6 +423,10 @@ func NewIRCClient(network *storage.Network, eventBus *events.EventBus, storage *
 		Timeout:   1 * time.Minute,
 		KeepAlive: 3 * time.Minute,
 	}
+
+	// Auto-join runs once per connection through triggerAutoJoin; doAutoJoin is the
+	// real action (overridable in tests, which have no live connection to JOIN on).
+	client.autoJoinAction = client.doAutoJoin
 
 	// Set up event handlers
 	client.setupHandlers()
@@ -490,6 +505,184 @@ func (c *IRCClient) BotNicks() []string {
 		nicks = append(nicks, nick)
 	}
 	return nicks
+}
+
+// applyUserMeta updates the live roster attributes for a nick. It clones the
+// current value, runs mutate against the clone, and only stores + emits
+// EventUserMetaChanged when the result actually differs from what we had — so a
+// redundant AWAY/ACCOUNT/account-tag never spams the frontend (mirrors markBot's
+// idempotency). Nicks are keyed lowercased since IRC nicks are case-folding.
+func (c *IRCClient) applyUserMeta(nick string, mutate func(*UserMeta)) {
+	if nick == "" {
+		return
+	}
+	key := strings.ToLower(nick)
+
+	c.userMetaMu.Lock()
+	current := UserMeta{}
+	if existing := c.userMeta[key]; existing != nil {
+		current = *existing
+	}
+	updated := current
+	mutate(&updated)
+	if updated == current {
+		c.userMetaMu.Unlock()
+		return
+	}
+	stored := updated
+	c.userMeta[key] = &stored
+	c.userMetaMu.Unlock()
+
+	c.emitUserMeta(key, stored)
+}
+
+// emitUserMeta publishes a snapshot of a nick's roster attributes. nick must
+// already be lowercased.
+func (c *IRCClient) emitUserMeta(nick string, meta UserMeta) {
+	c.eventBus.Emit(events.Event{
+		Type: EventUserMetaChanged,
+		Data: map[string]interface{}{
+			"network":      c.network.Address,
+			"networkId":    c.networkID,
+			"nickname":     nick,
+			"away":         meta.Away,
+			"away_message": meta.AwayMessage,
+			"account":      meta.Account,
+			"host":         meta.Host,
+		},
+		Timestamp: time.Now(),
+		Source:    events.EventSourceIRC,
+	})
+}
+
+// renameUserMeta moves a nick's roster attributes to its new nick on NICK so the
+// away/account/host follow the user instead of going stale. Emits for the new
+// nick when anything moved.
+func (c *IRCClient) renameUserMeta(oldNick, newNick string) {
+	if oldNick == "" || newNick == "" {
+		return
+	}
+	oldKey := strings.ToLower(oldNick)
+	newKey := strings.ToLower(newNick)
+	if oldKey == newKey {
+		return
+	}
+
+	c.userMetaMu.Lock()
+	meta := c.userMeta[oldKey]
+	if meta == nil {
+		c.userMetaMu.Unlock()
+		return
+	}
+	delete(c.userMeta, oldKey)
+	moved := *meta
+	c.userMeta[newKey] = &moved
+	c.userMetaMu.Unlock()
+
+	c.emitUserMeta(newKey, moved)
+}
+
+// removeUserMeta drops a nick's roster attributes when the user leaves the
+// network (QUIT). PART/KICK do not call this: the user may remain in other
+// channels, and away/account/host are network-wide, not channel-scoped.
+func (c *IRCClient) removeUserMeta(nick string) {
+	if nick == "" {
+		return
+	}
+	c.userMetaMu.Lock()
+	delete(c.userMeta, strings.ToLower(nick))
+	c.userMetaMu.Unlock()
+}
+
+// handleAway processes away-notify: ":nick AWAY :message" marks the user away,
+// ":nick AWAY" (no param, or empty) marks them back.
+func (c *IRCClient) handleAway(e ircmsg.Message) {
+	message := ""
+	if len(e.Params) > 0 {
+		message = e.Params[0]
+	}
+	away := message != ""
+	c.applyUserMeta(e.Nick(), func(m *UserMeta) {
+		m.Away = away
+		m.AwayMessage = message
+	})
+}
+
+// handleAccount processes account-notify: ":nick ACCOUNT <account>" where "*"
+// means the user logged out.
+func (c *IRCClient) handleAccount(e ircmsg.Message) {
+	if len(e.Params) < 1 {
+		return
+	}
+	account := e.Params[0]
+	if account == "*" {
+		account = ""
+	}
+	c.applyUserMeta(e.Nick(), func(m *UserMeta) { m.Account = account })
+}
+
+// handleChghost processes chghost: ":nick CHGHOST <newuser> <newhost>" — the
+// user's ident/host changed mid-session.
+func (c *IRCClient) handleChghost(e ircmsg.Message) {
+	if len(e.Params) < 2 {
+		return
+	}
+	host := e.Params[0] + "@" + e.Params[1]
+	c.applyUserMeta(e.Nick(), func(m *UserMeta) { m.Host = host })
+}
+
+// maybeApplyExtendedJoin records the joiner's account from an extended-join
+// JOIN. When that cap is negotiated, JOIN carries the account as the 2nd param
+// ("*" = not logged in) and realname as the 3rd (realname is out of scope —
+// that's setname). No-op on a plain JOIN or when the cap isn't enabled.
+func (c *IRCClient) maybeApplyExtendedJoin(e ircmsg.Message) {
+	if !c.capEnabled("extended-join") || len(e.Params) < 2 {
+		return
+	}
+	account := e.Params[1]
+	if account == "*" {
+		account = ""
+	}
+	c.applyUserMeta(e.Nick(), func(m *UserMeta) { m.Account = account })
+}
+
+// maybeApplyAccountTag records the sender's account when an incoming message
+// carries the IRCv3 `@account` tag (account-tag cap). An empty value or "*"
+// means the sender is not logged in. Shared by the PRIVMSG, NOTICE, and JOIN
+// handlers, alongside maybeMarkBotFromTag.
+func (c *IRCClient) maybeApplyAccountTag(e ircmsg.Message) {
+	present, account := e.GetTag("account")
+	if !present {
+		return
+	}
+	if account == "*" {
+		account = ""
+	}
+	c.applyUserMeta(e.Nick(), func(m *UserMeta) { m.Account = account })
+}
+
+// UserMetaFor returns a copy of the roster attributes known for a nick this
+// session, and whether any were recorded.
+func (c *IRCClient) UserMetaFor(nick string) (UserMeta, bool) {
+	c.userMetaMu.Lock()
+	defer c.userMetaMu.Unlock()
+	if m := c.userMeta[strings.ToLower(nick)]; m != nil {
+		return *m, true
+	}
+	return UserMeta{}, false
+}
+
+// AllUserMeta returns a snapshot of every nick's roster attributes this session,
+// keyed by lowercased nick. Used by the App layer to hydrate the frontend when a
+// window opens or reloads; live changes arrive via EventUserMetaChanged.
+func (c *IRCClient) AllUserMeta() map[string]UserMeta {
+	c.userMetaMu.Lock()
+	defer c.userMetaMu.Unlock()
+	out := make(map[string]UserMeta, len(c.userMeta))
+	for nick, m := range c.userMeta {
+		out[nick] = *m
+	}
+	return out
 }
 
 // setupHandlers sets up IRC event handlers
@@ -669,6 +862,8 @@ func (c *IRCClient) setupHandlers() {
 		// IRCv3 bot mode: servers tag messages from bots with a valueless `bot`
 		// tag. Recognize the sender as a bot (covers plain PRIVMSG and CTCP ACTION).
 		c.maybeMarkBotFromTag(e)
+		// account-tag: learn the sender's account from the `@account` tag.
+		c.maybeApplyAccountTag(e)
 
 		// Check if this is a CTCP message (wrapped in \001)
 		if len(message) >= 2 && message[0] == '\001' && message[len(message)-1] == '\001' {
@@ -807,6 +1002,10 @@ func (c *IRCClient) setupHandlers() {
 		// IRCv3 bot mode: a bot's JOIN carries the `bot` tag too, so we can
 		// recognize it before it speaks.
 		c.maybeMarkBotFromTag(e)
+		// account-tag: a JOIN may also carry the `@account` tag.
+		c.maybeApplyAccountTag(e)
+		// extended-join: when negotiated, JOIN carries the joiner's account.
+		c.maybeApplyExtendedJoin(e)
 
 		logger.Log.Debug().
 			Str("user", user).
@@ -1022,6 +1221,10 @@ func (c *IRCClient) setupHandlers() {
 			reason = e.Params[0]
 		}
 
+		// The user left the network entirely, so drop their live roster
+		// attributes (away/account/host). PART/KICK deliberately don't do this.
+		c.removeUserMeta(user)
+
 		// Remove user from all channels they were in
 		channels, err := c.storage.GetChannels(c.networkID)
 		if err == nil {
@@ -1176,6 +1379,13 @@ func (c *IRCClient) setupHandlers() {
 	// Nick change
 	// Inbound NICK changes for everyone, with self-tracking. See handleNickMessage.
 	c.conn.AddCallback("NICK", c.handleNickMessage)
+
+	// Live-roster presence updates (IRCv3 away-notify / account-notify / chghost).
+	// These only arrive when the matching cap was negotiated; each updates the
+	// session-local UserMeta and emits EventUserMetaChanged when something changed.
+	c.conn.AddCallback("AWAY", c.handleAway)
+	c.conn.AddCallback("ACCOUNT", c.handleAccount)
+	c.conn.AddCallback("CHGHOST", c.handleChghost)
 
 	// Channel topic (RPL_TOPIC = 332) - received when topic is retrieved
 	c.conn.AddCallback("332", func(e ircmsg.Message) {
@@ -1715,6 +1925,29 @@ func (c *IRCClient) setupHandlers() {
 	// preferred nick was taken). Registered after the welcome-line writer above
 	// so the log shows the welcome first; see handleWelcome.
 	c.conn.AddCallback("001", c.handleWelcome)
+
+	// Auto-join is gated on registration completion. The end-of-MOTD numerics are
+	// the primary trigger because they guarantee ISUPPORT (005) has arrived, so
+	// NAMES prefix parsing is correct before the first reply. A fallback timer
+	// armed at RPL_WELCOME (001) covers servers that send no MOTD terminator.
+	// autoJoinOnce ensures whichever fires first wins and we join exactly once.
+	c.conn.AddCallback("001", func(e ircmsg.Message) {
+		c.mu.RLock()
+		once := c.autoJoinOnce
+		c.mu.RUnlock()
+		time.AfterFunc(constants.AutoJoinDelay, func() {
+			// Re-read so a Connect() that re-armed the Once in the meantime isn't
+			// triggered by this stale timer.
+			c.mu.RLock()
+			current := c.autoJoinOnce
+			c.mu.RUnlock()
+			if current == once {
+				c.triggerAutoJoin()
+			}
+		})
+	})
+	c.conn.AddCallback("376", func(e ircmsg.Message) { c.triggerAutoJoin() }) // RPL_ENDOFMOTD
+	c.conn.AddCallback("422", func(e ircmsg.Message) { c.triggerAutoJoin() }) // ERR_NOMOTD
 
 	// WHOIS response handlers
 	// RPL_WHOISUSER (311) - Basic user information
@@ -2395,6 +2628,13 @@ func (c *IRCClient) chatHistoryEnabled() bool {
 	return c.enabledCaps["chathistory"] || c.enabledCaps["draft/chathistory"]
 }
 
+// capEnabled reports whether the server granted a named IRCv3 capability.
+func (c *IRCClient) capEnabled(name string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.enabledCaps[name]
+}
+
 // clampChatHistoryLimit bounds a requested count to the default (when unset) and
 // to the server-advertised maximum (when known).
 func (c *IRCClient) clampChatHistoryLimit(limit int) int {
@@ -2794,35 +3034,58 @@ func (c *IRCClient) Connect() error {
 	// Start the connection loop in a goroutine
 	go c.conn.Loop()
 
-	// Auto-join channels after a short delay to ensure connection is established.
-	// On a fresh startup we join only auto_join channels; on an auto-reconnect we
-	// rejoin every channel we were in so the server resends NAMES (see
-	// channelsToJoin). Each JOIN goes through the rate limiter because rejoining a
-	// full session at once would otherwise burst dozens of commands and trip the
-	// server's flood protection — the underlying library does no throttling itself.
-	go func() {
-		time.Sleep(constants.AutoJoinDelay)
-
-		c.mu.RLock()
-		reconnect := c.reconnecting
-		c.mu.RUnlock()
-
-		channels, err := c.channelsToJoin(reconnect)
-		if err != nil {
-			logger.Log.Error().Err(err).Bool("reconnect", reconnect).Msg("Failed to get channels to join")
-			return
-		}
-		logger.Log.Info().Int("count", len(channels)).Bool("reconnect", reconnect).Msg("Joining channels")
-		for _, channel := range channels {
-			c.rateLimiter.Wait()
-			logger.Log.Info().Str("channel", channel.Name).Bool("reconnect", reconnect).Msg("Joining channel")
-			if err := c.conn.Join(channel.Name); err != nil {
-				logger.Log.Error().Err(err).Str("channel", channel.Name).Msg("Failed to join channel")
-			}
-		}
-	}()
+	// Auto-join is gated on registration completion, not a fixed timer: JOIN is
+	// what makes the server send the NAMES list that builds the roster, and a
+	// JOIN sent before RPL_WELCOME (001) is silently dropped. The end-of-MOTD
+	// handlers (376/422) and a fallback timer armed at 001 both call
+	// triggerAutoJoin, which fires doAutoJoin exactly once via autoJoinOnce. We
+	// reset the Once here so each Connect (including auto-reconnect) re-arms it.
+	c.mu.Lock()
+	c.autoJoinOnce = &sync.Once{}
+	c.mu.Unlock()
 
 	return nil
+}
+
+// triggerAutoJoin runs the one auto-join for this connection, guarded by
+// autoJoinOnce so the multiple registration signals that race to call it
+// (RPL_ENDOFMOTD 376, ERR_NOMOTD 422, and the 001-armed fallback timer) result
+// in exactly one join pass.
+func (c *IRCClient) triggerAutoJoin() {
+	c.mu.RLock()
+	once := c.autoJoinOnce
+	action := c.autoJoinAction
+	c.mu.RUnlock()
+	if once == nil || action == nil {
+		return
+	}
+	once.Do(func() { go action() })
+}
+
+// doAutoJoin joins the channels for this connection. On a fresh startup we join
+// only auto_join channels; on an auto-reconnect we rejoin every channel we were
+// in so the server resends NAMES (see channelsToJoin). Each JOIN goes through
+// the rate limiter because rejoining a full session at once would otherwise
+// burst dozens of commands and trip the server's flood protection — the
+// underlying library does no throttling itself.
+func (c *IRCClient) doAutoJoin() {
+	c.mu.RLock()
+	reconnect := c.reconnecting
+	c.mu.RUnlock()
+
+	channels, err := c.channelsToJoin(reconnect)
+	if err != nil {
+		logger.Log.Error().Err(err).Bool("reconnect", reconnect).Msg("Failed to get channels to join")
+		return
+	}
+	logger.Log.Info().Int("count", len(channels)).Bool("reconnect", reconnect).Msg("Joining channels")
+	for _, channel := range channels {
+		c.rateLimiter.Wait()
+		logger.Log.Info().Str("channel", channel.Name).Bool("reconnect", reconnect).Msg("Joining channel")
+		if err := c.conn.Join(channel.Name); err != nil {
+			logger.Log.Error().Err(err).Str("channel", channel.Name).Msg("Failed to join channel")
+		}
+	}
 }
 
 // Disconnect disconnects from the IRC server
@@ -3251,6 +3514,8 @@ func (c *IRCClient) handleNotice(e ircmsg.Message) {
 
 	// IRCv3 bot mode: recognize a bot sender from the valueless `bot` tag.
 	c.maybeMarkBotFromTag(e)
+	// account-tag: learn the sender's account from the `@account` tag.
+	c.maybeApplyAccountTag(e)
 
 	// Check if this is a CTCP response (wrapped in \001)
 	if len(notice) >= 2 && notice[0] == '\001' && notice[len(notice)-1] == '\001' {

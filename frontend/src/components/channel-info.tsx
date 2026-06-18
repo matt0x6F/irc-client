@@ -58,6 +58,11 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
   // (full prefix string, e.g. "@+"). Durable + reactive via the settings store.
   const prefixDisplayMode = useSettingsStore((s) => s.prefixDisplayMode);
 
+  // Live roster metadata for this network (away/account/host). Subscribing to
+  // the map reference re-renders when setUserMeta replaces it, so away members
+  // dim and un-dim live.
+  const userMetaMap = useNetworkStore((s) => (networkId !== null ? s.userMeta[networkId] : undefined));
+
   const loadChannelInfo = useCallback(async () => {
     if (networkId === null || channelName === null || channelName === 'status') {
       setChannelInfo(null);
@@ -494,7 +499,18 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
           Users ({users.length})
         </div>
 
-        {orderedUsers.map(({ user, Icon, color }) => (
+        {orderedUsers.map(({ user, Icon, color }) => {
+          const meta = userMetaMap?.[user.nickname.toLowerCase()];
+          const away = !!meta?.away;
+          // Away users are dimmed; their away message (if any) shows on hover.
+          const nickTitle = away
+            ? meta?.away_message
+              ? `Away: ${meta.away_message}`
+              : 'Away'
+            : nicknameColors.get(user.nickname)
+              ? `Color: ${nicknameColors.get(user.nickname)}`
+              : 'No color';
+          return (
           <div
             key={user.id}
             className="text-sm py-1.5 px-2 cursor-pointer hover:bg-accent/70 rounded-md transition-all flex items-center gap-1.5"
@@ -509,9 +525,9 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
                 )
               : Icon && <Icon className="w-3.5 h-3.5 flex-shrink-0" style={{ color }} />}
             <span
-              className="font-medium truncate"
+              className={`font-medium truncate${away ? ' opacity-50' : ''}`}
               style={{ color: nicknameColors.get(user.nickname) || undefined }}
-              title={nicknameColors.get(user.nickname) ? `Color: ${nicknameColors.get(user.nickname)}` : 'No color'}
+              title={nickTitle}
             >
               {user.nickname}
             </span>
@@ -524,7 +540,8 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
               </span>
             )}
           </div>
-        ))}
+          );
+        })}
 
         {users.length === 0 && (
           <div className="text-sm text-muted-foreground px-2">No users found</div>

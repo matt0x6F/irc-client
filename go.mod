@@ -11,6 +11,7 @@ require (
 	github.com/wailsapp/wails/v3 v3.0.0-alpha2.103
 	github.com/zalando/go-keyring v0.2.6
 	golang.org/x/crypto v0.50.0
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )
 
 require (
@@ -34,7 +35,6 @@ require (
 	github.com/wailsapp/wails/webview2 v1.0.24 // indirect
 	golang.org/x/mod v0.35.0 // indirect
 	golang.org/x/sys v0.43.0 // indirect
-	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 )
 
 // replace github.com/wailsapp/wails/v2 v2.10.2 => /Users/matt/go/pkg/mod
