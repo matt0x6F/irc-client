@@ -172,6 +172,15 @@ export function GetCurrentNick(networkID) {
 }
 
 /**
+ * GetDefaultLogPath returns the default log file location, for use as a UI
+ * placeholder when the user hasn't chosen a custom path.
+ * @returns {$CancellablePromise<string>}
+ */
+export function GetDefaultLogPath() {
+    return $Call.ByID(3647489945);
+}
+
+/**
  * GetJoinedChannels retrieves channels where the current user is still a member
  * @param {number} networkID
  * @returns {$CancellablePromise<storage$0.Channel[]>}
@@ -193,6 +202,17 @@ export function GetLastOpenPane() {
 }
 
 /**
+ * GetLogConfig returns the current file-logging configuration, with defaults
+ * applied for any unset values.
+ * @returns {$CancellablePromise<$models.LogConfig>}
+ */
+export function GetLogConfig() {
+    return $Call.ByID(3565499149).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType8($result);
+    }));
+}
+
+/**
  * GetMessages retrieves messages for a network and channel
  * @param {number} networkID
  * @param {number | null} channelID
@@ -201,7 +221,7 @@ export function GetLastOpenPane() {
  */
 export function GetMessages(networkID, channelID, limit) {
     return $Call.ByID(3832618599, networkID, channelID, limit).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType9($result);
+        return $$createType10($result);
     }));
 }
 
@@ -216,7 +236,7 @@ export function GetMessages(networkID, channelID, limit) {
  */
 export function GetMessagesAfter(networkID, channelID, afterID, limit) {
     return $Call.ByID(4016273103, networkID, channelID, afterID, limit).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType9($result);
+        return $$createType10($result);
     }));
 }
 
@@ -231,7 +251,7 @@ export function GetMessagesAfter(networkID, channelID, afterID, limit) {
  */
 export function GetMessagesAround(networkID, channelID, targetID, window) {
     return $Call.ByID(468669170, networkID, channelID, targetID, window).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType9($result);
+        return $$createType10($result);
     }));
 }
 
@@ -246,7 +266,7 @@ export function GetMessagesAround(networkID, channelID, targetID, window) {
  */
 export function GetMessagesBefore(networkID, channelID, beforeID, limit) {
     return $Call.ByID(2291548608, networkID, channelID, beforeID, limit).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType9($result);
+        return $$createType10($result);
     }));
 }
 
@@ -270,7 +290,7 @@ export function GetMessagesBefore(networkID, channelID, beforeID, limit) {
  */
 export function GetMessagesBeforeTime(networkID, channelID, pmTarget, beforeISO, limit) {
     return $Call.ByID(1921588377, networkID, channelID, pmTarget, beforeISO, limit).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType9($result);
+        return $$createType10($result);
     }));
 }
 
@@ -284,7 +304,7 @@ export function GetMessagesBeforeTime(networkID, channelID, pmTarget, beforeISO,
  */
 export function GetNetworkBots(networkID) {
     return $Call.ByID(1037950925, networkID).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType10($result);
+        return $$createType11($result);
     }));
 }
 
@@ -294,7 +314,7 @@ export function GetNetworkBots(networkID) {
  */
 export function GetNetworks() {
     return $Call.ByID(366685148).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType12($result);
+        return $$createType13($result);
     }));
 }
 
@@ -316,7 +336,7 @@ export function GetNicknameColor(networkID, nickname) {
  */
 export function GetNicknameColorsBatch(networkID, nicknames) {
     return $Call.ByID(4229567593, networkID, nicknames).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType13($result);
+        return $$createType14($result);
     }));
 }
 
@@ -339,7 +359,7 @@ export function GetOpenChannels(networkID) {
  */
 export function GetPinnedMessages(networkID, channelID) {
     return $Call.ByID(380870585, networkID, channelID).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType15($result);
+        return $$createType16($result);
     }));
 }
 
@@ -350,7 +370,7 @@ export function GetPinnedMessages(networkID, channelID) {
  */
 export function GetPluginConfig(pluginName) {
     return $Call.ByID(1436487730, pluginName).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType16($result);
+        return $$createType17($result);
     }));
 }
 
@@ -361,7 +381,7 @@ export function GetPluginConfig(pluginName) {
  */
 export function GetPluginConfigSchema(pluginName) {
     return $Call.ByID(249168125, pluginName).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType16($result);
+        return $$createType17($result);
     }));
 }
 
@@ -373,7 +393,7 @@ export function GetPluginConfigSchema(pluginName) {
  */
 export function GetPrivateMessageConversations(networkID, openOnly) {
     return $Call.ByID(839521643, networkID, openOnly).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType10($result);
+        return $$createType11($result);
     }));
 }
 
@@ -386,7 +406,7 @@ export function GetPrivateMessageConversations(networkID, openOnly) {
  */
 export function GetPrivateMessages(networkID, targetUser, limit) {
     return $Call.ByID(2750786118, networkID, targetUser, limit).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType9($result);
+        return $$createType10($result);
     }));
 }
 
@@ -397,7 +417,7 @@ export function GetPrivateMessages(networkID, targetUser, limit) {
  */
 export function GetServerCapabilities(networkID) {
     return $Call.ByID(1639110850, networkID).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType18($result);
+        return $$createType19($result);
     }));
 }
 
@@ -408,7 +428,7 @@ export function GetServerCapabilities(networkID) {
  */
 export function GetServers(networkID) {
     return $Call.ByID(4270553301, networkID).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType20($result);
+        return $$createType21($result);
     }));
 }
 
@@ -449,7 +469,7 @@ export function LeaveChannel(networkID, channelName) {
  */
 export function ListPlugins() {
     return $Call.ByID(3314730135).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType22($result);
+        return $$createType23($result);
     }));
 }
 
@@ -588,7 +608,7 @@ export function SaveNetwork(config) {
  */
 export function SearchMessages(query, networkID, limit) {
     return $Call.ByID(3203246577, query, networkID, limit).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType24($result);
+        return $$createType25($result);
     }));
 }
 
@@ -623,6 +643,20 @@ export function SendMessage(networkID, target, message) {
  */
 export function SetChannelOpen(networkID, channelName, isOpen) {
     return $Call.ByID(1311700154, networkID, channelName, isOpen);
+}
+
+/**
+ * SetLogConfig validates, applies, and persists a new file-logging
+ * configuration. The new config is applied to the logger first so a bad path is
+ * rejected before anything is written — on error the previous configuration and
+ * stored settings are left untouched.
+ * @param {boolean} enabled
+ * @param {string} path
+ * @param {string} level
+ * @returns {$CancellablePromise<void>}
+ */
+export function SetLogConfig(enabled, path, level) {
+    return $Call.ByID(2238388953, enabled, path, level);
 }
 
 /**
@@ -708,20 +742,21 @@ const $$createType4 = storage$0.Channel.createFrom;
 const $$createType5 = $Create.Array($$createType4);
 const $$createType6 = $models.LastOpenPane.createFrom;
 const $$createType7 = $Create.Nullable($$createType6);
-const $$createType8 = storage$0.Message.createFrom;
-const $$createType9 = $Create.Array($$createType8);
-const $$createType10 = $Create.Array($Create.Any);
-const $$createType11 = storage$0.Network.createFrom;
-const $$createType12 = $Create.Array($$createType11);
-const $$createType13 = $Create.Map($Create.Any, $Create.Any);
-const $$createType14 = storage$0.PinnedMessage.createFrom;
-const $$createType15 = $Create.Array($$createType14);
-const $$createType16 = $Create.Map($Create.Any, $Create.Any);
-const $$createType17 = $models.ServerCapabilitiesInfo.createFrom;
-const $$createType18 = $Create.Nullable($$createType17);
-const $$createType19 = storage$0.Server.createFrom;
-const $$createType20 = $Create.Array($$createType19);
-const $$createType21 = $models.PluginInfo.createFrom;
-const $$createType22 = $Create.Array($$createType21);
-const $$createType23 = storage$0.SearchResult.createFrom;
-const $$createType24 = $Create.Array($$createType23);
+const $$createType8 = $models.LogConfig.createFrom;
+const $$createType9 = storage$0.Message.createFrom;
+const $$createType10 = $Create.Array($$createType9);
+const $$createType11 = $Create.Array($Create.Any);
+const $$createType12 = storage$0.Network.createFrom;
+const $$createType13 = $Create.Array($$createType12);
+const $$createType14 = $Create.Map($Create.Any, $Create.Any);
+const $$createType15 = storage$0.PinnedMessage.createFrom;
+const $$createType16 = $Create.Array($$createType15);
+const $$createType17 = $Create.Map($Create.Any, $Create.Any);
+const $$createType18 = $models.ServerCapabilitiesInfo.createFrom;
+const $$createType19 = $Create.Nullable($$createType18);
+const $$createType20 = storage$0.Server.createFrom;
+const $$createType21 = $Create.Array($$createType20);
+const $$createType22 = $models.PluginInfo.createFrom;
+const $$createType23 = $Create.Array($$createType22);
+const $$createType24 = storage$0.SearchResult.createFrom;
+const $$createType25 = $Create.Array($$createType24);

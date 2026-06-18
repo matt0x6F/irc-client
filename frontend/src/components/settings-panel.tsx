@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { main, storage } from '../../wailsjs/go/models';
-import { GetNetworks, SaveNetwork, ConnectNetwork, DeleteNetwork, DisconnectNetwork, GetConnectionStatus, GetServers, ListPlugins, EnablePlugin, DisablePlugin, ReloadPlugin, GetBuildInfo, CheckForUpdates } from '../../wailsjs/go/main/App';
+import { GetNetworks, SaveNetwork, ConnectNetwork, DeleteNetwork, DisconnectNetwork, GetConnectionStatus, GetServers, ListPlugins, EnablePlugin, DisablePlugin, ReloadPlugin, GetBuildInfo, CheckForUpdates, GetLogConfig, SetLogConfig, GetDefaultLogPath } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import { PluginConfigForm } from './plugin-config-form';
 import {
@@ -14,10 +14,10 @@ import { useThemeStore, ACCENTS, type ThemeMode } from '../stores/theme';
 import { useSettingsStore } from '../stores/settings';
 import { usePreferencesStore } from '../stores/preferences';
 
-export type SettingsSection = 'networks' | 'plugins' | 'display' | 'about';
+export type SettingsSection = 'networks' | 'plugins' | 'display' | 'advanced' | 'about';
 
 export const isSettingsSection = (v: string): v is SettingsSection =>
-  v === 'networks' || v === 'plugins' || v === 'display' || v === 'about';
+  v === 'networks' || v === 'plugins' || v === 'display' || v === 'advanced' || v === 'about';
 
 interface SettingsPanelProps {
   /** Currently selected pane (controlled by the host window). */
@@ -89,13 +89,50 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
   // it was never configured). Shown inline under the "Check for Updates…" button.
   const [updateNotice, setUpdateNotice] = useState<string | null>(null);
 
+  // File-logging config (Advanced section). Persisted in the backend settings
+  // table and applied to the global logger live via SetLogConfig.
+  const [logConfig, setLogConfig] = useState<main.LogConfig | null>(null);
+  const [defaultLogPath, setDefaultLogPath] = useState('');
+  const [logError, setLogError] = useState<string | null>(null);
+  const [logSaving, setLogSaving] = useState(false);
+  // Path edits are held locally and applied on blur, so we don't reconfigure the
+  // logger on every keystroke.
+  const [logPathDraft, setLogPathDraft] = useState('');
+  useEffect(() => {
+    if (logConfig) setLogPathDraft(logConfig.path);
+  }, [logConfig?.path]);
+
   useEffect(() => {
     loadNetworks();
     loadPlugins();
     GetBuildInfo()
       .then(setBuildInfo)
       .catch((error) => console.error('Failed to load build info:', error));
+    GetLogConfig()
+      .then(setLogConfig)
+      .catch((error) => console.error('Failed to load log config:', error));
+    GetDefaultLogPath()
+      .then(setDefaultLogPath)
+      .catch((error) => console.error('Failed to load default log path:', error));
   }, []);
+
+  // Persist a log-config change and apply it live. The backend rejects an
+  // unwritable path before changing anything, so on error we surface it and
+  // reload the still-current config rather than leaving the UI out of sync.
+  const saveLogConfig = async (next: main.LogConfig) => {
+    setLogSaving(true);
+    setLogError(null);
+    const previous = logConfig;
+    setLogConfig(next); // optimistic
+    try {
+      await SetLogConfig(next.enabled, next.path, next.level);
+    } catch (error) {
+      setLogConfig(previous);
+      setLogError(String(error));
+    } finally {
+      setLogSaving(false);
+    }
+  };
 
   // The backend emits updater:unavailable when "Check for Updates…" is pressed
   // on a dev build (the updater is only configured for installed releases). In
@@ -1073,6 +1110,86 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
             </div>
           </div>
         );
+      case 'advanced':
+        return (
+          <div className="mb-6">
+            <h3 className="text-md font-semibold mb-4">Advanced</h3>
+            <div className="border border-border rounded-lg p-4 bg-card/50 shadow-[var(--shadow-sm)] space-y-4">
+              <div>
+                <div className="text-sm font-semibold">Diagnostic logging</div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Write a plain-text log file for troubleshooting. Useful when reporting a bug — turn it on, reproduce the issue, then share the file. Rotates at 10&nbsp;MB (keeps 3 compressed backups).
+                </p>
+              </div>
+
+              {/* Enable toggle */}
+              <div className="flex items-center justify-between gap-4">
+                <span className="text-sm font-medium">Log to file</span>
+                <Toggle
+                  checked={logConfig?.enabled ?? false}
+                  onChange={(v) => {
+                    if (!logConfig) return;
+                    void saveLogConfig(main.LogConfig.createFrom({ ...logConfig, path: logPathDraft || logConfig.path, enabled: v }));
+                  }}
+                />
+              </div>
+
+              {/* Path */}
+              <div>
+                <label className="block text-sm font-medium mb-1.5">Log file path</label>
+                <input
+                  type="text"
+                  value={logPathDraft}
+                  placeholder={defaultLogPath}
+                  onChange={(e) => setLogPathDraft(e.target.value)}
+                  onBlur={() => {
+                    if (!logConfig) return;
+                    if (logPathDraft.trim() === logConfig.path) return;
+                    void saveLogConfig(main.LogConfig.createFrom({ ...logConfig, path: logPathDraft.trim() }));
+                  }}
+                  className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all shadow-[var(--shadow-sm)] focus:shadow-[var(--shadow-md)] font-mono"
+                  style={{ transition: 'var(--transition-base)' }}
+                  data-testid="log-path-input"
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  Leave blank to use the default location. A leading <code>~</code> expands to your home directory.
+                </p>
+              </div>
+
+              {/* Level */}
+              <div>
+                <label className="block text-sm font-medium mb-1.5">Log level</label>
+                <Select
+                  value={logConfig?.level ?? 'info'}
+                  onValueChange={(value) => {
+                    if (!logConfig) return;
+                    void saveLogConfig(main.LogConfig.createFrom({ ...logConfig, path: logPathDraft || logConfig.path, level: value }));
+                  }}
+                >
+                  <SelectTrigger className="w-full" data-testid="log-level-select">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="debug">Debug (most verbose)</SelectItem>
+                    <SelectItem value="info">Info (default)</SelectItem>
+                    <SelectItem value="warn">Warn</SelectItem>
+                    <SelectItem value="error">Error (least verbose)</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Debug captures connection, CAP/SASL, and channel-roster detail — the level to use when reproducing a bug. The level also applies to the on-screen Server log.
+                </p>
+              </div>
+
+              {logSaving && <p className="text-xs text-muted-foreground">Applying…</p>}
+              {logError && (
+                <p className="text-xs text-destructive" data-testid="log-config-error">
+                  Couldn’t apply: {logError}
+                </p>
+              )}
+            </div>
+          </div>
+        );
       case 'about':
         return (
           <div className="mb-6">
@@ -1136,6 +1253,7 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
     { id: 'networks', label: 'Networks' },
     { id: 'plugins', label: 'Plugins' },
     { id: 'display', label: 'Display' },
+    { id: 'advanced', label: 'Advanced' },
     { id: 'about', label: 'About' },
   ];
 

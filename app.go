@@ -22,6 +22,7 @@ import (
 // App struct
 type App struct {
 	app                  *application.App // Wired in ServiceStartup; nil until the app is running.
+	dataDir              string           // Root for persistent data (DB, plugins, logs); ~/.cascade-chat or $CASCADE_DATA_DIR.
 	storage              *storage.Storage
 	eventBus             *events.EventBus
 	pluginManager        *plugin.Manager
@@ -72,6 +73,10 @@ func NewApp() (*App, error) {
 		return nil, fmt.Errorf("failed to initialize storage: %w", err)
 	}
 
+	// Apply persisted logging preferences now that storage is available. A bad
+	// path must never block startup, so failures fall back to stderr-only.
+	applyLogConfig(stor, baseDir)
+
 	eventBus := events.NewEventBus()
 	keychain := security.NewKeychain()
 
@@ -82,6 +87,7 @@ func NewApp() (*App, error) {
 	notifier := notification.NewNotifier()
 
 	app := &App{
+		dataDir:              baseDir,
 		storage:              stor,
 		eventBus:             eventBus,
 		pluginManager:        pluginMgr,
@@ -235,6 +241,9 @@ func (a *App) ServiceShutdown() error {
 		}
 
 		logger.Log.Info().Msg("App shutdown complete")
+
+		// Flush and close the log file last, after the final shutdown log line.
+		_ = logger.Close()
 	})
 
 	return nil
