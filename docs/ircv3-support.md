@@ -47,13 +47,13 @@ Legend: ✅ Supported · ◐ Partial · ⛔ Not yet
 | ISUPPORT (`005`) | ✅ | n/a | PREFIX / CHANMODES parsing for mode handling |
 | WHOIS account (`330`) | ✅ | n/a | Shows the account a user is logged in as |
 | `cap-notify` | ✅ | Yes | `CAP NEW` auto-requests newly-offered wanted caps; `CAP DEL` disables withdrawn caps live |
-| `account-notify` | ⛔ | No | Account login/logout not tracked live |
-| `away-notify` | ⛔ | No | Per-user away state not tracked live |
-| `extended-join` | ⛔ | No | JOIN doesn't carry account/realname |
-| `chghost` | ⛔ | No | User host changes not tracked |
+| `account-notify` | ✅ | Yes | Live account login/logout drives the roster + WHOIS |
+| `away-notify` | ✅ | Yes | Live away state dims members in the nick list |
+| `extended-join` | ✅ | Yes | JOIN's account is recorded into the roster |
+| `chghost` | ✅ | Yes | User host changes update the roster |
 | `multi-prefix` | ⛔ | No | Only the highest membership prefix is shown |
 | `userhost-in-names` | ⛔ | No | NAMES carries nicks only |
-| `account-tag` | ⛔ | No | `@account` tag on messages not consumed |
+| `account-tag` | ✅ | Yes | `@account` on messages keeps the roster account current |
 | `invite-notify` | ⛔ | No | — |
 | `setname` | ⛔ | No | Live realname changes not tracked |
 | `monitor` | ⛔ | No | No presence monitoring of offline nicks |
@@ -65,7 +65,7 @@ Legend: ✅ Supported · ◐ Partial · ⛔ Not yet
 The set of requested capabilities lives in one place — `internal/irc/client.go:25`:
 
 ```go
-var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory"}
+var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "away-notify", "account-notify", "extended-join", "chghost", "account-tag"}
 ```
 
 `sasl` is only requested when the network has SASL configured (`client.go:1927`); the others
@@ -188,6 +188,47 @@ older messages seamlessly without duplicates.
 
 ![Channel showing six messages replayed via CHATHISTORY on join, before the user's own join line](images/ircv3/chathistory.png)
 
+### Live roster (away-notify / account-notify / extended-join / chghost / account-tag)
+
+These five capabilities keep the channel member list current as people go away, log in or
+out of an account, or change host — without a manual `/who`. They all feed one piece of
+session-local state: a per-network map of lowercased nick → `UserMeta{Away, AwayMessage,
+Account, Host}` (`internal/irc/events.go`, `internal/irc/client.go`). The map is deliberately
+**not** persisted — a nick's away/account/host is only meaningful for the current session and
+re-accrues on reconnect (same rationale as bot mode).
+
+Each signal updates the map through `applyUserMeta`, which is idempotent: it only stores and
+emits `EventUserMetaChanged` when an attribute actually changed, so high-frequency traffic
+(away toggles especially) never spams the UI.
+
+| Capability | Trigger | Handler |
+|------------|---------|---------|
+| `away-notify` | `:nick AWAY [:msg]` | `handleAway` |
+| `account-notify` | `:nick ACCOUNT <acct\|*>` | `handleAccount` |
+| `extended-join` | `JOIN #chan <acct> :realname` | `maybeApplyExtendedJoin` (in the JOIN handler) |
+| `chghost` | `:nick CHGHOST <user> <host>` | `handleChghost` |
+| `account-tag` | `@account` on any PRIVMSG/NOTICE/JOIN | `maybeApplyAccountTag` |
+
+Key lifecycle: a NICK change carries the attributes to the new nick (`renameUserMeta`) and a
+QUIT drops them (`removeUserMeta`); PART/KICK do not, since the user may remain in other
+channels and these attributes are network-wide.
+
+The backend forwards `EventUserMetaChanged` to the frontend as `usermeta-event`
+(`app_events.go`), and the store hydrates on select via `GetNetworkUserMeta` (`app.go`) into a
+per-network `userMeta` slice (`frontend/src/stores/network.ts`). Two surfaces read it:
+
+- **Nick list** — away members are dimmed, with their away message on hover
+  (`channel-info.tsx`). Per the design, presence transitions are **silent** — they update the
+  roster/WHOIS but never write status lines into the channel buffer.
+- **WHOIS panel** — shows a live `away` pill + away message, and the account
+  (`user-info.tsx`), staying current while the panel is open.
+
+This cluster also motivated making auto-join **evented**: JOIN (which triggers the NAMES list
+that builds the roster) now fires on registration completion — `RPL_ENDOFMOTD` (376) /
+`ERR_NOMOTD` (422), with a fallback timer armed at `RPL_WELCOME` (001) — instead of a fixed
+2-second timer that could send JOINs before the server was ready (`triggerAutoJoin` /
+`doAutoJoin`, `client.go`).
+
 ### Supporting features
 
 These are not CAP capabilities but are part of Cascade's modern-IRC behavior and interact
@@ -207,19 +248,17 @@ with the IRCv3 features above.
 The capabilities below are recognized as desirable but not yet negotiated. They are grouped
 by theme with the main blocker.
 
-**Live presence / roster updates** — `account-notify`, `away-notify`, `chghost`,
-`extended-join`, `setname`. These keep the user list current as people log in/out, go away,
-or change host/realname. Blocker: Cascade does not yet maintain a live per-user roster with
-these attributes; adding them is mostly additive (new command callbacks + roster fields + UI
-indicators) and is the most natural next step.
+**Live presence / roster updates** — `setname` (live realname changes). The rest of this
+cluster (`account-notify`, `away-notify`, `chghost`, `extended-join`) is now supported — see
+[Live roster](#live-roster-away-notify--account-notify--extended-join--chghost--account-tag).
+`setname` is the remaining gap: the roster does not yet track mid-session realname changes.
 
 **Richer NAMES / membership** — `multi-prefix` (show all of a user's membership prefixes, not
 just the highest), `userhost-in-names` (user@host in NAMES). Lower effort; mostly NAMES
 parsing and display changes.
 
-**Message metadata** — `account-tag` (per-message `@account`), `draft/message-redaction`
-(handle REDACT/DELETE). Depend on roster/account plumbing and message-mutation handling
-respectively.
+**Message metadata** — `draft/message-redaction` (handle REDACT/DELETE), which needs
+message-mutation handling. (`account-tag` is now consumed — see the roster section above.)
 
 **Connection & protocol niceties** — `labeled-response` (correlate replies via `@label`), `standard-replies` (uniform
 `FAIL`/`WARN`/`NOTE`), `invite-notify`, `monitor` (presence for offline nicks), `WHOX`

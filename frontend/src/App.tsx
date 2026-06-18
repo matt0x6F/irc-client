@@ -43,6 +43,8 @@ function App() {
   const setCurrentNick = useNetworkStore((s) => s.setCurrentNick);
   const loadNetworkBots = useNetworkStore((s) => s.loadNetworkBots);
   const addBot = useNetworkStore((s) => s.addBot);
+  const loadNetworkUserMeta = useNetworkStore((s) => s.loadNetworkUserMeta);
+  const setUserMeta = useNetworkStore((s) => s.setUserMeta);
   const markActivity = useNetworkStore((s) => s.markActivity);
   const restoreLastPane = useNetworkStore((s) => s.restoreLastPane);
 
@@ -239,6 +241,7 @@ function App() {
       loadChannelInfo();
       loadPinnedMessages();
       loadNetworkBots();
+      loadNetworkUserMeta();
       const interval = setInterval(() => {
         loadMessages();
         loadConnectionStatus();
@@ -283,6 +286,27 @@ function App() {
       const nick = data?.data?.nickname;
       if (typeof networkId === 'number' && typeof nick === 'string' && nick) {
         addBot(networkId, nick);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Live-roster events (IRCv3 away-notify / account-notify / extended-join /
+  // chghost / account-tag): a user's away/account/host changed. Update the
+  // per-network roster metadata so the nick list can dim away users and the
+  // WHOIS panel can show live account/away.
+  useEffect(() => {
+    const unsubscribe = EventsOn('usermeta-event', (data: any) => {
+      const d = data?.data;
+      const networkId = d?.networkId;
+      const nick = d?.nickname;
+      if (typeof networkId === 'number' && typeof nick === 'string' && nick) {
+        setUserMeta(networkId, nick, {
+          away: !!d.away,
+          away_message: typeof d.away_message === 'string' ? d.away_message : '',
+          account: typeof d.account === 'string' ? d.account : '',
+          host: typeof d.host === 'string' ? d.host : '',
+        });
       }
     });
     return () => unsubscribe();

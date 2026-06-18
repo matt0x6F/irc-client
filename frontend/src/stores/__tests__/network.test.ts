@@ -64,3 +64,62 @@ describe('network store: bot mode', () => {
     expect([...second]).toEqual(['bot']);
   });
 });
+
+// Guards the IRCv3 live-roster wiring (away-notify / account-notify /
+// extended-join / chghost / account-tag) that the nick list dims on and the
+// WHOIS panel reads. setUserMeta is fed by the 'usermeta-event' handler.
+describe('network store: user meta', () => {
+  const meta = (over: Partial<{ away: boolean; away_message: string; account: string; host: string }> = {}) => ({
+    away: false,
+    away_message: '',
+    account: '',
+    host: '',
+    ...over,
+  });
+
+  beforeEach(() => {
+    useNetworkStore.setState({ userMeta: {} });
+  });
+
+  it('setUserMeta records lowercased and getUserMeta/isAway are case-insensitive', () => {
+    useNetworkStore.getState().setUserMeta(1, 'Alice', meta({ away: true, away_message: 'brb' }));
+    const { getUserMeta, isAway, userMeta } = useNetworkStore.getState();
+    expect(Object.keys(userMeta[1])).toEqual(['alice']);
+    expect(getUserMeta(1, 'ALICE')?.away_message).toBe('brb');
+    expect(isAway(1, 'alice')).toBe(true);
+    expect(isAway(1, 'bob')).toBe(false);
+  });
+
+  it('isAway is false for an unknown network', () => {
+    useNetworkStore.getState().setUserMeta(1, 'alice', meta({ away: true }));
+    expect(useNetworkStore.getState().isAway(2, 'alice')).toBe(false);
+  });
+
+  it('setUserMeta is per-network and does not clobber other networks', () => {
+    const { setUserMeta } = useNetworkStore.getState();
+    setUserMeta(1, 'alice', meta({ account: 'a1' }));
+    setUserMeta(2, 'bob', meta({ account: 'b2' }));
+    const { userMeta } = useNetworkStore.getState();
+    expect(userMeta[1]['alice'].account).toBe('a1');
+    expect(userMeta[2]['bob'].account).toBe('b2');
+  });
+
+  it('setUserMeta with identical attributes is a no-op that keeps the same map reference', () => {
+    const { setUserMeta } = useNetworkStore.getState();
+    setUserMeta(1, 'alice', meta({ away: true, away_message: 'lunch' }));
+    const first = useNetworkStore.getState().userMeta[1];
+    setUserMeta(1, 'Alice', meta({ away: true, away_message: 'lunch' })); // same state
+    const second = useNetworkStore.getState().userMeta[1];
+    expect(second).toBe(first); // unchanged reference avoids needless re-renders
+  });
+
+  it('setUserMeta replaces the map when an attribute changes', () => {
+    const { setUserMeta } = useNetworkStore.getState();
+    setUserMeta(1, 'alice', meta({ away: true }));
+    const first = useNetworkStore.getState().userMeta[1];
+    setUserMeta(1, 'alice', meta({ away: false })); // back from away
+    const second = useNetworkStore.getState().userMeta[1];
+    expect(second).not.toBe(first);
+    expect(useNetworkStore.getState().isAway(1, 'alice')).toBe(false);
+  });
+});

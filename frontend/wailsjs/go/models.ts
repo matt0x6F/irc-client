@@ -4,3 +4,4 @@
 // `storage.Message.createFrom(…)` keep working unchanged.
 export * as main from '../../bindings/github.com/matt0x6f/irc-client/models'
 export * as storage from '../../bindings/github.com/matt0x6f/irc-client/internal/storage/models'
+export * as irc from '../../bindings/github.com/matt0x6f/irc-client/internal/irc/models'
