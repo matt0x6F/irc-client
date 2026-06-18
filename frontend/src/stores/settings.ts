@@ -2,13 +2,21 @@ import { create } from 'zustand';
 import { GetSetting, SetSetting } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 
-// Key in the backend settings(key, value) table. Kept stable — renaming it would
+// Keys in the backend settings(key, value) table. Kept stable — renaming one would
 // orphan the previously-persisted value.
 const CONSOLIDATE_JOIN_QUIT_KEY = 'consolidateJoinQuit';
+const PREFIX_DISPLAY_MODE_KEY = 'prefixDisplayMode';
+
+// How a user's channel-membership prefixes are shown in the nick list:
+// 'icon' shows a single icon for their highest role; 'text' shows the full
+// prefix string (e.g. "@+"), surfacing every role granted via multi-prefix.
+export type PrefixDisplayMode = 'icon' | 'text';
 
 interface SettingsState {
   consolidateJoinQuit: boolean;
   setConsolidateJoinQuit: (value: boolean) => void;
+  prefixDisplayMode: PrefixDisplayMode;
+  setPrefixDisplayMode: (value: PrefixDisplayMode) => void;
 }
 
 /**
@@ -32,6 +40,13 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       console.error('Failed to persist consolidateJoinQuit:', error);
     });
   },
+  prefixDisplayMode: 'icon', // sensible default until initSettings() hydrates
+  setPrefixDisplayMode: (value) => {
+    set({ prefixDisplayMode: value });
+    SetSetting(PREFIX_DISPLAY_MODE_KEY, value).catch((error) => {
+      console.error('Failed to persist prefixDisplayMode:', error);
+    });
+  },
 }));
 
 /**
@@ -40,8 +55,16 @@ export const useSettingsStore = create<SettingsState>((set) => ({
  */
 export async function initSettings(): Promise<void> {
   try {
-    const value = await GetSetting(CONSOLIDATE_JOIN_QUIT_KEY);
-    useSettingsStore.setState({ consolidateJoinQuit: value === 'true' });
+    const [consolidate, prefixMode] = await Promise.all([
+      GetSetting(CONSOLIDATE_JOIN_QUIT_KEY),
+      GetSetting(PREFIX_DISPLAY_MODE_KEY),
+    ]);
+    useSettingsStore.setState({
+      consolidateJoinQuit: consolidate === 'true',
+      ...(prefixMode === 'text' || prefixMode === 'icon'
+        ? { prefixDisplayMode: prefixMode }
+        : {}),
+    });
   } catch (error) {
     console.error('Failed to load settings:', error);
   }
@@ -52,6 +75,10 @@ export async function initSettings(): Promise<void> {
   EventsOn('setting:changed', (payload: { key: string; value: string }) => {
     if (payload.key === CONSOLIDATE_JOIN_QUIT_KEY) {
       useSettingsStore.setState({ consolidateJoinQuit: payload.value === 'true' });
+    } else if (payload.key === PREFIX_DISPLAY_MODE_KEY) {
+      if (payload.value === 'text' || payload.value === 'icon') {
+        useSettingsStore.setState({ prefixDisplayMode: payload.value });
+      }
     }
   });
 }

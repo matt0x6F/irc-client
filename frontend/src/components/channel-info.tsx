@@ -5,7 +5,13 @@ import { EventsOn } from '../../wailsjs/runtime/runtime';
 import { UserInfo } from './user-info';
 import { useNicknameColors } from '../hooks/useNicknameColors';
 import { useNetworkStore } from '../stores/network';
+import { useSettingsStore } from '../stores/settings';
 import { Shield, Crown, Star, Mic, ShieldCheck } from 'lucide-react';
+
+// Membership prefixes in descending privilege order: owner, admin, op, halfop,
+// voice. Used to group a user under their highest role even when multi-prefix
+// reports several at once (e.g. "@+").
+const PREFIX_RANK = ['~', '&', '@', '%', '+'] as const;
 
 interface ChannelInfoProps {
   networkId: number | null;
@@ -48,6 +54,9 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
   // Bot set for this network: badge bot members. Subscribing to the Set
   // reference re-renders the list when addBot replaces it.
   const botSet = useNetworkStore((s) => (networkId !== null ? s.botNicks[networkId] : undefined));
+  // How to render membership prefixes: 'icon' (highest role only) or 'text'
+  // (full prefix string, e.g. "@+"). Durable + reactive via the settings store.
+  const prefixDisplayMode = useSettingsStore((s) => s.prefixDisplayMode);
 
   // Live roster metadata for this network (away/account/host). Subscribing to
   // the map reference re-renders when setUserMeta replaces it, so away members
@@ -253,31 +262,23 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
   const channel = channelInfo.channel;
   // users is already defined above for the hook
 
-  // Group users by mode prefix
+  // Group each user under their highest-ranked prefix. Order matters: owner (~)
+  // outranks admin (&), op (@), halfop (%), then voice (+). With multi-prefix a
+  // user can hold several at once (e.g. "@+"), so we pick the highest by rank
+  // rather than the first character we happen to test.
   const usersByMode: Record<string, storage.ChannelUser[]> = {
+    '~': [], // owners
+    '&': [], // admins
     '@': [], // ops
     '%': [], // halfops
-    '&': [], // admins
-    '~': [], // owners
     '+': [], // voiced
     '': [],  // regular users
   };
 
   users.forEach(user => {
     const mode = user.modes || '';
-    if (mode.includes('@')) {
-      usersByMode['@'].push(user);
-    } else if (mode.includes('%')) {
-      usersByMode['%'].push(user);
-    } else if (mode.includes('&')) {
-      usersByMode['&'].push(user);
-    } else if (mode.includes('~')) {
-      usersByMode['~'].push(user);
-    } else if (mode.includes('+')) {
-      usersByMode['+'].push(user);
-    } else {
-      usersByMode[''].push(user);
-    }
+    const key = PREFIX_RANK.find((p) => mode.includes(p)) ?? '';
+    usersByMode[key].push(user);
   });
 
   // Sort users within each group
@@ -516,7 +517,13 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
             style={{ transition: 'var(--transition-base)' }}
             onContextMenu={(e) => handleContextMenu(e, user)}
           >
-            {Icon && <Icon className="w-3.5 h-3.5 flex-shrink-0" style={{ color }} />}
+            {prefixDisplayMode === 'text'
+              ? user.modes && (
+                  <span className="font-mono text-xs flex-shrink-0" style={{ color }}>
+                    {user.modes}
+                  </span>
+                )
+              : Icon && <Icon className="w-3.5 h-3.5 flex-shrink-0" style={{ color }} />}
             <span
               className={`font-medium truncate${away ? ' opacity-50' : ''}`}
               style={{ color: nicknameColors.get(user.nickname) || undefined }}

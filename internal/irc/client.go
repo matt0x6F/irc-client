@@ -21,12 +21,14 @@ import (
 // ratified "chathistory" and the older "draft/chathistory" names; the contains()
 // filter only requests whichever the server actually advertises. "batch" is
 // required for CHATHISTORY (replays arrive wrapped in a BATCH that the underlying
-// ergochat/irc-go library collects for us). "cap-notify" lets the server announce
-// runtime capability changes via CAP NEW / CAP DEL; it is implicitly enabled by
-// CAP LS 302, but we request it explicitly so it surfaces in enabledCaps. The
-// away-notify/account-notify/extended-join/chghost/account-tag cluster keeps the
-// live roster current (see UserMeta).
-var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "cap-notify", "away-notify", "account-notify", "extended-join", "chghost", "account-tag"}
+// ergochat/irc-go library collects for us). "multi-prefix" makes the server send
+// every membership prefix a user holds (e.g. "@+") in NAMES/WHO, not just the
+// highest; the 353 parser already accumulates all of them into the stored modes.
+// "cap-notify" lets the server announce runtime capability changes via CAP NEW /
+// CAP DEL; it is implicitly enabled by CAP LS 302, but we request it explicitly
+// so it surfaces in enabledCaps. The away-notify/account-notify/extended-join/
+// chghost/account-tag cluster keeps the live roster current (see UserMeta).
+var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "multi-prefix", "cap-notify", "away-notify", "account-notify", "extended-join", "chghost", "account-tag"}
 
 // IRCClient manages IRC connections
 type IRCClient struct {
@@ -150,6 +152,25 @@ func (sc *ServerCapabilities) applyUserPrefix(current string, modeLetter rune, a
 		b.WriteRune(r)
 	}
 	return b.String()
+}
+
+// standardMembershipPrefixes is the conventional set of channel-membership prefix
+// characters (owner, admin, op, halfop, voice). Used as a fallback when ISUPPORT
+// PREFIX hasn't been parsed yet so NAMES parsing still works before 005 arrives.
+const standardMembershipPrefixes = "~&@%+"
+
+// splitMembershipPrefixes peels leading membership-prefix characters (e.g. "@+")
+// off a NAMES (353) entry, returning the accumulated prefixes and the bare nick.
+// With the multi-prefix capability the server sends every prefix a user holds,
+// highest-privilege first, so the returned prefix order is preserved as received
+// (no re-sorting). validPrefixes is the set of prefix chars advertised in
+// ISUPPORT PREFIX; callers pass standardMembershipPrefixes as a fallback.
+func splitMembershipPrefixes(entry, validPrefixes string) (modes, nick string) {
+	i := 0
+	for i < len(entry) && strings.IndexByte(validPrefixes, entry[i]) >= 0 {
+		i++
+	}
+	return entry[:i], entry[i:]
 }
 
 // IsConnected returns whether the client is connected.
@@ -1455,20 +1476,23 @@ func (c *IRCClient) setupHandlers() {
 			c.namesMu.Unlock()
 		}
 
-		// Parse names (format: "@nick1 +nick2 nick3")
+		// Determine the valid membership-prefix chars from the server's ISUPPORT
+		// PREFIX, falling back to the standard set if 005 hasn't been parsed yet.
+		// Computed once per response rather than per-name.
+		c.mu.RLock()
+		validPrefixes := string(c.serverCapabilities.prefixRank())
+		c.mu.RUnlock()
+		if validPrefixes == "" {
+			validPrefixes = standardMembershipPrefixes
+		}
+
+		// Parse names (format: "@nick1 +nick2 nick3"; with multi-prefix: "@+nick1 …")
 		names := strings.Fields(namesList)
 		addedCount := 0
 		for _, nameWithMode := range names {
-			// Extract mode prefix (@, +, etc.) and nickname
-			nickname := nameWithMode
-			modes := ""
-			if len(nameWithMode) > 0 {
-				// IRC prefixes: @ = op, + = voice, % = halfop, & = admin, ~ = owner
-				for len(nickname) > 0 && (nickname[0] == '@' || nickname[0] == '+' || nickname[0] == '%' || nickname[0] == '&' || nickname[0] == '~') {
-					modes += string(nickname[0])
-					nickname = nickname[1:]
-				}
-			}
+			// Extract mode prefixes (@, +, etc.) and nickname. With multi-prefix
+			// enabled this captures every prefix the user holds, highest first.
+			modes, nickname := splitMembershipPrefixes(nameWithMode, validPrefixes)
 			if len(nickname) > 0 {
 				if err := c.storage.AddChannelUser(ch.ID, nickname, modes); err != nil {
 					logger.Log.Warn().Err(err).Str("nickname", nickname).Str("channel", channel).Msg("Failed to add user from NAMES")
