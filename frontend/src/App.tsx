@@ -901,11 +901,7 @@ function App() {
                           <ChannelInfo
                             networkId={selectedNetwork}
                             channelName={selectedChannel}
-                            currentNickname={
-                              selectedNetwork !== null
-                                ? networks.find((n) => n.id === selectedNetwork)?.nickname || null
-                                : null
-                            }
+                            currentNickname={selectedNick ?? preferredNick ?? null}
                             onSendCommand={async (command: string) => {
                               if (selectedNetwork !== null) {
                                 await SendCommand(selectedNetwork, command);

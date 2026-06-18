@@ -10,7 +10,8 @@ vi.mock('../../hooks/useNicknameColors', () => ({
 }))
 
 const storeState = {
-  networks: [],
+  networks: [] as Array<{ id: number; nickname: string }>,
+  currentNick: {} as Record<number, string>,
   botNicks: {} as Record<number, Set<string>>,
   pinnedMessages: [],
   pinMessage: vi.fn(),
@@ -74,6 +75,24 @@ describe('MessageView connection markers', () => {
     // Only the regular privmsg is a standard, pinnable row.
     expect(screen.getAllByTestId('message-item')).toHaveLength(1)
     expect(screen.getAllByTestId('pin-button')).toHaveLength(1)
+  })
+})
+
+describe('MessageView mention highlight', () => {
+  // After a runtime /nick, "who am I" must come from the live server-assigned nick
+  // (currentNick), not the stale configured network.nickname. A message mentioning
+  // the new nick should highlight; the configured nick is intentionally different.
+  it('highlights a mention of the live current nick, not the configured nick', () => {
+    storeState.networks = [{ id: 1, nickname: 'oldnick' }]
+    storeState.currentNick = { 1: 'newnick' }
+    const msg = makeMessage({ id: 7, user: 'alice', message: 'hey newnick how are you', message_type: 'privmsg' })
+
+    render(<MessageView messages={[msg]} networkId={1} selectedChannel="#chan" />)
+
+    expect(screen.getByTestId('message-item')).toHaveClass('cc-mention')
+
+    storeState.networks = []
+    storeState.currentNick = {}
   })
 })
 
