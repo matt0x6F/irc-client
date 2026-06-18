@@ -28,7 +28,7 @@ import (
 // CAP DEL; it is implicitly enabled by CAP LS 302, but we request it explicitly
 // so it surfaces in enabledCaps. The away-notify/account-notify/extended-join/
 // chghost/account-tag cluster keeps the live roster current (see UserMeta).
-var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "multi-prefix", "cap-notify", "away-notify", "account-notify", "extended-join", "chghost", "account-tag", "userhost-in-names", "setname", "invite-notify"}
+var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "multi-prefix", "cap-notify", "away-notify", "account-notify", "extended-join", "chghost", "account-tag", "userhost-in-names", "setname", "invite-notify", "standard-replies"}
 
 // IRCClient manages IRC connections
 type IRCClient struct {
@@ -718,6 +718,60 @@ func (c *IRCClient) handleInvite(e ircmsg.Message) {
 		Timestamp: time.Now(),
 		Source:    events.EventSourceIRC,
 	})
+}
+
+// writeStatusLine writes a line to the network status buffer and refreshes it
+// live. The sync write commits the row before the event fires (avoiding a
+// write/notify race), and channel:nil routes the refresh to the status buffer
+// (see the message-event handler in App.tsx).
+func (c *IRCClient) writeStatusLine(messageType, text string) {
+	if err := c.storage.WriteMessageSync(storage.Message{
+		NetworkID:   c.networkID,
+		ChannelID:   nil,
+		User:        "*",
+		Message:     text,
+		MessageType: messageType,
+		Timestamp:   time.Now(),
+	}); err != nil {
+		logger.Log.Warn().Err(err).Str("type", messageType).Msg("Failed to write status line")
+	}
+	c.eventBus.Emit(events.Event{
+		Type: EventMessageReceived,
+		Data: map[string]interface{}{
+			"network":   c.network.Address,
+			"networkId": c.networkID,
+			"channel":   nil,
+			"user":      "*",
+			"message":   text,
+		},
+		Timestamp: time.Now(),
+		Source:    events.EventSourceIRC,
+	})
+}
+
+// handleStandardReply surfaces an IRCv3 standard reply (FAIL / WARN / NOTE) in
+// the status buffer. The wire form is
+//
+//	<FAIL|WARN|NOTE> <command> <code> [<context>...] :<description>
+//
+// FAIL maps to an error line, WARN to a warning line, NOTE to a status line.
+func (c *IRCClient) handleStandardReply(e ircmsg.Message, messageType string) {
+	if len(e.Params) < 2 {
+		return
+	}
+	command := e.Params[0]
+	description := e.Params[len(e.Params)-1]
+	code := ""
+	if len(e.Params) >= 3 {
+		code = e.Params[1]
+	}
+	var text string
+	if code != "" {
+		text = fmt.Sprintf("%s %s (%s): %s", e.Command, command, code, description)
+	} else {
+		text = fmt.Sprintf("%s %s: %s", e.Command, command, description)
+	}
+	c.writeStatusLine(messageType, text)
 }
 
 // handleSetname processes the setname capability: ":nick SETNAME :new real name"
@@ -1482,6 +1536,10 @@ func (c *IRCClient) setupHandlers() {
 	c.conn.AddCallback("SETNAME", c.handleSetname)
 	c.conn.AddCallback("INVITE", c.handleInvite)
 	c.conn.AddCallback("354", c.handleWhoxReply) // RPL_WHOSPCRPL (WHOX)
+	// IRCv3 standard-replies: FAIL (error), WARN (warning), NOTE (status).
+	c.conn.AddCallback("FAIL", func(e ircmsg.Message) { c.handleStandardReply(e, "error") })
+	c.conn.AddCallback("WARN", func(e ircmsg.Message) { c.handleStandardReply(e, "warning") })
+	c.conn.AddCallback("NOTE", func(e ircmsg.Message) { c.handleStandardReply(e, "status") })
 
 	// Channel topic (RPL_TOPIC = 332) - received when topic is retrieved
 	c.conn.AddCallback("332", func(e ircmsg.Message) {

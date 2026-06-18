@@ -506,13 +506,14 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
           const consolidated = msg as ConsolidatedMessage;
           const isConsolidated = consolidated._consolidated === true;
           const isError = msg.message_type === 'error';
+          const isWarning = msg.message_type === 'warning';
           const isStatus = msg.message_type === 'status';
           const isCommand = msg.message_type === 'command';
           const isMarker = msg.message_type === 'marker';
           const isInvite = msg.message_type === 'invite';
           const isSystemMessage = msg.message_type === 'join' || msg.message_type === 'part' || msg.message_type === 'quit' || msg.message_type === 'mode';
           const isEven = index % 2 === 0;
-          const isRegularMessage = !isError && !isStatus && !isCommand && !isMarker && !isSystemMessage && !isInvite;
+          const isRegularMessage = !isError && !isWarning && !isStatus && !isCommand && !isMarker && !isSystemMessage && !isInvite;
           const hasMention = isRegularMessage && isMention(msg.message);
 
           // Connection delineation marker ("Disconnected"/"Reconnected"): a centered
@@ -554,6 +555,8 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
                   ? 'cc-mention border-l-2'
                   : isError
                   ? 'bg-destructive/10 border-l-2 border-destructive shadow-[var(--shadow-sm)]'
+                  : isWarning
+                  ? 'bg-amber-500/10 border-l-2 border-amber-500'
                   : isStatus || isCommand || isInvite
                   ? 'opacity-70'
                   : isEven
@@ -561,13 +564,13 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
                   : ''
               } hover:bg-muted/30`}
             >
-              {isError ? (
+              {isError || isWarning ? (
                 <>
-                  <span className="text-sm text-destructive font-semibold flex-shrink-0">⚠</span>
+                  <span className={`text-sm font-semibold flex-shrink-0 ${isError ? 'text-destructive' : 'text-amber-500'}`}>⚠</span>
                   <span className="hidden sm:inline text-xs text-muted-foreground/70 flex-shrink-0 font-mono">
                     {new Date(msg.timestamp).toLocaleTimeString()}
                   </span>
-                  <span className="text-sm text-destructive flex-1 font-medium">
+                  <span className={`text-sm flex-1 font-medium ${isError ? 'text-destructive' : 'text-amber-500'}`}>
                     {msg.message.replace(/^Error: /, '')}
                   </span>
                 </>

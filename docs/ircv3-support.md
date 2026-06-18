@@ -62,14 +62,14 @@ Legend: ✅ Supported · ◐ Partial · ⛔ Not yet
 | `setname` | ✅ | Yes | Live realname changes update the roster + WHOIS panel |
 | `monitor` | ⛔ | No | No presence monitoring of offline nicks |
 | `labeled-response` | ⛔ | No | — |
-| `standard-replies` | ⛔ | No | — |
+| `standard-replies` | ✅ | Yes | FAIL/WARN/NOTE shown as error/warning/status lines |
 | `draft/message-redaction` | ⛔ | No | No REDACT handling |
 | `WHOX` (`354`) | ✅ | n/a (ISUPPORT) | Extended WHO on join bulk-seeds the roster |
 
 The set of requested capabilities lives in one place — `internal/irc/client.go:31`:
 
 ```go
-var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "multi-prefix", "cap-notify", "away-notify", "account-notify", "extended-join", "chghost", "account-tag", "userhost-in-names", "setname", "invite-notify"}
+var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "multi-prefix", "cap-notify", "away-notify", "account-notify", "extended-join", "chghost", "account-tag", "userhost-in-names", "setname", "invite-notify", "standard-replies"}
 ```
 
 `sasl` is only requested when the network has SASL configured (`client.go:1927`); the others
@@ -322,6 +322,22 @@ Coverage: `internal/irc/invite_test.go`.
 **In the client:** invites render as a dimmed status line in which the channel name is a clickable
 link that issues `/join` (`message-view.tsx`), so you can accept an invite with one click.
 
+### standard-replies
+
+[standard-replies](https://ircv3.net/specs/extensions/standard-replies) gives servers a uniform
+shape for out-of-band feedback: `FAIL`, `WARN`, and `NOTE`, each carrying
+`<command> <code> [<context>...] :<description>`. Without it, such feedback arrives as ad-hoc
+notices that are easy to miss or misattribute.
+
+`handleStandardReply` (`client.go`) formats the reply as "`<TYPE> <command> (<code>): <description>`"
+and writes it to the status buffer via the shared `writeStatusLine` helper, mapping severity to a
+message type: `FAIL` → `error`, `WARN` → `warning`, `NOTE` → `status`. Coverage:
+`internal/irc/standard_replies_test.go`.
+
+**In the client:** the existing message renderer styles these by type — `error` in red with a ⚠,
+the new `warning` type in amber with a ⚠, and `NOTE` as a dimmed status line
+(`message-view.tsx`) — so a server-side failure is visually distinct from an informational note.
+
 ### Bot mode
 
 [Bot mode](https://ircv3.net/specs/extensions/bot-mode) lets a server mark certain users as
@@ -397,8 +413,8 @@ by theme with the main blocker.
 message-mutation handling.
 
 **Connection & protocol niceties** — `labeled-response` (correlate replies via `@label`),
-`standard-replies` (uniform `FAIL`/`WARN`/`NOTE`), `monitor` (presence for offline nicks).
-Independent of each other; each is a self-contained addition.
+`monitor` (presence for offline nicks). Independent of each other; each is a self-contained
+addition.
 
 When implementing any of these, add the cap to `requestedCaps` (`client.go:31`), gate
 behavior on `enabledCaps`, and update this matrix.
