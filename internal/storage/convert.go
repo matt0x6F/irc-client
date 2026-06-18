@@ -10,6 +10,14 @@ import (
 
 // Conversion helpers between SQLC generated types (db package) and our application types
 
+func convertSTSPolicyFromDB(p db.StsPolicy) STSPolicy {
+	return STSPolicy{
+		Hostname:  p.Hostname,
+		Port:      int(p.Port), // Convert int64 to int
+		ExpiresAt: p.ExpiresAt,
+	}
+}
+
 func convertNetworkFromDB(n db.Network) Network {
 	result := Network{
 		ID:          n.ID,

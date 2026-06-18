@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { main, storage } from '../../wailsjs/go/models';
-import { GetNetworks, SaveNetwork, ConnectNetwork, DeleteNetwork, DisconnectNetwork, GetConnectionStatus, GetServers, ListPlugins, EnablePlugin, DisablePlugin, ReloadPlugin, GetBuildInfo, CheckForUpdates, GetLogConfig, SetLogConfig, GetDefaultLogPath } from '../../wailsjs/go/main/App';
+import { GetNetworks, SaveNetwork, ConnectNetwork, DeleteNetwork, DisconnectNetwork, GetConnectionStatus, GetServers, ListPlugins, EnablePlugin, DisablePlugin, ReloadPlugin, GetBuildInfo, CheckForUpdates, GetLogConfig, SetLogConfig, GetDefaultLogPath, GetSTSPolicies, ClearSTSPolicy } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import { PluginConfigForm } from './plugin-config-form';
 import {
@@ -49,6 +49,34 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
   );
 }
 
+/**
+ * StsIndicator shows an IRCv3 STS lock badge for a host whose connections are
+ * being force-upgraded to TLS, with the policy's expiry and a clear control.
+ * Renders nothing when there's no active (non-expired) policy for the host.
+ */
+function StsIndicator({ policy, onClear }: { policy?: storage.STSPolicy; onClear: () => void }) {
+  if (!policy) return null;
+  const expiresMs = policy.expires_at * 1000;
+  if (expiresMs <= Date.now()) return null;
+  const until = new Date(expiresMs).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full bg-green-500/15 text-green-700 dark:text-green-400"
+      title={`Strict Transport Security: TLS is enforced for ${policy.hostname} on port ${policy.port} until ${until}.`}
+    >
+      <span aria-hidden>🔒</span>
+      STS · TLS enforced until {until}
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); onClear(); }}
+        className="ml-1 underline decoration-dotted hover:no-underline cursor-pointer"
+      >
+        Clear
+      </button>
+    </span>
+  );
+}
+
 export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) {
   const [networks, setNetworks] = useState<storage.Network[]>([]);
   const [plugins, setPlugins] = useState<main.PluginInfo[]>([]);
@@ -86,6 +114,8 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
   const [connectionStatus, setConnectionStatus] = useState<Record<number, boolean>>({});
   const [showAddForm, setShowAddForm] = useState(false);
   const [networkServers, setNetworkServers] = useState<Record<number, storage.Server[]>>({});
+  // STS policies keyed by hostname, so each server row can show whether TLS is enforced.
+  const [stsPolicies, setStsPolicies] = useState<Record<string, storage.STSPolicy>>({});
   const [buildInfo, setBuildInfo] = useState<main.BuildInfo | null>(null);
   // Set when the backend reports the updater is unavailable (dev builds where
   // it was never configured). Shown inline under the "Check for Updates…" button.
@@ -107,6 +137,7 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
   useEffect(() => {
     loadNetworks();
     loadPlugins();
+    loadStsPolicies();
     GetBuildInfo()
       .then(setBuildInfo)
       .catch((error) => console.error('Failed to load build info:', error));
@@ -145,6 +176,44 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
     });
     return () => unsubscribe();
   }, []);
+
+  // The backend emits sts-policy whenever a policy is learned, refreshed, or cleared
+  // (in this or another window), so the lock badges stay live without a reload.
+  useEffect(() => {
+    const unsubscribe = EventsOn('sts-policy', () => {
+      loadStsPolicies();
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const loadStsPolicies = async () => {
+    try {
+      const policies = await GetSTSPolicies();
+      const byHost: Record<string, storage.STSPolicy> = {};
+      (policies || []).forEach((p) => { byHost[p.hostname] = p; });
+      setStsPolicies(byHost);
+    } catch (error) {
+      console.error('Failed to load STS policies:', error);
+    }
+  };
+
+  const handleClearSts = async (hostname: string) => {
+    if (!confirm(
+      `Clear the STS policy for ${hostname}?\n\n` +
+      'This removes enforced TLS for this host. The next connection may use the ' +
+      'plaintext port you configured until the server re-advertises STS — a security ' +
+      'downgrade. Only do this to recover from a misconfigured server.'
+    )) {
+      return;
+    }
+    try {
+      await ClearSTSPolicy(hostname);
+      await loadStsPolicies();
+    } catch (error) {
+      console.error('Failed to clear STS policy:', error);
+      alert(`Failed to clear STS policy: ${error}`);
+    }
+  };
 
   const loadPlugins = async () => {
     try {
@@ -881,15 +950,19 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
                           </div>
                           <div className="text-sm text-muted-foreground space-y-1">
                             {networkServers[network.id] && networkServers[network.id].length > 0 ? (
-                              <div>
+                              <div className="space-y-1">
                                 {networkServers[network.id].map((srv, idx) => (
-                                  <div key={idx}>
-                                    {srv.address}:{srv.port} {srv.tls && '(TLS)'} {idx === 0 && '(Primary)'}
+                                  <div key={idx} className="flex flex-wrap items-center gap-2">
+                                    <span>{srv.address}:{srv.port} {srv.tls && '(TLS)'} {idx === 0 && '(Primary)'}</span>
+                                    <StsIndicator policy={stsPolicies[srv.address]} onClear={() => handleClearSts(srv.address)} />
                                   </div>
                                 ))}
                               </div>
                             ) : (
-                              <div>{network.address}:{network.port} {network.tls && '(TLS)'}</div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span>{network.address}:{network.port} {network.tls && '(TLS)'}</span>
+                                <StsIndicator policy={stsPolicies[network.address]} onClear={() => handleClearSts(network.address)} />
+                              </div>
                             )}
                             <div>Nickname: {network.nickname}</div>
                             {network.username && <div>Username: {network.username}</div>}

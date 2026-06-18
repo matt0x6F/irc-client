@@ -28,6 +28,7 @@ const (
 	EventHistoryReceived       = "history.received"
 	EventBotDetected           = "bot.detected" // a nick was recognized as an IRCv3 bot (bot tag or RPL_WHOISBOT)
 	EventUserMetaChanged       = "user.meta"    // a user's live roster attributes changed (away/account/host)
+	EventSTSPolicy             = "sts.policy"   // server advertised an IRCv3 STS policy in CAP LS
 )
 
 // UserMeta holds the live, session-local roster attributes Cascade tracks for a

@@ -52,6 +52,18 @@ export function ClearPaneFocus(networkID, paneType, paneName) {
 }
 
 /**
+ * ClearSTSPolicy removes the STS policy for a host. This is a deliberate security
+ * downgrade (the next connection to that host may go plaintext again) exposed for
+ * recovery/testing; the frontend gates it behind a confirmation. It broadcasts a
+ * sts-policy event so any open window refreshes its badge.
+ * @param {string} hostname
+ * @returns {$CancellablePromise<void>}
+ */
+export function ClearSTSPolicy(hostname) {
+    return $Call.ByID(2005130476, hostname);
+}
+
+/**
  * ConnectNetwork connects to an IRC network (fresh connect, e.g. user-initiated
  * or startup auto-connect). Reconnect after an unexpected drop goes through
  * connectNetwork with reconnect=true so the client rejoins its whole session.
@@ -429,13 +441,24 @@ export function GetPrivateMessages(networkID, targetUser, limit) {
 }
 
 /**
+ * GetSTSPolicies returns every stored IRCv3 STS policy (host → enforced TLS port +
+ * expiry), for the settings panel to render an "enforced until" badge per server.
+ * @returns {$CancellablePromise<storage$0.STSPolicy[]>}
+ */
+export function GetSTSPolicies() {
+    return $Call.ByID(3662233731).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType21($result);
+    }));
+}
+
+/**
  * GetServerCapabilities retrieves server capabilities from ISUPPORT for a network
  * @param {number} networkID
  * @returns {$CancellablePromise<$models.ServerCapabilitiesInfo | null>}
  */
 export function GetServerCapabilities(networkID) {
     return $Call.ByID(1639110850, networkID).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType21($result);
+        return $$createType23($result);
     }));
 }
 
@@ -446,7 +469,7 @@ export function GetServerCapabilities(networkID) {
  */
 export function GetServers(networkID) {
     return $Call.ByID(4270553301, networkID).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType23($result);
+        return $$createType25($result);
     }));
 }
 
@@ -487,7 +510,7 @@ export function LeaveChannel(networkID, channelName) {
  */
 export function ListPlugins() {
     return $Call.ByID(3314730135).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType25($result);
+        return $$createType27($result);
     }));
 }
 
@@ -626,7 +649,7 @@ export function SaveNetwork(config) {
  */
 export function SearchMessages(query, networkID, limit) {
     return $Call.ByID(3203246577, query, networkID, limit).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType27($result);
+        return $$createType29($result);
     }));
 }
 
@@ -772,11 +795,13 @@ const $$createType16 = $Create.Map($Create.Any, $Create.Any);
 const $$createType17 = storage$0.PinnedMessage.createFrom;
 const $$createType18 = $Create.Array($$createType17);
 const $$createType19 = $Create.Map($Create.Any, $Create.Any);
-const $$createType20 = $models.ServerCapabilitiesInfo.createFrom;
-const $$createType21 = $Create.Nullable($$createType20);
-const $$createType22 = storage$0.Server.createFrom;
-const $$createType23 = $Create.Array($$createType22);
-const $$createType24 = $models.PluginInfo.createFrom;
+const $$createType20 = storage$0.STSPolicy.createFrom;
+const $$createType21 = $Create.Array($$createType20);
+const $$createType22 = $models.ServerCapabilitiesInfo.createFrom;
+const $$createType23 = $Create.Nullable($$createType22);
+const $$createType24 = storage$0.Server.createFrom;
 const $$createType25 = $Create.Array($$createType24);
-const $$createType26 = storage$0.SearchResult.createFrom;
+const $$createType26 = $models.PluginInfo.createFrom;
 const $$createType27 = $Create.Array($$createType26);
+const $$createType28 = storage$0.SearchResult.createFrom;
+const $$createType29 = $Create.Array($$createType28);

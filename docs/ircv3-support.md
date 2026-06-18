@@ -45,6 +45,7 @@ Legend: ✅ Supported · ◐ Partial · ⛔ Not yet
 | `batch` | ✅ | Yes | Wraps `chathistory` replays |
 | `chathistory` / `draft/chathistory` | ✅ | Yes | Latest-on-join + on-demand backscroll |
 | `msgid` (via `message-tags`) | ✅ | n/a | Consumed for history deduplication |
+| `sts` | ✅ | Read (never `REQ`'d) | Auto-upgrades plaintext→TLS; persists per-host TLS enforcement |
 | CAP LS 302 negotiation | ✅ | n/a | Full LS/REQ/ACK/NAK/END lifecycle |
 | ISUPPORT (`005`) | ✅ | n/a | PREFIX / CHANMODES parsing for mode handling |
 | WHOIS account (`330`) | ✅ | n/a | Shows the account a user is logged in as |
@@ -250,6 +251,34 @@ that builds the roster) now fires on registration completion — `RPL_ENDOFMOTD`
 `ERR_NOMOTD` (422), with a fallback timer armed at `RPL_WELCOME` (001) — instead of a fixed
 2-second timer that could send JOINs before the server was ready (`triggerAutoJoin` /
 `doAutoJoin`, `client.go`).
+
+### Strict Transport Security (STS)
+
+[STS](https://ircv3.net/specs/extensions/sts) lets a server tell the client to always use
+TLS. It is **read** from the `CAP LS` value — never `CAP REQ`'d — so it is deliberately
+absent from `requestedCaps`; the LS handler parses it directly (`client.go`,
+`handleSTSAdvertisement`). How much it's trusted depends on the transport it arrived over:
+
+- **Over plaintext** — only the `port` directive is honored. Cascade records a one-shot
+  in-session upgrade and reconnects over TLS to that port, but persists **nothing** (a
+  network attacker could have injected the advertisement, so it must not outlive the
+  session).
+- **Over TLS** — the `duration` is trusted. Cascade persists a per-host policy (`sts_policies`
+  table, keyed by hostname) so every future connection to that host is forced onto TLS at the
+  policy port — even if the stored server config says plaintext. `duration=0` removes the
+  policy.
+
+Enforcement happens before each dial in the server loop (`applySTS`, `app_connection.go`): a
+host under an active policy is rewritten to TLS on the policy port, and because no plaintext
+fallback is added, a host under STS can never be dialed in plaintext and a failed TLS dial
+won't silently downgrade. Per spec, STS is ignored for connections made to an IP literal
+(`irc.IsIPLiteral`). Parsing and the policy store are covered by `internal/irc/sts_test.go`
+and `internal/storage/sts_policies_test.go`.
+
+**In the client:** the upgrade and policy lifecycle are written to the network's Status
+buffer ("Server advertised STS policy…", "Connecting to host:6697 (TLS enforced by STS)…"),
+and the Settings → Networks pane shows a 🔒 "TLS enforced until …" badge per server, with a
+Clear control (gated behind a confirmation, since clearing is a security downgrade).
 
 ### Supporting features
 

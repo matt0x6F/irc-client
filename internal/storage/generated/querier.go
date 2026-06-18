@@ -20,6 +20,7 @@ type Querier interface {
 	CreateServer(ctx context.Context, arg CreateServerParams) (Server, error)
 	DeleteAllServers(ctx context.Context, networkID int64) error
 	DeleteNetwork(ctx context.Context, id int64) error
+	DeleteSTSPolicy(ctx context.Context, hostname string) error
 	DeleteServer(ctx context.Context, id int64) error
 	GetAllPluginConfigs(ctx context.Context) ([]PluginConfig, error)
 	GetChannelByName(ctx context.Context, arg GetChannelByNameParams) (Channel, error)
@@ -53,6 +54,8 @@ type Querier interface {
 	GetPrivateMessageConversationsAll(ctx context.Context, arg GetPrivateMessageConversationsAllParams) ([]interface{}, error)
 	GetPrivateMessageConversationsOpen(ctx context.Context, networkID int64) ([]string, error)
 	GetPrivateMessages(ctx context.Context, arg GetPrivateMessagesParams) ([]Message, error)
+	GetSTSPolicies(ctx context.Context) ([]StsPolicy, error)
+	GetSTSPolicy(ctx context.Context, hostname string) (StsPolicy, error)
 	GetServers(ctx context.Context, networkID int64) ([]Server, error)
 	GetSetting(ctx context.Context, key string) (string, error)
 	PinMessage(ctx context.Context, arg PinMessageParams) error
@@ -71,6 +74,7 @@ type Querier interface {
 	UpdateNetworkAutoConnect(ctx context.Context, arg UpdateNetworkAutoConnectParams) error
 	UpdatePMConversationIsOpen(ctx context.Context, arg UpdatePMConversationIsOpenParams) error
 	UpdateServer(ctx context.Context, arg UpdateServerParams) error
+	UpsertSTSPolicy(ctx context.Context, arg UpsertSTSPolicyParams) error
 }
 
 var _ Querier = (*Queries)(nil)

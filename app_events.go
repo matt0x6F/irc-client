@@ -41,6 +41,12 @@ func (a *App) OnEvent(event events.Event) {
 		return
 	}
 
+	// Handle IRCv3 STS policy advertisements (plaintext→TLS upgrade or trusted persist)
+	if event.Type == irc.EventSTSPolicy {
+		a.handleSTSPolicy(event)
+		return
+	}
+
 	// Handle our own nick changing (collision resolved, preferred nick reclaimed,
 	// or a manual /nick). The frontend uses this to show the real current nick.
 	if event.Type == irc.EventNickChanged {
@@ -172,6 +178,83 @@ func (a *App) OnEvent(event events.Event) {
 
 	// Desktop notifications
 	a.handleDesktopNotification(event)
+}
+
+// handleSTSPolicy reacts to an IRCv3 STS advertisement the client read from CAP LS.
+// The transport the policy arrived over decides how much to trust it:
+//
+//   - over plaintext (secure=false): only the port is actionable. We record a pending
+//     in-session upgrade and reconnect over TLS, but persist nothing — a MITM could
+//     have injected the advertisement, so it must not outlive the session.
+//   - over TLS (secure=true): the duration is trusted. We persist a durable policy
+//     (duration=0 removes it instead) so every future connection to the host is forced
+//     to TLS, then hand off from the in-memory pending upgrade to the stored policy.
+func (a *App) handleSTSPolicy(event events.Event) {
+	networkID, found := a.resolveNetworkID(event.Data)
+	if !found {
+		logger.Log.Warn().Interface("event_data", event.Data).Msg("Could not determine network ID for STS event")
+		return
+	}
+
+	host, _ := event.Data["host"].(string)
+	if host == "" {
+		return
+	}
+	secure, _ := event.Data["secure"].(bool)
+	port, _ := event.Data["port"].(int)
+	currentPort, _ := event.Data["currentPort"].(int)
+	duration, _ := event.Data["duration"].(int64)
+
+	if !secure {
+		// Plaintext: honor only the port directive, as an upgrade target. Persist nothing.
+		if port <= 0 {
+			return
+		}
+		a.mu.Lock()
+		a.stsUpgrades[networkID] = stsTarget{host: host, port: port}
+		a.mu.Unlock()
+		a.emit("sts-policy", map[string]interface{}{"host": host, "active": true, "pending": true})
+		go a.upgradeToTLS(networkID)
+		return
+	}
+
+	// TLS: trusted. duration=0 means "forget this host".
+	if duration <= 0 {
+		if err := a.storage.DeleteSTSPolicy(host); err != nil {
+			logger.Log.Warn().Err(err).Str("host", host).Msg("Failed to delete STS policy")
+		}
+		a.clearPendingSTSUpgrade(networkID)
+		a.emit("sts-policy", map[string]interface{}{"host": host, "active": false})
+		return
+	}
+
+	// The policy's secure port is the advertised port, falling back to the port we're
+	// currently connected on (the spec makes port mandatory for the plaintext bootstrap
+	// but optional over TLS, where we're already on a good port).
+	securePort := port
+	if securePort <= 0 {
+		securePort = currentPort
+	}
+	expiresAt := time.Now().Unix() + duration
+	if err := a.storage.UpsertSTSPolicy(host, securePort, expiresAt); err != nil {
+		logger.Log.Error().Err(err).Str("host", host).Msg("Failed to persist STS policy")
+		return
+	}
+	a.clearPendingSTSUpgrade(networkID)
+	a.emit("sts-policy", map[string]interface{}{
+		"host":      host,
+		"active":    true,
+		"port":      securePort,
+		"expiresAt": expiresAt,
+	})
+}
+
+// clearPendingSTSUpgrade drops the in-memory plaintext→TLS upgrade once a durable
+// policy has taken over (or the host cleared its policy).
+func (a *App) clearPendingSTSUpgrade(networkID int64) {
+	a.mu.Lock()
+	delete(a.stsUpgrades, networkID)
+	a.mu.Unlock()
 }
 
 // handleDesktopNotification checks incoming events and sends desktop notifications

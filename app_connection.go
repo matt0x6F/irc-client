@@ -274,24 +274,34 @@ func (a *App) connectNetwork(config NetworkConfig, reconnect bool) error {
 	// Try connecting to servers in order
 	var lastErr error
 	for i, srv := range dbServers {
-		serverKey := fmt.Sprintf("%s:%d", srv.Address, srv.Port)
-		logger.Log.Info().Int("current", i+1).Int("total", len(dbServers)).Str("server", serverKey).Msg("Trying server")
-
-		// Write status message
-		a.storage.WriteMessage(storage.Message{
-			NetworkID:   network.ID,
-			ChannelID:   nil,
-			User:        "*",
-			Message:     fmt.Sprintf("Connecting to %s:%d...", srv.Address, srv.Port),
-			MessageType: "status",
-			Timestamp:   time.Now(),
-		})
-
 		// Create a temporary network object with this server's address
 		tempNetwork := *network
 		tempNetwork.Address = srv.Address
 		tempNetwork.Port = srv.Port
 		tempNetwork.TLS = srv.TLS
+
+		// Enforce STS before dialing: a host with a pending in-session upgrade or a
+		// stored policy is forced onto TLS at the policy port. This rewrites only the
+		// port/TLS (never adding a plaintext fallback), so a host under STS can never
+		// be reached in plaintext and a failed TLS dial won't silently downgrade.
+		stsForced := a.applySTS(network.ID, &tempNetwork)
+
+		serverKey := fmt.Sprintf("%s:%d", tempNetwork.Address, tempNetwork.Port)
+		logger.Log.Info().Int("current", i+1).Int("total", len(dbServers)).Str("server", serverKey).Bool("sts", stsForced).Msg("Trying server")
+
+		// Write status message
+		connectingMsg := fmt.Sprintf("Connecting to %s:%d...", tempNetwork.Address, tempNetwork.Port)
+		if stsForced {
+			connectingMsg = fmt.Sprintf("Connecting to %s:%d (TLS enforced by STS)...", tempNetwork.Address, tempNetwork.Port)
+		}
+		a.storage.WriteMessage(storage.Message{
+			NetworkID:   network.ID,
+			ChannelID:   nil,
+			User:        "*",
+			Message:     connectingMsg,
+			MessageType: "status",
+			Timestamp:   time.Now(),
+		})
 
 		mechanism := ""
 		username := ""
@@ -408,8 +418,102 @@ func (a *App) connectNetwork(config NetworkConfig, reconnect bool) error {
 	return fmt.Errorf("failed to connect to any server: %w", lastErr)
 }
 
+// applySTS rewrites n's port/TLS to satisfy an STS policy for n.Address, returning
+// true if it forced an upgrade. It consults, in order: a pending in-session upgrade
+// (an insecure advertisement seen this session) and the persisted policy store. IP
+// literals are exempt per spec. Because it only ever switches to TLS at the policy
+// port — never adding a plaintext fallback — a host under STS cannot be dialed in
+// plaintext.
+func (a *App) applySTS(networkID int64, n *storage.Network) bool {
+	if irc.IsIPLiteral(n.Address) {
+		return false
+	}
+
+	a.mu.RLock()
+	tgt, pending := a.stsUpgrades[networkID]
+	a.mu.RUnlock()
+	if pending && tgt.host == n.Address && tgt.port > 0 {
+		n.Port = tgt.port
+		n.TLS = true
+		return true
+	}
+
+	policy, ok, err := a.storage.GetSTSPolicy(n.Address, time.Now().Unix())
+	if err != nil {
+		logger.Log.Warn().Err(err).Str("host", n.Address).Msg("Failed to read STS policy")
+		return false
+	}
+	if ok && policy.Port > 0 {
+		n.Port = policy.Port
+		n.TLS = true
+		return true
+	}
+	return false
+}
+
+// upgradeToTLS performs the in-session plaintext→TLS reconnect after a server
+// advertised STS over an insecure connection. It guards the network against the
+// auto-reconnect path (so the deliberate teardown below isn't treated as a dropped
+// connection), tears down the plaintext client, and reconnects — applySTS then forces
+// TLS on the pending port. Runs in its own goroutine off the event handler.
+func (a *App) upgradeToTLS(networkID int64) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Log.Error().Interface("panic", r).Int64("network_id", networkID).Msg("PANIC in STS upgrade")
+		}
+		a.mu.Lock()
+		delete(a.stsUpgrading, networkID)
+		a.mu.Unlock()
+	}()
+
+	a.mu.Lock()
+	a.stsUpgrading[networkID] = true
+	a.mu.Unlock()
+
+	network, err := a.storage.GetNetwork(networkID)
+	if err != nil || network == nil {
+		logger.Log.Warn().Err(err).Int64("network_id", networkID).Msg("STS upgrade: network not found")
+		return
+	}
+
+	config, err := a.buildReconnectConfig(networkID, network)
+	if err != nil {
+		logger.Log.Error().Err(err).Int64("network_id", networkID).Msg("STS upgrade: failed to build config")
+		return
+	}
+
+	// Tear down the plaintext connection. The stsUpgrading guard makes the resulting
+	// EventConnectionLost a no-op in handleConnectionLost.
+	if err := a.DisconnectNetwork(networkID); err != nil {
+		logger.Log.Debug().Err(err).Int64("network_id", networkID).Msg("STS upgrade: disconnect (already gone?)")
+	}
+	time.Sleep(constants.ConnectionCleanupDelay)
+
+	if err := a.connectNetwork(config, true); err != nil {
+		logger.Log.Error().Err(err).Int64("network_id", networkID).Msg("STS upgrade: TLS reconnect failed")
+		a.storage.WriteMessage(storage.Message{
+			NetworkID:   networkID,
+			ChannelID:   nil,
+			User:        "*",
+			Message:     fmt.Sprintf("STS upgrade to TLS failed: %v", err),
+			MessageType: "status",
+			Timestamp:   time.Now(),
+		})
+	}
+}
+
 // handleConnectionLost handles auto-reconnect when a connection is lost
 func (a *App) handleConnectionLost(networkID int64) {
+	// A deliberate STS plaintext→TLS upgrade tears down the old connection on
+	// purpose; don't let the auto-reconnect path race the upgrade's own reconnect.
+	a.mu.RLock()
+	upgrading := a.stsUpgrading[networkID]
+	a.mu.RUnlock()
+	if upgrading {
+		logger.Log.Debug().Int64("network_id", networkID).Msg("STS upgrade in progress, skipping auto-reconnect")
+		return
+	}
+
 	// Atomically check and set reconnecting flag to prevent race conditions
 	a.mu.Lock()
 	if a.reconnectingNetworks[networkID] {

@@ -34,6 +34,15 @@ type Server struct {
 	CreatedAt time.Time `db:"created_at" json:"created_at"`
 }
 
+// STSPolicy is a persisted IRCv3 STS (Strict Transport Security) policy: a host
+// the client has learned (over TLS) must always be reached via TLS on Port until
+// ExpiresAt. Keyed by hostname, UA-wide. ExpiresAt is unix seconds.
+type STSPolicy struct {
+	Hostname  string `db:"hostname" json:"hostname"`
+	Port      int    `db:"port" json:"port"`
+	ExpiresAt int64  `db:"expires_at" json:"expires_at"`
+}
+
 // Channel represents an IRC channel
 // State: OPEN (dialog open, may or may not be joined), JOINED (dialog open and joined), CLOSED (dialog closed, not joined)
 type Channel struct {

@@ -110,3 +110,11 @@ type Setting struct {
 	Value     string    `json:"value"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
+
+type StsPolicy struct {
+	Hostname  string    `json:"hostname"`
+	Port      int64     `json:"port"`
+	ExpiresAt int64     `json:"expires_at"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}

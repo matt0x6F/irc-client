@@ -8,6 +8,7 @@ export {
     Message,
     Network,
     PinnedMessage,
+    STSPolicy,
     SearchResult,
     Server
 } from "./models.js";
