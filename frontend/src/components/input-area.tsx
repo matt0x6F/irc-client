@@ -4,6 +4,8 @@ import { main, storage } from '../../wailsjs/go/models';
 import { FormattingToolbar } from './formatting-toolbar';
 import { MessagePreview } from './message-preview';
 import { wrapSelection, applyToInput } from '../lib/input-insert';
+import { useCommandsStore, filterCommands, lookupCommand } from '../stores/commands';
+import { parseCommandLine } from '../lib/command-line';
 
 interface InputAreaProps {
   onSendMessage: (message: string) => Promise<void>;
@@ -23,6 +25,18 @@ export function InputArea({ onSendMessage, placeholder = 'Type a message...', ne
   const historyRef = useRef<string[]>([]);
   const historyIndexRef = useRef(-1);
   const draftRef = useRef('');
+
+  // Command autocomplete state
+  const commands = useCommandsStore((s) => s.commands);
+  const [cmdSelIndex, setCmdSelIndex] = useState(0);
+  const [cmdPopupDismissed, setCmdPopupDismissed] = useState(false);
+
+  const cmdLine = parseCommandLine(message);
+  const cmdMatches =
+    cmdLine.isCommand && !cmdLine.afterCommandName ? filterCommands(commands, cmdLine.word) : [];
+  const showCmdPopup = cmdMatches.length > 0 && !cmdPopupDismissed;
+  const usageHint =
+    cmdLine.isCommand && cmdLine.afterCommandName ? lookupCommand(commands, cmdLine.word) : null;
 
   // Auto-focus the input whenever the user switches to a different buffer
   // (channel or PM). The same InputArea instance stays mounted across switches,
@@ -50,6 +64,43 @@ export function InputArea({ onSendMessage, placeholder = 'Type a message...', ne
       setLastCompletionPrefix('');
     }
   }, [message, completionIndex]);
+
+  // Reset popup selection/dismissal as the typed command word changes.
+  useEffect(() => {
+    setCmdSelIndex(0);
+    setCmdPopupDismissed(false);
+  }, [cmdLine.word, cmdLine.afterCommandName]);
+
+  const acceptCommand = (info: main.CommandInfo) => {
+    setMessage(`/${info.name.toLowerCase()} `);
+    setCmdPopupDismissed(true);
+    setTimeout(() => inputRef.current?.focus(), 0);
+  };
+
+  const handleCommandKeys = (e: React.KeyboardEvent<HTMLInputElement>): boolean => {
+    if (!showCmdPopup) return false;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setCmdSelIndex((i) => (i + 1) % cmdMatches.length);
+      return true;
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setCmdSelIndex((i) => (i - 1 + cmdMatches.length) % cmdMatches.length);
+      return true;
+    }
+    if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault();
+      acceptCommand(cmdMatches[cmdSelIndex]);
+      return true;
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      setCmdPopupDismissed(true);
+      return true;
+    }
+    return false;
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -247,6 +298,29 @@ export function InputArea({ onSendMessage, placeholder = 'Type a message...', ne
       className="border-t border-border p-4"
       style={{ background: 'var(--glass-bg)', backdropFilter: 'blur(var(--backdrop-blur))', WebkitBackdropFilter: 'blur(var(--backdrop-blur))' }}
     >
+      {showCmdPopup && (
+        <div className="mb-2 max-h-48 overflow-y-auto rounded-md border border-border bg-background shadow-[var(--shadow-md)]" role="listbox">
+          {cmdMatches.map((c, i) => (
+            <div
+              key={c.name}
+              role="option"
+              aria-selected={i === cmdSelIndex}
+              className={`flex items-baseline gap-2 px-3 py-1.5 cursor-pointer text-sm ${i === cmdSelIndex ? 'bg-accent' : ''}`}
+              onMouseDown={(e) => { e.preventDefault(); acceptCommand(c); }}
+            >
+              <span className="font-medium"><span className="opacity-50">/</span><span>{c.name}</span></span>
+              <span className="text-muted-foreground text-xs">{c.usage}</span>
+              <span className="ml-auto text-muted-foreground/70 text-xs">{c.category}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {usageHint && !showCmdPopup && (
+        <div className="mb-2 px-1 text-xs text-muted-foreground">
+          <span className="font-medium">/{usageHint.name.toLowerCase()}</span> {usageHint.usage}
+          {usageHint.description ? <span className="text-muted-foreground/70"> — {usageHint.description}</span> : null}
+        </div>
+      )}
       <MessagePreview message={message} />
       <FormattingToolbar
         inputRef={inputRef}
@@ -261,7 +335,7 @@ export function InputArea({ onSendMessage, placeholder = 'Type a message...', ne
           type="text"
           value={message}
           onChange={(e) => setMessage(e.target.value)}
-          onKeyDown={(e) => { handleFormattingShortcut(e); handleHistoryNavigation(e); performTabCompletion(e); }}
+          onKeyDown={(e) => { if (handleCommandKeys(e)) return; handleFormattingShortcut(e); handleHistoryNavigation(e); performTabCompletion(e); }}
           placeholder={placeholder}
           className="flex-1 px-4 py-2.5 border border-border rounded-full bg-background text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all shadow-[var(--shadow-sm)] focus:shadow-[var(--shadow-md)]"
           style={{ transition: 'var(--transition-base)' }}
