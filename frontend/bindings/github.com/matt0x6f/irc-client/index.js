@@ -13,6 +13,7 @@ export {
     ChannelListCacheResult,
     LastOpenPane,
     LogConfig,
+    MonitorEntry,
     NetworkConfig,
     PluginInfo,
     ServerCapabilitiesInfo,

@@ -31,6 +31,8 @@ Because of its IRCv3 support, Cascade gives you:
   reconciled with the server's canonical copy instead of appearing twice.
 - **Every role at a glance** — with `multi-prefix`, the nick list shows all of a user's channel
   roles (e.g. an op who is also voiced), not just the highest one.
+- **A buddy list** — track specific nicks' online/offline presence across restarts, even when
+  you share no channel with them (`monitor`), in a dedicated Buddies pane.
 
 ## Capability status matrix
 
@@ -60,7 +62,7 @@ Legend: ✅ Supported · ◐ Partial · ⛔ Not yet
 | `account-tag` | ✅ | Yes | `@account` on messages keeps the roster account current |
 | `invite-notify` | ✅ | Yes | Inbound INVITEs shown as a clickable status line |
 | `setname` | ✅ | Yes | Live realname changes update the roster + WHOIS panel |
-| `monitor` | ⛔ | No | No presence monitoring of offline nicks |
+| `monitor` | ✅ | n/a (ISUPPORT) | Durable per-network buddy list with live presence |
 | `labeled-response` | ✅ | Yes | Correlates the WHOX roster query's reply by `@label` |
 | `standard-replies` | ✅ | Yes | FAIL/WARN/NOTE shown as error/warning/status lines |
 | `draft/message-redaction` | ⛔ | No | No REDACT handling |
@@ -347,6 +349,8 @@ Coverage: `internal/irc/invite_test.go`.
 **In the client:** invites render as a dimmed status line in which the channel name is a clickable
 link that issues `/join` (`message-view.tsx`), so you can accept an invite with one click.
 
+![Status buffer showing an "invited you to #cc-invite" line with a clickable channel](images/ircv3/invite-notify.png)
+
 ### standard-replies
 
 [standard-replies](https://ircv3.net/specs/extensions/standard-replies) gives servers a uniform
@@ -415,6 +419,30 @@ buffer ("Server advertised STS policy…", "Connecting to host:6697 (TLS enforce
 and the Settings → Networks pane shows a 🔒 "TLS enforced until …" badge per server, with a
 Clear control (gated behind a confirmation, since clearing is a security downgrade).
 
+### MONITOR (buddy list)
+
+[MONITOR](https://ircv3.net/specs/extensions/monitor) tracks the online/offline presence of
+specific nicks — even ones not in any shared channel — so you can keep a "buddy list". It is
+advertised via the `MONITOR=<limit>` ISUPPORT token (not a CAP).
+
+Unlike the session-local roster, the buddy list is **durable**: monitored nicks are stored per
+network in the `monitored_nicks` table (`internal/storage/`). On registration,
+`sendInitialMonitor` re-sends the saved list to the server (`MONITOR +`, chunked); thereafter
+`MonitorAdd`/`MonitorRemove` add and drop nicks. Presence replies — `730` (RPL_MONONLINE) and
+`731` (RPL_MONOFFLINE), each a comma-separated target list — are parsed by
+`handleMonitorPresence` and folded into a session presence map by the idempotent
+`setMonitorPresence`, which emits `EventMonitorChanged` only on a real change. The bound methods
+`AddMonitor` / `RemoveMonitor` / `GetMonitorList` (`app.go`) coordinate persistence, the live
+`MONITOR` command, and presence for the UI. Coverage: `internal/irc/monitor_test.go` and
+`internal/storage/monitored_nicks_test.go`.
+
+**In the client:** the right sidebar has a **Users / Buddies** tab switcher (`channel-info.tsx`);
+the Buddies pane (`monitor-list.tsx`) lists each buddy with a green (online) / grey (offline)
+dot, an "Add nick" input, and a remove control, and updates live via the `monitor-event`. A
+nick can also be added straight from the member list's right-click menu ("Monitor this user").
+
+![The Buddies pane showing a monitored nick "buddybot" with a green online dot](images/ircv3/monitor.png)
+
 ### Supporting features
 
 These are not CAP capabilities but are part of Cascade's modern-IRC behavior and interact
@@ -431,16 +459,16 @@ with the IRCv3 features above.
 
 ## Not yet supported
 
-The capabilities below are recognized as desirable but not yet negotiated. They are grouped
-by theme with the main blocker.
+Every **ratified** IRCv3 capability is now supported (see the matrix above). What remains is
+*draft* extensions, which are deliberately out of scope for ratified compliance and belong to
+the future modern-chat product rather than this client:
 
-**Message metadata** — `draft/message-redaction` (handle REDACT/DELETE), which needs
-message-mutation handling.
+- `draft/message-redaction` (handle REDACT/DELETE) — needs message-mutation handling.
+- `draft/multiline`, `draft/metadata-2`, `draft/extended-monitor`, and the client-only UX tags
+  (`+typing`, `draft/react`, `draft/reply`).
 
-**Connection & protocol niceties** — `monitor` (presence for offline nicks).
-
-When implementing any of these, add the cap to `requestedCaps` (`client.go:31`), gate
-behavior on `enabledCaps`, and update this matrix.
+When implementing any future cap, add it to `requestedCaps` (`client.go:31`), gate behavior on
+`enabledCaps` (or the relevant ISUPPORT token), and update this matrix.
 
 ## How the screenshots are made
 
