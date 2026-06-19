@@ -102,6 +102,23 @@ tasks:
     cmds:
       - go fmt ./...
 
+  fmt-check:
+    desc: Verify Go formatting (fails if any file needs gofmt; mirrors CI's check)
+    cmds:
+      - |
+        unformatted="$(gofmt -l .)"
+        if [ -n "$unformatted" ]; then
+          echo "These files are not gofmt-formatted (run 'task fmt'):"
+          echo "$unformatted"
+          exit 1
+        fi
+
+  install-hooks:
+    desc: Install git hooks (pre-push runs gofmt + vet, mirroring CI's fast gates)
+    cmds:
+      - git config core.hooksPath .githooks
+      - echo "Installed git hooks -> core.hooksPath=.githooks"
+
   lint:
     desc: Run Go linters
     cmds:
@@ -230,9 +247,9 @@ tasks:
   # Checks / Release
   # ---------------------------------------------------------------------------
   check:
-    desc: Run all checks (fmt, lint, sqlc, test, type-check)
+    desc: Run all checks (fmt-check, lint, sqlc, test, type-check)
     cmds:
-      - task: fmt
+      - task: fmt-check
       - task: lint
       - task: sqlc-vet
       - task: sqlc-diff

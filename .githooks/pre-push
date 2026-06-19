@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Pre-push guard mirroring CI's fast Go gates, so a formatting or vet failure is
+# caught locally instead of on the PR. Install once with: task install-hooks
+#
+# Kept intentionally fast (no test suite) — gofmt + vet are the cheap gates that
+# are easy to forget. The full -race test suite runs in CI.
+set -euo pipefail
+
+unformatted="$(gofmt -l .)"
+if [ -n "$unformatted" ]; then
+  echo "✗ gofmt: these files are not formatted (run 'task fmt'):" >&2
+  echo "$unformatted" >&2
+  exit 1
+fi
+
+if ! CGO_ENABLED=1 go vet -tags fts5 ./internal/...; then
+  echo "✗ go vet failed" >&2
+  exit 1
+fi
+
+echo "✓ pre-push checks passed (gofmt, go vet)"
