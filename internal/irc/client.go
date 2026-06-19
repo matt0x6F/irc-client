@@ -39,7 +39,6 @@ type IRCClient struct {
 	network               *storage.Network
 	mu                    sync.RWMutex
 	connected             bool
-	lastMessageTime       time.Time // Last time we received any message from server (including PING). Read by isStale/the liveness watchdog as the freshness signal; also still updated by the library pingLoop.
 	saslEnabled           bool
 	saslMechanism         string
 	saslUsername          string
@@ -75,7 +74,6 @@ type IRCClient struct {
 	currentNick           string                // Nick the server currently knows us by; differs from the preferred nick during a collision (guarded by mu)
 	nickCollisionNotified bool                  // True once we've told the user (one time) that the preferred nick was unavailable (guarded by mu)
 	reconnecting          bool                  // True when this connection is an auto-reconnect after an unexpected drop (guarded by mu)
-	watchdogStop          chan struct{}         // closed to stop the liveness watchdog (guarded by mu)
 }
 
 // ServerCapabilities stores parsed ISUPPORT information
@@ -212,80 +210,25 @@ func (c *IRCClient) IsConnectedDirect() bool {
 	return c.IsConnected()
 }
 
-// isStale reports whether the connection is alive in name (connected==true) but
-// has received NO inbound traffic for at least threshold. Because lastMessageTime
-// is bumped by the read loop on every inbound message (including PING), a true
-// result means the read loop has genuinely gone quiet — this is what makes the
-// watchdog safe and is the inverse of the #13 race. A zero lastMessageTime
-// (never received anything yet) is treated as not-stale to avoid a spurious
-// teardown immediately after connect, before the first message.
-func (c *IRCClient) isStale(now time.Time, threshold time.Duration) bool {
+// ForceReconnect tears the connection down through the library's normal teardown
+// path: conn.Quit() -> DisconnectCallback -> EventConnectionLost ->
+// handleConnectionLost -> auto-reconnect. It is used by the system-wake hook to
+// recover promptly after sleep, where the socket is usually dead but not yet
+// detected by the library's ping loop. On a live connection that survived sleep
+// this sends a clean QUIT and reconnects; on a dead one the library declares the
+// QUIT unacknowledged after ConnectionReadTimeout and tears down. Liveness is the
+// library's responsibility (its PING/PONG keepalive), not an app-side timestamp;
+// this method only nudges a teardown, it never decides a connection is dead.
+func (c *IRCClient) ForceReconnect() {
 	c.mu.RLock()
-	defer c.mu.RUnlock()
-	if !c.connected || c.lastMessageTime.IsZero() {
-		return false
+	networkID := c.networkID
+	connected := c.connected
+	c.mu.RUnlock()
+	if !connected {
+		return
 	}
-	return now.Sub(c.lastMessageTime) >= threshold
-}
-
-// startWatchdog launches a goroutine that periodically checks for a silently
-// dead socket (connected==true but no inbound traffic past the stale threshold)
-// and forces a teardown via conn.Quit(). Quit() issues a socket write that, on a
-// dead link, trips the read/write deadline (ConnectionReadTimeout) and makes the
-// library run its DisconnectCallback — the single teardown path that emits
-// EventConnectionLost and drives auto-reconnect. The lastMessageTime guard in
-// isStale guarantees this never fires while traffic is flowing (#13 safe).
-func (c *IRCClient) startWatchdog() {
-	stop := make(chan struct{})
-	c.mu.Lock()
-	c.watchdogStop = stop
-	networkID := c.networkID // stable after connect; captured to keep the goroutine lock-free
-	c.mu.Unlock()
-
-	go func() {
-		ticker := time.NewTicker(constants.ConnectionWatchdogInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-stop:
-				return
-			case <-ticker.C:
-				if c.isStale(time.Now(), constants.ConnectionStaleThreshold) {
-					logger.Log.Warn().Int64("network_id", networkID).
-						Msg("Watchdog: connection silent past threshold, forcing teardown")
-					c.conn.Quit()
-				}
-			}
-		}
-	}()
-}
-
-// stopWatchdog signals the watchdog goroutine to exit. Safe to call multiple times.
-// The goroutine may run at most one more tick before observing the closed channel.
-func (c *IRCClient) stopWatchdog() {
-	c.mu.Lock()
-	if c.watchdogStop != nil {
-		close(c.watchdogStop)
-		c.watchdogStop = nil
-	}
-	c.mu.Unlock()
-}
-
-// CheckLivenessNow forces an immediate staleness evaluation (used by the
-// system-wake hook). If stale, it tears the connection down via the normal path
-// (conn.Quit() -> DisconnectCallback -> auto-reconnect). Returns true if a
-// teardown was triggered.
-func (c *IRCClient) CheckLivenessNow() bool {
-	if c.isStale(time.Now(), constants.ConnectionStaleThreshold) {
-		c.mu.RLock()
-		networkID := c.networkID
-		c.mu.RUnlock()
-		logger.Log.Warn().Int64("network_id", networkID).
-			Msg("Wake probe: connection silent past threshold, forcing teardown")
-		c.conn.Quit()
-		return true
-	}
-	return false
+	logger.Log.Info().Int64("network_id", networkID).Msg("Wake: forcing reconnect")
+	c.conn.Quit()
 }
 
 // preferredNick is the nick the user configured and wants to hold. It matches
@@ -907,28 +850,11 @@ func (c *IRCClient) AllUserMeta() map[string]UserMeta {
 
 // setupHandlers sets up IRC event handlers
 func (c *IRCClient) setupHandlers() {
-	// Add a raw message handler to see ALL incoming messages (for debugging)
-	// Also track last message time for connection health checking
-	c.conn.AddCallback("", func(e ircmsg.Message) {
-		// Update last message time for any message from server (indicates connection is alive)
-		c.mu.Lock()
-		c.lastMessageTime = time.Now()
-		c.mu.Unlock()
-
-		// Only log CAP and AUTHENTICATE messages to avoid spam
-		if len(e.Command) > 0 && (e.Command == "CAP" || e.Command == "AUTHENTICATE" || strings.HasPrefix(e.Command, "90")) {
-			rawLine, _ := e.Line()
-			logger.Log.Debug().Str("raw_line", rawLine).Msg("RAW IRC message")
-		}
-	})
-
 	// Connection established
 	c.conn.AddConnectCallback(func(e ircmsg.Message) {
 		c.mu.Lock()
 		c.connected = true
-		c.lastMessageTime = time.Now()
 		c.mu.Unlock()
-		c.startWatchdog()
 
 		// Store connection message in status window
 		rawLine, _ := e.Line()
@@ -978,7 +904,6 @@ func (c *IRCClient) setupHandlers() {
 		c.currentNick = ""
 		c.nickCollisionNotified = false
 		c.mu.Unlock()
-		c.stopWatchdog()
 
 		// Write "Disconnected" messages to all open/joined channels BEFORE clearing users
 		// This ensures we can still identify which channels the user was in

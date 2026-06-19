@@ -165,13 +165,14 @@ func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) 
 		a.notifier.SetFocused(false)
 	})
 
-	// On system wake, sockets are usually dead but undetected; probe immediately
-	// so the UI reflects reality without waiting for the watchdog/library ping.
-	// This callback runs off the main thread (Wails app-event semantics); that is
-	// fine here — probeAllConnections touches no AppKit/UI APIs.
+	// On system wake, sockets are usually dead but not yet detected by the library
+	// ping loop; force every auto-connect network to reconnect so the UI recovers
+	// promptly instead of waiting up to KeepAlive+Timeout. This callback runs off
+	// the main thread (Wails app-event semantics); that is fine here —
+	// reconnectAllOnWake touches no AppKit/UI APIs.
 	a.app.Event.OnApplicationEvent(wailsevents.Common.SystemDidWake, func(*application.ApplicationEvent) {
-		logger.Log.Info().Msg("System woke; probing all IRC connections for liveness")
-		a.probeAllConnections()
+		logger.Log.Info().Msg("System woke; forcing reconnect of auto-connect networks")
+		a.reconnectAllOnWake()
 	})
 
 	// Load plugins in background so it doesn't block auto-connect

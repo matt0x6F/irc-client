@@ -2,7 +2,6 @@ package irc
 
 import (
 	"testing"
-	"time"
 
 	"github.com/matt0x6f/irc-client/internal/constants"
 	"github.com/matt0x6f/irc-client/internal/storage"
@@ -76,22 +75,16 @@ func TestNoticePMTarget(t *testing.T) {
 // the UI reported "disconnected" while messages kept arriving.
 //
 // IsConnected() used to be a getter with a side effect: a passive "no messages
-// in 15 minutes" check that flipped connected -> false. Combined with the
-// short-circuit `if !connected { return false }`, this created an asymmetric
-// latch — once tripped, live inbound traffic (which updates lastMessageTime but
-// not connected) could never restore the reported state. Liveness is now owned
-// solely by the library's pingLoop + DisconnectCallback, so IsConnected() must
-// be a pure read of the connection flag and must ignore lastMessageTime.
+// in N minutes" activity check that flipped connected -> false. That created an
+// asymmetric latch — once tripped, live inbound traffic could never restore the
+// reported state (#13). Liveness is now owned solely by the library's pingLoop +
+// DisconnectCallback, so IsConnected() must be a pure read of the connection flag.
 func TestIsConnectedIsPureGetter(t *testing.T) {
-	t.Run("stale lastMessageTime does not flip a connected client", func(t *testing.T) {
-		c := &IRCClient{
-			connected:       true,
-			lastMessageTime: time.Now().Add(-24 * time.Hour), // far past, well beyond the old 15m threshold
-		}
+	t.Run("is side-effect free for a connected client", func(t *testing.T) {
+		c := &IRCClient{connected: true}
 
 		if !c.IsConnected() {
-			t.Fatal("IsConnected() returned false for a connected client with stale lastMessageTime; " +
-				"a stale activity timestamp must no longer mark the connection dead")
+			t.Fatal("IsConnected() returned false for a connected client")
 		}
 
 		// Calling it again must observe no state mutation (it is side-effect free).
@@ -126,87 +119,18 @@ func TestIsConnectedIsPureGetter(t *testing.T) {
 	})
 
 	t.Run("IsConnectedDirect agrees with IsConnected", func(t *testing.T) {
-		c := &IRCClient{connected: true, lastMessageTime: time.Now().Add(-24 * time.Hour)}
+		c := &IRCClient{connected: true}
 		if c.IsConnected() != c.IsConnectedDirect() {
 			t.Fatal("IsConnectedDirect() must be identical to IsConnected()")
 		}
 	})
 }
 
-// isStale must NEVER report a connection dead while the read loop is delivering
-// traffic (the #13 regression). It only reports stale when connected AND no
-// inbound message has arrived within the threshold.
-func TestIsStale(t *testing.T) {
-	now := time.Date(2026, 6, 18, 12, 0, 0, 0, time.UTC)
-	threshold := 90 * time.Second
-
-	cases := []struct {
-		name      string
-		connected bool
-		lastMsg   time.Time
-		want      bool
-	}{
-		{"fresh traffic", true, now.Add(-1 * time.Second), false},
-		{"idle but within threshold", true, now.Add(-30 * time.Second), false},
-		{"silent past threshold", true, now.Add(-120 * time.Second), true},
-		{"exactly at threshold", true, now.Add(-90 * time.Second), true},
-		{"not connected is never stale", false, now.Add(-999 * time.Second), false},
-		{"zero lastMessageTime while connected is not stale", true, time.Time{}, false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			c := &IRCClient{connected: tc.connected, lastMessageTime: tc.lastMsg}
-			if got := c.isStale(now, threshold); got != tc.want {
-				t.Fatalf("isStale=%v, want %v", got, tc.want)
-			}
-		})
-	}
-}
-
-// TestWatchdogLifecycle verifies the watchdog's start/stop bookkeeping: stop is
-// safe before start, start sets the stop channel, stop closes and clears it, and
-// a double-stop does not panic. The 15s ticker means the goroutine just parks on
-// its select and exits when the channel closes — c.conn is never touched here.
-func TestWatchdogLifecycle(t *testing.T) {
-	c := &IRCClient{}
-
-	// stop before any start must be a safe no-op
-	c.stopWatchdog()
-
-	c.startWatchdog()
-	c.mu.RLock()
-	stop := c.watchdogStop
-	c.mu.RUnlock()
-	if stop == nil {
-		t.Fatal("expected watchdogStop to be set after startWatchdog")
-	}
-
-	c.stopWatchdog()
-	c.mu.RLock()
-	cleared := c.watchdogStop
-	c.mu.RUnlock()
-	if cleared != nil {
-		t.Fatal("expected watchdogStop to be cleared after stopWatchdog")
-	}
-
-	// the captured channel must be closed (goroutine's <-stop returns)
-	select {
-	case <-stop:
-	default:
-		t.Fatal("expected stop channel to be closed")
-	}
-
-	// double stop must not panic
-	c.stopWatchdog()
-}
-
-// The library requires KeepAlive >= Timeout; the watchdog must only fire after
-// a healthy idle link would have already PINGed, so StaleThreshold > KeepAlive.
+// The library's pingLoop sends a keepalive PING after KeepAlive of idle and
+// declares the connection dead if it is unacked within Timeout, so it requires
+// KeepAlive >= Timeout. This guards that invariant on our configured values.
 func TestLivenessConstantOrdering(t *testing.T) {
 	if constants.ConnectionKeepAlive < constants.ConnectionReadTimeout {
 		t.Fatalf("KeepAlive (%v) must be >= Timeout (%v)", constants.ConnectionKeepAlive, constants.ConnectionReadTimeout)
-	}
-	if constants.ConnectionStaleThreshold <= constants.ConnectionKeepAlive {
-		t.Fatalf("StaleThreshold (%v) must be > KeepAlive (%v)", constants.ConnectionStaleThreshold, constants.ConnectionKeepAlive)
 	}
 }

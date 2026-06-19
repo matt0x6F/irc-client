@@ -10,13 +10,37 @@
 
 ---
 
+## ⚠️ Correction (post-implementation review)
+
+The original plan below proposed a **guarded staleness watchdog** (Tasks 2–4) keyed on
+`lastMessageTime`, on the stated assumption that the read loop's catch-all callback
+(`conn.AddCallback("", …)`) bumps `lastMessageTime` on every inbound message. **That
+assumption is false.** `ergochat/irc-go@v0.4.0` `addCallback` discards `command == ""`
+(`ircevent/irc_callback.go:36-38`), so the catch-all registers nothing and
+`lastMessageTime` is only ever set once, at connect. A watchdog keyed on it would mark
+*every* connection stale ~90s after connect and tear down healthy links — re-introducing
+the exact #13 failure. (This is also the likely undiagnosed root cause of #13 itself: the
+old passive staleness check read the same frozen field.)
+
+**Resolution (implemented):** liveness detection is owned entirely by the library's
+PING/PONG ping loop, simply tuned faster (Task 1: `Timeout 30s / KeepAlive 60s`, dead-socket
+detection within ~90s for idle and busy links alike). The `isStale` helper, the watchdog
+goroutine, `lastMessageTime`, and the dead catch-all were **removed**. The sleep/wake probe
+(Task 4) was reworked to `ForceReconnect`/`reconnectAllOnWake`: on `SystemDidWake`, every
+*auto-connect* network is force-reconnected via `conn.Quit()` → the normal
+`DisconnectCallback` → auto-reconnect path (no `lastMessageTime` involved). All Phase 2/3
+frontend work stands unchanged. Tasks 2–4 below are retained for historical context but do
+**not** reflect the merged code.
+
+---
+
 ## Background: the root cause
 
 `c.connected` (the one bool behind `IsConnected()` → `GetConnectionStatus`) is flipped to `false` by exactly one path: the library `DisconnectCallback`, driven by the ping loop tuned to `Timeout 1m / KeepAlive 3m` ([client.go:440](../../internal/irc/client.go)). Commit `bf33a50` (#13) deliberately removed the active staleness check (`lastMessageTime` is now "informational only", [client.go:42](../../internal/irc/client.go)) to fix the inverse "stuck disconnected" bug. Result: a silently-dead socket reads "Connected" for minutes, and the 2s poll can't help because it reads the same stale bool.
 
 Two amplifiers: the event bus dispatches `go sub.OnEvent` with no ordering ([bus.go:91](../../internal/events/bus.go)), and the interval poll only refreshes `selectedNetwork` ([App.tsx:248](../../frontend/src/App.tsx)), so non-selected sidebar dots ride on unordered events alone. The nick list ([channel-info.tsx](../../frontend/src/components/channel-info.tsx)) only refreshes on `message-event`, never on reconnect.
 
-**The #13 guard (critical invariant):** `lastMessageTime` is updated by the read loop's catch-all callback on *every* inbound message ([client.go:838](../../internal/irc/client.go)). Any staleness check we add must key off `lastMessageTime` so it can *never* fire while the read loop is delivering traffic — that is precisely what makes re-adding active detection safe this time.
+**~~The #13 guard (critical invariant)~~ — FALSE, see the Correction above:** the original plan assumed `lastMessageTime` is updated by the read loop's catch-all callback on *every* inbound message. It is not — `ergochat` discards the `""` catch-all, so the field never advances after connect. The merged implementation therefore relies on the library's PING/PONG loop for liveness instead of any `lastMessageTime`-based check.
 
 ## Test commands
 

@@ -906,20 +906,34 @@ func (a *App) GetConnectionStatus(networkID int64) (bool, error) {
 	return client.IsConnected(), nil
 }
 
-// probeAllConnections forces an immediate liveness check on every active client.
-// Called on system wake, where sockets are commonly dead but undetected. Any
-// teardown flows through the normal DisconnectCallback -> auto-reconnect path, so
-// this only nudges; it does not reconnect directly.
-func (a *App) probeAllConnections() {
+// reconnectAllOnWake forces every auto-connect network to reconnect after the
+// system wakes from sleep, where sockets are usually dead but not yet detected by
+// the library's ping loop. Teardown flows through the normal DisconnectCallback ->
+// handleConnectionLost -> auto-reconnect path. Networks with auto-connect disabled
+// are left untouched so a manually-managed connection that survived a brief sleep
+// is not needlessly killed; a genuinely dead one there is still caught by the
+// library ping loop within KeepAlive+Timeout.
+func (a *App) reconnectAllOnWake() {
+	type entry struct {
+		id     int64
+		client *irc.IRCClient
+	}
 	a.mu.RLock()
-	clients := make([]*irc.IRCClient, 0, len(a.ircClients))
-	for _, c := range a.ircClients {
-		clients = append(clients, c)
+	entries := make([]entry, 0, len(a.ircClients))
+	for id, c := range a.ircClients {
+		entries = append(entries, entry{id, c})
 	}
 	a.mu.RUnlock()
 
-	for _, c := range clients {
-		c.CheckLivenessNow()
+	for _, e := range entries {
+		if !e.client.IsConnected() {
+			continue
+		}
+		network, err := a.storage.GetNetwork(e.id)
+		if err != nil || network == nil || !network.AutoConnect {
+			continue
+		}
+		e.client.ForceReconnect()
 	}
 }
 
