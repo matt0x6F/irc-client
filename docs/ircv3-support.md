@@ -349,6 +349,8 @@ Coverage: `internal/irc/invite_test.go`.
 **In the client:** invites render as a dimmed status line in which the channel name is a clickable
 link that issues `/join` (`message-view.tsx`), so you can accept an invite with one click.
 
+![Status buffer showing an "invited you to #cc-invite" line with a clickable channel](images/ircv3/invite-notify.png)
+
 ### standard-replies
 
 [standard-replies](https://ircv3.net/specs/extensions/standard-replies) gives servers a uniform
@@ -438,6 +440,8 @@ network in the `monitored_nicks` table (`internal/storage/`). On registration,
 the Buddies pane (`monitor-list.tsx`) lists each buddy with a green (online) / grey (offline)
 dot, an "Add nick" input, and a remove control, and updates live via the `monitor-event`. A
 nick can also be added straight from the member list's right-click menu ("Monitor this user").
+
+![The Buddies pane showing a monitored nick "buddybot" with a green online dot](images/ircv3/monitor.png)
 
 ### Supporting features
 
