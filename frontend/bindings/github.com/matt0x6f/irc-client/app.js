@@ -610,6 +610,20 @@ export function PinMessage(networkID, messageID, channelID) {
 }
 
 /**
+ * PrintLocalLines writes client-local system lines (e.g. /help output) into a
+ * buffer through the normal message pipeline so they render and scroll like
+ * other system notices. target: "" or "status" => status buffer; "#name" =>
+ * channel; otherwise a PM peer nick.
+ * @param {number} networkID
+ * @param {string} target
+ * @param {string[]} lines
+ * @returns {$CancellablePromise<void>}
+ */
+export function PrintLocalLines(networkID, target, lines) {
+    return $Call.ByID(821357734, networkID, target, lines);
+}
+
+/**
  * ReloadPlugin reloads a plugin
  * @param {string} name
  * @returns {$CancellablePromise<void>}
