@@ -3,6 +3,7 @@ import { SendCommand, OpenSettings } from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime/runtime';
 import { useNetworkStore } from './stores/network';
 import { useUIStore } from './stores/ui';
+import { initCommands } from './stores/commands';
 import { ServerTree } from './components/server-tree';
 import { MessageView } from './components/message-view';
 import { InputArea } from './components/input-area';
@@ -210,6 +211,7 @@ function App() {
   // Initial load + periodic refresh
   useEffect(() => {
     loadNetworks();
+    void initCommands();
     const interval = setInterval(loadNetworks, 5000);
 
     // The backend broadcasts networks:changed after a save/delete/auto-connect
