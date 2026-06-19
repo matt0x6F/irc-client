@@ -101,6 +101,11 @@ func Migrate(db *sqlx.DB) error {
 		return fmt.Errorf("STS policies migration failed: %w", err)
 	}
 
+	// Handle monitored nicks table migration (durable per-network MONITOR list)
+	if err := migrateMonitoredNicks(db); err != nil {
+		return fmt.Errorf("monitored nicks migration failed: %w", err)
+	}
+
 	return nil
 }
 
@@ -780,6 +785,26 @@ CREATE TABLE IF NOT EXISTS sts_policies (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 `
+
+const createMonitoredNicksTable = `
+CREATE TABLE IF NOT EXISTS monitored_nicks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    network_id INTEGER NOT NULL,
+    nickname TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (network_id) REFERENCES networks(id) ON DELETE CASCADE,
+    UNIQUE(network_id, nickname)
+);
+`
+
+// migrateMonitoredNicks creates the monitored_nicks table if it doesn't exist. It
+// is the durable per-network MONITOR buddy list re-sent to the server on connect.
+func migrateMonitoredNicks(db *sqlx.DB) error {
+	if _, err := db.Exec(createMonitoredNicksTable); err != nil {
+		return fmt.Errorf("failed to create monitored_nicks table: %w", err)
+	}
+	return nil
+}
 
 // migrateSTSPolicies creates the sts_policies table if it doesn't exist. It is the
 // durable store for IRCv3 STS policies (hostname -> secure port + expiry) that
