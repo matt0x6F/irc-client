@@ -31,3 +31,33 @@ func TestCommandRegistryDuplicatePanics(t *testing.T) {
 	r.Register(&CommandSpec{Name: "JOIN"})
 	r.Register(&CommandSpec{Name: "JOIN"})
 }
+
+func TestBuiltinRegistryCoverage(t *testing.T) {
+	r := buildBuiltinRegistry()
+	// Spot-check representative commands across categories + aliases.
+	cases := map[string]CommandCategory{
+		"JOIN": CategoryServer, "J": CategoryServer,
+		"MSG": CategoryServer, "PRIVMSG": CategoryServer, "M": CategoryServer,
+		"QUERY": CategoryClient, "Q": CategoryClient,
+		"CLOSE": CategoryClient, "QUOTE": CategoryServer, "RAW": CategoryServer,
+		"VERSION": CategoryCTCP, "CTCP": CategoryCTCP, "PING": CategoryCTCP,
+		"OP": CategoryServer, "HOP": CategoryServer, "DEVOICE": CategoryServer,
+		"HELP": CategoryClient,
+	}
+	for name, cat := range cases {
+		spec, ok := r.Lookup(name)
+		if !ok {
+			t.Errorf("missing built-in %q", name)
+			continue
+		}
+		if spec.Category != cat {
+			t.Errorf("%q category = %q; want %q", name, spec.Category, cat)
+		}
+	}
+	if spec, _ := r.Lookup("HELP"); spec == nil || !spec.Frontend {
+		t.Errorf("HELP must be a frontend-handled command")
+	}
+	if spec, _ := r.Lookup("JOIN"); spec.Usage != "#channel [key]" || spec.MinArgs != 1 {
+		t.Errorf("JOIN spec metadata wrong: %+v", spec)
+	}
+}
