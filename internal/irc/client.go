@@ -74,6 +74,7 @@ type IRCClient struct {
 	rateLimiter           *RateLimiter          // Rate limiter for outgoing messages
 	currentNick           string                // Nick the server currently knows us by; differs from the preferred nick during a collision (guarded by mu)
 	nickCollisionNotified bool                  // True once we've told the user (one time) that the preferred nick was unavailable (guarded by mu)
+	pendingManualNick     string                // Nick the user explicitly asked for via /nick and is awaiting; lets us surface a failure that the library's silent background reclaims would otherwise hide (guarded by mu)
 	reconnecting          bool                  // True when this connection is an auto-reconnect after an unexpected drop (guarded by mu)
 }
 
@@ -231,6 +232,28 @@ func (c *IRCClient) CurrentNick() string {
 	return nick
 }
 
+// ChangeNick sends a user-initiated NICK request and records the requested nick
+// so a resulting failure (e.g. ERR_NICKNAMEINUSE) is surfaced to the user rather
+// than swallowed by the silence we keep for the library's background reclaims.
+// The marker is recorded before the send to close any reply race, rolled back if
+// nothing was sent, and cleared once the change succeeds (handleNickMessage) or
+// the connection drops.
+func (c *IRCClient) ChangeNick(nick string) error {
+	c.mu.Lock()
+	c.pendingManualNick = nick
+	c.mu.Unlock()
+
+	if err := c.SendRawCommand(fmt.Sprintf("NICK %s", nick)); err != nil {
+		c.mu.Lock()
+		if c.pendingManualNick == nick {
+			c.pendingManualNick = ""
+		}
+		c.mu.Unlock()
+		return err
+	}
+	return nil
+}
+
 // emitNickChanged notifies subscribers that our own nick changed, carrying both
 // the new nick and the preferred nick so the UI can flag a pending reclaim.
 func (c *IRCClient) emitNickChanged(nick string) {
@@ -249,14 +272,59 @@ func (c *IRCClient) emitNickChanged(nick string) {
 	})
 }
 
+// nickErrorAttempt pulls the attempted nick out of a nick-error numeric. The
+// common layout is "<client> <nick> :<reason>", so the nick is the second param;
+// ERR_NONICKNAMEGIVEN (431) carries none, so this returns "".
+func nickErrorAttempt(e ircmsg.Message) string {
+	if len(e.Params) >= 2 {
+		return e.Params[1]
+	}
+	return ""
+}
+
+// surfaceManualNickError reports a failed user-initiated nick change exactly
+// once and returns whether it claimed the error. It fires only when the failing
+// numeric answers the nick the user asked for via /nick — matched on the
+// attempted nick, or unconditionally for numerics that carry none (431) so long
+// as a request is pending. Clearing the marker means the library's later
+// background reclaims of the same nick fall back to staying silent.
+func (c *IRCClient) surfaceManualNickError(attempted, message string) bool {
+	c.mu.Lock()
+	manual := c.pendingManualNick != "" &&
+		(attempted == "" || strings.EqualFold(attempted, c.pendingManualNick))
+	if manual {
+		c.pendingManualNick = ""
+	}
+	c.mu.Unlock()
+
+	if !manual {
+		return false
+	}
+	c.storage.WriteMessageSync(storage.Message{
+		NetworkID:   c.networkID,
+		ChannelID:   nil,
+		User:        "*",
+		Message:     message,
+		MessageType: "status",
+		Timestamp:   time.Now(),
+	})
+	return true
+}
+
 // handleNickInUse handles ERR_NICKNAMEINUSE (433). The library owns nick
 // selection: before registration it cycles through alternatives on its own, and
 // after registration its keepalive loop periodically re-requests the preferred
 // nick (yielding a 433 each time it's still held). We therefore send no NICK of
 // our own and surface only a single, one-time notice while still unregistered —
 // the post-registration reclaim attempts stay silent so the log isn't spammed
-// every keepalive interval.
-func (c *IRCClient) handleNickInUse(_ ircmsg.Message) {
+// every keepalive interval. A 433 answering the user's explicit /nick is the
+// exception: it's surfaced regardless of registration.
+func (c *IRCClient) handleNickInUse(e ircmsg.Message) {
+	attempted := nickErrorAttempt(e)
+	if c.surfaceManualNickError(attempted, fmt.Sprintf("Couldn't change nick to %q — it's already in use.", attempted)) {
+		return
+	}
+
 	c.mu.Lock()
 	registered := c.currentNick != ""
 	alreadyNotified := c.nickCollisionNotified
@@ -276,6 +344,36 @@ func (c *IRCClient) handleNickInUse(_ ircmsg.Message) {
 		MessageType: "status",
 		Timestamp:   time.Now(),
 	})
+}
+
+// handleErroneousNick surfaces ERR_ERRONEUSNICKNAME (432) for a user-initiated
+// /nick — the server rejected the nick as malformed (bad characters or length).
+func (c *IRCClient) handleErroneousNick(e ircmsg.Message) {
+	attempted := nickErrorAttempt(e)
+	c.surfaceManualNickError(attempted, fmt.Sprintf("Couldn't change nick to %q — that nickname isn't allowed.", attempted))
+}
+
+// handleNickUnavailable surfaces ERR_UNAVAILRESOURCE (437) for a user-initiated
+// /nick. Many networks hold a nick under "nick delay" for a while after its
+// owner disconnects, so this is the usual answer when reclaiming right after a
+// reconnect.
+func (c *IRCClient) handleNickUnavailable(e ircmsg.Message) {
+	attempted := nickErrorAttempt(e)
+	c.surfaceManualNickError(attempted, fmt.Sprintf("Couldn't change nick to %q — it's temporarily unavailable (it may still be held from a recent disconnect).", attempted))
+}
+
+// handleNickCollision surfaces ERR_NICKCOLLISION (436) when it answers a
+// user-initiated /nick. This is uncommon for a client request — it usually marks
+// a server-side collision KILL — but if it does answer our attempt, say so.
+func (c *IRCClient) handleNickCollision(e ircmsg.Message) {
+	attempted := nickErrorAttempt(e)
+	c.surfaceManualNickError(attempted, fmt.Sprintf("Couldn't change nick to %q — it collided with another user.", attempted))
+}
+
+// handleNoNickGiven surfaces ERR_NONICKNAMEGIVEN (431) for a user-initiated
+// /nick. The numeric carries no nick, so it's attributed to any pending request.
+func (c *IRCClient) handleNoNickGiven(_ ircmsg.Message) {
+	c.surfaceManualNickError("", "Couldn't change nick — no nickname given.")
 }
 
 // handleWelcome records the nick the server actually assigned us on RPL_WELCOME
@@ -350,6 +448,8 @@ func (c *IRCClient) handleNickMessage(e ircmsg.Message) {
 	reclaimed := strings.EqualFold(newNick, preferred)
 	c.mu.Lock()
 	c.currentNick = newNick
+	// Our nick changed successfully, so any manual /nick request is now resolved.
+	c.pendingManualNick = ""
 	if reclaimed {
 		// Reclaimed the preferred nick; allow a future collision to notify afresh.
 		c.nickCollisionNotified = false
@@ -899,6 +999,7 @@ func (c *IRCClient) setupHandlers() {
 		// Reset nick-collision state so a reconnect starts from a clean slate.
 		c.currentNick = ""
 		c.nickCollisionNotified = false
+		c.pendingManualNick = ""
 		c.mu.Unlock()
 
 		// Write "Disconnected" messages to all open/joined channels BEFORE clearing users
@@ -2700,6 +2801,14 @@ func (c *IRCClient) setupHandlers() {
 	// pre-registration and re-requests the preferred nick on each keepalive, so
 	// we don't send our own NICK here — we only surface a one-time notice.
 	c.conn.AddCallback("433", c.handleNickInUse)
+
+	// Other nick-error numerics. These carry no background-reclaim traffic, so
+	// they only ever speak up when answering a user-initiated /nick (see
+	// surfaceManualNickError).
+	c.conn.AddCallback("431", c.handleNoNickGiven)     // ERR_NONICKNAMEGIVEN
+	c.conn.AddCallback("432", c.handleErroneousNick)   // ERR_ERRONEUSNICKNAME
+	c.conn.AddCallback("436", c.handleNickCollision)   // ERR_NICKCOLLISION
+	c.conn.AddCallback("437", c.handleNickUnavailable) // ERR_UNAVAILRESOURCE
 }
 
 // contains checks if a capability string contains the given capability
