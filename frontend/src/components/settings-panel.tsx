@@ -98,6 +98,9 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
   // Composer formatting toolbar visibility (shared live with the in-composer "Aa" toggle)
   const showFormattingToolbar = usePreferencesStore((s) => s.showFormattingToolbar);
   const setShowFormattingToolbar = usePreferencesStore((s) => s.setShowFormattingToolbar);
+  // Help display mode: show /help output as a dialog or in the buffer
+  const helpDisplayMode = usePreferencesStore((s) => s.helpDisplayMode);
+  const setHelpDisplayMode = usePreferencesStore((s) => s.setHelpDisplayMode);
   const [pluginLoading, setPluginLoading] = useState<Set<string>>(new Set());
   const [expandedPlugins, setExpandedPlugins] = useState<Set<string>>(new Set());
   const [formData, setFormData] = useState<main.NetworkConfig>(main.NetworkConfig.createFrom({
@@ -1180,6 +1183,24 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
                 </div>
                 <p className="text-xs text-muted-foreground mt-2">
                   Show the bold/italic/underline/colour buttons above the message input. Emoji and mention buttons stay available either way, and you can also toggle this with the "Aa" button in the composer.
+                </p>
+              </div>
+
+              {/* Help display mode */}
+              <div className="border border-border rounded-lg p-4 bg-card/50 shadow-[var(--shadow-sm)]">
+                <label className="flex items-center justify-between py-2">
+                  <span className="text-sm font-medium">Show /help as</span>
+                  <select
+                    value={helpDisplayMode}
+                    onChange={(e) => setHelpDisplayMode(e.target.value as 'dialog' | 'buffer')}
+                    className="border border-border rounded px-2 py-1 bg-background text-sm"
+                  >
+                    <option value="dialog">Dialog</option>
+                    <option value="buffer">Buffer text</option>
+                  </select>
+                </label>
+                <p className="text-xs text-muted-foreground mt-2">
+                  Choose whether /help opens a dialog or prints directly into the current buffer.
                 </p>
               </div>
 

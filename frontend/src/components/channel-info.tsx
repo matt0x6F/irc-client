@@ -19,6 +19,7 @@ interface ChannelInfoProps {
   channelName: string | null;
   currentNickname: string | null;
   onSendCommand: (command: string) => Promise<void>;
+  onOpenQuery?: (nick: string) => void;
 }
 
 interface ContextMenu {
@@ -27,7 +28,7 @@ interface ContextMenu {
   user: storage.ChannelUser | null;
 }
 
-export function ChannelInfo({ networkId, channelName, currentNickname, onSendCommand }: ChannelInfoProps) {
+export function ChannelInfo({ networkId, channelName, currentNickname, onSendCommand, onOpenQuery }: ChannelInfoProps) {
   const [channelInfo, setChannelInfo] = useState<main.ChannelInfo | null>(null);
   const [loading, setLoading] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null);
@@ -560,6 +561,7 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
             className="text-sm py-1.5 px-2 cursor-pointer hover:bg-accent/70 rounded-md transition-all flex items-center gap-1.5"
             style={{ transition: 'var(--transition-base)' }}
             onContextMenu={(e) => handleContextMenu(e, user)}
+            onDoubleClick={() => onOpenQuery?.(user.nickname)}
           >
             {prefixDisplayMode === 'text'
               ? user.modes && (

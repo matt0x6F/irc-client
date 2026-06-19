@@ -928,6 +928,11 @@ function App() {
                                 await SendCommand(selectedNetwork, command);
                               }
                             }}
+                            onOpenQuery={(nick) => {
+                              if (selectedNetwork !== null) {
+                                useNetworkStore.getState().openQuery(selectedNetwork, nick);
+                              }
+                            }}
                           />
                         ) : (
                           <PinnedMessages networkId={selectedNetwork} />

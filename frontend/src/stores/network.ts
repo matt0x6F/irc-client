@@ -220,6 +220,9 @@ interface NetworkState {
 
   // Pane restoration
   restoreLastPane: () => Promise<void>;
+
+  // DM / query
+  openQuery: (networkId: number, nick: string) => Promise<void>;
 }
 
 export const useNetworkStore = create<NetworkState>((set, get) => ({
@@ -854,6 +857,14 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
         console.error('Failed to send command:', error);
         await loadMessages();
       }
+
+      // /query and /q navigate to the PM pane for the target nick.
+      // /msg must NOT navigate (it only sends a one-off message).
+      const queryMatch = trimmedMessage.match(/^\/(?:query|q)\s+(\S+)\s*$/i);
+      if (queryMatch) {
+        await get().selectPane(selectedNetwork, `pm:${queryMatch[1]}`);
+      }
+
       return;
     }
 
@@ -1083,6 +1094,15 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
 
   isAway: (networkId, nick) =>
     get().userMeta[networkId]?.[nick.toLowerCase()]?.away ?? false,
+
+  openQuery: async (networkId, nick) => {
+    try {
+      await SetPrivateMessageOpen(networkId, nick, true);
+    } catch (error) {
+      console.error('Failed to open query:', error);
+    }
+    await get().selectPane(networkId, `pm:${nick}`);
+  },
 
   restoreLastPane: async () => {
     const { networks } = get();
