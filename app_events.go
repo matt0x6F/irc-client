@@ -26,7 +26,7 @@ func (a *App) OnEvent(event events.Event) {
 			a.emit("connection-status", map[string]interface{}{
 				"networkId": networkID,
 				"connected": isConnected,
-				"timestamp": event.Timestamp.Format(time.RFC3339),
+				"timestamp": event.Timestamp.Format(time.RFC3339Nano),
 			})
 
 			if !isConnected {
