@@ -14,15 +14,23 @@ import (
 	"github.com/matt0x6f/irc-client/internal/storage"
 )
 
+// pluginCommandEntry is a registered plugin command keyed by upper-cased name/alias.
+type pluginCommandEntry struct {
+	Plugin string
+	Spec   CommandSpecWire
+}
+
 // Manager manages plugin lifecycle and event routing
 type Manager struct {
-	plugins     map[string]*Plugin
-	eventBus    *events.EventBus
-	metadataReg *MetadataRegistry
-	pluginDir   string
-	storage     *storage.Storage
-	mu          sync.RWMutex
-	actionQueue chan Action
+	plugins          map[string]*Plugin
+	eventBus         *events.EventBus
+	metadataReg      *MetadataRegistry
+	pluginDir        string
+	storage          *storage.Storage
+	mu               sync.RWMutex
+	actionQueue      chan Action
+	pluginCommands   map[string]pluginCommandEntry
+	isBuiltinCommand func(string) bool
 }
 
 // Plugin represents a running plugin instance
@@ -48,11 +56,13 @@ func NewManager(eventBus *events.EventBus, pluginDir string) *Manager {
 	}
 
 	pm := &Manager{
-		plugins:     make(map[string]*Plugin),
-		eventBus:    eventBus,
-		metadataReg: NewMetadataRegistry(),
-		pluginDir:   pluginDir,
-		actionQueue: make(chan Action, 100),
+		plugins:          make(map[string]*Plugin),
+		eventBus:         eventBus,
+		metadataReg:      NewMetadataRegistry(),
+		pluginDir:        pluginDir,
+		actionQueue:      make(chan Action, 100),
+		pluginCommands:   make(map[string]pluginCommandEntry),
+		isBuiltinCommand: func(string) bool { return false },
 	}
 
 	// Subscribe to events
@@ -302,6 +312,7 @@ func (pm *Manager) LoadPlugin(info *PluginInfo) error {
 			info.Events = initResult.Events
 			info.MetadataTypes = initResult.MetadataTypes
 			info.ConfigSchema = initResult.ConfigSchema
+			info.Commands = initResult.Commands
 			// Update the plugin's Info
 			plugin.Info = info
 			// Store config_schema in database for later retrieval
@@ -330,6 +341,7 @@ func (pm *Manager) LoadPlugin(info *PluginInfo) error {
 		Interface("response", resp.Result).
 		Msg("Plugin initialized successfully")
 
+	pm.registerPluginCommands(info.Name, initResult.Commands, pm.isBuiltinCommand)
 	pm.plugins[info.Name] = plugin
 
 	return nil
@@ -353,6 +365,7 @@ func (pm *Manager) UnloadPlugin(name string) error {
 	pm.metadataReg.ClearPluginMetadata(name)
 
 	delete(pm.plugins, name)
+	pm.unregisterPluginCommands(name)
 	return nil
 }
 
@@ -419,7 +432,60 @@ func (pm *Manager) unloadPluginUnlocked(name string) error {
 	pm.metadataReg.ClearPluginMetadata(name)
 
 	delete(pm.plugins, name)
+	pm.unregisterPluginCommands(name)
 	return nil
+}
+
+// registerPluginCommands registers commands declared by a plugin.
+// Skips commands that shadow built-ins or are already owned by another plugin (first-wins policy).
+// Must be called under pm.mu (does NOT acquire it internally).
+func (pm *Manager) registerPluginCommands(pluginName string, cmds []CommandSpecWire, isBuiltin func(string) bool) {
+	for _, c := range cmds {
+		for _, key := range append([]string{c.Name}, c.Aliases...) {
+			k := strings.ToUpper(key)
+			if isBuiltin(k) {
+				logger.Log.Warn().Str("plugin", pluginName).Str("command", k).Msg("Plugin command shadows a built-in; ignored")
+				continue
+			}
+			if existing, taken := pm.pluginCommands[k]; taken {
+				logger.Log.Warn().Str("plugin", pluginName).Str("command", k).Str("owner", existing.Plugin).Msg("Plugin command already registered; ignored")
+				continue
+			}
+			pm.pluginCommands[k] = pluginCommandEntry{Plugin: pluginName, Spec: c}
+		}
+	}
+}
+
+// unregisterPluginCommands removes all command keys owned by pluginName.
+// Must be called under pm.mu (does NOT acquire it internally).
+func (pm *Manager) unregisterPluginCommands(pluginName string) {
+	for k, e := range pm.pluginCommands {
+		if e.Plugin == pluginName {
+			delete(pm.pluginCommands, k)
+		}
+	}
+}
+
+// LookupPluginCommand looks up a plugin command by name (case-insensitive).
+func (pm *Manager) LookupPluginCommand(name string) (pluginCommandEntry, bool) {
+	e, ok := pm.pluginCommands[strings.ToUpper(name)]
+	return e, ok
+}
+
+// PluginCommands returns one entry per canonical command (keyed by Spec.Name, deduped across aliases).
+func (pm *Manager) PluginCommands() []pluginCommandEntry {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	seen := map[string]bool{}
+	out := []pluginCommandEntry{}
+	for _, e := range pm.pluginCommands {
+		if seen[strings.ToUpper(e.Spec.Name)] {
+			continue
+		}
+		seen[strings.ToUpper(e.Spec.Name)] = true
+		out = append(out, e)
+	}
+	return out
 }
 
 // GetPluginMetadata initializes a plugin temporarily to get its metadata (including config_schema)
@@ -791,6 +857,7 @@ func (pm *Manager) SetPluginEnabled(name string, enabled bool, stor *storage.Sto
 				logger.Log.Warn().Err(err).Str("plugin", name).Msg("Error closing plugin IPC")
 			}
 			delete(pm.plugins, name)
+			pm.unregisterPluginCommands(name)
 			pm.metadataReg.ClearPluginMetadata(name)
 			logger.Log.Info().Str("plugin", name).Msg("Plugin disabled and unloaded")
 		} else {
@@ -872,6 +939,7 @@ func (pm *Manager) loadPluginUnlocked(info *PluginInfo) error {
 			info.Events = initResult.Events
 			info.MetadataTypes = initResult.MetadataTypes
 			info.ConfigSchema = initResult.ConfigSchema
+			info.Commands = initResult.Commands
 			// Update the plugin's Info
 			plugin.Info = info
 			// Store config_schema in database for later retrieval
@@ -883,6 +951,7 @@ func (pm *Manager) loadPluginUnlocked(info *PluginInfo) error {
 		}
 	}
 
+	pm.registerPluginCommands(info.Name, initResult.Commands, pm.isBuiltinCommand)
 	pm.plugins[info.Name] = plugin
 	return nil
 }
