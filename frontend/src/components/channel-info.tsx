@@ -3,6 +3,7 @@ import { GetChannelInfo } from '../../wailsjs/go/main/App';
 import { main, storage } from '../../wailsjs/go/models';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import { UserInfo } from './user-info';
+import { MonitorList } from './monitor-list';
 import { useNicknameColors } from '../hooks/useNicknameColors';
 import { useNetworkStore } from '../stores/network';
 import { useSettingsStore } from '../stores/settings';
@@ -31,6 +32,9 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
   const [loading, setLoading] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null);
   const [showUserInfo, setShowUserInfo] = useState<{ nickname: string } | null>(null);
+  // Right-sidebar tab: the channel member list, or the network's MONITOR buddies.
+  const [sidebarView, setSidebarView] = useState<'users' | 'monitor'>('users');
+  const addMonitorNick = useNetworkStore((s) => s.addMonitorNick);
   const contextMenuRef = useRef<HTMLDivElement>(null);
   // Use refs to avoid stale closures in event listener
   const networkIdRef = useRef<number | null>(networkId);
@@ -493,6 +497,27 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
 
   return (
     <div data-testid="channel-user-list" className="w-full flex flex-col h-full bg-card/30">
+      {/* Sidebar tabs: channel members vs. the network's MONITOR buddy list */}
+      <div className="flex gap-1 p-2 pb-0">
+        {(['users', 'monitor'] as const).map((tab) => (
+          <button
+            key={tab}
+            onClick={() => setSidebarView(tab)}
+            className={`flex-1 rounded-md px-2 py-1 text-xs font-semibold uppercase tracking-wide cursor-pointer transition-colors ${
+              sidebarView === tab ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent/50'
+            }`}
+          >
+            {tab === 'users' ? 'Users' : 'Buddies'}
+          </button>
+        ))}
+      </div>
+
+      {sidebarView === 'monitor' ? (
+        <div className="flex-1 overflow-y-auto p-3">
+          <MonitorList networkId={networkId} />
+        </div>
+      ) : (
+      <>
       {/* Users List — flat, role-ordered */}
       <div className="flex-1 overflow-y-auto p-3">
         <div className="px-1 pb-2 text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground/80">
@@ -553,6 +578,8 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
           <div className="text-sm text-muted-foreground px-2">No users found</div>
         )}
       </div>
+      </>
+      )}
 
       {/* Context Menu */}
       {contextMenu && contextMenu.user && (
@@ -695,6 +722,18 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
               }}
             >
               Whois
+            </button>
+            <button
+              className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
+              style={{ transition: 'var(--transition-base)' }}
+              onClick={() => {
+                if (contextMenu.user && networkId !== null) {
+                  void addMonitorNick(networkId, contextMenu.user.nickname);
+                  setContextMenu(null);
+                }
+              }}
+            >
+              Monitor this user
             </button>
             <div className="border-t border-border my-1" />
             <div className="px-4 py-1 text-xs font-semibold text-muted-foreground uppercase">
