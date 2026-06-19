@@ -23,7 +23,7 @@ jobs:
       - name: Run tests
         env:
           CGO_ENABLED: '1'
-        run: go test -tags fts5 ./internal/... -count=1 -timeout 60s
+        run: go test -race -tags fts5 ./internal/... -count=1 -timeout 120s
 
       - name: Run vet
         run: go vet ./internal/...
