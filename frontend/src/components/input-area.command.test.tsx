@@ -18,8 +18,8 @@ describe('InputArea command autocomplete', () => {
     render(<InputArea onSendMessage={vi.fn()} networkId={1} channelName="#x" />);
     const input = screen.getByTestId('message-input');
     fireEvent.change(input, { target: { value: '/j' } });
-    expect(screen.getByText('JOIN')).toBeInTheDocument();
-    expect(screen.queryByText('QUIT')).not.toBeInTheDocument();
+    expect(screen.getByText('join')).toBeInTheDocument();
+    expect(screen.queryByText('quit')).not.toBeInTheDocument();
   });
 
   it('shows the usage hint after the command name', () => {

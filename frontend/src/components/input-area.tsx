@@ -308,7 +308,7 @@ export function InputArea({ onSendMessage, placeholder = 'Type a message...', ne
               className={`flex items-baseline gap-2 px-3 py-1.5 cursor-pointer text-sm ${i === cmdSelIndex ? 'bg-accent' : ''}`}
               onMouseDown={(e) => { e.preventDefault(); acceptCommand(c); }}
             >
-              <span className="font-medium"><span className="opacity-50">/</span><span>{c.name}</span></span>
+              <span className="font-medium"><span className="opacity-50">/</span><span>{c.name.toLowerCase()}</span></span>
               <span className="text-muted-foreground text-xs">{c.usage}</span>
               <span className="ml-auto text-muted-foreground/70 text-xs">{c.category}</span>
             </div>
