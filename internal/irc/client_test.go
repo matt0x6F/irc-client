@@ -149,6 +149,7 @@ func TestIsStale(t *testing.T) {
 		{"fresh traffic", true, now.Add(-1 * time.Second), false},
 		{"idle but within threshold", true, now.Add(-30 * time.Second), false},
 		{"silent past threshold", true, now.Add(-120 * time.Second), true},
+		{"exactly at threshold", true, now.Add(-90 * time.Second), true},
 		{"not connected is never stale", false, now.Add(-999 * time.Second), false},
 		{"zero lastMessageTime while connected is not stale", true, time.Time{}, false},
 	}

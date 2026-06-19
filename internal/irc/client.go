@@ -39,7 +39,7 @@ type IRCClient struct {
 	network               *storage.Network
 	mu                    sync.RWMutex
 	connected             bool
-	lastMessageTime       time.Time // Last time we received any message from server (including PING). Informational only — liveness is owned by the library pingLoop, not this field.
+	lastMessageTime       time.Time // Last time we received any message from server (including PING). Read by isStale/the liveness watchdog as the freshness signal; also still updated by the library pingLoop.
 	saslEnabled           bool
 	saslMechanism         string
 	saslUsername          string
