@@ -468,6 +468,8 @@ func (pm *Manager) unregisterPluginCommands(pluginName string) {
 
 // LookupPluginCommand looks up a plugin command by name (case-insensitive).
 func (pm *Manager) LookupPluginCommand(name string) (pluginCommandEntry, bool) {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
 	e, ok := pm.pluginCommands[strings.ToUpper(name)]
 	return e, ok
 }
