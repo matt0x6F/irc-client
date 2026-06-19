@@ -11,6 +11,7 @@ export {
     BuildInfo,
     ChannelInfo,
     ChannelListCacheResult,
+    CommandInfo,
     LastOpenPane,
     LogConfig,
     MonitorEntry,

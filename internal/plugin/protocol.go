@@ -32,6 +32,14 @@ type InitializeParams struct {
 	Config       map[string]interface{} `json:"config,omitempty"` // User configuration for the plugin
 }
 
+// CommandSpecWire is a slash command a plugin registers in its initialize response.
+type CommandSpecWire struct {
+	Name        string   `json:"name"`
+	Aliases     []string `json:"aliases,omitempty"`
+	Usage       string   `json:"usage,omitempty"`
+	Description string   `json:"description,omitempty"`
+}
+
 // InitializeResult represents the response from plugin initialization
 type InitializeResult struct {
 	Name          string                 `json:"name"`
@@ -42,6 +50,7 @@ type InitializeResult struct {
 	Permissions   []string               `json:"permissions,omitempty"`
 	MetadataTypes []string               `json:"metadata_types,omitempty"`
 	ConfigSchema  map[string]interface{} `json:"config_schema,omitempty"`
+	Commands      []CommandSpecWire      `json:"commands,omitempty"`
 }
 
 // EventParams represents parameters for event notification
@@ -66,6 +75,7 @@ type PluginInfo struct {
 	Permissions   []string               `json:"permissions,omitempty"`
 	MetadataTypes []string               `json:"metadata_types,omitempty"` // e.g., ["nickname_color", "nickname_badge"]
 	ConfigSchema  map[string]interface{} `json:"config_schema,omitempty"`  // JSON Schema for plugin configuration
+	Commands      []CommandSpecWire      `json:"commands,omitempty"`
 	Path          string                 `json:"path"`
 	Enabled       bool                   `json:"enabled"`
 }

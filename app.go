@@ -26,6 +26,7 @@ type App struct {
 	dataDir              string           // Root for persistent data (DB, plugins, logs); ~/.cascade-chat or $CASCADE_DATA_DIR.
 	storage              *storage.Storage
 	eventBus             *events.EventBus
+	commands             *CommandRegistry
 	pluginManager        *plugin.Manager
 	keychain             *security.Keychain
 	notifier             *notification.Notifier
@@ -102,6 +103,7 @@ func NewApp() (*App, error) {
 		dataDir:              baseDir,
 		storage:              stor,
 		eventBus:             eventBus,
+		commands:             buildBuiltinRegistry(),
 		pluginManager:        pluginMgr,
 		keychain:             keychain,
 		notifier:             notifier,
@@ -113,6 +115,11 @@ func NewApp() (*App, error) {
 		stsUpgrading:         make(map[int64]bool),
 		channelListCache:     make(map[int64]channelListCacheEntry),
 	}
+
+	pluginMgr.SetBuiltinCommandChecker(func(k string) bool {
+		_, ok := app.commands.Lookup(k)
+		return ok
+	})
 
 	// Subscribe to events for frontend forwarding
 	eventBus.Subscribe(irc.EventMessageSent, app)

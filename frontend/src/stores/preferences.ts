@@ -16,10 +16,16 @@ import { EventsOn } from '../../wailsjs/runtime/runtime';
 const SHOW_FORMATTING_TOOLBAR_KEY = 'showFormattingToolbar';
 const DEFAULT_SHOW_FORMATTING_TOOLBAR = true; // shown, so the feature is discoverable
 
+const HELP_DISPLAY_MODE_KEY = 'help.display_mode';
+type HelpDisplayMode = 'dialog' | 'buffer';
+const DEFAULT_HELP_DISPLAY_MODE: HelpDisplayMode = 'dialog';
+
 interface PreferencesState {
   showFormattingToolbar: boolean;
   setShowFormattingToolbar: (show: boolean) => void;
   toggleFormattingToolbar: () => void;
+  helpDisplayMode: HelpDisplayMode;
+  setHelpDisplayMode: (mode: HelpDisplayMode) => void;
 }
 
 export const usePreferencesStore = create<PreferencesState>((set, get) => ({
@@ -33,6 +39,13 @@ export const usePreferencesStore = create<PreferencesState>((set, get) => ({
     });
   },
   toggleFormattingToolbar: () => get().setShowFormattingToolbar(!get().showFormattingToolbar),
+  helpDisplayMode: DEFAULT_HELP_DISPLAY_MODE,
+  setHelpDisplayMode: (mode) => {
+    set({ helpDisplayMode: mode });
+    SetSetting(HELP_DISPLAY_MODE_KEY, mode).catch((error) => {
+      console.error('Failed to persist helpDisplayMode:', error);
+    });
+  },
 }));
 
 /**
@@ -51,11 +64,23 @@ export async function initPreferences(): Promise<void> {
     console.error('Failed to load preferences:', error);
   }
 
+  try {
+    const mode = await GetSetting(HELP_DISPLAY_MODE_KEY);
+    if (mode === 'dialog' || mode === 'buffer') {
+      usePreferencesStore.setState({ helpDisplayMode: mode });
+    }
+  } catch (error) {
+    console.error('Failed to load help display mode:', error);
+  }
+
   // Reconcile when the value is changed from another window. This only updates
   // in-memory state — it must never call SetSetting back, or it would loop.
   EventsOn('setting:changed', (payload: { key: string; value: string }) => {
     if (payload.key === SHOW_FORMATTING_TOOLBAR_KEY && (payload.value === 'true' || payload.value === 'false')) {
       usePreferencesStore.setState({ showFormattingToolbar: payload.value === 'true' });
+    }
+    if (payload.key === HELP_DISPLAY_MODE_KEY && (payload.value === 'dialog' || payload.value === 'buffer')) {
+      usePreferencesStore.setState({ helpDisplayMode: payload.value });
     }
   });
 }

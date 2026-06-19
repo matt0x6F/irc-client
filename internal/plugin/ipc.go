@@ -529,6 +529,30 @@ func (ipc *IPC) handleNotification(req *Request) {
 				Msg("Failed to parse ui_metadata.set params")
 		}
 	}
+
+	// Handle generic action notifications (e.g. plugins sending a message).
+	if req.Method == "action" {
+		params, ok := req.Params.(map[string]interface{})
+		if !ok {
+			if b, err := json.Marshal(req.Params); err == nil {
+				var p map[string]interface{}
+				if json.Unmarshal(b, &p) == nil {
+					params, ok = p, true
+				}
+			}
+		}
+		if ok {
+			atype, _ := params["type"].(string)
+			data, _ := params["data"].(map[string]interface{})
+			ipc.manager.EnqueueAction(Action{PluginID: ipc.pluginID, Type: atype, Data: data})
+		} else {
+			logger.Log.Warn().
+				Str("plugin", ipc.pluginID).
+				Interface("params", req.Params).
+				Msg("Failed to parse action params")
+		}
+		return
+	}
 }
 
 // Close closes the IPC connection

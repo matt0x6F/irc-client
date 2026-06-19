@@ -49,6 +49,10 @@ interface UIState {
   // Right sidebar tab (users vs pinned messages)
   rightSidebarTab: 'users' | 'pinned';
   setRightSidebarTab: (tab: 'users' | 'pinned') => void;
+
+  // Help dialog
+  helpOpen: boolean;
+  setHelpOpen: (open: boolean) => void;
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -88,4 +92,7 @@ export const useUIStore = create<UIState>((set) => ({
 
   rightSidebarTab: 'users',
   setRightSidebarTab: (tab) => set({ rightSidebarTab: tab }),
+
+  helpOpen: false,
+  setHelpOpen: (open) => set({ helpOpen: open }),
 }));

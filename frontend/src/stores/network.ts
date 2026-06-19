@@ -34,7 +34,12 @@ import {
   AddMonitor,
   RemoveMonitor,
   GetNetworkUserMeta,
+  PrintLocalLines,
 } from '../../wailsjs/go/main/App';
+import { useCommandsStore, lookupCommand } from './commands';
+import { usePreferencesStore } from './preferences';
+import { useUIStore } from './ui';
+import { formatCommandHelp, formatHelpList } from '../lib/help-format';
 
 // UserMetaT mirrors the Go irc.UserMeta JSON shape: the live, session-local
 // roster attributes Cascade tracks per nick via away-notify / account-notify /
@@ -215,6 +220,9 @@ interface NetworkState {
 
   // Pane restoration
   restoreLastPane: () => Promise<void>;
+
+  // DM / query
+  openQuery: (networkId: number, nick: string) => Promise<void>;
 }
 
 export const useNetworkStore = create<NetworkState>((set, get) => ({
@@ -788,6 +796,30 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
     if (trimmedMessage.startsWith('/')) {
       let commandToSend = trimmedMessage;
 
+      // /help is handled entirely client-side (it owns the cached registry).
+      const helpMatch = trimmedMessage.match(/^\/help(?:\s+(\S+))?\s*$/i);
+      if (helpMatch) {
+        const target =
+          selectedChannel === 'status'
+            ? 'status'
+            : selectedChannel.startsWith('pm:')
+              ? selectedChannel.substring(3)
+              : selectedChannel;
+        const commands = useCommandsStore.getState().commands;
+        const arg = helpMatch[1];
+        if (arg) {
+          const cmd = lookupCommand(commands, arg.replace(/^\//, ''));
+          const lines = cmd ? formatCommandHelp(cmd) : [`Unknown command: ${arg}`];
+          await PrintLocalLines(selectedNetwork, target, lines);
+        } else if (usePreferencesStore.getState().helpDisplayMode === 'dialog') {
+          useUIStore.getState().setHelpOpen(true);
+        } else {
+          await PrintLocalLines(selectedNetwork, target, formatHelpList(commands));
+        }
+        await loadMessages();
+        return;
+      }
+
       // Handle /me command — prepend target. The action text is formatting
       // markup like any other message, so convert it to IRC codes.
       if (trimmedMessage.toLowerCase().startsWith('/me ') && selectedChannel !== 'status') {
@@ -825,6 +857,14 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
         console.error('Failed to send command:', error);
         await loadMessages();
       }
+
+      // /query and /q navigate to the PM pane for the target nick.
+      // /msg must NOT navigate (it only sends a one-off message).
+      const queryMatch = trimmedMessage.match(/^\/(?:query|q)\s+(\S+)\s*$/i);
+      if (queryMatch) {
+        await get().selectPane(selectedNetwork, `pm:${queryMatch[1]}`);
+      }
+
       return;
     }
 
@@ -1054,6 +1094,15 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
 
   isAway: (networkId, nick) =>
     get().userMeta[networkId]?.[nick.toLowerCase()]?.away ?? false,
+
+  openQuery: async (networkId, nick) => {
+    try {
+      await SetPrivateMessageOpen(networkId, nick, true);
+    } catch (error) {
+      console.error('Failed to open query:', error);
+    }
+    await get().selectPane(networkId, `pm:${nick}`);
+  },
 
   restoreLastPane: async () => {
     const { networks } = get();

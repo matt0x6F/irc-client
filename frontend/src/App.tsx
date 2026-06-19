@@ -3,6 +3,7 @@ import { SendCommand, OpenSettings } from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime/runtime';
 import { useNetworkStore } from './stores/network';
 import { useUIStore } from './stores/ui';
+import { initCommands } from './stores/commands';
 import { ServerTree } from './components/server-tree';
 import { MessageView } from './components/message-view';
 import { InputArea } from './components/input-area';
@@ -14,6 +15,7 @@ import { UserInfo } from './components/user-info';
 import { SearchModal } from './components/search-modal';
 import { ChannelListModal } from './components/channel-list-modal';
 import { KeyboardShortcutsModal } from './components/keyboard-shortcuts-modal';
+import { HelpDialog } from './components/help-dialog';
 import { List, Settings } from 'lucide-react';
 
 function App() {
@@ -210,6 +212,7 @@ function App() {
   // Initial load + periodic refresh
   useEffect(() => {
     loadNetworks();
+    void initCommands();
     const interval = setInterval(loadNetworks, 5000);
 
     // The backend broadcasts networks:changed after a save/delete/auto-connect
@@ -925,6 +928,11 @@ function App() {
                                 await SendCommand(selectedNetwork, command);
                               }
                             }}
+                            onOpenQuery={(nick) => {
+                              if (selectedNetwork !== null) {
+                                useNetworkStore.getState().openQuery(selectedNetwork, nick);
+                              }
+                            }}
                           />
                         ) : (
                           <PinnedMessages networkId={selectedNetwork} />
@@ -1002,6 +1010,8 @@ function App() {
       {showKeyboardShortcuts && (
         <KeyboardShortcutsModal onClose={closeKeyboardShortcuts} />
       )}
+
+      <HelpDialog />
     </div>
   );
 }
