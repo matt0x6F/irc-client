@@ -258,6 +258,44 @@ export class LogConfig {
 }
 
 /**
+ * MonitorEntry is one nick on a network's MONITOR buddy list with its presence.
+ */
+export class MonitorEntry {
+    /**
+     * Creates a new MonitorEntry instance.
+     * @param {Partial<MonitorEntry>} [$$source = {}] - The source object to create the MonitorEntry.
+     */
+    constructor($$source = {}) {
+        if (!("nick" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["nick"] = "";
+        }
+        if (!("online" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["online"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new MonitorEntry instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {MonitorEntry}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new MonitorEntry(/** @type {Partial<MonitorEntry>} */($$parsedSource));
+    }
+}
+
+/**
  * NetworkConfig represents network configuration
  */
 export class NetworkConfig {

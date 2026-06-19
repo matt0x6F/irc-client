@@ -44,11 +44,19 @@ export class UserMeta {
         }
         if (!("host" in $$source)) {
             /**
-             * user@host learned from chghost; "" until seen
+             * user@host learned from chghost / userhost-in-names; "" until seen
              * @member
              * @type {string}
              */
             this["host"] = "";
+        }
+        if (!("realname" in $$source)) {
+            /**
+             * realname learned from setname / extended-join; "" until seen
+             * @member
+             * @type {string}
+             */
+            this["realname"] = "";
         }
 
         Object.assign(this, $$source);

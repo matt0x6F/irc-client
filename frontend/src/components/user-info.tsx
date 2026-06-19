@@ -171,10 +171,10 @@ export function UserInfo({ networkId, nickname, onClose }: UserInfoProps) {
           </div>
         </div>
 
-        {whoisInfo.real_name && (
+        {(meta?.realname || whoisInfo.real_name) && (
           <div>
             <div className="font-semibold mb-1">Real Name</div>
-            <div className="text-muted-foreground">{whoisInfo.real_name}</div>
+            <div className="text-muted-foreground">{meta?.realname || whoisInfo.real_name}</div>
           </div>
         )}
 

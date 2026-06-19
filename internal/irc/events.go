@@ -26,9 +26,10 @@ const (
 	EventChannelListItem       = "channel.list.item"
 	EventChannelListEnd        = "channel.list.end"
 	EventHistoryReceived       = "history.received"
-	EventBotDetected           = "bot.detected" // a nick was recognized as an IRCv3 bot (bot tag or RPL_WHOISBOT)
-	EventUserMetaChanged       = "user.meta"    // a user's live roster attributes changed (away/account/host)
-	EventSTSPolicy             = "sts.policy"   // server advertised an IRCv3 STS policy in CAP LS
+	EventBotDetected           = "bot.detected"    // a nick was recognized as an IRCv3 bot (bot tag or RPL_WHOISBOT)
+	EventUserMetaChanged       = "user.meta"       // a user's live roster attributes changed (away/account/host)
+	EventSTSPolicy             = "sts.policy"      // server advertised an IRCv3 STS policy in CAP LS
+	EventMonitorChanged        = "monitor.changed" // a monitored nick's online/offline state changed (MONITOR)
 )
 
 // UserMeta holds the live, session-local roster attributes Cascade tracks for a
@@ -39,7 +40,8 @@ type UserMeta struct {
 	Away        bool   `json:"away"`         // true while the user is marked away (away-notify)
 	AwayMessage string `json:"away_message"` // the away reason, if any
 	Account     string `json:"account"`      // account the user is logged in as; "" when not logged in
-	Host        string `json:"host"`         // user@host learned from chghost; "" until seen
+	Host        string `json:"host"`         // user@host learned from chghost / userhost-in-names; "" until seen
+	Realname    string `json:"realname"`     // realname learned from setname / extended-join; "" until seen
 }
 
 // BanEntry represents a single entry from a channel ban list (RPL_BANLIST 367)

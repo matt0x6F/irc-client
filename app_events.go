@@ -142,6 +142,15 @@ func (a *App) OnEvent(event events.Event) {
 		})
 	}
 
+	// Forward MONITOR presence changes to frontend (buddy-list online/offline)
+	if event.Type == irc.EventMonitorChanged {
+		a.emit("monitor-event", map[string]interface{}{
+			"type":      event.Type,
+			"data":      event.Data,
+			"timestamp": event.Timestamp.Format(time.RFC3339),
+		})
+	}
+
 	// Forward live-roster metadata changes to frontend (away-notify /
 	// account-notify / extended-join / chghost / account-tag)
 	if event.Type == irc.EventUserMetaChanged {
