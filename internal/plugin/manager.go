@@ -675,6 +675,39 @@ func (pm *Manager) GetActionQueue() <-chan Action {
 	return pm.actionQueue
 }
 
+// EnqueueAction queues a plugin-requested action for the App to process.
+// Non-blocking: if the queue is full the action is dropped with a warning.
+func (pm *Manager) EnqueueAction(a Action) {
+	select {
+	case pm.actionQueue <- a:
+	default:
+		logger.Log.Warn().Str("plugin", a.PluginID).Str("type", a.Type).Msg("Plugin action queue full; dropping action")
+	}
+}
+
+// InvokePluginCommand sends a command.invoke request to the owning plugin.
+func (pm *Manager) InvokePluginCommand(pluginName, command string, args []string, networkID int64, channel string) error {
+	pm.mu.RLock()
+	plugin, ok := pm.plugins[pluginName]
+	pm.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("plugin not loaded: %s", pluginName)
+	}
+	resp, err := plugin.IPC.SendRequest("command.invoke", map[string]interface{}{
+		"command":   command,
+		"args":      args,
+		"networkId": networkID,
+		"channel":   channel,
+	})
+	if err != nil {
+		return fmt.Errorf("plugin command failed: %w", err)
+	}
+	if resp.Error != nil {
+		return fmt.Errorf("plugin command error: %s", resp.Error.Message)
+	}
+	return nil
+}
+
 // ProcessActions processes actions from plugins (should be called in a goroutine)
 func (pm *Manager) ProcessActions(actionHandler func(Action) error) {
 	for action := range pm.actionQueue {
