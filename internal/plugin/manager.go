@@ -729,8 +729,9 @@ func (pm *Manager) ProcessActions(actionHandler func(Action) error) {
 }
 
 // emitLifecycle emits a plugin.lifecycle event for load/unload transitions.
-// Must NOT be called while holding pm.mu (Emit is async so it doesn't block,
-// but the nil-guard read is safe without the lock).
+// Safe to call while holding pm.mu because eventBus.Emit is non-blocking and
+// dispatches asynchronously; callers in load/unload paths hold the lock and
+// this is intentional.
 func (pm *Manager) emitLifecycle(action, plugin string) {
 	if pm.eventBus == nil {
 		return

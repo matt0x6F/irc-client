@@ -545,6 +545,11 @@ func (ipc *IPC) handleNotification(req *Request) {
 			atype, _ := params["type"].(string)
 			data, _ := params["data"].(map[string]interface{})
 			ipc.manager.EnqueueAction(Action{PluginID: ipc.pluginID, Type: atype, Data: data})
+		} else {
+			logger.Log.Warn().
+				Str("plugin", ipc.pluginID).
+				Interface("params", req.Params).
+				Msg("Failed to parse action params")
 		}
 		return
 	}

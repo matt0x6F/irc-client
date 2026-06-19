@@ -20,11 +20,16 @@ export const useCommandsStore = create<CommandsState>((set) => ({
   },
 }));
 
+let lifecycleSubscribed = false;
+
 export async function initCommands(): Promise<void> {
   await useCommandsStore.getState().loadCommands();
-  EventsOn('plugin-lifecycle', () => {
-    useCommandsStore.getState().loadCommands();
-  });
+  if (!lifecycleSubscribed) {
+    lifecycleSubscribed = true;
+    EventsOn('plugin-lifecycle', () => {
+      useCommandsStore.getState().loadCommands();
+    });
+  }
 }
 
 /** Filter commands whose name or any alias starts with prefix (no leading slash). */

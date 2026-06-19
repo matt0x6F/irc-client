@@ -83,6 +83,10 @@ func (a *App) SendCommand(networkID int64, command string) error {
 // command (Phase 4), then raw passthrough for unknown commands. rawRemainder is
 // the original command text with the leading slash removed, used verbatim for
 // the passthrough so multi-space/colon payloads are not mangled.
+// The client parameter may be nil only in unit tests that exercise paths which
+// short-circuit before using it (Frontend specs and MinArgs usage errors);
+// production always passes a non-nil client because SendCommand guards on the
+// connection first.
 func (a *App) dispatchCommand(client *irc.IRCClient, networkID int64, name string, args []string, rawRemainder string) error {
 	if spec, ok := a.commands.Lookup(name); ok {
 		if spec.Frontend {
