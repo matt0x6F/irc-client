@@ -16,7 +16,8 @@ const (
 
 // System event types
 const (
-	EventMetadataUpdated = "metadata.updated"
+	EventMetadataUpdated  = "metadata.updated"
+	EventPluginLifecycle  = "plugin.lifecycle"
 )
 
 // UI event types

@@ -343,6 +343,7 @@ func (pm *Manager) LoadPlugin(info *PluginInfo) error {
 
 	pm.registerPluginCommands(info.Name, initResult.Commands, pm.isBuiltinCommand)
 	pm.plugins[info.Name] = plugin
+	pm.emitLifecycle("loaded", info.Name)
 
 	return nil
 }
@@ -366,6 +367,7 @@ func (pm *Manager) UnloadPlugin(name string) error {
 
 	delete(pm.plugins, name)
 	pm.unregisterPluginCommands(name)
+	pm.emitLifecycle("unloaded", name)
 	return nil
 }
 
@@ -433,6 +435,7 @@ func (pm *Manager) unloadPluginUnlocked(name string) error {
 
 	delete(pm.plugins, name)
 	pm.unregisterPluginCommands(name)
+	pm.emitLifecycle("unloaded", name)
 	return nil
 }
 
@@ -725,6 +728,21 @@ func (pm *Manager) ProcessActions(actionHandler func(Action) error) {
 	}
 }
 
+// emitLifecycle emits a plugin.lifecycle event for load/unload transitions.
+// Must NOT be called while holding pm.mu (Emit is async so it doesn't block,
+// but the nil-guard read is safe without the lock).
+func (pm *Manager) emitLifecycle(action, plugin string) {
+	if pm.eventBus == nil {
+		return
+	}
+	pm.eventBus.Emit(events.Event{
+		Type:      events.EventPluginLifecycle,
+		Data:      map[string]interface{}{"action": action, "plugin": plugin},
+		Timestamp: time.Now(),
+		Source:    events.EventSourceSystem,
+	})
+}
+
 // HandleMetadataRequest handles UI metadata from plugins
 func (pm *Manager) HandleMetadataRequest(pluginID string, params map[string]interface{}) error {
 	// Parse metadata request
@@ -902,6 +920,7 @@ func (pm *Manager) SetPluginEnabled(name string, enabled bool, stor *storage.Sto
 			delete(pm.plugins, name)
 			pm.unregisterPluginCommands(name)
 			pm.metadataReg.ClearPluginMetadata(name)
+			pm.emitLifecycle("unloaded", name)
 			logger.Log.Info().Str("plugin", name).Msg("Plugin disabled and unloaded")
 		} else {
 			logger.Log.Debug().Str("plugin", name).Msg("Plugin not loaded, nothing to unload")
@@ -996,6 +1015,7 @@ func (pm *Manager) loadPluginUnlocked(info *PluginInfo) error {
 
 	pm.registerPluginCommands(info.Name, initResult.Commands, pm.isBuiltinCommand)
 	pm.plugins[info.Name] = plugin
+	pm.emitLifecycle("loaded", info.Name)
 	return nil
 }
 

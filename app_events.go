@@ -161,6 +161,15 @@ func (a *App) OnEvent(event events.Event) {
 		})
 	}
 
+	// Forward plugin lifecycle changes so the frontend can refetch GetCommands()
+	if event.Type == events.EventPluginLifecycle {
+		a.emit("plugin-lifecycle", map[string]interface{}{
+			"action": event.Data["action"],
+			"plugin": event.Data["plugin"],
+		})
+		return
+	}
+
 	// Handle metadata updates
 	if event.Type == events.EventMetadataUpdated {
 		a.emit("metadata-updated", map[string]interface{}{

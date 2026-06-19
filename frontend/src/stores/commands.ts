@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { GetCommands } from '../../wailsjs/go/main/App';
 import { main } from '../../wailsjs/go/models';
+import { EventsOn } from '../../wailsjs/runtime/runtime';
 
 interface CommandsState {
   commands: main.CommandInfo[];
@@ -21,6 +22,9 @@ export const useCommandsStore = create<CommandsState>((set) => ({
 
 export async function initCommands(): Promise<void> {
   await useCommandsStore.getState().loadCommands();
+  EventsOn('plugin-lifecycle', () => {
+    useCommandsStore.getState().loadCommands();
+  });
 }
 
 /** Filter commands whose name or any alias starts with prefix (no leading slash). */
