@@ -75,6 +75,7 @@ type IRCClient struct {
 	currentNick           string                // Nick the server currently knows us by; differs from the preferred nick during a collision (guarded by mu)
 	nickCollisionNotified bool                  // True once we've told the user (one time) that the preferred nick was unavailable (guarded by mu)
 	reconnecting          bool                  // True when this connection is an auto-reconnect after an unexpected drop (guarded by mu)
+	watchdogStop          chan struct{}         // closed to stop the liveness watchdog (guarded by mu)
 }
 
 // ServerCapabilities stores parsed ISUPPORT information
@@ -225,6 +226,47 @@ func (c *IRCClient) isStale(now time.Time, threshold time.Duration) bool {
 		return false
 	}
 	return now.Sub(c.lastMessageTime) >= threshold
+}
+
+// startWatchdog launches a goroutine that periodically checks for a silently
+// dead socket (connected==true but no inbound traffic past the stale threshold)
+// and forces a teardown via conn.Quit(). Quit() issues a socket write that, on a
+// dead link, trips the read/write deadline (ConnectionReadTimeout) and makes the
+// library run its DisconnectCallback — the single teardown path that emits
+// EventConnectionLost and drives auto-reconnect. The lastMessageTime guard in
+// isStale guarantees this never fires while traffic is flowing (#13 safe).
+func (c *IRCClient) startWatchdog() {
+	stop := make(chan struct{})
+	c.mu.Lock()
+	c.watchdogStop = stop
+	c.mu.Unlock()
+
+	go func() {
+		ticker := time.NewTicker(constants.ConnectionWatchdogInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				if c.isStale(time.Now(), constants.ConnectionStaleThreshold) {
+					logger.Log.Warn().Int64("network_id", c.networkID).
+						Msg("Watchdog: connection silent past threshold, forcing teardown")
+					c.conn.Quit()
+				}
+			}
+		}
+	}()
+}
+
+// stopWatchdog signals the watchdog goroutine to exit. Safe to call multiple times.
+func (c *IRCClient) stopWatchdog() {
+	c.mu.Lock()
+	if c.watchdogStop != nil {
+		close(c.watchdogStop)
+		c.watchdogStop = nil
+	}
+	c.mu.Unlock()
 }
 
 // preferredNick is the nick the user configured and wants to hold. It matches
@@ -867,6 +909,7 @@ func (c *IRCClient) setupHandlers() {
 		c.connected = true
 		c.lastMessageTime = time.Now()
 		c.mu.Unlock()
+		c.startWatchdog()
 
 		// Store connection message in status window
 		rawLine, _ := e.Line()
@@ -916,6 +959,7 @@ func (c *IRCClient) setupHandlers() {
 		c.currentNick = ""
 		c.nickCollisionNotified = false
 		c.mu.Unlock()
+		c.stopWatchdog()
 
 		// Write "Disconnected" messages to all open/joined channels BEFORE clearing users
 		// This ensures we can still identify which channels the user was in
