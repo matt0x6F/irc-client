@@ -39,7 +39,6 @@ type IRCClient struct {
 	network               *storage.Network
 	mu                    sync.RWMutex
 	connected             bool
-	lastMessageTime       time.Time // Last time we received any message from server (including PING). Informational only — liveness is owned by the library pingLoop, not this field.
 	saslEnabled           bool
 	saslMechanism         string
 	saslUsername          string
@@ -210,6 +209,27 @@ func (c *IRCClient) IsConnected() bool {
 // to IsConnected (both are pure reads of the connection flag).
 func (c *IRCClient) IsConnectedDirect() bool {
 	return c.IsConnected()
+}
+
+// ForceReconnect tears the connection down through the library's normal teardown
+// path: conn.Quit() -> DisconnectCallback -> EventConnectionLost ->
+// handleConnectionLost -> auto-reconnect. It is used by the system-wake hook to
+// recover promptly after sleep, where the socket is usually dead but not yet
+// detected by the library's ping loop. On a live connection that survived sleep
+// this sends a clean QUIT and reconnects; on a dead one the library declares the
+// QUIT unacknowledged after ConnectionReadTimeout and tears down. Liveness is the
+// library's responsibility (its PING/PONG keepalive), not an app-side timestamp;
+// this method only nudges a teardown, it never decides a connection is dead.
+func (c *IRCClient) ForceReconnect() {
+	c.mu.RLock()
+	networkID := c.networkID
+	connected := c.connected
+	c.mu.RUnlock()
+	if !connected {
+		return
+	}
+	logger.Log.Info().Int64("network_id", networkID).Msg("Wake: forcing reconnect")
+	c.conn.Quit()
 }
 
 // preferredNick is the nick the user configured and wants to hold. It matches
@@ -537,8 +557,8 @@ func NewIRCClient(network *storage.Network, eventBus *events.EventBus, storage *
 		// the DisconnectCallback. This is the single source of truth for whether
 		// the connection is alive, including across OS sleep/wake. Constraint:
 		// KeepAlive must be >= Timeout.
-		Timeout:   1 * time.Minute,
-		KeepAlive: 3 * time.Minute,
+		Timeout:   constants.ConnectionReadTimeout,
+		KeepAlive: constants.ConnectionKeepAlive,
 	}
 
 	// Auto-join runs once per connection through triggerAutoJoin; doAutoJoin is the
@@ -930,26 +950,10 @@ func (c *IRCClient) AllUserMeta() map[string]UserMeta {
 
 // setupHandlers sets up IRC event handlers
 func (c *IRCClient) setupHandlers() {
-	// Add a raw message handler to see ALL incoming messages (for debugging)
-	// Also track last message time for connection health checking
-	c.conn.AddCallback("", func(e ircmsg.Message) {
-		// Update last message time for any message from server (indicates connection is alive)
-		c.mu.Lock()
-		c.lastMessageTime = time.Now()
-		c.mu.Unlock()
-
-		// Only log CAP and AUTHENTICATE messages to avoid spam
-		if len(e.Command) > 0 && (e.Command == "CAP" || e.Command == "AUTHENTICATE" || strings.HasPrefix(e.Command, "90")) {
-			rawLine, _ := e.Line()
-			logger.Log.Debug().Str("raw_line", rawLine).Msg("RAW IRC message")
-		}
-	})
-
 	// Connection established
 	c.conn.AddConnectCallback(func(e ircmsg.Message) {
 		c.mu.Lock()
 		c.connected = true
-		c.lastMessageTime = time.Now()
 		c.mu.Unlock()
 
 		// Store connection message in status window

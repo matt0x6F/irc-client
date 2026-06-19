@@ -30,6 +30,7 @@ function App() {
   const loadMessages = useNetworkStore((s) => s.loadMessages);
   const loadChannelInfo = useNetworkStore((s) => s.loadChannelInfo);
   const loadConnectionStatus = useNetworkStore((s) => s.loadConnectionStatus);
+  const refreshAllConnectionStatus = useNetworkStore((s) => s.refreshAllConnectionStatus);
   const loadCurrentNick = useNetworkStore((s) => s.loadCurrentNick);
   const loadPinnedMessages = useNetworkStore((s) => s.loadPinnedMessages);
   const noteNewWhileAnchored = useNetworkStore((s) => s.noteNewWhileAnchored);
@@ -245,7 +246,7 @@ function App() {
       loadNetworkUserMeta();
       const interval = setInterval(() => {
         loadMessages();
-        loadConnectionStatus();
+        refreshAllConnectionStatus();
         loadCurrentNick();
         loadChannelInfo();
       }, 2000);
@@ -258,8 +259,9 @@ function App() {
     const unsubscribe = EventsOn('connection-status', (data: any) => {
       const networkId = data?.networkId;
       const connected = data?.connected;
+      const at = data?.timestamp ? Date.parse(data.timestamp) : undefined;
       if (networkId !== undefined && typeof connected === 'boolean') {
-        setConnectionStatus(networkId, connected);
+        setConnectionStatus(networkId, connected, Number.isNaN(at) ? undefined : at);
       }
     });
     return () => unsubscribe();

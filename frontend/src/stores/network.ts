@@ -120,6 +120,7 @@ interface NetworkState {
   // Data
   networks: storage.Network[];
   connectionStatus: Record<number, boolean>;
+  connectionStatusAt: Record<number, number>; // last-applied event time (ms) per network
   currentNick: Record<number, string>; // server-assigned nick per network; differs from the configured nick during a collision
   messages: storage.Message[];
   channelInfo: main.ChannelInfo | null;
@@ -161,6 +162,7 @@ interface NetworkState {
   onHistoryReceived: (target: string, inserted: number) => boolean;
   loadChannelInfo: () => Promise<void>;
   loadConnectionStatus: (networkId?: number) => Promise<void>;
+  refreshAllConnectionStatus: () => Promise<void>;
   loadCurrentNick: (networkId?: number) => Promise<void>;
 
   // Pinned message actions
@@ -191,7 +193,7 @@ interface NetworkState {
   clearNetworkActivity: (networkId: number) => void;
 
   // Connection status
-  setConnectionStatus: (networkId: number, connected: boolean) => void;
+  setConnectionStatus: (networkId: number, connected: boolean, at?: number) => void;
   setCurrentNick: (networkId: number, nick: string) => void;
 
   // Bot mode
@@ -218,6 +220,7 @@ interface NetworkState {
 export const useNetworkStore = create<NetworkState>((set, get) => ({
   networks: [],
   connectionStatus: {},
+  connectionStatusAt: {},
   currentNick: {},
   messages: [],
   channelInfo: null,
@@ -520,6 +523,29 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
     } catch (error) {
       console.error('Failed to load connection status:', error);
     }
+  },
+
+  refreshAllConnectionStatus: async () => {
+    // Authoritative poll over every network (O(N) IPC per tick — fine for realistic
+    // network counts). Writes connectionStatus directly and intentionally does NOT
+    // update connectionStatusAt, so it never raises the out-of-order-event watermark.
+    const { networks } = get();
+    const results = await Promise.all(
+      networks.map(async (n) => {
+        try {
+          return { id: n.id, connected: await GetConnectionStatus(n.id) };
+        } catch {
+          return { id: n.id, connected: false };
+        }
+      }),
+    );
+    set((state) => {
+      const next = { ...state.connectionStatus };
+      results.forEach(({ id, connected }) => {
+        next[id] = connected;
+      });
+      return { connectionStatus: next };
+    });
   },
 
   loadCurrentNick: async (networkId?: number) => {
@@ -879,10 +905,27 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
       return { unreadCounts: next };
     }),
 
-  setConnectionStatus: (networkId, connected) =>
-    set((state) => ({
-      connectionStatus: { ...state.connectionStatus, [networkId]: connected },
-    })),
+  setConnectionStatus: (networkId, connected, at) =>
+    set((state) => {
+      // Timestamped updates (events) may arrive out of order because the Go event
+      // bus dispatches subscribers on unordered goroutines. Drop an event strictly
+      // older than the last one applied for this network. Untimestamped updates
+      // (the poll) are authoritative and always win. Equal timestamps are applied
+      // (idempotent) so a same-instant correction is not lost.
+      if (at !== undefined) {
+        const lastAt = state.connectionStatusAt[networkId];
+        if (lastAt !== undefined && at < lastAt) {
+          return state;
+        }
+        return {
+          connectionStatus: { ...state.connectionStatus, [networkId]: connected },
+          connectionStatusAt: { ...state.connectionStatusAt, [networkId]: at },
+        };
+      }
+      return {
+        connectionStatus: { ...state.connectionStatus, [networkId]: connected },
+      };
+    }),
 
   setCurrentNick: (networkId, nick) =>
     set((state) => ({

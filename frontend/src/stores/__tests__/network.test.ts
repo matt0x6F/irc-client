@@ -1,5 +1,12 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useNetworkStore } from '../network';
+
+vi.mock('../../../wailsjs/go/main/App', async (orig) => {
+  const actual = await (orig() as Promise<Record<string, unknown>>);
+  return { ...actual, GetConnectionStatus: vi.fn() };
+});
+
+import { GetConnectionStatus } from '../../../wailsjs/go/main/App';
 
 // Guards the currentNick store wiring that the header reads and the
 // 'current-nick' event handler writes. The reducer is pure, so no Wails
@@ -122,5 +129,71 @@ describe('network store: user meta', () => {
     const second = useNetworkStore.getState().userMeta[1];
     expect(second).not.toBe(first);
     expect(useNetworkStore.getState().isAway(1, 'alice')).toBe(false);
+  });
+});
+
+describe('network store: connectionStatus ordering', () => {
+  beforeEach(() => {
+    useNetworkStore.setState({ connectionStatus: {}, connectionStatusAt: {} });
+  });
+
+  it('applies a newer event and ignores an older one (out-of-order delivery)', () => {
+    const { setConnectionStatus } = useNetworkStore.getState();
+    setConnectionStatus(1, true, 2000);   // newer: connected
+    setConnectionStatus(1, false, 1000);  // older: must be ignored
+    expect(useNetworkStore.getState().connectionStatus[1]).toBe(true);
+  });
+
+  it('an untimestamped update (poll) always wins', () => {
+    const { setConnectionStatus } = useNetworkStore.getState();
+    setConnectionStatus(1, true, 5000);
+    setConnectionStatus(1, false);        // poll, no timestamp -> authoritative
+    expect(useNetworkStore.getState().connectionStatus[1]).toBe(false);
+  });
+
+  it('is per-network', () => {
+    const { setConnectionStatus } = useNetworkStore.getState();
+    setConnectionStatus(1, true, 2000);
+    setConnectionStatus(2, false, 1000);
+    expect(useNetworkStore.getState().connectionStatus).toEqual({ 1: true, 2: false });
+  });
+
+  it('applies an equal-timestamp update (idempotent, not dropped)', () => {
+    const { setConnectionStatus } = useNetworkStore.getState();
+    setConnectionStatus(1, true, 3000);
+    setConnectionStatus(1, false, 3000);  // equal ts -> applied (>= rule)
+    expect(useNetworkStore.getState().connectionStatus[1]).toBe(false);
+  });
+});
+
+describe('network store: refreshAllConnectionStatus', () => {
+  beforeEach(() => {
+    useNetworkStore.setState({
+      networks: [
+        { id: 1, name: 'A' } as any,
+        { id: 2, name: 'B' } as any,
+      ],
+      connectionStatus: {},
+      connectionStatusAt: {},
+    });
+    (GetConnectionStatus as any).mockReset();
+  });
+
+  it('writes a status for every known network', async () => {
+    (GetConnectionStatus as any).mockImplementation((id: number) =>
+      Promise.resolve(id === 1),
+    );
+    await useNetworkStore.getState().refreshAllConnectionStatus();
+    expect(useNetworkStore.getState().connectionStatus).toEqual({ 1: true, 2: false });
+    expect(useNetworkStore.getState().connectionStatusAt).toEqual({});
+  });
+
+  it('treats a failing GetConnectionStatus as disconnected', async () => {
+    (GetConnectionStatus as any).mockImplementation((id: number) =>
+      id === 1 ? Promise.reject(new Error('boom')) : Promise.resolve(true),
+    );
+    await useNetworkStore.getState().refreshAllConnectionStatus();
+    expect(useNetworkStore.getState().connectionStatus).toEqual({ 1: false, 2: true });
+    expect(useNetworkStore.getState().connectionStatusAt).toEqual({});
   });
 });

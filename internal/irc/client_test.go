@@ -2,8 +2,8 @@ package irc
 
 import (
 	"testing"
-	"time"
 
+	"github.com/matt0x6f/irc-client/internal/constants"
 	"github.com/matt0x6f/irc-client/internal/storage"
 )
 
@@ -75,22 +75,16 @@ func TestNoticePMTarget(t *testing.T) {
 // the UI reported "disconnected" while messages kept arriving.
 //
 // IsConnected() used to be a getter with a side effect: a passive "no messages
-// in 15 minutes" check that flipped connected -> false. Combined with the
-// short-circuit `if !connected { return false }`, this created an asymmetric
-// latch — once tripped, live inbound traffic (which updates lastMessageTime but
-// not connected) could never restore the reported state. Liveness is now owned
-// solely by the library's pingLoop + DisconnectCallback, so IsConnected() must
-// be a pure read of the connection flag and must ignore lastMessageTime.
+// in N minutes" activity check that flipped connected -> false. That created an
+// asymmetric latch — once tripped, live inbound traffic could never restore the
+// reported state (#13). Liveness is now owned solely by the library's pingLoop +
+// DisconnectCallback, so IsConnected() must be a pure read of the connection flag.
 func TestIsConnectedIsPureGetter(t *testing.T) {
-	t.Run("stale lastMessageTime does not flip a connected client", func(t *testing.T) {
-		c := &IRCClient{
-			connected:       true,
-			lastMessageTime: time.Now().Add(-24 * time.Hour), // far past, well beyond the old 15m threshold
-		}
+	t.Run("is side-effect free for a connected client", func(t *testing.T) {
+		c := &IRCClient{connected: true}
 
 		if !c.IsConnected() {
-			t.Fatal("IsConnected() returned false for a connected client with stale lastMessageTime; " +
-				"a stale activity timestamp must no longer mark the connection dead")
+			t.Fatal("IsConnected() returned false for a connected client")
 		}
 
 		// Calling it again must observe no state mutation (it is side-effect free).
@@ -125,9 +119,18 @@ func TestIsConnectedIsPureGetter(t *testing.T) {
 	})
 
 	t.Run("IsConnectedDirect agrees with IsConnected", func(t *testing.T) {
-		c := &IRCClient{connected: true, lastMessageTime: time.Now().Add(-24 * time.Hour)}
+		c := &IRCClient{connected: true}
 		if c.IsConnected() != c.IsConnectedDirect() {
 			t.Fatal("IsConnectedDirect() must be identical to IsConnected()")
 		}
 	})
+}
+
+// The library's pingLoop sends a keepalive PING after KeepAlive of idle and
+// declares the connection dead if it is unacked within Timeout, so it requires
+// KeepAlive >= Timeout. This guards that invariant on our configured values.
+func TestLivenessConstantOrdering(t *testing.T) {
+	if constants.ConnectionKeepAlive < constants.ConnectionReadTimeout {
+		t.Fatalf("KeepAlive (%v) must be >= Timeout (%v)", constants.ConnectionKeepAlive, constants.ConnectionReadTimeout)
+	}
 }

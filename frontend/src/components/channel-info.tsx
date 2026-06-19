@@ -211,6 +211,19 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
     };
   }, [networkId, channelName, loadChannelInfo]);
 
+  // Reload the roster on connection-state transitions for this network. The
+  // backend blanks the user list while disconnected and refills it after a
+  // reconnect's NAMES; reloading here keeps the panel in sync with connect/
+  // disconnect immediately, independent of NAMES timing or the generic poll.
+  useEffect(() => {
+    const unsubscribe = EventsOn('connection-status', (data: any) => {
+      if (data?.networkId === networkId) {
+        loadChannelInfo();
+      }
+    });
+    return () => unsubscribe();
+  }, [networkId, channelName, loadChannelInfo]);
+
   // Close context menu on outside click
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
