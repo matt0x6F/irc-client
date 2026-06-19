@@ -173,6 +173,86 @@ Sent to plugin when subscribed events occur.
 }
 ```
 
+### Slash Commands
+
+Plugins can register slash commands that users invoke directly in the chat input (e.g. `/remind`, `/weather`).
+
+#### Declaring commands in `initialize`
+
+Return a `commands` array in the `initialize` result. Each entry is a `CommandSpecWire` object:
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | string | Primary command name (without the `/` prefix) |
+| `aliases` | []string | Optional alternative names for the same command |
+| `usage` | string | Short usage hint shown in help (e.g. `"remind <duration> <text>"`) |
+| `description` | string | One-line description shown in the command list and help dialog |
+
+**Example `initialize` result with commands:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "name": "remind-plugin",
+    "version": "1.0.0",
+    "description": "Reminder plugin",
+    "author": "Me",
+    "events": [],
+    "metadata_types": [],
+    "commands": [
+      {
+        "name": "remind",
+        "aliases": ["reminder"],
+        "usage": "remind <duration> <text>",
+        "description": "Set a reminder that fires after a duration"
+      }
+    ]
+  }
+}
+```
+
+#### `command.invoke` (Request from host to plugin)
+
+When a user runs a plugin command, Cascade sends a `command.invoke` request to the owning plugin:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "command.invoke",
+  "params": {
+    "command": "remind",
+    "args": ["5m", "check", "the", "oven"],
+    "networkId": 1,
+    "channel": "#general"
+  }
+}
+```
+
+**Params:**
+- `command` (string): The command name as typed (canonical name, not an alias).
+- `args` ([]string): Tokenised arguments after the command name.
+- `networkId` (int64): ID of the network the command was sent from.
+- `channel` (string): Channel or query window where the command was typed.
+
+The plugin must send a standard JSON-RPC result to signal success. To report a failure, return a JSON-RPC error object — the error message will be surfaced to the user.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "result": {}
+}
+```
+
+#### Conflict policy
+
+- **Built-in commands take precedence.** A plugin command whose name or alias matches a built-in is silently ignored; the collision is logged as a warning.
+- **First-registration-wins between plugins.** If two plugins register the same name or alias, the second registration is ignored and the collision is logged.
+- Commands are unregistered automatically when a plugin is unloaded or disabled.
+
 ### Notifications from Plugin
 
 #### `ui_metadata.set` (Notification)
@@ -203,6 +283,36 @@ Plugin sends this to set UI metadata (colors, badges, etc.).
 }
 ```
 
+#### `action` (Notification)
+
+Plugins send `action` notifications to ask Cascade to perform side-effects on their behalf — for example, sending an IRC message.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "action",
+  "params": {
+    "type": "send_message",
+    "data": {
+      "server": "irc.libera.chat:6667",
+      "target": "#general",
+      "message": "Reminder: check the oven"
+    }
+  }
+}
+```
+
+**Params:**
+- `type` (string): Action type. The only currently supported value is `"send_message"`.
+- `data` (object): Action-specific payload.
+
+**`send_message` data fields:**
+- `server` (string): Server address of the network (as `host:port`).
+- `target` (string): Channel or nickname to send the message to.
+- `message` (string): Text to send.
+
+**Queue and overflow:** Actions are delivered through a bounded in-memory queue (capacity 100). If the queue is full when an action arrives — for example because the app is busy processing a burst of actions — the action is dropped and a warning is logged. Plugins should not rely on delivery guarantees during high load.
+
 ## Plugin Lifecycle
 
 1. **Discovery**: Plugin discovered during startup or when enabled
@@ -210,6 +320,10 @@ Plugin sends this to set UI metadata (colors, badges, etc.).
 3. **Initialization**: Plugin process started, `initialize` request sent
 4. **Active**: Plugin receives events and can send metadata
 5. **Unload**: Plugin process terminated, metadata cleared
+
+### `plugin-lifecycle` frontend event
+
+Whenever a plugin is loaded or unloaded, Cascade emits a `plugin-lifecycle` event to the frontend. This is an informational signal — the frontend uses it to refetch the current command list (e.g. to update autocomplete). No action is required from the plugin itself.
 
 ### Loading a Plugin
 
