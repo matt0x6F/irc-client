@@ -162,6 +162,7 @@ interface NetworkState {
   onHistoryReceived: (target: string, inserted: number) => boolean;
   loadChannelInfo: () => Promise<void>;
   loadConnectionStatus: (networkId?: number) => Promise<void>;
+  refreshAllConnectionStatus: () => Promise<void>;
   loadCurrentNick: (networkId?: number) => Promise<void>;
 
   // Pinned message actions
@@ -522,6 +523,26 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
     } catch (error) {
       console.error('Failed to load connection status:', error);
     }
+  },
+
+  refreshAllConnectionStatus: async () => {
+    const { networks } = get();
+    const results = await Promise.all(
+      networks.map(async (n) => {
+        try {
+          return { id: n.id, connected: await GetConnectionStatus(n.id) };
+        } catch {
+          return { id: n.id, connected: false };
+        }
+      }),
+    );
+    set((state) => {
+      const next = { ...state.connectionStatus };
+      results.forEach(({ id, connected }) => {
+        next[id] = connected;
+      });
+      return { connectionStatus: next };
+    });
   },
 
   loadCurrentNick: async (networkId?: number) => {
