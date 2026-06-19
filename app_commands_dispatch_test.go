@@ -20,3 +20,20 @@ func TestSendCommandFrontendNoOp(t *testing.T) {
 		t.Fatalf("HELP (frontend) dispatch should no-op, got %v", err)
 	}
 }
+
+func TestGetCommandsIncludesPlugin(t *testing.T) {
+	// A registry-only App with a fake plugin manager is heavy; assert the merge
+	// helper directly instead.
+	builtins := buildBuiltinRegistry()
+	plugins := []CommandInfo{{Name: "WEATHER", Category: "plugin", Usage: "<city>", Description: "Weather", Source: "weather"}}
+	merged := mergeCommandInfos(builtins, plugins)
+	var found bool
+	for _, c := range merged {
+		if c.Name == "WEATHER" && c.Source == "weather" && c.Category == "plugin" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("merged command list missing the plugin command")
+	}
+}

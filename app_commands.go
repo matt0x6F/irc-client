@@ -93,6 +93,12 @@ func (a *App) dispatchCommand(client *irc.IRCClient, networkID int64, name strin
 		}
 		return spec.handler(a, client, networkID, args)
 	}
+	if a.pluginManager != nil {
+		if entry, ok := a.pluginManager.LookupPluginCommand(name); ok {
+			channel := "" // best-effort context; the frontend sends the active buffer separately if needed
+			return a.pluginManager.InvokePluginCommand(entry.Plugin, strings.ToUpper(name), args, networkID, channel)
+		}
+	}
 	// Unknown command: raw passthrough (preserves server-extension commands).
 	return client.SendRawCommand(rawRemainder)
 }

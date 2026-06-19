@@ -670,6 +670,14 @@ func (pm *Manager) ListPlugins() []*PluginInfo {
 	return infos
 }
 
+// SetBuiltinCommandChecker wires the predicate used to block plugin commands from
+// shadowing built-ins. Must be called before any plugins are loaded.
+func (pm *Manager) SetBuiltinCommandChecker(fn func(string) bool) {
+	if fn != nil {
+		pm.isBuiltinCommand = fn
+	}
+}
+
 // GetActionQueue returns the action queue channel
 func (pm *Manager) GetActionQueue() <-chan Action {
 	return pm.actionQueue

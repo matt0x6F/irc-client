@@ -327,13 +327,28 @@ func specToInfo(s *CommandSpec) CommandInfo {
 	}
 }
 
-// GetCommands returns metadata for every known command (built-in here; merged
-// with plugin commands in Phase 4). Bound to the frontend via Wails.
-func (a *App) GetCommands() []CommandInfo {
-	specs := a.commands.Specs()
-	infos := make([]CommandInfo, 0, len(specs))
+// mergeCommandInfos produces the full command list: built-ins followed by plugin commands.
+func mergeCommandInfos(r *CommandRegistry, plugin []CommandInfo) []CommandInfo {
+	specs := r.Specs()
+	out := make([]CommandInfo, 0, len(specs)+len(plugin))
 	for _, s := range specs {
-		infos = append(infos, specToInfo(s))
+		out = append(out, specToInfo(s))
 	}
-	return infos
+	return append(out, plugin...)
+}
+
+// GetCommands returns metadata for every known command (built-ins merged with
+// plugin commands). Bound to the frontend via Wails.
+func (a *App) GetCommands() []CommandInfo {
+	var plugin []CommandInfo
+	if a.pluginManager != nil {
+		for _, e := range a.pluginManager.PluginCommands() {
+			plugin = append(plugin, CommandInfo{
+				Name: strings.ToUpper(e.Spec.Name), Aliases: e.Spec.Aliases,
+				Category: string(CategoryPlugin), Usage: e.Spec.Usage,
+				Description: e.Spec.Description, Source: e.Plugin,
+			})
+		}
+	}
+	return mergeCommandInfos(a.commands, plugin)
 }

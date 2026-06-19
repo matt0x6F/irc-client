@@ -179,8 +179,8 @@ export function GetChannels(networkID) {
 }
 
 /**
- * GetCommands returns metadata for every known command (built-in here; merged
- * with plugin commands in Phase 4). Bound to the frontend via Wails.
+ * GetCommands returns metadata for every known command (built-ins merged with
+ * plugin commands). Bound to the frontend via Wails.
  * @returns {$CancellablePromise<$models.CommandInfo[]>}
  */
 export function GetCommands() {

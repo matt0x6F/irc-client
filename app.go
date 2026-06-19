@@ -116,6 +116,11 @@ func NewApp() (*App, error) {
 		channelListCache:     make(map[int64]channelListCacheEntry),
 	}
 
+	pluginMgr.SetBuiltinCommandChecker(func(k string) bool {
+		_, ok := app.commands.Lookup(k)
+		return ok
+	})
+
 	// Subscribe to events for frontend forwarding
 	eventBus.Subscribe(irc.EventMessageSent, app)
 	eventBus.Subscribe(irc.EventMessageReceived, app)
