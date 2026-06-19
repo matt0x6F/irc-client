@@ -14,7 +14,7 @@
 - **Frontend**: [network.ts `sendMessage`](../../frontend/src/stores/network.ts) only special-cases `/me`, `/part`, `/leave` (target injection), then forwards everything to the backend. [input-area.tsx](../../frontend/src/components/input-area.tsx) Tab-completes **nicks only**.
 - **DMs**: `/query` / `/msg` already exist backend-side and open a PM conversation (`GetOrCreatePMConversation` + `SetPrivateMessageOpen`), but the frontend does not reliably **navigate** to the new pane. PM panes are addressed `"pm:<nick>"` and opened via `selectPane(networkId, "pm:<nick>")`.
 - **Nick list**: [channel-info.tsx:540](../../frontend/src/components/channel-info.tsx) has a right-click context menu only — **no click/double-click handler**.
-- **Plugins**: subprocess + JSON-RPC. In their `initialize` response they declare `Events` and `MetadataTypes` ([protocol.go:36](../../internal/plugin/protocol.go)). A `Permissions` field is defined-but-unused. Plugins receive events read-only. An `actionQueue` + `processPluginActions` ([app_events.go:225](../../app_events.go)) exists for a `send_message` action but is **not wired** to inbound plugin notifications. **No command concept exists.**
+- **Plugins**: subprocess + JSON-RPC. In their `initialize` response they declare `Events` and `MetadataTypes` ([protocol.go:36](../../internal/plugin/protocol.go)). A `Permissions` field is defined-but-unused. Plugins receive events read-only. The `actionQueue` **consumer** `processPluginActions` ([app_events.go:225](../../app_events.go)) **is live** (spawned in `NewApp`, loops on the channel, handles `send_message` → `client.SendMessage`), but the **producer** side is missing: the IPC notification handler ([ipc.go](../../internal/plugin/ipc.go)) only handles `ui_metadata.set`, so **nothing ever enqueues an action from a plugin**. Plugin lifecycle (`LoadPlugin`/`UnloadPlugin`/`SetPluginEnabled` in [manager.go](../../internal/plugin/manager.go)) emits **no events**. **No command concept exists.**
 
 ---
 
@@ -72,8 +72,8 @@ Non-`/` input → `client.SendRawCommand(command)` (unchanged).
 - **Conflict policy**:
   - Plugins **cannot shadow built-ins** — built-in lookup wins; a plugin command colliding with a built-in name/alias is rejected with a logged warning.
   - **Plugin-vs-plugin**: first registration wins; later collisions rejected + logged (mirrors the existing `Priority` precedent in the metadata system).
-- **Invocation**: new host→plugin RPC `command.invoke` with `{command, args, networkID, channel}`. The plugin performs its work and replies by emitting a host action (e.g. a `message.send` notification), which requires **wiring the dormant `actionQueue` / `processPluginActions`** ([app_events.go:225](../../app_events.go)) to a new plugin→host action notification handler in [ipc.go](../../internal/plugin/ipc.go) (today only `ui_metadata.set` is handled). This activates the existing half-built return path.
-- **Refresh**: when plugins load/unload, the frontend refetches `GetCommands()` so autocomplete/help reflect plugin commands.
+- **Invocation**: new host→plugin RPC `command.invoke` with `{command, args, networkID, channel}` (direct request/response, like `initialize` — **not** routed through the event bus, so no ordering concerns). The plugin performs its work and replies by emitting a host action notification (e.g. `message.send`). The **action-queue consumer already runs** ([app_events.go:225](../../app_events.go)); the missing half is the **producer**: add a plugin→host action notification handler in [ipc.go](../../internal/plugin/ipc.go) (today only `ui_metadata.set` is handled) that enqueues onto `actionQueue`. Effects then ride the existing chain for free: `send_message` → consumer → `client.SendMessage` → `EventMessageSent` → `message-event` → frontend.
+- **Refresh (new event):** there is **no plugin lifecycle event today**. Add a `plugin-lifecycle` bus event emitted from `LoadPlugin`/`UnloadPlugin`/`SetPluginEnabled` ([manager.go](../../internal/plugin/manager.go)), forwarded to the frontend in `App.OnEvent` ([app_events.go](../../app_events.go)) exactly like `metadata-updated`. The frontend subscribes and refetches `GetCommands()` so autocomplete/help reflect plugin commands. (Cache invalidation is idempotent, so the bus's lack of ordering guarantee is irrelevant.)
 
 ---
 
@@ -93,7 +93,7 @@ Non-`/` input → `client.SendRawCommand(command)` (unchanged).
 - Help is **handled frontend-side** (it owns the cached registry) using the same interception pattern as `/me`/`/part` today. The Go registry still carries a `/help` spec (`Category: client`, `Frontend: true`) so it appears in autocomplete and the panel.
 
 ### DM on double-click + `/query` navigation
-- `onDoubleClick` on a nick in [channel-info.tsx:540](../../frontend/src/components/channel-info.tsx) calls a new store action `openQuery(networkId, nick)` → ensure conversation open (backend) → `selectPane(networkId, "pm:"+nick)`.
+- `onDoubleClick` on a nick in [channel-info.tsx:540](../../frontend/src/components/channel-info.tsx) calls a new store action `openQuery(networkId, nick)` → ensure conversation open (backend `SetPrivateMessageOpen`) → `selectPane(networkId, "pm:"+nick)`. **No new events needed:** `SetPrivateMessageOpen` already emits `EventUIPaneFocused` → `ui-pane-event`, and [server-tree.tsx:294](../../frontend/src/components/server-tree.tsx) already refreshes the PM list on it; `selectPane` performs the navigation.
 - **`/query` (and double-click) navigate** to the DM pane after opening. **`/msg` stays a one-off send** that does not switch panes. This delivers "double-click → DM" + "a slash command for one" (`/query`), now discoverable via autocomplete/help and navigation-correct.
 
 ---
@@ -105,15 +105,15 @@ Phased so each lands independently green:
 1. **Go registry + dispatch refactor** (behavior-preserving) + `GetCommands()` binding + regen.
 2. **Frontend autocomplete** (popup + inline hint) consuming the registry.
 3. **Help** (`/help <cmd>` → buffer; `/help` → panel) + **DM double-click** + **`/query` navigation**.
-4. **Plugin command registration** (protocol `Commands`, manager registration + conflict policy, `command.invoke` RPC, action-queue wiring) + docs.
+4. **Plugin command registration** (protocol `Commands`, manager registration + conflict policy, `command.invoke` RPC, producer-side action handler enqueuing onto the existing `actionQueue`, new `plugin-lifecycle` event for command-cache invalidation) + docs.
 
 ### Testing
-- **Go** (`CGO_ENABLED=1 go test -tags fts5 ./... -count=1`): registry lookup, alias resolution, category assignment, dispatch routing (built-in vs passthrough), `MinArgs` usage errors, plugin command registration + conflict rejection (built-in shadow, plugin-vs-plugin), `command.invoke` marshaling + action-queue round-trip.
+- **Go** (`CGO_ENABLED=1 go test -tags fts5 ./... -count=1`): registry lookup, alias resolution, category assignment, dispatch routing (built-in vs passthrough), `MinArgs` usage errors, plugin command registration + conflict rejection (built-in shadow, plugin-vs-plugin), `command.invoke` marshaling, producer-side action enqueue → consumer round-trip, and `plugin-lifecycle` event emission on enable/disable/load/unload.
 - **Frontend** (`cd frontend && npx vitest run`): command parsing + autocomplete filtering, inline hint derivation, help panel rendering + section grouping, `/help <cmd>` buffer output, `openQuery`/double-click navigation, `/msg` does-not-switch.
 - **e2e screenshots** (per quality bar — visual surfaces only): autocomplete popup, Help panel.
 
 ### Docs
-- Update [docs/plugin-system.md](../../docs/plugin-system.md): new `Commands` field in `initialize`, `command.invoke` RPC, the plugin→host action notification contract, and conflict policy.
+- Update [docs/plugin-system.md](../../docs/plugin-system.md): new `Commands` field in `initialize`, `command.invoke` RPC, the plugin→host action notification contract, the `plugin-lifecycle` event, and conflict policy.
 - Document the command list / `/help` for users.
 
 ---
