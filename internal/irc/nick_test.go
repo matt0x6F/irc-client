@@ -98,6 +98,131 @@ func TestNickInUseNotifiesOnceThenSilent(t *testing.T) {
 	}
 }
 
+// A 433 answering a nick the user explicitly requested via /nick must be
+// surfaced even though we're already registered (the "funky" post-reconnect
+// state where we're stuck on an alternative). The blanket "registered → silent"
+// rule that hushes the library's background keepalive reclaims would otherwise
+// swallow the user's manual attempt, making it look like nothing happened.
+func TestManualNickChangeFailureIsSurfaced(t *testing.T) {
+	c := newNickTestClient(t)
+
+	// Registered as an alternative; the user has just run /nick matt0x6f.
+	c.mu.Lock()
+	c.currentNick = "matt0x6f_2"
+	c.pendingManualNick = "matt0x6f"
+	c.mu.Unlock()
+
+	c.handleNickInUse(parseLine(t, ":server 433 matt0x6f_2 matt0x6f :Nickname is already in use"))
+
+	if !containsMessage(statusMessages(t, c), "matt0x6f") {
+		t.Fatalf("expected a status message about the failed manual nick change, got %+v", statusMessages(t, c))
+	}
+
+	// The manual attempt has now been answered once. A repeat 433 (e.g. the next
+	// keepalive reclaim of the same nick) must not re-notify and spam the log.
+	before := len(statusMessages(t, c))
+	c.handleNickInUse(parseLine(t, ":server 433 matt0x6f_2 matt0x6f :Nickname is already in use"))
+	if got := len(statusMessages(t, c)); got != before {
+		t.Fatalf("expected no further notice after the manual attempt was answered, got %d new", got-before)
+	}
+}
+
+// A user-initiated /nick can fail for reasons other than 433: an invalid
+// nickname (432), a nick held under nick-delay right after a reconnect (437),
+// a collision (436), or an empty nick (431). Each must be surfaced once and
+// must clear the pending marker.
+func TestManualNickErrorsAreSurfaced(t *testing.T) {
+	cases := []struct {
+		name    string
+		pending string
+		line    string
+		invoke  func(*IRCClient, ircmsg.Message)
+		want    string
+	}{
+		{"erroneous 432", "1badnick", ":server 432 matt0x6f_2 1badnick :Erroneous Nickname", (*IRCClient).handleErroneousNick, "1badnick"},
+		{"unavailable 437", "matt0x6f", ":server 437 matt0x6f_2 matt0x6f :Nick/channel is temporarily unavailable", (*IRCClient).handleNickUnavailable, "temporarily unavailable"},
+		{"collision 436", "matt0x6f", ":server 436 matt0x6f_2 matt0x6f :Nickname collision KILL", (*IRCClient).handleNickCollision, "collided"},
+		{"no nick given 431", "matt0x6f", ":server 431 matt0x6f_2 :No nickname given", (*IRCClient).handleNoNickGiven, "no nickname given"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newNickTestClient(t)
+			c.mu.Lock()
+			c.currentNick = "matt0x6f_2"
+			c.pendingManualNick = tc.pending
+			c.mu.Unlock()
+
+			tc.invoke(c, parseLine(t, tc.line))
+
+			if !containsMessage(statusMessages(t, c), tc.want) {
+				t.Fatalf("expected a status message containing %q, got %+v", tc.want, statusMessages(t, c))
+			}
+			c.mu.RLock()
+			pending := c.pendingManualNick
+			c.mu.RUnlock()
+			if pending != "" {
+				t.Fatalf("pendingManualNick = %q, want cleared after surfacing the error", pending)
+			}
+		})
+	}
+}
+
+// Nick-error numerics that aren't answering a user-initiated /nick stay silent
+// (e.g. a 432/437 the server sends unsolicited), just like background 433s.
+func TestNickErrorsSilentWithoutPendingManualNick(t *testing.T) {
+	c := newNickTestClient(t)
+	c.mu.Lock()
+	c.currentNick = "matt0x6f"
+	c.pendingManualNick = ""
+	c.mu.Unlock()
+
+	c.handleErroneousNick(parseLine(t, ":server 432 matt0x6f weird :Erroneous Nickname"))
+	c.handleNickUnavailable(parseLine(t, ":server 437 matt0x6f weird :temporarily unavailable"))
+
+	if msgs := statusMessages(t, c); len(msgs) != 0 {
+		t.Fatalf("expected no status messages for unsolicited nick errors, got %+v", msgs)
+	}
+}
+
+// ChangeNick must not leave a pending manual marker behind when the send can't
+// happen (disconnected). A stale marker would otherwise make the next
+// connection's first background reclaim 433 look like a failed user request.
+func TestChangeNickRollsBackPendingOnSendFailure(t *testing.T) {
+	c := newNickTestClient(t)
+	// connected is false and conn is nil, so the send cannot succeed.
+
+	if err := c.ChangeNick("matt0x6f"); err == nil {
+		t.Fatal("expected ChangeNick to fail while disconnected")
+	}
+
+	c.mu.RLock()
+	pending := c.pendingManualNick
+	c.mu.RUnlock()
+	if pending != "" {
+		t.Fatalf("pendingManualNick = %q, want cleared after a failed send", pending)
+	}
+}
+
+// A successful self nick change clears any pending manual request, so a later
+// background reclaim 433 for that same nick doesn't get mistaken for the user's
+// (already-fulfilled) attempt.
+func TestSelfNickChangeClearsPendingManualNick(t *testing.T) {
+	c := newNickTestClient(t)
+	c.mu.Lock()
+	c.currentNick = "matt0x6f_2"
+	c.pendingManualNick = "matt0x6f"
+	c.mu.Unlock()
+
+	c.handleNickMessage(parseLine(t, ":matt0x6f_2!u@h NICK matt0x6f"))
+
+	c.mu.RLock()
+	pending := c.pendingManualNick
+	c.mu.RUnlock()
+	if pending != "" {
+		t.Fatalf("pendingManualNick = %q, want cleared after a successful self nick change", pending)
+	}
+}
+
 // Registering under an alternative nick records the real nick and explains that
 // the client will keep trying to reclaim the preferred one.
 func TestWelcomeOnAlternativeNickTracksAndExplains(t *testing.T) {

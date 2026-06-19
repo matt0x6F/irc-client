@@ -122,7 +122,7 @@ func (a *App) SendCommand(networkID int64, command string) error {
 			if len(parts) < 2 {
 				return fmt.Errorf("usage: /nick newnick")
 			}
-			return client.SendRawCommand(fmt.Sprintf("NICK %s", parts[1]))
+			return client.ChangeNick(parts[1])
 		case "QUIT":
 			reason := ""
 			if len(parts) >= 2 {
