@@ -120,6 +120,7 @@ interface NetworkState {
   // Data
   networks: storage.Network[];
   connectionStatus: Record<number, boolean>;
+  connectionStatusAt: Record<number, number>; // last-applied event time (ms) per network
   currentNick: Record<number, string>; // server-assigned nick per network; differs from the configured nick during a collision
   messages: storage.Message[];
   channelInfo: main.ChannelInfo | null;
@@ -191,7 +192,7 @@ interface NetworkState {
   clearNetworkActivity: (networkId: number) => void;
 
   // Connection status
-  setConnectionStatus: (networkId: number, connected: boolean) => void;
+  setConnectionStatus: (networkId: number, connected: boolean, at?: number) => void;
   setCurrentNick: (networkId: number, nick: string) => void;
 
   // Bot mode
@@ -218,6 +219,7 @@ interface NetworkState {
 export const useNetworkStore = create<NetworkState>((set, get) => ({
   networks: [],
   connectionStatus: {},
+  connectionStatusAt: {},
   currentNick: {},
   messages: [],
   channelInfo: null,
@@ -879,10 +881,27 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
       return { unreadCounts: next };
     }),
 
-  setConnectionStatus: (networkId, connected) =>
-    set((state) => ({
-      connectionStatus: { ...state.connectionStatus, [networkId]: connected },
-    })),
+  setConnectionStatus: (networkId, connected, at) =>
+    set((state) => {
+      // Timestamped updates (events) may arrive out of order because the Go event
+      // bus dispatches subscribers on unordered goroutines. Drop an event strictly
+      // older than the last one applied for this network. Untimestamped updates
+      // (the poll) are authoritative and always win. Equal timestamps are applied
+      // (idempotent) so a same-instant correction is not lost.
+      if (at !== undefined) {
+        const lastAt = state.connectionStatusAt[networkId];
+        if (lastAt !== undefined && at < lastAt) {
+          return state;
+        }
+        return {
+          connectionStatus: { ...state.connectionStatus, [networkId]: connected },
+          connectionStatusAt: { ...state.connectionStatusAt, [networkId]: at },
+        };
+      }
+      return {
+        connectionStatus: { ...state.connectionStatus, [networkId]: connected },
+      };
+    }),
 
   setCurrentNick: (networkId, nick) =>
     set((state) => ({

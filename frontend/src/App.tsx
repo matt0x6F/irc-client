@@ -258,8 +258,9 @@ function App() {
     const unsubscribe = EventsOn('connection-status', (data: any) => {
       const networkId = data?.networkId;
       const connected = data?.connected;
+      const at = data?.timestamp ? Date.parse(data.timestamp) : undefined;
       if (networkId !== undefined && typeof connected === 'boolean') {
-        setConnectionStatus(networkId, connected);
+        setConnectionStatus(networkId, connected, Number.isNaN(at) ? undefined : at);
       }
     });
     return () => unsubscribe();

@@ -124,3 +124,37 @@ describe('network store: user meta', () => {
     expect(useNetworkStore.getState().isAway(1, 'alice')).toBe(false);
   });
 });
+
+describe('network store: connectionStatus ordering', () => {
+  beforeEach(() => {
+    useNetworkStore.setState({ connectionStatus: {}, connectionStatusAt: {} });
+  });
+
+  it('applies a newer event and ignores an older one (out-of-order delivery)', () => {
+    const { setConnectionStatus } = useNetworkStore.getState();
+    setConnectionStatus(1, true, 2000);   // newer: connected
+    setConnectionStatus(1, false, 1000);  // older: must be ignored
+    expect(useNetworkStore.getState().connectionStatus[1]).toBe(true);
+  });
+
+  it('an untimestamped update (poll) always wins', () => {
+    const { setConnectionStatus } = useNetworkStore.getState();
+    setConnectionStatus(1, true, 5000);
+    setConnectionStatus(1, false);        // poll, no timestamp -> authoritative
+    expect(useNetworkStore.getState().connectionStatus[1]).toBe(false);
+  });
+
+  it('is per-network', () => {
+    const { setConnectionStatus } = useNetworkStore.getState();
+    setConnectionStatus(1, true, 2000);
+    setConnectionStatus(2, false, 1000);
+    expect(useNetworkStore.getState().connectionStatus).toEqual({ 1: true, 2: false });
+  });
+
+  it('applies an equal-timestamp update (idempotent, not dropped)', () => {
+    const { setConnectionStatus } = useNetworkStore.getState();
+    setConnectionStatus(1, true, 3000);
+    setConnectionStatus(1, false, 3000);  // equal ts -> applied (>= rule)
+    expect(useNetworkStore.getState().connectionStatus[1]).toBe(false);
+  });
+});
