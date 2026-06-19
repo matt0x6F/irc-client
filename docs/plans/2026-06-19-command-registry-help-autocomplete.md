@@ -87,10 +87,18 @@ Non-`/` input → `client.SendRawCommand(command)` (unchanged).
 - After the command name + space, render a **ghosted inline argument hint** from the spec `Usage` (e.g. `#channel [key]` after `/join `).
 - Existing **nick Tab-completion is preserved** for mid-line / non-command context. (At line start with a leading `/`, Tab drives the command popup; otherwise Tab completes nicks.)
 
-### Help — "Both" (buffer + panel)
-- **`/help <cmd>`**: prints that command's `usage` + `description` as system message(s) into the current buffer (classic, scrollable).
-- **`/help`** (no args): opens a **searchable Help panel** (modal) with sections **Client / Server / CTCP / Plugin**, each row showing usage + description; plugin commands grouped by owning plugin. Also openable via menu/keybind.
+### Help — "Both" (buffer + panel), user-selectable
+- **`/help <cmd>`**: **always** prints that command's `usage` + `description` as system message(s) into the current buffer (classic, scrollable). A single-command lookup never opens a dialog — this keeps the behavior cheap and predictable.
+- **`/help`** (no args): behavior is governed by a user setting (below):
+  - `dialog` (default): opens a **searchable Help panel** (modal) with sections **Client / Server / CTCP / Plugin**, each row showing usage + description; plugin commands grouped by owning plugin.
+  - `buffer`: dumps the full categorized list as system messages into the current buffer.
+  - The panel is also openable via menu/keybind regardless of the setting.
 - Help is **handled frontend-side** (it owns the cached registry) using the same interception pattern as `/me`/`/part` today. The Go registry still carries a `/help` spec (`Category: client`, `Frontend: true`) so it appears in autocomplete and the panel.
+
+### Setting: help display mode
+- Key `help.display_mode`, values `dialog` (default) | `buffer`, persisted in the **SQLite settings table** via the existing `App.GetSetting`/`App.SetSetting` (NOT `localStorage` — WKWebView drops it across restarts).
+- Read (and cached) by the network/ui store alongside the command registry; the no-arg `/help` interceptor branches on it.
+- Exposed as a toggle in the existing settings UI.
 
 ### DM on double-click + `/query` navigation
 - `onDoubleClick` on a nick in [channel-info.tsx:540](../../frontend/src/components/channel-info.tsx) calls a new store action `openQuery(networkId, nick)` → ensure conversation open (backend `SetPrivateMessageOpen`) → `selectPane(networkId, "pm:"+nick)`. **No new events needed:** `SetPrivateMessageOpen` already emits `EventUIPaneFocused` → `ui-pane-event`, and [server-tree.tsx:294](../../frontend/src/components/server-tree.tsx) already refreshes the PM list on it; `selectPane` performs the navigation.
@@ -104,12 +112,12 @@ Phased so each lands independently green:
 
 1. **Go registry + dispatch refactor** (behavior-preserving) + `GetCommands()` binding + regen.
 2. **Frontend autocomplete** (popup + inline hint) consuming the registry.
-3. **Help** (`/help <cmd>` → buffer; `/help` → panel) + **DM double-click** + **`/query` navigation**.
+3. **Help** (`/help <cmd>` → buffer always; `/help` → panel or buffer per `help.display_mode` setting + settings-UI toggle) + **DM double-click** + **`/query` navigation**.
 4. **Plugin command registration** (protocol `Commands`, manager registration + conflict policy, `command.invoke` RPC, producer-side action handler enqueuing onto the existing `actionQueue`, new `plugin-lifecycle` event for command-cache invalidation) + docs.
 
 ### Testing
 - **Go** (`CGO_ENABLED=1 go test -tags fts5 ./... -count=1`): registry lookup, alias resolution, category assignment, dispatch routing (built-in vs passthrough), `MinArgs` usage errors, plugin command registration + conflict rejection (built-in shadow, plugin-vs-plugin), `command.invoke` marshaling, producer-side action enqueue → consumer round-trip, and `plugin-lifecycle` event emission on enable/disable/load/unload.
-- **Frontend** (`cd frontend && npx vitest run`): command parsing + autocomplete filtering, inline hint derivation, help panel rendering + section grouping, `/help <cmd>` buffer output, `openQuery`/double-click navigation, `/msg` does-not-switch.
+- **Frontend** (`cd frontend && npx vitest run`): command parsing + autocomplete filtering, inline hint derivation, help panel rendering + section grouping, `/help <cmd>` buffer output, no-arg `/help` honoring both `help.display_mode` values, `openQuery`/double-click navigation, `/msg` does-not-switch.
 - **e2e screenshots** (per quality bar — visual surfaces only): autocomplete popup, Help panel.
 
 ### Docs
