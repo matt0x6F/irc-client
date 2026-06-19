@@ -18,7 +18,12 @@ jobs:
           go-version: '1.25'
 
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y gcc libgtk-3-dev libwebkit2gtk-4.1-dev
+        # The root `main` package links wails v3's desktop cgo (internal/
+        # operatingsystem + assetserver/webview), whose pkg-config requires
+        # gtk4 + webkitgtk-6.0 even for a pure-logic `go test` and even under
+        # the `server` tag (that cgo isn't tag-guarded in this wails alpha).
+        # Same deps the e2e job installs; needed so `./...` (incl. root) compiles.
+        run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev
 
       - name: Stub embedded frontend assets
         # The root `main` package embeds frontend/dist (//go:embed all:frontend/dist),
