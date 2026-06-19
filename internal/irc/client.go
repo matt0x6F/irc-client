@@ -28,7 +28,7 @@ import (
 // CAP DEL; it is implicitly enabled by CAP LS 302, but we request it explicitly
 // so it surfaces in enabledCaps. The away-notify/account-notify/extended-join/
 // chghost/account-tag cluster keeps the live roster current (see UserMeta).
-var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "multi-prefix", "cap-notify", "away-notify", "account-notify", "extended-join", "chghost", "account-tag", "userhost-in-names", "setname", "invite-notify"}
+var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "multi-prefix", "cap-notify", "away-notify", "account-notify", "extended-join", "chghost", "account-tag", "userhost-in-names", "setname", "invite-notify", "standard-replies", "labeled-response"}
 
 // IRCClient manages IRC connections
 type IRCClient struct {
@@ -53,6 +53,9 @@ type IRCClient struct {
 	namesMu               sync.Mutex            // Mutex for namesInProgress map
 	serverCapabilities    *ServerCapabilities   // Server capabilities from ISUPPORT
 	supportsWHOX          bool                  // Server advertised the WHOX token in ISUPPORT (guarded by mu)
+	supportsMonitor       bool                  // Server advertised the MONITOR token in ISUPPORT (guarded by mu)
+	monitorStatus         map[string]bool       // MONITOR presence: lowercased nick -> online (guarded by monitorMu)
+	monitorMu             sync.Mutex            // Mutex for monitorStatus
 	whoisInProgress       map[string]*WhoisInfo // Track WHOIS requests in progress (key: nickname)
 	whoisMu               sync.Mutex            // Mutex for whoisInProgress map
 	knownBots             map[string]bool       // Nicks recognized as IRCv3 bots this session (key: lowercased nick)
@@ -396,6 +399,7 @@ func NewIRCClient(network *storage.Network, eventBus *events.EventBus, storage *
 		whoisInProgress:     make(map[string]*WhoisInfo),
 		knownBots:           make(map[string]bool),
 		userMeta:            make(map[string]*UserMeta),
+		monitorStatus:       make(map[string]bool),
 		autoJoinOnce:        &sync.Once{},
 		enabledCaps:         make(map[string]bool),
 		banLists:            make(map[string][]BanEntry),
@@ -718,6 +722,60 @@ func (c *IRCClient) handleInvite(e ircmsg.Message) {
 		Timestamp: time.Now(),
 		Source:    events.EventSourceIRC,
 	})
+}
+
+// writeStatusLine writes a line to the network status buffer and refreshes it
+// live. The sync write commits the row before the event fires (avoiding a
+// write/notify race), and channel:nil routes the refresh to the status buffer
+// (see the message-event handler in App.tsx).
+func (c *IRCClient) writeStatusLine(messageType, text string) {
+	if err := c.storage.WriteMessageSync(storage.Message{
+		NetworkID:   c.networkID,
+		ChannelID:   nil,
+		User:        "*",
+		Message:     text,
+		MessageType: messageType,
+		Timestamp:   time.Now(),
+	}); err != nil {
+		logger.Log.Warn().Err(err).Str("type", messageType).Msg("Failed to write status line")
+	}
+	c.eventBus.Emit(events.Event{
+		Type: EventMessageReceived,
+		Data: map[string]interface{}{
+			"network":   c.network.Address,
+			"networkId": c.networkID,
+			"channel":   nil,
+			"user":      "*",
+			"message":   text,
+		},
+		Timestamp: time.Now(),
+		Source:    events.EventSourceIRC,
+	})
+}
+
+// handleStandardReply surfaces an IRCv3 standard reply (FAIL / WARN / NOTE) in
+// the status buffer. The wire form is
+//
+//	<FAIL|WARN|NOTE> <command> <code> [<context>...] :<description>
+//
+// FAIL maps to an error line, WARN to a warning line, NOTE to a status line.
+func (c *IRCClient) handleStandardReply(e ircmsg.Message, messageType string) {
+	if len(e.Params) < 2 {
+		return
+	}
+	command := e.Params[0]
+	description := e.Params[len(e.Params)-1]
+	code := ""
+	if len(e.Params) >= 3 {
+		code = e.Params[1]
+	}
+	var text string
+	if code != "" {
+		text = fmt.Sprintf("%s %s (%s): %s", e.Command, command, code, description)
+	} else {
+		text = fmt.Sprintf("%s %s: %s", e.Command, command, description)
+	}
+	c.writeStatusLine(messageType, text)
 }
 
 // handleSetname processes the setname capability: ":nick SETNAME :new real name"
@@ -1482,6 +1540,13 @@ func (c *IRCClient) setupHandlers() {
 	c.conn.AddCallback("SETNAME", c.handleSetname)
 	c.conn.AddCallback("INVITE", c.handleInvite)
 	c.conn.AddCallback("354", c.handleWhoxReply) // RPL_WHOSPCRPL (WHOX)
+	// MONITOR presence: 730 RPL_MONONLINE, 731 RPL_MONOFFLINE.
+	c.conn.AddCallback("730", func(e ircmsg.Message) { c.handleMonitorPresence(e, true) })
+	c.conn.AddCallback("731", func(e ircmsg.Message) { c.handleMonitorPresence(e, false) })
+	// IRCv3 standard-replies: FAIL (error), WARN (warning), NOTE (status).
+	c.conn.AddCallback("FAIL", func(e ircmsg.Message) { c.handleStandardReply(e, "error") })
+	c.conn.AddCallback("WARN", func(e ircmsg.Message) { c.handleStandardReply(e, "warning") })
+	c.conn.AddCallback("NOTE", func(e ircmsg.Message) { c.handleStandardReply(e, "status") })
 
 	// Channel topic (RPL_TOPIC = 332) - received when topic is retrieved
 	c.conn.AddCallback("332", func(e ircmsg.Message) {
@@ -2242,6 +2307,14 @@ func (c *IRCClient) setupHandlers() {
 				c.mu.Unlock()
 			}
 
+			// MONITOR=<limit> announces presence-monitoring support. We only need
+			// to know it's present; the limit is advisory.
+			if param == "MONITOR" || strings.HasPrefix(param, "MONITOR=") {
+				c.mu.Lock()
+				c.supportsMonitor = true
+				c.mu.Unlock()
+			}
+
 			// Parse CHANMODES parameter: CHANMODES=b,k,l,imnpst
 			if strings.HasPrefix(param, "CHANMODES=") {
 				chanModesValue := param[10:] // Skip "CHANMODES="
@@ -2818,28 +2891,73 @@ func (c *IRCClient) whoxSupported() bool {
 // (account / host / away / realname) on join, instead of waiting for live churn
 // to fill it in. The field set "%tcuhnfar" yields, in WHOX's canonical order:
 // token, channel, user, host, nick, flags, account, realname.
+//
+// When labeled-response is negotiated, the request is sent via the library's
+// SendWithLabel: the server's reply is collected into a batch correlated by an
+// IRCv3 @label and delivered to handleWhoxBatch — no token matching needed. The
+// token is still included so the reply layout is identical to the fallback path.
+// Without labeled-response, a plain WHO is sent and the 354 rows are correlated
+// by whoxRosterToken in handleWhoxReply.
 func (c *IRCClient) requestWHOX(channel string) error {
 	if channel == "" {
 		return fmt.Errorf("whox channel required")
 	}
-	return c.conn.SendRaw(fmt.Sprintf("WHO %s %%tcuhnfar,%s", channel, whoxRosterToken))
+	fields := fmt.Sprintf("%%tcuhnfar,%s", whoxRosterToken)
+	if c.capEnabled("labeled-response") {
+		if err := c.conn.SendWithLabel(c.handleWhoxBatch, nil, "WHO", channel, fields); err == nil {
+			return nil
+		}
+		// Fall through to the unlabeled path if the label send was refused.
+	}
+	return c.conn.SendRaw(fmt.Sprintf("WHO %s %s", channel, fields))
 }
 
-// handleWhoxReply folds a RPL_WHOSPCRPL (354) row from our roster-seeding WHO
-// into the live roster. Replies whose token doesn't match ours (a user-initiated
-// WHO) are ignored. Params match the "%tcuhnfar" request:
-//
-//	[ourNick, token, channel, user, host, nick, flags, account, realname]
+// handleWhoxBatch receives the labeled-response batch for a roster-seeding WHO
+// (see requestWHOX) and folds each 354 row into the roster. b is nil if the
+// server failed to send a proper labeled response.
+func (c *IRCClient) handleWhoxBatch(b *ircevent.Batch) {
+	if b == nil {
+		return
+	}
+	// A multi-row reply nests the 354s in Items; a single-row reply may arrive as
+	// the batch Message itself. Handle both.
+	if b.Command == "354" {
+		c.applyWhoxRow(b.Params)
+	}
+	for _, item := range b.Items {
+		if item == nil {
+			continue
+		}
+		if item.Command == "354" {
+			c.applyWhoxRow(item.Params)
+		}
+	}
+}
+
+// handleWhoxReply folds a RPL_WHOSPCRPL (354) row from an unlabeled roster WHO
+// into the roster. Replies whose token doesn't match ours (a user-initiated WHO)
+// are ignored. Used only when labeled-response is unavailable.
 func (c *IRCClient) handleWhoxReply(e ircmsg.Message) {
 	if len(e.Params) < 9 || e.Params[1] != whoxRosterToken {
 		return
 	}
-	user := e.Params[3]
-	host := e.Params[4]
-	nick := e.Params[5]
-	flags := e.Params[6]
-	account := e.Params[7]
-	realname := e.Params[8]
+	c.applyWhoxRow(e.Params)
+}
+
+// applyWhoxRow parses one 354 row and folds it into the live roster. Params match
+// the "%tcuhnfar" request:
+//
+//	[ourNick, token, channel, user, host, nick, flags, account, realname]
+func (c *IRCClient) applyWhoxRow(params []string) {
+	if len(params) < 9 {
+		return
+	}
+	user := params[3]
+	host := params[4]
+	nick := params[5]
+	flags := params[6]
+	account := params[7]
+	realname := params[8]
 
 	// WHOX uses "0" (ircu) or "*" for "no account".
 	if account == "0" || account == "*" {
@@ -2862,6 +2980,117 @@ func (c *IRCClient) handleWhoxReply(e ircmsg.Message) {
 			m.Realname = realname
 		}
 	})
+}
+
+// monitorSupported reports whether the server advertised MONITOR in ISUPPORT.
+func (c *IRCClient) monitorSupported() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.supportsMonitor
+}
+
+// MonitorAdd asks the server to track a nick's presence (MONITOR + nick). The
+// online/offline result arrives asynchronously via 730/731.
+func (c *IRCClient) MonitorAdd(nick string) error {
+	if nick == "" {
+		return fmt.Errorf("monitor nick required")
+	}
+	return c.conn.SendRaw("MONITOR + " + nick)
+}
+
+// MonitorRemove stops tracking a nick (MONITOR - nick) and drops its cached state.
+func (c *IRCClient) MonitorRemove(nick string) error {
+	if nick == "" {
+		return fmt.Errorf("monitor nick required")
+	}
+	c.monitorMu.Lock()
+	delete(c.monitorStatus, strings.ToLower(nick))
+	c.monitorMu.Unlock()
+	return c.conn.SendRaw("MONITOR - " + nick)
+}
+
+// sendInitialMonitor re-arms the server-side MONITOR list from the durable
+// per-network buddy list on (re)connect. No-op when the server lacks MONITOR or
+// the list is empty. Nicks are sent comma-separated in chunks to respect line
+// length.
+func (c *IRCClient) sendInitialMonitor() {
+	if !c.monitorSupported() {
+		return
+	}
+	nicks, err := c.storage.GetMonitoredNicks(c.networkID)
+	if err != nil {
+		logger.Log.Warn().Err(err).Msg("Failed to load monitored nicks")
+		return
+	}
+	const chunkSize = 20
+	for i := 0; i < len(nicks); i += chunkSize {
+		end := i + chunkSize
+		if end > len(nicks) {
+			end = len(nicks)
+		}
+		if err := c.conn.SendRaw("MONITOR + " + strings.Join(nicks[i:end], ",")); err != nil {
+			logger.Log.Warn().Err(err).Msg("Failed to send initial MONITOR list")
+			return
+		}
+	}
+}
+
+// setMonitorPresence records a monitored nick's online state and emits
+// EventMonitorChanged on a real change (idempotent, like applyUserMeta).
+func (c *IRCClient) setMonitorPresence(nick string, online bool) {
+	if nick == "" {
+		return
+	}
+	key := strings.ToLower(nick)
+	c.monitorMu.Lock()
+	prev, existed := c.monitorStatus[key]
+	if existed && prev == online {
+		c.monitorMu.Unlock()
+		return
+	}
+	c.monitorStatus[key] = online
+	c.monitorMu.Unlock()
+
+	c.eventBus.Emit(events.Event{
+		Type: EventMonitorChanged,
+		Data: map[string]interface{}{
+			"network":   c.network.Address,
+			"networkId": c.networkID,
+			"nickname":  nick,
+			"online":    online,
+		},
+		Timestamp: time.Now(),
+		Source:    events.EventSourceIRC,
+	})
+}
+
+// handleMonitorPresence parses a 730 (RPL_MONONLINE) or 731 (RPL_MONOFFLINE)
+// reply, whose second parameter is a comma-separated target list ("nick!user@host"
+// or bare nick), and updates each nick's presence.
+func (c *IRCClient) handleMonitorPresence(e ircmsg.Message, online bool) {
+	if len(e.Params) < 2 {
+		return
+	}
+	for _, target := range strings.Split(e.Params[1], ",") {
+		target = strings.TrimSpace(target)
+		if target == "" {
+			continue
+		}
+		nick, _, _ := strings.Cut(target, "!") // strip any !user@host
+		c.setMonitorPresence(nick, online)
+	}
+}
+
+// MonitorPresence returns a snapshot of known monitored-nick presence
+// (lowercased nick -> online) for hydrating the frontend on demand.
+func (c *IRCClient) MonitorPresence() map[string]bool {
+	c.monitorMu.Lock()
+	defer c.monitorMu.Unlock()
+	out := make(map[string]bool, len(c.monitorStatus))
+	for k, v := range c.monitorStatus {
+		out[k] = v
+	}
+	return out
 }
 
 // RequestChatHistoryBefore asks the server for up to `limit` messages older than
@@ -3311,6 +3540,10 @@ func (c *IRCClient) doAutoJoin() {
 	c.mu.RLock()
 	reconnect := c.reconnecting
 	c.mu.RUnlock()
+
+	// Re-arm the server-side MONITOR list from the durable buddy list now that
+	// registration is complete (same trigger as auto-join).
+	c.sendInitialMonitor()
 
 	channels, err := c.channelsToJoin(reconnect)
 	if err != nil {

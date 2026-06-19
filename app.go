@@ -130,6 +130,7 @@ func NewApp() (*App, error) {
 	eventBus.Subscribe(irc.EventChannelUserMode, app)
 	eventBus.Subscribe(irc.EventChannelBanList, app)
 	eventBus.Subscribe(irc.EventSTSPolicy, app)
+	eventBus.Subscribe(irc.EventMonitorChanged, app)
 
 	go app.processPluginActions()
 
@@ -437,6 +438,76 @@ func (a *App) GetNetworkUserMeta(networkID int64) (map[string]irc.UserMeta, erro
 		return map[string]irc.UserMeta{}, nil
 	}
 	return client.AllUserMeta(), nil
+}
+
+// MonitorEntry is one nick on a network's MONITOR buddy list with its presence.
+type MonitorEntry struct {
+	Nick   string `json:"nick"`
+	Online bool   `json:"online"`
+}
+
+// GetMonitorList returns the network's durable MONITOR buddy list joined with each
+// nick's current online state (unknown until the first 730/731, defaulting offline).
+func (a *App) GetMonitorList(networkID int64) ([]MonitorEntry, error) {
+	nicks, err := a.storage.GetMonitoredNicks(networkID)
+	if err != nil {
+		return nil, err
+	}
+	presence := map[string]bool{}
+	a.mu.RLock()
+	client, exists := a.ircClients[networkID]
+	a.mu.RUnlock()
+	if exists {
+		presence = client.MonitorPresence()
+	}
+	out := make([]MonitorEntry, len(nicks))
+	for i, n := range nicks {
+		out[i] = MonitorEntry{Nick: n, Online: presence[strings.ToLower(n)]}
+	}
+	return out, nil
+}
+
+// AddMonitor adds a nick to the network's durable buddy list and, if connected,
+// asks the server to track it (MONITOR +). It persists even when offline, so the
+// nick is (re-)sent on the next connect.
+func (a *App) AddMonitor(networkID int64, nick string) error {
+	nick = strings.TrimSpace(nick)
+	if nick == "" {
+		return fmt.Errorf("nick required")
+	}
+	if err := a.storage.AddMonitoredNick(networkID, nick); err != nil {
+		return err
+	}
+	a.mu.RLock()
+	client, exists := a.ircClients[networkID]
+	a.mu.RUnlock()
+	if exists {
+		if err := client.MonitorAdd(nick); err != nil {
+			// Non-fatal: it's persisted and re-sent on connect.
+			logger.Log.Debug().Err(err).Str("nick", nick).Msg("MONITOR + send failed")
+		}
+	}
+	return nil
+}
+
+// RemoveMonitor removes a nick from the buddy list and stops tracking it.
+func (a *App) RemoveMonitor(networkID int64, nick string) error {
+	nick = strings.TrimSpace(nick)
+	if nick == "" {
+		return fmt.Errorf("nick required")
+	}
+	if err := a.storage.RemoveMonitoredNick(networkID, nick); err != nil {
+		return err
+	}
+	a.mu.RLock()
+	client, exists := a.ircClients[networkID]
+	a.mu.RUnlock()
+	if exists {
+		if err := client.MonitorRemove(nick); err != nil {
+			logger.Log.Debug().Err(err).Str("nick", nick).Msg("MONITOR - send failed")
+		}
+	}
+	return nil
 }
 
 // GetJoinedChannels retrieves channels where the current user is still a member

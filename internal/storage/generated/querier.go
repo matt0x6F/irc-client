@@ -11,6 +11,7 @@ import (
 
 type Querier interface {
 	AddChannelUser(ctx context.Context, arg AddChannelUserParams) error
+	AddMonitoredNick(ctx context.Context, arg AddMonitoredNickParams) error
 	ClearChannelUsers(ctx context.Context, channelID int64) error
 	ClearNetworkChannelUsers(ctx context.Context, networkID int64) error
 	CreateChannel(ctx context.Context, arg CreateChannelParams) (Channel, error)
@@ -43,6 +44,7 @@ type Querier interface {
 	GetMessagesBeforeWithoutChannel(ctx context.Context, arg GetMessagesBeforeWithoutChannelParams) ([]Message, error)
 	GetMessagesWithChannel(ctx context.Context, arg GetMessagesWithChannelParams) ([]Message, error)
 	GetMessagesWithoutChannel(ctx context.Context, arg GetMessagesWithoutChannelParams) ([]Message, error)
+	GetMonitoredNicks(ctx context.Context, networkID int64) ([]MonitoredNick, error)
 	GetNetwork(ctx context.Context, id int64) (Network, error)
 	GetNetworks(ctx context.Context) ([]Network, error)
 	GetOpenChannels(ctx context.Context, arg GetOpenChannelsParams) ([]Channel, error)
@@ -60,6 +62,7 @@ type Querier interface {
 	GetSetting(ctx context.Context, key string) (string, error)
 	PinMessage(ctx context.Context, arg PinMessageParams) error
 	RemoveChannelUser(ctx context.Context, arg RemoveChannelUserParams) error
+	RemoveMonitoredNick(ctx context.Context, arg RemoveMonitoredNickParams) error
 	SetPluginConfig(ctx context.Context, arg SetPluginConfigParams) error
 	SetPluginConfigSchema(ctx context.Context, arg SetPluginConfigSchemaParams) error
 	SetPluginEnabled(ctx context.Context, arg SetPluginEnabledParams) error
