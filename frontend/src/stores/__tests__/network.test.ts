@@ -185,6 +185,7 @@ describe('network store: refreshAllConnectionStatus', () => {
     );
     await useNetworkStore.getState().refreshAllConnectionStatus();
     expect(useNetworkStore.getState().connectionStatus).toEqual({ 1: true, 2: false });
+    expect(useNetworkStore.getState().connectionStatusAt).toEqual({});
   });
 
   it('treats a failing GetConnectionStatus as disconnected', async () => {
@@ -193,5 +194,6 @@ describe('network store: refreshAllConnectionStatus', () => {
     );
     await useNetworkStore.getState().refreshAllConnectionStatus();
     expect(useNetworkStore.getState().connectionStatus).toEqual({ 1: false, 2: true });
+    expect(useNetworkStore.getState().connectionStatusAt).toEqual({});
   });
 });

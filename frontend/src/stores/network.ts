@@ -526,6 +526,9 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
   },
 
   refreshAllConnectionStatus: async () => {
+    // Authoritative poll over every network (O(N) IPC per tick — fine for realistic
+    // network counts). Writes connectionStatus directly and intentionally does NOT
+    // update connectionStatusAt, so it never raises the out-of-order-event watermark.
     const { networks } = get();
     const results = await Promise.all(
       networks.map(async (n) => {
