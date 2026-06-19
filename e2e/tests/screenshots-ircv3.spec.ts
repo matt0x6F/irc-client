@@ -190,4 +190,65 @@ test.describe('IRCv3 documentation screenshots', () => {
       peer.close();
     }
   });
+
+  test('invite-notify shows a clickable invite in the status buffer', async ({ page, runtime }) => {
+    // A peer in a channel invites the UI user; with invite-notify the INVITE is
+    // surfaced in the status buffer as a clickable join line.
+    const peer = new IrcPeer('localhost', runtime.ergoPort, 'invbot');
+    await peer.connect();
+    peer.join('#cc-invite');
+    await peer.waitForJoin('#cc-invite');
+    try {
+      await page.goto(runtime.bridgeUrl);
+      await addNetworkAndConnect(page, runtime);
+      await selectNetwork(page); // status pane, where the invite lands
+
+      peer.sendRaw('INVITE e2euser #cc-invite');
+
+      await expect(
+        page.getByTestId('message-list').getByText(/invited you to #cc-invite/i),
+      ).toBeVisible({ timeout: 15_000 });
+
+      await shoot(page.getByTestId('message-list'), 'invite-notify.png');
+    } finally {
+      peer.close();
+    }
+  });
+
+  // Note: standard-replies (FAIL/WARN/NOTE) has no screenshot here — triggering a
+  // deterministic server standard-reply through the UI isn't reliable, and the
+  // rendering reuses the existing error/warning/status message styles (documented
+  // in prose in docs/ircv3-support.md). Unit coverage is in
+  // internal/irc/standard_replies_test.go.
+
+  test('monitor buddy list shows online presence', async ({ page, runtime }) => {
+    // A peer stays connected so it reads as online once monitored.
+    const peer = new IrcPeer('localhost', runtime.ergoPort, 'buddybot');
+    await peer.connect();
+    try {
+      await page.goto(runtime.bridgeUrl);
+      await addNetworkAndConnect(page, runtime);
+      await selectNetwork(page);
+      await joinChannel(page, '#cc-monitor'); // a channel so the right sidebar shows
+
+      // Switch the right sidebar to the Buddies tab and add the peer.
+      await page.getByTestId('right-sidebar').getByText('Buddies', { exact: true }).click();
+      await page.getByPlaceholder('Add nick…').fill('buddybot');
+      await page.getByTestId('monitor-list').getByRole('button', { name: 'Add' }).click();
+
+      // The buddy appears in the pane and is flagged online (730 RPL_MONONLINE).
+      await expect(
+        page.getByTestId('monitor-list').getByText('buddybot', { exact: true }),
+      ).toBeVisible({ timeout: 15_000 });
+      await page
+        .getByTestId('monitor-list')
+        .getByTitle('Online')
+        .first()
+        .waitFor({ state: 'visible', timeout: 10_000 });
+
+      await shoot(page.getByTestId('monitor-list'), 'monitor.png');
+    } finally {
+      peer.close();
+    }
+  });
 });

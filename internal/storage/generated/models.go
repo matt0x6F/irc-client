@@ -49,6 +49,13 @@ type MessagesFt struct {
 	User    string `json:"user"`
 }
 
+type MonitoredNick struct {
+	ID        int64     `json:"id"`
+	NetworkID int64     `json:"network_id"`
+	Nickname  string    `json:"nickname"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type Network struct {
 	ID               int64          `json:"id"`
 	Name             string         `json:"name"`

@@ -1320,6 +1320,42 @@ func (s *Storage) DeleteSTSPolicy(hostname string) error {
 	return nil
 }
 
+// AddMonitoredNick adds a nick to a network's durable MONITOR buddy list
+// (idempotent — re-adding an existing nick is a no-op).
+func (s *Storage) AddMonitoredNick(networkID int64, nickname string) error {
+	if err := s.queries.AddMonitoredNick(context.Background(), db.AddMonitoredNickParams{
+		NetworkID: networkID,
+		Nickname:  nickname,
+	}); err != nil {
+		return fmt.Errorf("failed to add monitored nick %q: %w", nickname, err)
+	}
+	return nil
+}
+
+// RemoveMonitoredNick removes a nick from a network's MONITOR buddy list.
+func (s *Storage) RemoveMonitoredNick(networkID int64, nickname string) error {
+	if err := s.queries.RemoveMonitoredNick(context.Background(), db.RemoveMonitoredNickParams{
+		NetworkID: networkID,
+		Nickname:  nickname,
+	}); err != nil {
+		return fmt.Errorf("failed to remove monitored nick %q: %w", nickname, err)
+	}
+	return nil
+}
+
+// GetMonitoredNicks returns the nicks on a network's MONITOR buddy list, sorted.
+func (s *Storage) GetMonitoredNicks(networkID int64) ([]string, error) {
+	rows, err := s.queries.GetMonitoredNicks(context.Background(), networkID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get monitored nicks: %w", err)
+	}
+	nicks := make([]string, len(rows))
+	for i, r := range rows {
+		nicks[i] = r.Nickname
+	}
+	return nicks, nil
+}
+
 // GetAllPluginConfigs retrieves all plugin configurations
 func (s *Storage) GetAllPluginConfigs() (map[string]*PluginConfig, error) {
 	dbConfigs, err := s.queries.GetAllPluginConfigs(context.Background())

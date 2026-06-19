@@ -43,6 +43,7 @@ function App() {
   const setCurrentNick = useNetworkStore((s) => s.setCurrentNick);
   const loadNetworkBots = useNetworkStore((s) => s.loadNetworkBots);
   const addBot = useNetworkStore((s) => s.addBot);
+  const setMonitorOnline = useNetworkStore((s) => s.setMonitorOnline);
   const loadNetworkUserMeta = useNetworkStore((s) => s.loadNetworkUserMeta);
   const setUserMeta = useNetworkStore((s) => s.setUserMeta);
   const markActivity = useNetworkStore((s) => s.markActivity);
@@ -286,6 +287,20 @@ function App() {
       const nick = data?.data?.nickname;
       if (typeof networkId === 'number' && typeof nick === 'string' && nick) {
         addBot(networkId, nick);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // MONITOR presence events (IRCv3): a monitored buddy came online/offline.
+  // Update the per-network buddy list so the Buddies pane reflects it live.
+  useEffect(() => {
+    const unsubscribe = EventsOn('monitor-event', (data: any) => {
+      const d = data?.data;
+      const networkId = d?.networkId;
+      const nick = d?.nickname;
+      if (typeof networkId === 'number' && typeof nick === 'string' && nick) {
+        setMonitorOnline(networkId, nick, !!d.online);
       }
     });
     return () => unsubscribe();
