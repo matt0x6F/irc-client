@@ -133,6 +133,35 @@ func TestIsConnectedIsPureGetter(t *testing.T) {
 	})
 }
 
+// isStale must NEVER report a connection dead while the read loop is delivering
+// traffic (the #13 regression). It only reports stale when connected AND no
+// inbound message has arrived within the threshold.
+func TestIsStale(t *testing.T) {
+	now := time.Date(2026, 6, 18, 12, 0, 0, 0, time.UTC)
+	threshold := 90 * time.Second
+
+	cases := []struct {
+		name      string
+		connected bool
+		lastMsg   time.Time
+		want      bool
+	}{
+		{"fresh traffic", true, now.Add(-1 * time.Second), false},
+		{"idle but within threshold", true, now.Add(-30 * time.Second), false},
+		{"silent past threshold", true, now.Add(-120 * time.Second), true},
+		{"not connected is never stale", false, now.Add(-999 * time.Second), false},
+		{"zero lastMessageTime while connected is not stale", true, time.Time{}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &IRCClient{connected: tc.connected, lastMessageTime: tc.lastMsg}
+			if got := c.isStale(now, threshold); got != tc.want {
+				t.Fatalf("isStale=%v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // The library requires KeepAlive >= Timeout; the watchdog must only fire after
 // a healthy idle link would have already PINGed, so StaleThreshold > KeepAlive.
 func TestLivenessConstantOrdering(t *testing.T) {

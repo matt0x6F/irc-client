@@ -211,6 +211,22 @@ func (c *IRCClient) IsConnectedDirect() bool {
 	return c.IsConnected()
 }
 
+// isStale reports whether the connection is alive in name (connected==true) but
+// has received NO inbound traffic for at least threshold. Because lastMessageTime
+// is bumped by the read loop on every inbound message (including PING), a true
+// result means the read loop has genuinely gone quiet — this is what makes the
+// watchdog safe and is the inverse of the #13 race. A zero lastMessageTime
+// (never received anything yet) is treated as not-stale to avoid a spurious
+// teardown immediately after connect, before the first message.
+func (c *IRCClient) isStale(now time.Time, threshold time.Duration) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if !c.connected || c.lastMessageTime.IsZero() {
+		return false
+	}
+	return now.Sub(c.lastMessageTime) >= threshold
+}
+
 // preferredNick is the nick the user configured and wants to hold. It matches
 // the library's PreferredNick (conn.Nick is initialized from it) and is the one
 // the library re-requests every keepalive while we're on an alternative.
