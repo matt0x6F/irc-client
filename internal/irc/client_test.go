@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/matt0x6f/irc-client/internal/constants"
 	"github.com/matt0x6f/irc-client/internal/storage"
 )
 
@@ -130,4 +131,15 @@ func TestIsConnectedIsPureGetter(t *testing.T) {
 			t.Fatal("IsConnectedDirect() must be identical to IsConnected()")
 		}
 	})
+}
+
+// The library requires KeepAlive >= Timeout; the watchdog must only fire after
+// a healthy idle link would have already PINGed, so StaleThreshold > KeepAlive.
+func TestLivenessConstantOrdering(t *testing.T) {
+	if constants.ConnectionKeepAlive < constants.ConnectionReadTimeout {
+		t.Fatalf("KeepAlive (%v) must be >= Timeout (%v)", constants.ConnectionKeepAlive, constants.ConnectionReadTimeout)
+	}
+	if constants.ConnectionStaleThreshold <= constants.ConnectionKeepAlive {
+		t.Fatalf("StaleThreshold (%v) must be > KeepAlive (%v)", constants.ConnectionStaleThreshold, constants.ConnectionKeepAlive)
+	}
 }

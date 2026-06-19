@@ -437,8 +437,8 @@ func NewIRCClient(network *storage.Network, eventBus *events.EventBus, storage *
 		// the DisconnectCallback. This is the single source of truth for whether
 		// the connection is alive, including across OS sleep/wake. Constraint:
 		// KeepAlive must be >= Timeout.
-		Timeout:   1 * time.Minute,
-		KeepAlive: 3 * time.Minute,
+		Timeout:   constants.ConnectionReadTimeout,
+		KeepAlive: constants.ConnectionKeepAlive,
 	}
 
 	// Auto-join runs once per connection through triggerAutoJoin; doAutoJoin is the
