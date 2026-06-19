@@ -906,6 +906,23 @@ func (a *App) GetConnectionStatus(networkID int64) (bool, error) {
 	return client.IsConnected(), nil
 }
 
+// probeAllConnections forces an immediate liveness check on every active client.
+// Called on system wake, where sockets are commonly dead but undetected. Any
+// teardown flows through the normal DisconnectCallback -> auto-reconnect path, so
+// this only nudges; it does not reconnect directly.
+func (a *App) probeAllConnections() {
+	a.mu.RLock()
+	clients := make([]*irc.IRCClient, 0, len(a.ircClients))
+	for _, c := range a.ircClients {
+		clients = append(clients, c)
+	}
+	a.mu.RUnlock()
+
+	for _, c := range clients {
+		c.CheckLivenessNow()
+	}
+}
+
 // GetCurrentNick returns the nick the server currently knows us by on a network,
 // which can differ from the configured nick while a nick collision is being
 // resolved. Returns an empty string when the network has no active client.

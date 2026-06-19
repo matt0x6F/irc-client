@@ -17,6 +17,7 @@ import (
 	"github.com/matt0x6f/irc-client/internal/security"
 	"github.com/matt0x6f/irc-client/internal/storage"
 	"github.com/wailsapp/wails/v3/pkg/application"
+	wailsevents "github.com/wailsapp/wails/v3/pkg/events"
 )
 
 // App struct
@@ -162,6 +163,15 @@ func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) 
 	})
 	a.app.Event.On("window-blurred", func(_ *application.CustomEvent) {
 		a.notifier.SetFocused(false)
+	})
+
+	// On system wake, sockets are usually dead but undetected; probe immediately
+	// so the UI reflects reality without waiting for the watchdog/library ping.
+	// This callback runs off the main thread (Wails app-event semantics); that is
+	// fine here — probeAllConnections touches no AppKit/UI APIs.
+	a.app.Event.OnApplicationEvent(wailsevents.Common.SystemDidWake, func(*application.ApplicationEvent) {
+		logger.Log.Info().Msg("System woke; probing all IRC connections for liveness")
+		a.probeAllConnections()
 	})
 
 	// Load plugins in background so it doesn't block auto-connect

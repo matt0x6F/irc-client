@@ -271,6 +271,23 @@ func (c *IRCClient) stopWatchdog() {
 	c.mu.Unlock()
 }
 
+// CheckLivenessNow forces an immediate staleness evaluation (used by the
+// system-wake hook). If stale, it tears the connection down via the normal path
+// (conn.Quit() -> DisconnectCallback -> auto-reconnect). Returns true if a
+// teardown was triggered.
+func (c *IRCClient) CheckLivenessNow() bool {
+	if c.isStale(time.Now(), constants.ConnectionStaleThreshold) {
+		c.mu.RLock()
+		networkID := c.networkID
+		c.mu.RUnlock()
+		logger.Log.Warn().Int64("network_id", networkID).
+			Msg("Wake probe: connection silent past threshold, forcing teardown")
+		c.conn.Quit()
+		return true
+	}
+	return false
+}
+
 // preferredNick is the nick the user configured and wants to hold. It matches
 // the library's PreferredNick (conn.Nick is initialized from it) and is the one
 // the library re-requests every keepalive while we're on an alternative.
