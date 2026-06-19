@@ -26,6 +26,18 @@ import * as storage$0 from "./internal/storage/models.js";
 import * as $models from "./models.js";
 
 /**
+ * AddMonitor adds a nick to the network's durable buddy list and, if connected,
+ * asks the server to track it (MONITOR +). It persists even when offline, so the
+ * nick is (re-)sent on the next connect.
+ * @param {number} networkID
+ * @param {string} nick
+ * @returns {$CancellablePromise<void>}
+ */
+export function AddMonitor(networkID, nick) {
+    return $Call.ByID(3992658754, networkID, nick);
+}
+
+/**
  * CheckForUpdates is the Wails-bound manual update trigger, called from the
  * "Check for Updates…" menu item and the About-pane button. On a dev build the
  * updater was never configured (see isReleaseVersion in main.go); rather than
@@ -310,6 +322,18 @@ export function GetMessagesBeforeTime(networkID, channelID, pmTarget, beforeISO,
 }
 
 /**
+ * GetMonitorList returns the network's durable MONITOR buddy list joined with each
+ * nick's current online state (unknown until the first 730/731, defaulting offline).
+ * @param {number} networkID
+ * @returns {$CancellablePromise<$models.MonitorEntry[]>}
+ */
+export function GetMonitorList(networkID) {
+    return $Call.ByID(3280037895, networkID).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType12($result);
+    }));
+}
+
+/**
  * GetNetworkBots returns the lowercased nicks recognized as IRCv3 bots for a
  * network this session. The frontend calls this to hydrate its bot set when a
  * window opens or reloads; live additions arrive via the "bot-event" event.
@@ -319,7 +343,7 @@ export function GetMessagesBeforeTime(networkID, channelID, pmTarget, beforeISO,
  */
 export function GetNetworkBots(networkID) {
     return $Call.ByID(1037950925, networkID).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType11($result);
+        return $$createType13($result);
     }));
 }
 
@@ -334,7 +358,7 @@ export function GetNetworkBots(networkID) {
  */
 export function GetNetworkUserMeta(networkID) {
     return $Call.ByID(1426666641, networkID).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType13($result);
+        return $$createType15($result);
     }));
 }
 
@@ -344,7 +368,7 @@ export function GetNetworkUserMeta(networkID) {
  */
 export function GetNetworks() {
     return $Call.ByID(366685148).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType15($result);
+        return $$createType17($result);
     }));
 }
 
@@ -366,7 +390,7 @@ export function GetNicknameColor(networkID, nickname) {
  */
 export function GetNicknameColorsBatch(networkID, nicknames) {
     return $Call.ByID(4229567593, networkID, nicknames).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType16($result);
+        return $$createType18($result);
     }));
 }
 
@@ -389,7 +413,7 @@ export function GetOpenChannels(networkID) {
  */
 export function GetPinnedMessages(networkID, channelID) {
     return $Call.ByID(380870585, networkID, channelID).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType18($result);
+        return $$createType20($result);
     }));
 }
 
@@ -400,7 +424,7 @@ export function GetPinnedMessages(networkID, channelID) {
  */
 export function GetPluginConfig(pluginName) {
     return $Call.ByID(1436487730, pluginName).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType19($result);
+        return $$createType21($result);
     }));
 }
 
@@ -411,7 +435,7 @@ export function GetPluginConfig(pluginName) {
  */
 export function GetPluginConfigSchema(pluginName) {
     return $Call.ByID(249168125, pluginName).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType19($result);
+        return $$createType21($result);
     }));
 }
 
@@ -423,7 +447,7 @@ export function GetPluginConfigSchema(pluginName) {
  */
 export function GetPrivateMessageConversations(networkID, openOnly) {
     return $Call.ByID(839521643, networkID, openOnly).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType11($result);
+        return $$createType13($result);
     }));
 }
 
@@ -447,7 +471,7 @@ export function GetPrivateMessages(networkID, targetUser, limit) {
  */
 export function GetSTSPolicies() {
     return $Call.ByID(3662233731).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType21($result);
+        return $$createType23($result);
     }));
 }
 
@@ -458,7 +482,7 @@ export function GetSTSPolicies() {
  */
 export function GetServerCapabilities(networkID) {
     return $Call.ByID(1639110850, networkID).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType23($result);
+        return $$createType25($result);
     }));
 }
 
@@ -469,7 +493,7 @@ export function GetServerCapabilities(networkID) {
  */
 export function GetServers(networkID) {
     return $Call.ByID(4270553301, networkID).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType25($result);
+        return $$createType27($result);
     }));
 }
 
@@ -510,7 +534,7 @@ export function LeaveChannel(networkID, channelName) {
  */
 export function ListPlugins() {
     return $Call.ByID(3314730135).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType27($result);
+        return $$createType29($result);
     }));
 }
 
@@ -584,6 +608,16 @@ export function ReloadPlugin(name) {
 }
 
 /**
+ * RemoveMonitor removes a nick from the buddy list and stops tracking it.
+ * @param {number} networkID
+ * @param {string} nick
+ * @returns {$CancellablePromise<void>}
+ */
+export function RemoveMonitor(networkID, nick) {
+    return $Call.ByID(2238775289, networkID, nick);
+}
+
+/**
  * RequestChannelBans asks the server for a channel's ban list. The result is delivered
  * asynchronously to the frontend via the "channel.banlist" event.
  * @param {number} networkID
@@ -649,7 +683,7 @@ export function SaveNetwork(config) {
  */
 export function SearchMessages(query, networkID, limit) {
     return $Call.ByID(3203246577, query, networkID, limit).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType29($result);
+        return $$createType31($result);
     }));
 }
 
@@ -786,22 +820,24 @@ const $$createType7 = $Create.Nullable($$createType6);
 const $$createType8 = $models.LogConfig.createFrom;
 const $$createType9 = storage$0.Message.createFrom;
 const $$createType10 = $Create.Array($$createType9);
-const $$createType11 = $Create.Array($Create.Any);
-const $$createType12 = irc$0.UserMeta.createFrom;
-const $$createType13 = $Create.Map($Create.Any, $$createType12);
-const $$createType14 = storage$0.Network.createFrom;
-const $$createType15 = $Create.Array($$createType14);
-const $$createType16 = $Create.Map($Create.Any, $Create.Any);
-const $$createType17 = storage$0.PinnedMessage.createFrom;
-const $$createType18 = $Create.Array($$createType17);
-const $$createType19 = $Create.Map($Create.Any, $Create.Any);
-const $$createType20 = storage$0.STSPolicy.createFrom;
-const $$createType21 = $Create.Array($$createType20);
-const $$createType22 = $models.ServerCapabilitiesInfo.createFrom;
-const $$createType23 = $Create.Nullable($$createType22);
-const $$createType24 = storage$0.Server.createFrom;
-const $$createType25 = $Create.Array($$createType24);
-const $$createType26 = $models.PluginInfo.createFrom;
+const $$createType11 = $models.MonitorEntry.createFrom;
+const $$createType12 = $Create.Array($$createType11);
+const $$createType13 = $Create.Array($Create.Any);
+const $$createType14 = irc$0.UserMeta.createFrom;
+const $$createType15 = $Create.Map($Create.Any, $$createType14);
+const $$createType16 = storage$0.Network.createFrom;
+const $$createType17 = $Create.Array($$createType16);
+const $$createType18 = $Create.Map($Create.Any, $Create.Any);
+const $$createType19 = storage$0.PinnedMessage.createFrom;
+const $$createType20 = $Create.Array($$createType19);
+const $$createType21 = $Create.Map($Create.Any, $Create.Any);
+const $$createType22 = storage$0.STSPolicy.createFrom;
+const $$createType23 = $Create.Array($$createType22);
+const $$createType24 = $models.ServerCapabilitiesInfo.createFrom;
+const $$createType25 = $Create.Nullable($$createType24);
+const $$createType26 = storage$0.Server.createFrom;
 const $$createType27 = $Create.Array($$createType26);
-const $$createType28 = storage$0.SearchResult.createFrom;
+const $$createType28 = $models.PluginInfo.createFrom;
 const $$createType29 = $Create.Array($$createType28);
+const $$createType30 = storage$0.SearchResult.createFrom;
+const $$createType31 = $Create.Array($$createType30);

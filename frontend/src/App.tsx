@@ -43,6 +43,7 @@ function App() {
   const setCurrentNick = useNetworkStore((s) => s.setCurrentNick);
   const loadNetworkBots = useNetworkStore((s) => s.loadNetworkBots);
   const addBot = useNetworkStore((s) => s.addBot);
+  const setMonitorOnline = useNetworkStore((s) => s.setMonitorOnline);
   const loadNetworkUserMeta = useNetworkStore((s) => s.loadNetworkUserMeta);
   const setUserMeta = useNetworkStore((s) => s.setUserMeta);
   const markActivity = useNetworkStore((s) => s.markActivity);
@@ -291,6 +292,20 @@ function App() {
     return () => unsubscribe();
   }, []);
 
+  // MONITOR presence events (IRCv3): a monitored buddy came online/offline.
+  // Update the per-network buddy list so the Buddies pane reflects it live.
+  useEffect(() => {
+    const unsubscribe = EventsOn('monitor-event', (data: any) => {
+      const d = data?.data;
+      const networkId = d?.networkId;
+      const nick = d?.nickname;
+      if (typeof networkId === 'number' && typeof nick === 'string' && nick) {
+        setMonitorOnline(networkId, nick, !!d.online);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
   // Live-roster events (IRCv3 away-notify / account-notify / extended-join /
   // chghost / account-tag): a user's away/account/host changed. Update the
   // per-network roster metadata so the nick list can dim away users and the
@@ -306,6 +321,7 @@ function App() {
           away_message: typeof d.away_message === 'string' ? d.away_message : '',
           account: typeof d.account === 'string' ? d.account : '',
           host: typeof d.host === 'string' ? d.host : '',
+          realname: typeof d.realname === 'string' ? d.realname : '',
         });
       }
     });

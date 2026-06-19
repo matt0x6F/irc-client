@@ -125,6 +125,17 @@ CREATE TABLE IF NOT EXISTS sts_policies (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- IRCv3 MONITOR: the per-network buddy list of nicks whose online/offline
+-- presence is tracked. Durable, and re-sent via MONITOR + on each connect.
+CREATE TABLE IF NOT EXISTS monitored_nicks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    network_id INTEGER NOT NULL,
+    nickname TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (network_id) REFERENCES networks(id) ON DELETE CASCADE,
+    UNIQUE(network_id, nickname)
+);
+
 CREATE INDEX IF NOT EXISTS idx_messages_network_channel_time ON messages(network_id, channel_id, timestamp);
 CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
 -- Partial unique index: dedup CHATHISTORY replays by IRCv3 msgid, while leaving

@@ -31,6 +31,8 @@ Because of its IRCv3 support, Cascade gives you:
   reconciled with the server's canonical copy instead of appearing twice.
 - **Every role at a glance** — with `multi-prefix`, the nick list shows all of a user's channel
   roles (e.g. an op who is also voiced), not just the highest one.
+- **A buddy list** — track specific nicks' online/offline presence across restarts, even when
+  you share no channel with them (`monitor`), in a dedicated Buddies pane.
 
 ## Capability status matrix
 
@@ -58,18 +60,18 @@ Legend: ✅ Supported · ◐ Partial · ⛔ Not yet
 | `chghost` | ✅ | Yes | User host changes update the roster |
 | `userhost-in-names` | ✅ | Yes | NAMES carries `nick!user@host`; the host seeds the roster |
 | `account-tag` | ✅ | Yes | `@account` on messages keeps the roster account current |
-| `invite-notify` | ⛔ | No | — |
-| `setname` | ⛔ | No | Live realname changes not tracked |
-| `monitor` | ⛔ | No | No presence monitoring of offline nicks |
-| `labeled-response` | ⛔ | No | — |
-| `standard-replies` | ⛔ | No | — |
+| `invite-notify` | ✅ | Yes | Inbound INVITEs shown as a clickable status line |
+| `setname` | ✅ | Yes | Live realname changes update the roster + WHOIS panel |
+| `monitor` | ✅ | n/a (ISUPPORT) | Durable per-network buddy list with live presence |
+| `labeled-response` | ✅ | Yes | Correlates the WHOX roster query's reply by `@label` |
+| `standard-replies` | ✅ | Yes | FAIL/WARN/NOTE shown as error/warning/status lines |
 | `draft/message-redaction` | ⛔ | No | No REDACT handling |
-| `WHOX` (`354`) | ⛔ | No | Plain WHO/WHOIS only |
+| `WHOX` (`354`) | ✅ | n/a (ISUPPORT) | Extended WHO on join bulk-seeds the roster |
 
 The set of requested capabilities lives in one place — `internal/irc/client.go:31`:
 
 ```go
-var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "multi-prefix", "cap-notify", "away-notify", "account-notify", "extended-join", "chghost", "account-tag", "userhost-in-names"}
+var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "multi-prefix", "cap-notify", "away-notify", "account-notify", "extended-join", "chghost", "account-tag", "userhost-in-names", "setname", "invite-notify", "standard-replies", "labeled-response"}
 ```
 
 `sasl` is only requested when the network has SASL configured (`client.go:1927`); the others
@@ -234,9 +236,10 @@ rather than only after a WHOIS.
 These five capabilities keep the channel member list current as people go away, log in or
 out of an account, or change host — without a manual `/who`. They all feed one piece of
 session-local state: a per-network map of lowercased nick → `UserMeta{Away, AwayMessage,
-Account, Host}` (`internal/irc/events.go`, `internal/irc/client.go`). The map is deliberately
-**not** persisted — a nick's away/account/host is only meaningful for the current session and
-re-accrues on reconnect (same rationale as bot mode).
+Account, Host, Realname}` (`internal/irc/events.go`, `internal/irc/client.go`). The map is
+deliberately **not** persisted — a nick's attributes are only meaningful for the current
+session and re-accrue on reconnect (same rationale as bot mode). `Realname` is fed by
+[setname](#setname) and `extended-join`.
 
 Each signal updates the map through `applyUserMeta`, which is idempotent: it only stores and
 emits `EventUserMetaChanged` when an attribute actually changed, so high-frequency traffic
@@ -269,6 +272,100 @@ that builds the roster) now fires on registration completion — `RPL_ENDOFMOTD`
 `ERR_NOMOTD` (422), with a fallback timer armed at `RPL_WELCOME` (001) — instead of a fixed
 2-second timer that could send JOINs before the server was ready (`triggerAutoJoin` /
 `doAutoJoin`, `client.go`).
+
+### WHOX (extended WHO)
+
+The live-roster caps fill in attributes *as they change*, but a freshly-joined channel starts
+blank until someone goes away or speaks. [WHOX](https://ircv3.net/specs/extensions/whox) — an
+extended `WHO` advertised by the `WHOX` ISUPPORT token (not a CAP) — closes that gap by fetching
+every member's attributes in one shot.
+
+On our own JOIN, when the server advertised `WHOX` (`c.supportsWHOX`, set in the `005` handler),
+`requestWHOX` issues `WHO <channel> %tcuhnfar,<token>` (`client.go`). The reply rows arrive as
+`354` (RPL_WHOSPCRPL) in WHOX's canonical field order — token, channel, user, host, nick, flags,
+account, realname — and each is folded into the live roster by `applyWhoxRow` via `applyUserMeta`:
+host (`user@host`), away (the `flags` field begins with `G`), account (`"0"`/`"*"` → none), and
+realname. Correlation uses one of two paths: when `labeled-response` is available the reply is a
+label-correlated batch (see [labeled-response](#labeled-response)); otherwise the fixed
+`whoxRosterToken` lets `handleWhoxReply` ignore `354`s from any user-initiated `WHO`. Coverage:
+`internal/irc/whox_test.go`.
+
+**In the client:** there is no dedicated UI — WHOX simply makes the existing roster surfaces
+(nick-list away dimming, host tooltip, WHOIS account/realname) accurate the instant you join,
+rather than after the first event for each user.
+
+### labeled-response
+
+[labeled-response](https://ircv3.net/specs/extensions/labeled-response) lets a client tag an
+outbound command with `@label=<id>`; the server echoes that label on the reply (wrapped in a
+`batch`), so the reply can be matched to the request even when several are outstanding.
+
+Cascade's underlying `ergochat/irc-go` implements this around `SendWithLabel`: a labeled command's
+reply is **collected** into a `*Batch` and delivered to a callback rather than the normal
+handlers. (Inbound labels the library didn't generate are dropped, so labels must only be sent
+this way.) The library learns the cap is active by passively observing our `CAP ACK`, and gates it
+on `batch` also being enabled — the reply is delivered *as* a batch.
+
+Cascade's consumer is the **WHOX roster query**: when `labeled-response` is negotiated,
+`requestWHOX` sends the `WHO` via `SendWithLabel`, and `handleWhoxBatch` folds the collected `354`
+rows into the roster — no token matching needed. Without the cap, WHOX falls back to token
+correlation. This is a deliberate fit: WHOX is a command whose whole multi-line reply we want
+collected, which is exactly the shape labeled-response is built for. Cascade processes ordinary
+server messages globally, so it does not label every command — only this one, where correlation
+adds value. Coverage: the batch path in `internal/irc/whox_test.go`.
+
+**In the client:** no visible surface — labeled-response only makes the WHOX reply correlation
+exact. It is the one ratified cap with no direct UI.
+
+### setname
+
+[setname](https://ircv3.net/specs/extensions/setname) lets a user change their realname (GECOS)
+mid-session; the server announces it as `:nick SETNAME :new real name`. Without it, a realname is
+fixed at connect and only seen via `WHOIS`.
+
+`handleSetname` (`client.go`) records the new realname into the live roster's `Realname` field
+via `applyUserMeta` — the same idempotent path the rest of the roster uses. The same field is
+also seeded by `extended-join`, whose third parameter is the joiner's realname
+(`maybeApplyExtendedJoin`), so a user's realname is often known from the moment they join, then
+kept current by `SETNAME`. Coverage: `internal/irc/setname_test.go`.
+
+**In the client:** the WHOIS panel's *Real Name* row prefers the live roster value over the
+point-in-time `WHOIS` reply (`user-info.tsx`), so it updates the moment a `SETNAME` arrives while
+the panel is open — mirroring how the live account is shown.
+
+### invite-notify
+
+The invitee form of `INVITE` (`:inviter INVITE you #chan`) is delivered whether or not this cap
+is negotiated. With `invite-notify`, the server *additionally* relays invites of other users to a
+channel's operators (`:inviter INVITE someone #chan`), so ops can see who is being invited.
+
+`handleInvite` (`client.go`) handles both: it compares the target to `CurrentNick()` and writes a
+status-buffer line — "*inviter* invited **you** to #chan" or "*inviter* invited *someone* to
+#chan". The line is written with `WriteMessageSync` (so the row is committed before the refresh
+event fires, avoiding a write/notify race) under a dedicated `invite` message type, then an
+`EventMessageReceived` with `channel: nil` routes it to the status buffer and refreshes it live.
+Coverage: `internal/irc/invite_test.go`.
+
+**In the client:** invites render as a dimmed status line in which the channel name is a clickable
+link that issues `/join` (`message-view.tsx`), so you can accept an invite with one click.
+
+![Status buffer showing an "invited you to #cc-invite" line with a clickable channel](images/ircv3/invite-notify.png)
+
+### standard-replies
+
+[standard-replies](https://ircv3.net/specs/extensions/standard-replies) gives servers a uniform
+shape for out-of-band feedback: `FAIL`, `WARN`, and `NOTE`, each carrying
+`<command> <code> [<context>...] :<description>`. Without it, such feedback arrives as ad-hoc
+notices that are easy to miss or misattribute.
+
+`handleStandardReply` (`client.go`) formats the reply as "`<TYPE> <command> (<code>): <description>`"
+and writes it to the status buffer via the shared `writeStatusLine` helper, mapping severity to a
+message type: `FAIL` → `error`, `WARN` → `warning`, `NOTE` → `status`. Coverage:
+`internal/irc/standard_replies_test.go`.
+
+**In the client:** the existing message renderer styles these by type — `error` in red with a ⚠,
+the new `warning` type in amber with a ⚠, and `NOTE` as a dimmed status line
+(`message-view.tsx`) — so a server-side failure is visually distinct from an informational note.
 
 ### Bot mode
 
@@ -322,6 +419,30 @@ buffer ("Server advertised STS policy…", "Connecting to host:6697 (TLS enforce
 and the Settings → Networks pane shows a 🔒 "TLS enforced until …" badge per server, with a
 Clear control (gated behind a confirmation, since clearing is a security downgrade).
 
+### MONITOR (buddy list)
+
+[MONITOR](https://ircv3.net/specs/extensions/monitor) tracks the online/offline presence of
+specific nicks — even ones not in any shared channel — so you can keep a "buddy list". It is
+advertised via the `MONITOR=<limit>` ISUPPORT token (not a CAP).
+
+Unlike the session-local roster, the buddy list is **durable**: monitored nicks are stored per
+network in the `monitored_nicks` table (`internal/storage/`). On registration,
+`sendInitialMonitor` re-sends the saved list to the server (`MONITOR +`, chunked); thereafter
+`MonitorAdd`/`MonitorRemove` add and drop nicks. Presence replies — `730` (RPL_MONONLINE) and
+`731` (RPL_MONOFFLINE), each a comma-separated target list — are parsed by
+`handleMonitorPresence` and folded into a session presence map by the idempotent
+`setMonitorPresence`, which emits `EventMonitorChanged` only on a real change. The bound methods
+`AddMonitor` / `RemoveMonitor` / `GetMonitorList` (`app.go`) coordinate persistence, the live
+`MONITOR` command, and presence for the UI. Coverage: `internal/irc/monitor_test.go` and
+`internal/storage/monitored_nicks_test.go`.
+
+**In the client:** the right sidebar has a **Users / Buddies** tab switcher (`channel-info.tsx`);
+the Buddies pane (`monitor-list.tsx`) lists each buddy with a green (online) / grey (offline)
+dot, an "Add nick" input, and a remove control, and updates live via the `monitor-event`. A
+nick can also be added straight from the member list's right-click menu ("Monitor this user").
+
+![The Buddies pane showing a monitored nick "buddybot" with a green online dot](images/ircv3/monitor.png)
+
 ### Supporting features
 
 These are not CAP capabilities but are part of Cascade's modern-IRC behavior and interact
@@ -338,23 +459,16 @@ with the IRCv3 features above.
 
 ## Not yet supported
 
-The capabilities below are recognized as desirable but not yet negotiated. They are grouped
-by theme with the main blocker.
+Every **ratified** IRCv3 capability is now supported (see the matrix above). What remains is
+*draft* extensions, which are deliberately out of scope for ratified compliance and belong to
+the future modern-chat product rather than this client:
 
-**Live presence / roster updates** — `setname` (live realname changes). The rest of this
-cluster (`account-notify`, `away-notify`, `chghost`, `extended-join`) is now supported — see
-[Live roster](#live-roster-away-notify--account-notify--extended-join--chghost--account-tag).
-`setname` is the remaining gap: the roster does not yet track mid-session realname changes.
+- `draft/message-redaction` (handle REDACT/DELETE) — needs message-mutation handling.
+- `draft/multiline`, `draft/metadata-2`, `draft/extended-monitor`, and the client-only UX tags
+  (`+typing`, `draft/react`, `draft/reply`).
 
-**Message metadata** — `draft/message-redaction` (handle REDACT/DELETE), which needs
-message-mutation handling. (`account-tag` is now consumed — see the roster section above.)
-
-**Connection & protocol niceties** — `labeled-response` (correlate replies via `@label`), `standard-replies` (uniform
-`FAIL`/`WARN`/`NOTE`), `invite-notify`, `monitor` (presence for offline nicks), `WHOX`
-(extended WHO). Independent of each other; each is a self-contained addition.
-
-When implementing any of these, add the cap to `requestedCaps` (`client.go:31`), gate
-behavior on `enabledCaps`, and update this matrix.
+When implementing any future cap, add it to `requestedCaps` (`client.go:31`), gate behavior on
+`enabledCaps` (or the relevant ISUPPORT token), and update this matrix.
 
 ## How the screenshots are made
 
