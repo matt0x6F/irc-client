@@ -179,6 +179,17 @@ export function GetChannels(networkID) {
 }
 
 /**
+ * GetCommands returns metadata for every known command (built-in here; merged
+ * with plugin commands in Phase 4). Bound to the frontend via Wails.
+ * @returns {$CancellablePromise<$models.CommandInfo[]>}
+ */
+export function GetCommands() {
+    return $Call.ByID(983453965).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType7($result);
+    }));
+}
+
+/**
  * GetConnectionStatus returns whether a network is connected
  * @param {number} networkID
  * @returns {$CancellablePromise<boolean>}
@@ -224,7 +235,7 @@ export function GetJoinedChannels(networkID) {
  */
 export function GetLastOpenPane() {
     return $Call.ByID(1367469045).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType7($result);
+        return $$createType9($result);
     }));
 }
 
@@ -235,7 +246,7 @@ export function GetLastOpenPane() {
  */
 export function GetLogConfig() {
     return $Call.ByID(3565499149).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType8($result);
+        return $$createType10($result);
     }));
 }
 
@@ -248,7 +259,7 @@ export function GetLogConfig() {
  */
 export function GetMessages(networkID, channelID, limit) {
     return $Call.ByID(3832618599, networkID, channelID, limit).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType10($result);
+        return $$createType12($result);
     }));
 }
 
@@ -263,7 +274,7 @@ export function GetMessages(networkID, channelID, limit) {
  */
 export function GetMessagesAfter(networkID, channelID, afterID, limit) {
     return $Call.ByID(4016273103, networkID, channelID, afterID, limit).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType10($result);
+        return $$createType12($result);
     }));
 }
 
@@ -278,7 +289,7 @@ export function GetMessagesAfter(networkID, channelID, afterID, limit) {
  */
 export function GetMessagesAround(networkID, channelID, targetID, window) {
     return $Call.ByID(468669170, networkID, channelID, targetID, window).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType10($result);
+        return $$createType12($result);
     }));
 }
 
@@ -293,7 +304,7 @@ export function GetMessagesAround(networkID, channelID, targetID, window) {
  */
 export function GetMessagesBefore(networkID, channelID, beforeID, limit) {
     return $Call.ByID(2291548608, networkID, channelID, beforeID, limit).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType10($result);
+        return $$createType12($result);
     }));
 }
 
@@ -317,7 +328,7 @@ export function GetMessagesBefore(networkID, channelID, beforeID, limit) {
  */
 export function GetMessagesBeforeTime(networkID, channelID, pmTarget, beforeISO, limit) {
     return $Call.ByID(1921588377, networkID, channelID, pmTarget, beforeISO, limit).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType10($result);
+        return $$createType12($result);
     }));
 }
 
@@ -329,7 +340,7 @@ export function GetMessagesBeforeTime(networkID, channelID, pmTarget, beforeISO,
  */
 export function GetMonitorList(networkID) {
     return $Call.ByID(3280037895, networkID).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType12($result);
+        return $$createType14($result);
     }));
 }
 
@@ -343,7 +354,7 @@ export function GetMonitorList(networkID) {
  */
 export function GetNetworkBots(networkID) {
     return $Call.ByID(1037950925, networkID).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType13($result);
+        return $$createType15($result);
     }));
 }
 
@@ -358,7 +369,7 @@ export function GetNetworkBots(networkID) {
  */
 export function GetNetworkUserMeta(networkID) {
     return $Call.ByID(1426666641, networkID).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType15($result);
+        return $$createType17($result);
     }));
 }
 
@@ -368,7 +379,7 @@ export function GetNetworkUserMeta(networkID) {
  */
 export function GetNetworks() {
     return $Call.ByID(366685148).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType17($result);
+        return $$createType19($result);
     }));
 }
 
@@ -390,7 +401,7 @@ export function GetNicknameColor(networkID, nickname) {
  */
 export function GetNicknameColorsBatch(networkID, nicknames) {
     return $Call.ByID(4229567593, networkID, nicknames).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType18($result);
+        return $$createType20($result);
     }));
 }
 
@@ -413,7 +424,7 @@ export function GetOpenChannels(networkID) {
  */
 export function GetPinnedMessages(networkID, channelID) {
     return $Call.ByID(380870585, networkID, channelID).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType20($result);
+        return $$createType22($result);
     }));
 }
 
@@ -424,7 +435,7 @@ export function GetPinnedMessages(networkID, channelID) {
  */
 export function GetPluginConfig(pluginName) {
     return $Call.ByID(1436487730, pluginName).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType21($result);
+        return $$createType23($result);
     }));
 }
 
@@ -435,7 +446,7 @@ export function GetPluginConfig(pluginName) {
  */
 export function GetPluginConfigSchema(pluginName) {
     return $Call.ByID(249168125, pluginName).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType21($result);
+        return $$createType23($result);
     }));
 }
 
@@ -447,7 +458,7 @@ export function GetPluginConfigSchema(pluginName) {
  */
 export function GetPrivateMessageConversations(networkID, openOnly) {
     return $Call.ByID(839521643, networkID, openOnly).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType13($result);
+        return $$createType15($result);
     }));
 }
 
@@ -460,7 +471,7 @@ export function GetPrivateMessageConversations(networkID, openOnly) {
  */
 export function GetPrivateMessages(networkID, targetUser, limit) {
     return $Call.ByID(2750786118, networkID, targetUser, limit).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType10($result);
+        return $$createType12($result);
     }));
 }
 
@@ -471,7 +482,7 @@ export function GetPrivateMessages(networkID, targetUser, limit) {
  */
 export function GetSTSPolicies() {
     return $Call.ByID(3662233731).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType23($result);
+        return $$createType25($result);
     }));
 }
 
@@ -482,7 +493,7 @@ export function GetSTSPolicies() {
  */
 export function GetServerCapabilities(networkID) {
     return $Call.ByID(1639110850, networkID).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType25($result);
+        return $$createType27($result);
     }));
 }
 
@@ -493,7 +504,7 @@ export function GetServerCapabilities(networkID) {
  */
 export function GetServers(networkID) {
     return $Call.ByID(4270553301, networkID).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType27($result);
+        return $$createType29($result);
     }));
 }
 
@@ -534,7 +545,7 @@ export function LeaveChannel(networkID, channelName) {
  */
 export function ListPlugins() {
     return $Call.ByID(3314730135).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType29($result);
+        return $$createType31($result);
     }));
 }
 
@@ -683,7 +694,7 @@ export function SaveNetwork(config) {
  */
 export function SearchMessages(query, networkID, limit) {
     return $Call.ByID(3203246577, query, networkID, limit).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType31($result);
+        return $$createType33($result);
     }));
 }
 
@@ -815,29 +826,31 @@ const $$createType2 = $models.ChannelInfo.createFrom;
 const $$createType3 = $Create.Nullable($$createType2);
 const $$createType4 = storage$0.Channel.createFrom;
 const $$createType5 = $Create.Array($$createType4);
-const $$createType6 = $models.LastOpenPane.createFrom;
-const $$createType7 = $Create.Nullable($$createType6);
-const $$createType8 = $models.LogConfig.createFrom;
-const $$createType9 = storage$0.Message.createFrom;
-const $$createType10 = $Create.Array($$createType9);
-const $$createType11 = $models.MonitorEntry.createFrom;
+const $$createType6 = $models.CommandInfo.createFrom;
+const $$createType7 = $Create.Array($$createType6);
+const $$createType8 = $models.LastOpenPane.createFrom;
+const $$createType9 = $Create.Nullable($$createType8);
+const $$createType10 = $models.LogConfig.createFrom;
+const $$createType11 = storage$0.Message.createFrom;
 const $$createType12 = $Create.Array($$createType11);
-const $$createType13 = $Create.Array($Create.Any);
-const $$createType14 = irc$0.UserMeta.createFrom;
-const $$createType15 = $Create.Map($Create.Any, $$createType14);
-const $$createType16 = storage$0.Network.createFrom;
-const $$createType17 = $Create.Array($$createType16);
-const $$createType18 = $Create.Map($Create.Any, $Create.Any);
-const $$createType19 = storage$0.PinnedMessage.createFrom;
-const $$createType20 = $Create.Array($$createType19);
-const $$createType21 = $Create.Map($Create.Any, $Create.Any);
-const $$createType22 = storage$0.STSPolicy.createFrom;
-const $$createType23 = $Create.Array($$createType22);
-const $$createType24 = $models.ServerCapabilitiesInfo.createFrom;
-const $$createType25 = $Create.Nullable($$createType24);
-const $$createType26 = storage$0.Server.createFrom;
-const $$createType27 = $Create.Array($$createType26);
-const $$createType28 = $models.PluginInfo.createFrom;
+const $$createType13 = $models.MonitorEntry.createFrom;
+const $$createType14 = $Create.Array($$createType13);
+const $$createType15 = $Create.Array($Create.Any);
+const $$createType16 = irc$0.UserMeta.createFrom;
+const $$createType17 = $Create.Map($Create.Any, $$createType16);
+const $$createType18 = storage$0.Network.createFrom;
+const $$createType19 = $Create.Array($$createType18);
+const $$createType20 = $Create.Map($Create.Any, $Create.Any);
+const $$createType21 = storage$0.PinnedMessage.createFrom;
+const $$createType22 = $Create.Array($$createType21);
+const $$createType23 = $Create.Map($Create.Any, $Create.Any);
+const $$createType24 = storage$0.STSPolicy.createFrom;
+const $$createType25 = $Create.Array($$createType24);
+const $$createType26 = $models.ServerCapabilitiesInfo.createFrom;
+const $$createType27 = $Create.Nullable($$createType26);
+const $$createType28 = storage$0.Server.createFrom;
 const $$createType29 = $Create.Array($$createType28);
-const $$createType30 = storage$0.SearchResult.createFrom;
+const $$createType30 = $models.PluginInfo.createFrom;
 const $$createType31 = $Create.Array($$createType30);
+const $$createType32 = storage$0.SearchResult.createFrom;
+const $$createType33 = $Create.Array($$createType32);

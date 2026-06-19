@@ -165,6 +165,76 @@ export class ChannelListCacheResult {
 }
 
 /**
+ * CommandInfo is the wire/metadata view of a command for the frontend.
+ */
+export class CommandInfo {
+    /**
+     * Creates a new CommandInfo instance.
+     * @param {Partial<CommandInfo>} [$$source = {}] - The source object to create the CommandInfo.
+     */
+    constructor($$source = {}) {
+        if (!("name" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["name"] = "";
+        }
+        if (!("aliases" in $$source)) {
+            /**
+             * @member
+             * @type {string[]}
+             */
+            this["aliases"] = [];
+        }
+        if (!("category" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["category"] = "";
+        }
+        if (!("usage" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["usage"] = "";
+        }
+        if (!("description" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["description"] = "";
+        }
+        if (!("source" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["source"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new CommandInfo instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {CommandInfo}
+     */
+    static createFrom($$source = {}) {
+        const $$createField1_0 = $$createType8;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("aliases" in $$parsedSource) {
+            $$parsedSource["aliases"] = $$createField1_0($$parsedSource["aliases"]);
+        }
+        return new CommandInfo(/** @type {Partial<CommandInfo>} */($$parsedSource));
+    }
+}
+
+/**
  * LastOpenPane represents the last open pane (channel or PM conversation)
  */
 export class LastOpenPane {
@@ -423,7 +493,7 @@ export class NetworkConfig {
      * @returns {NetworkConfig}
      */
     static createFrom($$source = {}) {
-        const $$createField4_0 = $$createType9;
+        const $$createField4_0 = $$createType10;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("servers" in $$parsedSource) {
             $$parsedSource["servers"] = $$createField4_0($$parsedSource["servers"]);
@@ -521,9 +591,9 @@ export class PluginInfo {
      * @returns {PluginInfo}
      */
     static createFrom($$source = {}) {
-        const $$createField4_0 = $$createType10;
-        const $$createField5_0 = $$createType10;
-        const $$createField6_0 = $$createType10;
+        const $$createField4_0 = $$createType8;
+        const $$createField5_0 = $$createType8;
+        const $$createField6_0 = $$createType8;
         const $$createField7_0 = $$createType6;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("events" in $$parsedSource) {
@@ -683,7 +753,7 @@ const $$createType4 = ServerCapabilitiesInfo.createFrom;
 const $$createType5 = $Create.Nullable($$createType4);
 const $$createType6 = $Create.Map($Create.Any, $Create.Any);
 const $$createType7 = $Create.Array($$createType6);
-const $$createType8 = ServerConfig.createFrom;
-const $$createType9 = $Create.Array($$createType8);
-const $$createType10 = $Create.Array($Create.Any);
+const $$createType8 = $Create.Array($Create.Any);
+const $$createType9 = ServerConfig.createFrom;
+const $$createType10 = $Create.Array($$createType9);
 const $$createType11 = $Create.Map($Create.Any, $Create.Any);

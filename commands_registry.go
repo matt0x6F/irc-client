@@ -309,3 +309,31 @@ func cmdIgnore(a *App, client *irc.IRCClient, networkID int64, args []string) er
 func cmdUnignore(a *App, client *irc.IRCClient, networkID int64, args []string) error {
 	return fmt.Errorf("/unignore is not yet implemented")
 }
+
+// CommandInfo is the wire/metadata view of a command for the frontend.
+type CommandInfo struct {
+	Name        string   `json:"name"`
+	Aliases     []string `json:"aliases"`
+	Category    string   `json:"category"`
+	Usage       string   `json:"usage"`
+	Description string   `json:"description"`
+	Source      string   `json:"source"`
+}
+
+func specToInfo(s *CommandSpec) CommandInfo {
+	return CommandInfo{
+		Name: s.Name, Aliases: s.Aliases, Category: string(s.Category),
+		Usage: s.Usage, Description: s.Description, Source: s.Source,
+	}
+}
+
+// GetCommands returns metadata for every known command (built-in here; merged
+// with plugin commands in Phase 4). Bound to the frontend via Wails.
+func (a *App) GetCommands() []CommandInfo {
+	specs := a.commands.Specs()
+	infos := make([]CommandInfo, 0, len(specs))
+	for _, s := range specs {
+		infos = append(infos, specToInfo(s))
+	}
+	return infos
+}

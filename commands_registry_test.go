@@ -61,3 +61,23 @@ func TestBuiltinRegistryCoverage(t *testing.T) {
 		t.Errorf("JOIN spec metadata wrong: %+v", spec)
 	}
 }
+
+func TestGetCommandsMetadata(t *testing.T) {
+	a := &App{commands: buildBuiltinRegistry()}
+	infos := a.GetCommands()
+	if len(infos) == 0 {
+		t.Fatal("GetCommands returned nothing")
+	}
+	var join *CommandInfo
+	for i := range infos {
+		if infos[i].Name == "JOIN" {
+			join = &infos[i]
+		}
+	}
+	if join == nil {
+		t.Fatal("JOIN missing from GetCommands")
+	}
+	if join.Category != "server" || join.Usage != "#channel [key]" || len(join.Aliases) != 1 || join.Aliases[0] != "J" {
+		t.Fatalf("JOIN info wrong: %+v", join)
+	}
+}
