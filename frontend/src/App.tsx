@@ -15,6 +15,7 @@ import { UserInfo } from './components/user-info';
 import { SearchModal } from './components/search-modal';
 import { ChannelListModal } from './components/channel-list-modal';
 import { KeyboardShortcutsModal } from './components/keyboard-shortcuts-modal';
+import { HelpDialog } from './components/help-dialog';
 import { List, Settings } from 'lucide-react';
 
 function App() {
@@ -1004,6 +1005,8 @@ function App() {
       {showKeyboardShortcuts && (
         <KeyboardShortcutsModal onClose={closeKeyboardShortcuts} />
       )}
+
+      <HelpDialog />
     </div>
   );
 }

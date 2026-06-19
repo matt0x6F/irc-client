@@ -34,7 +34,12 @@ import {
   AddMonitor,
   RemoveMonitor,
   GetNetworkUserMeta,
+  PrintLocalLines,
 } from '../../wailsjs/go/main/App';
+import { useCommandsStore, lookupCommand } from './commands';
+import { usePreferencesStore } from './preferences';
+import { useUIStore } from './ui';
+import { formatCommandHelp, formatHelpList } from '../lib/help-format';
 
 // UserMetaT mirrors the Go irc.UserMeta JSON shape: the live, session-local
 // roster attributes Cascade tracks per nick via away-notify / account-notify /
@@ -787,6 +792,30 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
     // Slash commands
     if (trimmedMessage.startsWith('/')) {
       let commandToSend = trimmedMessage;
+
+      // /help is handled entirely client-side (it owns the cached registry).
+      const helpMatch = trimmedMessage.match(/^\/help(?:\s+(\S+))?\s*$/i);
+      if (helpMatch) {
+        const target =
+          selectedChannel === 'status'
+            ? 'status'
+            : selectedChannel.startsWith('pm:')
+              ? selectedChannel.substring(3)
+              : selectedChannel;
+        const commands = useCommandsStore.getState().commands;
+        const arg = helpMatch[1];
+        if (arg) {
+          const cmd = lookupCommand(commands, arg.replace(/^\//, ''));
+          const lines = cmd ? formatCommandHelp(cmd) : [`Unknown command: ${arg}`];
+          await PrintLocalLines(selectedNetwork, target, lines);
+        } else if (usePreferencesStore.getState().helpDisplayMode === 'dialog') {
+          useUIStore.getState().setHelpOpen(true);
+        } else {
+          await PrintLocalLines(selectedNetwork, target, formatHelpList(commands));
+        }
+        await loadMessages();
+        return;
+      }
 
       // Handle /me command — prepend target. The action text is formatting
       // markup like any other message, so convert it to IRC codes.
