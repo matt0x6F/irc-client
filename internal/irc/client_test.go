@@ -163,6 +163,43 @@ func TestIsStale(t *testing.T) {
 	}
 }
 
+// TestWatchdogLifecycle verifies the watchdog's start/stop bookkeeping: stop is
+// safe before start, start sets the stop channel, stop closes and clears it, and
+// a double-stop does not panic. The 15s ticker means the goroutine just parks on
+// its select and exits when the channel closes — c.conn is never touched here.
+func TestWatchdogLifecycle(t *testing.T) {
+	c := &IRCClient{}
+
+	// stop before any start must be a safe no-op
+	c.stopWatchdog()
+
+	c.startWatchdog()
+	c.mu.RLock()
+	stop := c.watchdogStop
+	c.mu.RUnlock()
+	if stop == nil {
+		t.Fatal("expected watchdogStop to be set after startWatchdog")
+	}
+
+	c.stopWatchdog()
+	c.mu.RLock()
+	cleared := c.watchdogStop
+	c.mu.RUnlock()
+	if cleared != nil {
+		t.Fatal("expected watchdogStop to be cleared after stopWatchdog")
+	}
+
+	// the captured channel must be closed (goroutine's <-stop returns)
+	select {
+	case <-stop:
+	default:
+		t.Fatal("expected stop channel to be closed")
+	}
+
+	// double stop must not panic
+	c.stopWatchdog()
+}
+
 // The library requires KeepAlive >= Timeout; the watchdog must only fire after
 // a healthy idle link would have already PINGed, so StaleThreshold > KeepAlive.
 func TestLivenessConstantOrdering(t *testing.T) {

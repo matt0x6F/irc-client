@@ -239,6 +239,7 @@ func (c *IRCClient) startWatchdog() {
 	stop := make(chan struct{})
 	c.mu.Lock()
 	c.watchdogStop = stop
+	networkID := c.networkID // stable after connect; captured to keep the goroutine lock-free
 	c.mu.Unlock()
 
 	go func() {
@@ -250,7 +251,7 @@ func (c *IRCClient) startWatchdog() {
 				return
 			case <-ticker.C:
 				if c.isStale(time.Now(), constants.ConnectionStaleThreshold) {
-					logger.Log.Warn().Int64("network_id", c.networkID).
+					logger.Log.Warn().Int64("network_id", networkID).
 						Msg("Watchdog: connection silent past threshold, forcing teardown")
 					c.conn.Quit()
 				}
@@ -260,6 +261,7 @@ func (c *IRCClient) startWatchdog() {
 }
 
 // stopWatchdog signals the watchdog goroutine to exit. Safe to call multiple times.
+// The goroutine may run at most one more tick before observing the closed channel.
 func (c *IRCClient) stopWatchdog() {
 	c.mu.Lock()
 	if c.watchdogStop != nil {
