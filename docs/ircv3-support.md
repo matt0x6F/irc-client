@@ -436,10 +436,31 @@ network in the `monitored_nicks` table (`internal/storage/`). On registration,
 `MONITOR` command, and presence for the UI. Coverage: `internal/irc/monitor_test.go` and
 `internal/storage/monitored_nicks_test.go`.
 
+**Two monitoring sources, one server list.** MONITOR is fed by two sources that are unioned onto
+the single server-side list:
+
+1. **Durable buddies** — the curated, persisted list described above (shown in the Buddies pane).
+2. **Open PM correspondents** — every open private-message conversation is *auto-monitored* so
+   the DM-list entry shows real presence, then dropped from MONITOR when the PM closes. These are
+   **transient and session-derived** (computed from open PMs each connect); they never enter
+   `monitored_nicks` or the Buddies pane. Opening a DM does not add a buddy.
+
+The rule is centralized in `desiredMonitorState`: a nick is monitored iff it is a durable buddy
+**or** has an open PM — excluding yourself and service pseudo-clients (`IsServiceNick`:
+NickServ/ChanServ/SaslServ/…). `MonitorReconcileNick` applies it after any buddy add/remove
+(`AddMonitor`/`RemoveMonitor`) or PM open/close (`SetPrivateMessageOpen`), and `sendInitialMonitor`
+arms the whole union on connect (buddies first, so they keep their slots under a tight
+`MONITOR=<limit>`). `MonitorSet` tracks the armed-set and honors the advertised limit; `734`
+(ERR_MONLISTFULL) degrades gracefully — extra nicks simply show as "unknown".
+
 **In the client:** the right sidebar has a **Users / Buddies** tab switcher (`channel-info.tsx`);
 the Buddies pane (`monitor-list.tsx`) lists each buddy with a green (online) / grey (offline)
 dot, an "Add nick" input, and a remove control, and updates live via the `monitor-event`. A
 nick can also be added straight from the member list's right-click menu ("Monitor this user").
+In the **Direct Messages** list, each conversation shows a presence dot driven by the same
+MONITOR data (`GetMonitorPresence` seeds it, `monitor-event` keeps it live): solid green =
+online, solid grey = offline, and a hollow neutral dot = unknown (a service nick, or not yet
+tracked). See `dmPresenceState` in `frontend/src/lib/presence.ts`.
 
 ![The Buddies pane showing a monitored nick "buddybot" with a green online dot](images/ircv3/monitor.png)
 

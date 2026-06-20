@@ -79,6 +79,7 @@ func newUserMetaTestClient(t *testing.T) (*IRCClient, *metaCounter) {
 		network:       net,
 		userMeta:      make(map[string]*UserMeta),
 		monitorStatus: make(map[string]bool),
+		monitorArmed:  make(map[string]bool),
 		enabledCaps:   make(map[string]bool),
 	}
 	return c, counter

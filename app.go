@@ -496,19 +496,20 @@ func (a *App) AddMonitor(networkID int64, nick string) error {
 	if err := a.storage.AddMonitoredNick(networkID, nick); err != nil {
 		return err
 	}
+	// Reconcile against the union rule: now a durable buddy, so it gets armed.
+	// It's persisted regardless, so it's re-sent on the next connect.
 	a.mu.RLock()
 	client, exists := a.ircClients[networkID]
 	a.mu.RUnlock()
 	if exists {
-		if err := client.MonitorAdd(nick); err != nil {
-			// Non-fatal: it's persisted and re-sent on connect.
-			logger.Log.Debug().Err(err).Str("nick", nick).Msg("MONITOR + send failed")
-		}
+		client.MonitorReconcileNick(nick)
 	}
 	return nil
 }
 
-// RemoveMonitor removes a nick from the buddy list and stops tracking it.
+// RemoveMonitor removes a nick from the buddy list and stops tracking it — unless
+// the nick still has an open PM, in which case presence tracking continues for
+// the DM-list dot (the union rule).
 func (a *App) RemoveMonitor(networkID int64, nick string) error {
 	nick = strings.TrimSpace(nick)
 	if nick == "" {
@@ -521,11 +522,24 @@ func (a *App) RemoveMonitor(networkID int64, nick string) error {
 	client, exists := a.ircClients[networkID]
 	a.mu.RUnlock()
 	if exists {
-		if err := client.MonitorRemove(nick); err != nil {
-			logger.Log.Debug().Err(err).Str("nick", nick).Msg("MONITOR - send failed")
-		}
+		client.MonitorReconcileNick(nick)
 	}
 	return nil
+}
+
+// GetMonitorPresence returns the live online state of every nick currently tracked
+// via MONITOR (lowercased nick -> online), including auto-monitored PM
+// correspondents that are not durable buddies. The frontend uses it to seed the
+// DM-list presence dots, covering 730/731 replies that arrived before the UI
+// subscribed to the live 'monitor-event'.
+func (a *App) GetMonitorPresence(networkID int64) (map[string]bool, error) {
+	a.mu.RLock()
+	client, exists := a.ircClients[networkID]
+	a.mu.RUnlock()
+	if !exists {
+		return map[string]bool{}, nil
+	}
+	return client.MonitorPresence(), nil
 }
 
 // GetJoinedChannels retrieves channels where the current user is still a member
@@ -832,6 +846,16 @@ func (a *App) SetPrivateMessageOpen(networkID int64, targetUser string, isOpen b
 	err := a.storage.UpdatePMConversationIsOpen(networkID, targetUser, isOpen)
 	if err != nil {
 		return err
+	}
+
+	// Auto-MONITOR the correspondent so the DM-list dot reflects real presence.
+	// Reconcile honors the union rule, so closing a PM with someone who is also a
+	// buddy keeps them monitored.
+	a.mu.RLock()
+	client, exists := a.ircClients[networkID]
+	a.mu.RUnlock()
+	if exists {
+		client.MonitorReconcileNick(targetUser)
 	}
 
 	// Try to get original case from messages
