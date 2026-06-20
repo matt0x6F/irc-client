@@ -31,6 +31,7 @@ import {
   SendCommand,
   GetNetworkBots,
   GetMonitorList,
+  GetMonitorPresence,
   AddMonitor,
   RemoveMonitor,
   GetNetworkUserMeta,
@@ -140,6 +141,12 @@ interface NetworkState {
   // toggles arrive via 'monitor-event'.
   monitor: Record<number, MonitorBuddy[]>;
 
+  // Live MONITOR presence for every tracked nick (lowercased nick -> online),
+  // including auto-monitored PM correspondents that are not durable buddies.
+  // Drives the DM-list dots; seeded from GetMonitorPresence and kept fresh by
+  // the same 'monitor-event' the buddy list listens for.
+  presence: Record<number, Record<string, boolean>>;
+
   // Live roster (IRCv3 away-notify / account-notify / extended-join / chghost /
   // account-tag): per-network map of lowercased nick -> attributes. In-memory,
   // re-accrues per session.
@@ -212,6 +219,10 @@ interface NetworkState {
   removeMonitorNick: (networkId: number, nick: string) => Promise<void>;
   setMonitorOnline: (networkId: number, nick: string, online: boolean) => void;
 
+  // MONITOR presence map (drives DM-list dots)
+  loadPresence: (networkId: number) => Promise<void>;
+  setPresence: (networkId: number, nick: string, online: boolean) => void;
+
   // Live roster metadata
   loadNetworkUserMeta: (networkId?: number) => Promise<void>;
   setUserMeta: (networkId: number, nick: string, meta: UserMetaT) => void;
@@ -235,6 +246,7 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
   unreadCounts: new Map(),
   botNicks: {},
   monitor: {},
+  presence: {},
   userMeta: {},
   pinnedMessages: [],
   viewMode: 'live',
@@ -1044,6 +1056,32 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
       });
       if (!changed) return state; // avoid needless re-renders
       return { monitor: { ...state.monitor, [networkId]: next } };
+    }),
+
+  // Seed the presence map for a network from the backend snapshot of every nick
+  // currently tracked via MONITOR. Covers 730/731 replies that arrived before the
+  // UI subscribed to 'monitor-event'. Keys are lowercased nicks.
+  loadPresence: async (networkId) => {
+    try {
+      const snapshot = await GetMonitorPresence(networkId);
+      const map: Record<string, boolean> = {};
+      for (const [nick, online] of Object.entries(snapshot || {})) {
+        map[nick.toLowerCase()] = !!online;
+      }
+      set((state) => ({ presence: { ...state.presence, [networkId]: map } }));
+    } catch (error) {
+      console.error('Failed to load MONITOR presence:', error);
+    }
+  },
+
+  setPresence: (networkId, nick, online) =>
+    set((state) => {
+      const key = nick.toLowerCase();
+      const current = state.presence[networkId];
+      if (current && current[key] === online) return state; // no change
+      const next: Record<string, boolean> = { ...(current ?? {}) };
+      next[key] = online;
+      return { presence: { ...state.presence, [networkId]: next } };
     }),
 
   // Hydrate the roster metadata for a network from the backend (e.g. on window

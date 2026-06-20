@@ -3,6 +3,8 @@ import { main, storage } from '../../wailsjs/go/models';
 import { GetChannels, GetJoinedChannels, GetOpenChannels, GetServers, LeaveChannel, ToggleChannelAutoJoin, ToggleNetworkAutoConnect, SetChannelOpen, GetPrivateMessageConversations, SendCommand, SetPrivateMessageOpen, ClearPaneFocus } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import { useUIStore } from '../stores/ui';
+import { useNetworkStore } from '../stores/network';
+import { dmPresenceState } from '../lib/presence';
 import markUrl from '../assets/brand/cascade-mark.svg';
 import { Terminal } from 'lucide-react';
 
@@ -56,6 +58,11 @@ export function ServerTree({
   const [contextMenuIsJoined, setContextMenuIsJoined] = useState<boolean>(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<{ serverId: number; serverName: string } | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
+
+  // Live MONITOR presence per network (lowercased nick -> online), driving the
+  // DM-list dots. Seeded on expand, kept fresh by 'monitor-event' in App.tsx.
+  const presence = useNetworkStore((s) => s.presence);
+  const loadPresence = useNetworkStore((s) => s.loadPresence);
 
   // Load channels and PM conversations for expanded networks
   useEffect(() => {
@@ -112,8 +119,13 @@ export function ServerTree({
           [networkId]: [],
         }));
       }
+
+      // Seed MONITOR presence for the DM-list dots (auto-monitored PM
+      // correspondents plus durable buddies). Live updates arrive via
+      // 'monitor-event'.
+      void loadPresence(networkId);
     });
-  }, [expandedServers, servers]);
+  }, [expandedServers, servers, loadPresence]);
 
   // Auto-expand selected network and always refresh channels
   useEffect(() => {
@@ -436,6 +448,7 @@ export function ServerTree({
                             const pmKey = `pm:${user}`;
                             const activityKey = `${network.id}:${pmKey}`;
                             const unreadCount = unreadCounts.get(activityKey) || 0;
+                            const dotState = dmPresenceState(user, presence[network.id]?.[user.toLowerCase()]);
                             return (
                               <div
                                 key={pmKey}
@@ -454,7 +467,17 @@ export function ServerTree({
                                 }}
                               >
                                 <span className={`text-sm flex items-center gap-2 min-w-0 ${unreadCount > 0 ? 'font-semibold' : ''}`}>
-                                  <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: 'var(--presence-online)' }} />
+                                  <span
+                                    className="w-2 h-2 rounded-full flex-shrink-0"
+                                    title={dotState === 'online' ? 'Online' : dotState === 'offline' ? 'Offline' : 'Presence unknown'}
+                                    style={
+                                      dotState === 'online'
+                                        ? { background: 'var(--presence-online)' }
+                                        : dotState === 'offline'
+                                          ? { background: 'var(--presence-offline)' }
+                                          : { background: 'transparent', border: '1.5px solid var(--presence-offline)', opacity: 0.5 }
+                                    }
+                                  />
                                   <span className="truncate">{user}</span>
                                 </span>
                                 {unreadCount > 0 && (

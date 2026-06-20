@@ -53,8 +53,10 @@ type IRCClient struct {
 	serverCapabilities    *ServerCapabilities   // Server capabilities from ISUPPORT
 	supportsWHOX          bool                  // Server advertised the WHOX token in ISUPPORT (guarded by mu)
 	supportsMonitor       bool                  // Server advertised the MONITOR token in ISUPPORT (guarded by mu)
+	monitorLimit          int                   // MONITOR=<limit> from ISUPPORT; 0 = unlimited/unknown (guarded by mu)
 	monitorStatus         map[string]bool       // MONITOR presence: lowercased nick -> online (guarded by monitorMu)
-	monitorMu             sync.Mutex            // Mutex for monitorStatus
+	monitorArmed          map[string]bool       // Nicks currently on the server MONITOR list (guarded by monitorMu)
+	monitorMu             sync.Mutex            // Mutex for monitorStatus and monitorArmed
 	whoisInProgress       map[string]*WhoisInfo // Track WHOIS requests in progress (key: nickname)
 	whoisMu               sync.Mutex            // Mutex for whoisInProgress map
 	knownBots             map[string]bool       // Nicks recognized as IRCv3 bots this session (key: lowercased nick)
@@ -520,6 +522,7 @@ func NewIRCClient(network *storage.Network, eventBus *events.EventBus, storage *
 		knownBots:           make(map[string]bool),
 		userMeta:            make(map[string]*UserMeta),
 		monitorStatus:       make(map[string]bool),
+		monitorArmed:        make(map[string]bool),
 		autoJoinOnce:        &sync.Once{},
 		enabledCaps:         make(map[string]bool),
 		banLists:            make(map[string][]BanEntry),
@@ -1648,6 +1651,11 @@ func (c *IRCClient) setupHandlers() {
 	// MONITOR presence: 730 RPL_MONONLINE, 731 RPL_MONOFFLINE.
 	c.conn.AddCallback("730", func(e ircmsg.Message) { c.handleMonitorPresence(e, true) })
 	c.conn.AddCallback("731", func(e ircmsg.Message) { c.handleMonitorPresence(e, false) })
+	// 734 ERR_MONLISTFULL: the MONITOR list is full; the trailing nicks were not
+	// added. We degrade gracefully — their presence simply shows as unknown.
+	c.conn.AddCallback("734", func(e ircmsg.Message) {
+		logger.Log.Warn().Interface("params", e.Params).Msg("MONITOR list full (734); some nicks are not being tracked")
+	})
 	// IRCv3 standard-replies: FAIL (error), WARN (warning), NOTE (status).
 	c.conn.AddCallback("FAIL", func(e ircmsg.Message) { c.handleStandardReply(e, "error") })
 	c.conn.AddCallback("WARN", func(e ircmsg.Message) { c.handleStandardReply(e, "warning") })
@@ -2412,11 +2420,12 @@ func (c *IRCClient) setupHandlers() {
 				c.mu.Unlock()
 			}
 
-			// MONITOR=<limit> announces presence-monitoring support. We only need
-			// to know it's present; the limit is advisory.
-			if param == "MONITOR" || strings.HasPrefix(param, "MONITOR=") {
+			// MONITOR=<limit> announces presence-monitoring support and the max
+			// number of targets we may track (0 = unlimited/unspecified).
+			if limit, ok := parseMonitorLimit(param); ok {
 				c.mu.Lock()
 				c.supportsMonitor = true
+				c.monitorLimit = limit
 				c.mu.Unlock()
 			}
 
@@ -3102,11 +3111,121 @@ func (c *IRCClient) monitorSupported() bool {
 	return c.supportsMonitor
 }
 
-// MonitorAdd asks the server to track a nick's presence (MONITOR + nick). The
-// online/offline result arrives asynchronously via 730/731.
+// serviceNicks are the well-known network-services pseudo-clients. Presence is
+// meaningless for them (they're effectively always online), so we never spend a
+// MONITOR slot tracking a service even when a PM with one is open.
+var serviceNicks = map[string]bool{
+	"nickserv": true, "chanserv": true, "saslserv": true, "memoserv": true,
+	"hostserv": true, "operserv": true, "botserv": true, "global": true,
+}
+
+// IsServiceNick reports whether nick is a well-known network service (NickServ,
+// ChanServ, …). Comparison is case-insensitive.
+func IsServiceNick(nick string) bool {
+	return serviceNicks[strings.ToLower(nick)]
+}
+
+// parseMonitorLimit interprets an ISUPPORT token. ok is true when the token is
+// MONITOR (announcing presence support); limit is the advertised maximum number
+// of monitored targets, or 0 when none/malformed (treated as unlimited).
+func parseMonitorLimit(param string) (limit int, ok bool) {
+	if param == "MONITOR" {
+		return 0, true
+	}
+	if !strings.HasPrefix(param, "MONITOR=") {
+		return 0, false
+	}
+	n, err := strconv.Atoi(param[len("MONITOR="):])
+	if err != nil || n < 0 {
+		return 0, true
+	}
+	return n, true
+}
+
+// desiredMonitorState is the single rule deciding whether nick should be on the
+// server MONITOR list: an explicit (durable) buddy is always monitored; anyone
+// with an open PM is monitored too, except yourself and service pseudo-clients.
+func desiredMonitorState(nick, selfNick string, isBuddy, hasOpenPM bool) bool {
+	if isBuddy {
+		return true
+	}
+	return hasOpenPM && !strings.EqualFold(nick, selfNick) && !IsServiceNick(nick)
+}
+
+// MonitorReconcileNick brings nick's MONITOR state in line with the union rule:
+// it is monitored iff it is a durable buddy or has an open PM (and is neither
+// ourselves nor a service nick). Call it after a buddy add/remove or a PM
+// open/close; it is safe to call when the server lacks MONITOR (no-op).
+func (c *IRCClient) MonitorReconcileNick(nick string) {
+	if nick == "" || !c.monitorSupported() {
+		return
+	}
+	isBuddy := false
+	if nicks, err := c.storage.GetMonitoredNicks(c.networkID); err == nil {
+		for _, n := range nicks {
+			if strings.EqualFold(n, nick) {
+				isBuddy = true
+				break
+			}
+		}
+	}
+	hasOpenPM := false
+	if open, err := c.storage.GetPrivateMessageConversations(c.networkID, c.network.Nickname, true); err == nil {
+		for _, u := range open {
+			if strings.EqualFold(u, nick) {
+				hasOpenPM = true
+				break
+			}
+		}
+	}
+	c.MonitorSet(nick, desiredMonitorState(nick, c.network.Nickname, isBuddy, hasOpenPM))
+}
+
+// MonitorSet arms (on) or disarms (off) nick on the server MONITOR list, keeping
+// the armed-set in sync. It is idempotent and a no-op when the desired state
+// already holds or the server lacks MONITOR. Adds are skipped once the server's
+// advertised MONITOR limit is reached — durable buddies are armed before PM
+// correspondents (see sendInitialMonitor), so buddies win the available slots.
+func (c *IRCClient) MonitorSet(nick string, on bool) {
+	if nick == "" || !c.monitorSupported() {
+		return
+	}
+	key := strings.ToLower(nick)
+	c.monitorMu.Lock()
+	armed := c.monitorArmed[key]
+	atLimit := c.monitorLimit > 0 && len(c.monitorArmed) >= c.monitorLimit
+	c.monitorMu.Unlock()
+	if on == armed {
+		return // already in the desired state
+	}
+	if on {
+		if atLimit {
+			logger.Log.Debug().Str("nick", nick).Int("limit", c.monitorLimit).
+				Msg("MONITOR list full; skipping add (presence will show as unknown)")
+			return
+		}
+		if err := c.MonitorAdd(nick); err != nil {
+			logger.Log.Debug().Err(err).Str("nick", nick).Msg("MONITOR + send failed")
+		}
+		return
+	}
+	if err := c.MonitorRemove(nick); err != nil {
+		logger.Log.Debug().Err(err).Str("nick", nick).Msg("MONITOR - send failed")
+	}
+}
+
+// MonitorAdd asks the server to track a nick's presence (MONITOR + nick) and
+// records it in the armed-set. The online/offline result arrives asynchronously
+// via 730/731.
 func (c *IRCClient) MonitorAdd(nick string) error {
 	if nick == "" {
 		return fmt.Errorf("monitor nick required")
+	}
+	c.monitorMu.Lock()
+	c.monitorArmed[strings.ToLower(nick)] = true
+	c.monitorMu.Unlock()
+	if c.conn == nil {
+		return nil // not connected yet; armed-set re-sent on connect
 	}
 	return c.conn.SendRaw("MONITOR + " + nick)
 }
@@ -3116,32 +3235,80 @@ func (c *IRCClient) MonitorRemove(nick string) error {
 	if nick == "" {
 		return fmt.Errorf("monitor nick required")
 	}
+	key := strings.ToLower(nick)
 	c.monitorMu.Lock()
-	delete(c.monitorStatus, strings.ToLower(nick))
+	delete(c.monitorStatus, key)
+	delete(c.monitorArmed, key)
 	c.monitorMu.Unlock()
+	if c.conn == nil {
+		return nil
+	}
 	return c.conn.SendRaw("MONITOR - " + nick)
 }
 
-// sendInitialMonitor re-arms the server-side MONITOR list from the durable
-// per-network buddy list on (re)connect. No-op when the server lacks MONITOR or
-// the list is empty. Nicks are sent comma-separated in chunks to respect line
-// length.
+// sendInitialMonitor re-arms the server-side MONITOR list on (re)connect from the
+// union of durable buddies and open PM correspondents (excluding ourselves and
+// service nicks). Buddies are listed first so they keep their slots if the
+// server's advertised limit is tight. No-op when the server lacks MONITOR. Nicks
+// are sent comma-separated in chunks to respect line length.
 func (c *IRCClient) sendInitialMonitor() {
 	if !c.monitorSupported() {
 		return
 	}
-	nicks, err := c.storage.GetMonitoredNicks(c.networkID)
+	buddies, err := c.storage.GetMonitoredNicks(c.networkID)
 	if err != nil {
 		logger.Log.Warn().Err(err).Msg("Failed to load monitored nicks")
+	}
+	open, err := c.storage.GetPrivateMessageConversations(c.networkID, c.network.Nickname, true)
+	if err != nil {
+		logger.Log.Warn().Err(err).Msg("Failed to load open PM conversations for MONITOR")
+	}
+
+	// Build the ordered, de-duplicated union: buddies first, then open PMs.
+	seen := make(map[string]bool)
+	var armed []string
+	add := func(nick string, isBuddy, hasOpenPM bool) {
+		key := strings.ToLower(nick)
+		if seen[key] || !desiredMonitorState(nick, c.network.Nickname, isBuddy, hasOpenPM) {
+			return
+		}
+		seen[key] = true
+		armed = append(armed, nick)
+	}
+	for _, n := range buddies {
+		add(n, true, false)
+	}
+	for _, u := range open {
+		add(u, false, true)
+	}
+
+	// Respect the server's advertised MONITOR limit (buddies-first ordering means
+	// they survive the truncation).
+	c.mu.RLock()
+	limit := c.monitorLimit
+	c.mu.RUnlock()
+	if limit > 0 && len(armed) > limit {
+		armed = armed[:limit]
+	}
+
+	// Record the armed-set so it matches the fresh (empty) server list.
+	c.monitorMu.Lock()
+	c.monitorArmed = make(map[string]bool, len(armed))
+	for _, n := range armed {
+		c.monitorArmed[strings.ToLower(n)] = true
+	}
+	c.monitorMu.Unlock()
+
+	if c.conn == nil {
 		return
 	}
 	const chunkSize = 20
-	for i := 0; i < len(nicks); i += chunkSize {
+	for i := 0; i < len(armed); i += chunkSize {
 		end := i + chunkSize
-		if end > len(nicks) {
-			end = len(nicks)
+		if end > len(armed) {
+			end = len(armed)
 		}
-		if err := c.conn.SendRaw("MONITOR + " + strings.Join(nicks[i:end], ",")); err != nil {
+		if err := c.conn.SendRaw("MONITOR + " + strings.Join(armed[i:end], ",")); err != nil {
 			logger.Log.Warn().Err(err).Msg("Failed to send initial MONITOR list")
 			return
 		}
