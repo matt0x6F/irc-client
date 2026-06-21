@@ -515,21 +515,26 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
   };
 
   const handleToggleNotifications = async (v: boolean) => {
-    if (v) {
-      try {
-        const granted = await RequestNotificationPermission();
-        setNotifyNotice(
-          granted
-            ? null
-            : 'Notifications are blocked. Enable Cascade Chat in System Settings → Notifications, then toggle this again.',
-        );
-      } catch (e) {
-        setNotifyNotice(String(e));
-      }
-    } else {
+    if (!v) {
+      setNotificationsEnabled(false);
       setNotifyNotice(null);
+      return;
     }
-    setNotificationsEnabled(v);
+    try {
+      const granted = await RequestNotificationPermission();
+      if (granted) {
+        setNotifyNotice(null);
+        setNotificationsEnabled(true);
+      } else {
+        setNotifyNotice(
+          'Notifications are blocked. Enable Cascade Chat in System Settings → Notifications, then toggle this again.',
+        );
+        setNotificationsEnabled(false);
+      }
+    } catch (e) {
+      setNotifyNotice(String(e));
+      setNotificationsEnabled(false);
+    }
   };
 
   const renderContent = () => {

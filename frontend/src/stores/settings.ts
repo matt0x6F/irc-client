@@ -88,36 +88,36 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   notificationsEnabled: false,
   setNotificationsEnabled: (value) => {
     set({ notificationsEnabled: value });
-    SetSetting(NOTIFY_ENABLED_KEY, value ? 'true' : 'false').catch((e) =>
-      console.error('Failed to persist notifications.enabled:', e),
+    SetSetting(NOTIFY_ENABLED_KEY, value ? 'true' : 'false').catch((error) =>
+      console.error('Failed to persist notifications.enabled:', error),
     );
   },
   notifyPrivateMessages: true,
   setNotifyPrivateMessages: (value) => {
     set({ notifyPrivateMessages: value });
-    SetSetting(NOTIFY_PM_KEY, value ? 'true' : 'false').catch((e) =>
-      console.error('Failed to persist notifications.privateMessages:', e),
+    SetSetting(NOTIFY_PM_KEY, value ? 'true' : 'false').catch((error) =>
+      console.error('Failed to persist notifications.privateMessages:', error),
     );
   },
   notifyMentions: true,
   setNotifyMentions: (value) => {
     set({ notifyMentions: value });
-    SetSetting(NOTIFY_MENTIONS_KEY, value ? 'true' : 'false').catch((e) =>
-      console.error('Failed to persist notifications.mentions:', e),
+    SetSetting(NOTIFY_MENTIONS_KEY, value ? 'true' : 'false').catch((error) =>
+      console.error('Failed to persist notifications.mentions:', error),
     );
   },
   notifyConnectionLost: true,
   setNotifyConnectionLost: (value) => {
     set({ notifyConnectionLost: value });
-    SetSetting(NOTIFY_CONNECTION_KEY, value ? 'true' : 'false').catch((e) =>
-      console.error('Failed to persist notifications.connectionLost:', e),
+    SetSetting(NOTIFY_CONNECTION_KEY, value ? 'true' : 'false').catch((error) =>
+      console.error('Failed to persist notifications.connectionLost:', error),
     );
   },
   notifyOnlyWhenUnfocused: true,
   setNotifyOnlyWhenUnfocused: (value) => {
     set({ notifyOnlyWhenUnfocused: value });
-    SetSetting(NOTIFY_UNFOCUSED_KEY, value ? 'true' : 'false').catch((e) =>
-      console.error('Failed to persist notifications.onlyWhenUnfocused:', e),
+    SetSetting(NOTIFY_UNFOCUSED_KEY, value ? 'true' : 'false').catch((error) =>
+      console.error('Failed to persist notifications.onlyWhenUnfocused:', error),
     );
   },
 }));

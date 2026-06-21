@@ -82,10 +82,10 @@ func (a *App) AttachNotifications(svc *notifications.NotificationService, win *a
 	a.notifier.SetDelivery(d)
 
 	if err := d.RegisterCategory(messageCategory()); err != nil {
-		logger.Log.Debug().Err(err).Msg("register message notification category")
+		logger.Log.Warn().Err(err).Msg("register message notification category")
 	}
 	if err := d.RegisterCategory(connectionCategory()); err != nil {
-		logger.Log.Debug().Err(err).Msg("register connection notification category")
+		logger.Log.Warn().Err(err).Msg("register connection notification category")
 	}
 
 	svc.OnNotificationResponse(a.handleNotificationResponse)

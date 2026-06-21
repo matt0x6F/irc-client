@@ -22,14 +22,16 @@ import (
 
 // App struct
 type App struct {
-	app                   *application.App // Wired in ServiceStartup; nil until the app is running.
-	dataDir               string           // Root for persistent data (DB, plugins, logs); ~/.cascade-chat or $CASCADE_DATA_DIR.
-	storage               *storage.Storage
-	eventBus              *events.EventBus
-	commands              *CommandRegistry
-	pluginManager         *plugin.Manager
-	keychain              *security.Keychain
-	notifier              *notification.Notifier
+	app           *application.App // Wired in ServiceStartup; nil until the app is running.
+	dataDir       string           // Root for persistent data (DB, plugins, logs); ~/.cascade-chat or $CASCADE_DATA_DIR.
+	storage       *storage.Storage
+	eventBus      *events.EventBus
+	commands      *CommandRegistry
+	pluginManager *plugin.Manager
+	keychain      *security.Keychain
+	notifier      *notification.Notifier
+	// notifyWindow is set once at startup (AttachNotifications) and only read on
+	// the Wails main-thread bound path (FocusMainWindow), so no mutex is needed.
 	notifyWindow          *application.WebviewWindow
 	ircClients            map[int64]*irc.IRCClient
 	connectingNetworks    map[string]chan struct{} // Track networks currently connecting by "address:port"
