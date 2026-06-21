@@ -1354,7 +1354,10 @@ func (c *IRCClient) setupHandlers() {
 			})
 		}
 
-		// Emit event
+		// Emit event. pmTarget carries the conversation peer for DMs (empty for
+		// channel messages) so the frontend can route the event to the open
+		// "pm:<peer>" pane — the raw `channel` is our own nick for inbound DMs and
+		// never matches that pane on its own.
 		c.eventBus.Emit(events.Event{
 			Type: EventMessageReceived,
 			Data: map[string]interface{}{
@@ -1363,6 +1366,7 @@ func (c *IRCClient) setupHandlers() {
 				"channel":   channel,
 				"user":      user,
 				"message":   message,
+				"pmTarget":  pmTarget,
 			},
 			Timestamp: time.Now(),
 			Source:    events.EventSourceIRC,
@@ -3940,8 +3944,10 @@ func (c *IRCClient) SendMessage(target, message string) error {
 		return fmt.Errorf("failed to send message: %w", err)
 	}
 
-	// Determine if it's a channel or private message
+	// Determine if it's a channel or private message. For a PM the peer is the
+	// recipient (we are the sender); channel messages have no PM peer.
 	var channelID *int64
+	var pmTarget string
 	if len(target) > 0 && (target[0] == '#' || target[0] == '&') {
 		// Channel message - look up channel ID
 		ch, err := c.storage.GetChannelByName(c.networkID, target)
@@ -3954,6 +3960,7 @@ func (c *IRCClient) SendMessage(target, message string) error {
 		}
 	} else {
 		// Private message - create or get PM conversation
+		pmTarget = target
 		_, err := c.storage.GetOrCreatePMConversation(c.networkID, target, c.network.Nickname)
 		if err != nil {
 			logger.Log.Error().Err(err).Str("target", target).Msg("Failed to create/get PM conversation")
@@ -3968,12 +3975,6 @@ func (c *IRCClient) SendMessage(target, message string) error {
 	c.mu.RUnlock()
 
 	if !hasEcho {
-		// For a private message the peer is the recipient (we are the sender);
-		// for channel messages there is no PM peer.
-		var pmTarget string
-		if !(len(target) > 0 && (target[0] == '#' || target[0] == '&')) {
-			pmTarget = target
-		}
 		msg := storage.Message{
 			NetworkID:   c.networkID,
 			ChannelID:   channelID,
@@ -3997,6 +3998,7 @@ func (c *IRCClient) SendMessage(target, message string) error {
 			"networkId": c.networkID,
 			"target":    target,
 			"message":   message,
+			"pmTarget":  pmTarget,
 		},
 		Timestamp: time.Now(),
 		Source:    events.EventSourceIRC,
