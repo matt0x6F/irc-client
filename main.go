@@ -53,17 +53,11 @@ func main() {
 	// Config.CheckInterval, so background polling never pops the window unless
 	// an update is actually found.
 	if isReleaseVersion(version) {
-		gh, err := github.New(github.Config{
-			Repository:    "matt0x6f/irc-client",
-			ChecksumAsset: "SHA256SUMS",
-			AssetMatcher:  matchDarwinUniversalZip,
-			// Track prereleases (the per-merge builds published from main) only
-			// when the user opted into that channel; the default stable channel
-			// leaves this false so the provider uses /releases/latest, which
-			// excludes prereleases. Read once here — the channel is fixed for
-			// the process lifetime (see updateChannelPrerelease).
-			Prerelease: ircApp.updateChannelPrerelease(),
-		})
+		// The channel-routing provider reads the persisted "updateChannel"
+		// setting live on every check (see newGitHubChannelProvider), so the
+		// Stable/Prerelease choice takes effect on the next check without an app
+		// restart — even though Updater.Init below is single-shot.
+		gh, err := newGitHubChannelProvider(ircApp.updateChannelPrerelease)
 		if err != nil {
 			println("Error creating updater provider:", err.Error())
 		} else if err := app.Updater.Init(updater.Config{

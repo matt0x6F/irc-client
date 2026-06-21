@@ -1368,7 +1368,7 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
                   </select>
                 </label>
                 <p className="text-xs text-muted-foreground mt-2">
-                  Stable installs published releases only. Prerelease also picks up the test builds auto-published from <span className="font-mono">main</span> on every merge. Changes apply after restarting Cascade.
+                  Stable installs published releases only. Prerelease also picks up the test builds auto-published from <span className="font-mono">main</span> on every merge. Changes take effect on the next update check.
                 </p>
               </div>
               <div className="pt-3 border-t border-border space-y-1 text-sm">
