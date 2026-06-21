@@ -3,6 +3,7 @@ import { SendCommand, OpenSettings } from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime/runtime';
 import { useNetworkStore } from './stores/network';
 import { useUIStore } from './stores/ui';
+import { eventMatchesPane } from './lib/pane-routing';
 import { initCommands } from './stores/commands';
 import { ServerTree } from './components/server-tree';
 import { MessageView } from './components/message-view';
@@ -424,9 +425,11 @@ function App() {
       if (selectedNetwork === null) return;
       const currentNetwork = networks.find((n) => n.id === selectedNetwork);
       if (currentNetwork && network === currentNetwork.address) {
-        const matchesView =
-          (target && selectedChannel === target) ||
-          (eventData.channel === null && selectedChannel === 'status');
+        // Route the event to its buffer key (pm:<peer> for DMs via the backend's
+        // pmTarget, #chan for channels, status otherwise) and compare to the open
+        // pane. Matching DMs on the raw target never lined up with the "pm:<peer>"
+        // pane, so DM panes only refreshed on the 2s poll.
+        const matchesView = eventMatchesPane(eventData, selectedChannel);
         if (matchesView) {
           // While anchored to a pinned/old message, don't reload (which would snap
           // back to live). Instead count new messages so the badge can show them.
