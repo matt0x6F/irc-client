@@ -30,6 +30,7 @@ type App struct {
 	pluginManager         *plugin.Manager
 	keychain              *security.Keychain
 	notifier              *notification.Notifier
+	notifyWindow          *application.WebviewWindow
 	ircClients            map[int64]*irc.IRCClient
 	connectingNetworks    map[string]chan struct{} // Track networks currently connecting by "address:port"
 	reconnectingNetworks  map[int64]bool           // Track networks currently reconnecting (by network ID)
@@ -405,6 +406,9 @@ func (a *App) SetSetting(key, value string) error {
 		return err
 	}
 	a.emit("setting:changed", map[string]string{"key": key, "value": value})
+	if strings.HasPrefix(key, "notifications.") {
+		a.refreshNotificationPrefs()
+	}
 	return nil
 }
 
