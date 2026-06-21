@@ -11,7 +11,7 @@ import {
   SelectValue,
 } from './ui/select';
 import { useThemeStore, ACCENTS, type ThemeMode } from '../stores/theme';
-import { useSettingsStore, type PrefixDisplayMode } from '../stores/settings';
+import { useSettingsStore, type PrefixDisplayMode, type UpdateChannel } from '../stores/settings';
 import { usePreferencesStore } from '../stores/preferences';
 
 export type SettingsSection = 'networks' | 'plugins' | 'display' | 'advanced' | 'about';
@@ -88,6 +88,8 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
   const setConsolidateJoinQuit = useSettingsStore((s) => s.setConsolidateJoinQuit);
   const prefixDisplayMode = useSettingsStore((s) => s.prefixDisplayMode);
   const setPrefixDisplayMode = useSettingsStore((s) => s.setPrefixDisplayMode);
+  const updateChannel = useSettingsStore((s) => s.updateChannel);
+  const setUpdateChannel = useSettingsStore((s) => s.setUpdateChannel);
 
   // Theme (appearance + accent)
   const themeMode = useThemeStore((s) => s.mode);
@@ -1351,6 +1353,23 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
                     {updateNotice}
                   </p>
                 )}
+              </div>
+              <div className="pt-3 border-t border-border">
+                <label className="flex items-center justify-between gap-4">
+                  <span className="text-sm font-medium">Update channel</span>
+                  <select
+                    value={updateChannel}
+                    onChange={(e) => setUpdateChannel(e.target.value as UpdateChannel)}
+                    data-testid="update-channel-select"
+                    className="border border-border rounded px-2 py-1 bg-background text-sm"
+                  >
+                    <option value="stable">Stable</option>
+                    <option value="prerelease">Prerelease</option>
+                  </select>
+                </label>
+                <p className="text-xs text-muted-foreground mt-2">
+                  Stable installs published releases only. Prerelease also picks up the test builds auto-published from <span className="font-mono">main</span> on every merge. Changes apply after restarting Cascade.
+                </p>
               </div>
               <div className="pt-3 border-t border-border space-y-1 text-sm">
                 <a

@@ -59,6 +59,23 @@ func (a *App) updaterAccentCSS() string {
 	return ":root { --accent: " + hex + "; --accent-fg: #ffffff; }"
 }
 
+// updateChannelPrerelease reports whether the user opted into the prerelease
+// update channel via the persisted "updateChannel" setting. Any unset or
+// unknown value means the default stable channel (false), so the updater only
+// ever tracks prereleases when the user has explicitly opted in. Read once at
+// startup from main.go when the github provider is configured; because
+// Updater.Init is single-shot (it returns ErrAlreadyConfigured on a second
+// call), a channel change only takes effect on the next launch — the Settings
+// UI says as much. Safe to call before the app is running because storage is
+// opened in NewApp.
+func (a *App) updateChannelPrerelease() bool {
+	if a.storage == nil {
+		return false
+	}
+	v, err := a.GetSetting("updateChannel")
+	return err == nil && v == "prerelease"
+}
+
 // startPeriodicUpdateCheck runs a background loop that polls the provider chain
 // on updateCheckInterval and surfaces the updater window only when a newer
 // release is found. It deliberately uses Updater.Check (which opens no window)

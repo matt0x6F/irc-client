@@ -59,6 +59,15 @@ Reference for every IRCv3 capability Cascade negotiates, what it does with each,
 - Tracking unsupported capabilities and what blocks them
 - Knowing how the capability screenshots are generated
 
+### [Releases & Update Channels](./releases.md)
+How Cascade builds and ships (manual stable releases + auto pre-releases on every merge to `main`), and how the in-app updater's Stable/Prerelease channels work.
+
+**Use this for:**
+- Understanding the stable vs. pre-release publishing flow
+- How auto pre-release versions are derived (and why SemVer ordering matters)
+- How the Update channel setting maps to the updater (`file:line`)
+- Why a channel change needs a restart
+
 ## Quick Start
 
 1. **New to the project?** Start with the [Technical Documentation](../agents.md) to understand the architecture.
