@@ -1,4 +1,4 @@
-import { Page } from '@playwright/test';
+import { Page, Locator } from '@playwright/test';
 import { Runtime } from './runtime';
 
 /** URL of the standalone Settings window for a given pane. */
@@ -166,6 +166,30 @@ export async function connectViaContextMenu(page: Page, name = 'e2e'): Promise<v
         `/preceding-sibling::span[@data-testid="network-status-indicator" and @data-connected="true"]`,
     )
     .waitFor({ state: 'visible', timeout: 30_000 });
+}
+
+/**
+ * Disconnect a network via its context-menu "Disconnect" entry (only present
+ * when the network is connected) and wait for its indicator to go grey. Scoped
+ * to the named network's row so it's unambiguous in the shared-DB run.
+ */
+export async function disconnectViaContextMenu(page: Page, name = 'e2e'): Promise<void> {
+  await openNetworkContextMenu(page, name);
+  await page.getByTestId('context-menu').getByText('Disconnect', { exact: true }).click();
+  await networkIndicator(page, name, false).waitFor({ state: 'visible', timeout: 30_000 });
+}
+
+/**
+ * Locator for a network row's status indicator in the named connection state.
+ * The indicator is the dot rendered immediately before the network-name span in
+ * the server tree, so it's matched as that span's preceding sibling.
+ */
+export function networkIndicator(page: Page, name: string, connected: boolean): Locator {
+  return page.locator(
+    `xpath=//span[normalize-space(text())=${JSON.stringify(name)}]` +
+      `/preceding-sibling::span[@data-testid="network-status-indicator" and ` +
+      `@data-connected=${JSON.stringify(connected ? 'true' : 'false')}]`,
+  );
 }
 
 /**

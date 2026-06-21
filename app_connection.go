@@ -504,13 +504,31 @@ func (a *App) upgradeToTLS(networkID int64) {
 
 // handleConnectionLost handles auto-reconnect when a connection is lost
 func (a *App) handleConnectionLost(networkID int64) {
-	// A deliberate STS plaintext→TLS upgrade tears down the old connection on
-	// purpose; don't let the auto-reconnect path race the upgrade's own reconnect.
-	a.mu.RLock()
+	// Read both deliberate-teardown guards under one lock, consuming the
+	// user-disconnect marker unconditionally. Consuming it even when the STS guard
+	// short-circuits below matters: an STS upgrade also routes through
+	// DisconnectNetwork (which sets the marker), so leaving it set would leak onto
+	// the next genuine drop and wrongly suppress that reconnect.
+	a.mu.Lock()
 	upgrading := a.stsUpgrading[networkID]
-	a.mu.RUnlock()
+	intentional := a.intentionalDisconnect[networkID]
+	delete(a.intentionalDisconnect, networkID)
+	a.mu.Unlock()
+
+	// A deliberate STS plaintext→TLS upgrade tears down the old connection on
+	// purpose; its own goroutine drives the reconnect, so don't race it here.
 	if upgrading {
 		logger.Log.Debug().Int64("network_id", networkID).Msg("STS upgrade in progress, skipping auto-reconnect")
+		return
+	}
+
+	// A user-initiated disconnect tears the connection down on purpose, but rides
+	// the same EventConnectionLost path as an unexpected drop. Without this guard
+	// an auto-connect network would immediately reconnect after the user hit
+	// Disconnect. Checked before openConnectionGap so a deliberate disconnect leaves
+	// no "Disconnected" gap marker implying a recovery is pending.
+	if intentional {
+		logger.Log.Debug().Int64("network_id", networkID).Msg("User-initiated disconnect, skipping auto-reconnect")
 		return
 	}
 
@@ -962,7 +980,17 @@ func (a *App) DisconnectNetwork(networkID int64) error {
 		return fmt.Errorf("network not connected")
 	}
 
+	// Flag this as a deliberate teardown so the resulting EventConnectionLost
+	// doesn't trip auto-reconnect (handleConnectionLost consumes the flag). Only
+	// when actually connected: disconnecting an already-dead client fires no
+	// DisconnectCallback, so the flag would otherwise leak onto the next genuine
+	// drop and wrongly suppress that reconnect.
+	if client.IsConnectedDirect() {
+		a.intentionalDisconnect[networkID] = true
+	}
+
 	if err := client.Disconnect(); err != nil {
+		delete(a.intentionalDisconnect, networkID)
 		return fmt.Errorf("failed to disconnect: %w", err)
 	}
 
