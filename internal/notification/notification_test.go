@@ -8,11 +8,14 @@ type fakeDelivery struct {
 	authErr     error
 }
 
-func (f *fakeDelivery) Send(n Notification) error            { return nil }
-func (f *fakeDelivery) SendWithActions(n Notification) error { f.withActions = append(f.withActions, n); return nil }
-func (f *fakeDelivery) RegisterCategory(c Category) error    { return nil }
-func (f *fakeDelivery) RequestAuthorization() (bool, error)  { return f.authResult, f.authErr }
-func (f *fakeDelivery) CheckAuthorization() (bool, error)    { return f.authResult, f.authErr }
+func (f *fakeDelivery) Send(n Notification) error { return nil }
+func (f *fakeDelivery) SendWithActions(n Notification) error {
+	f.withActions = append(f.withActions, n)
+	return nil
+}
+func (f *fakeDelivery) RegisterCategory(c Category) error   { return nil }
+func (f *fakeDelivery) RequestAuthorization() (bool, error) { return f.authResult, f.authErr }
+func (f *fakeDelivery) CheckAuthorization() (bool, error)   { return f.authResult, f.authErr }
 
 func TestShouldNotify_prefsMatrix(t *testing.T) {
 	cases := []struct {
