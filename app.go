@@ -22,27 +22,28 @@ import (
 
 // App struct
 type App struct {
-	app                  *application.App // Wired in ServiceStartup; nil until the app is running.
-	dataDir              string           // Root for persistent data (DB, plugins, logs); ~/.cascade-chat or $CASCADE_DATA_DIR.
-	storage              *storage.Storage
-	eventBus             *events.EventBus
-	commands             *CommandRegistry
-	pluginManager        *plugin.Manager
-	keychain             *security.Keychain
-	notifier             *notification.Notifier
-	ircClients           map[int64]*irc.IRCClient
-	connectingNetworks   map[string]chan struct{} // Track networks currently connecting by "address:port"
-	reconnectingNetworks map[int64]bool           // Track networks currently reconnecting (by network ID)
-	connectionGapOpen    map[int64]bool           // Networks with an open disconnect→reconnect gap (by network ID)
-	stsUpgrades          map[int64]stsTarget      // Pending plaintext→TLS STS upgrades (by network ID)
-	stsUpgrading         map[int64]bool           // Networks mid-STS-upgrade; suppresses auto-reconnect (by network ID)
-	mu                   sync.RWMutex
-	channelListCache     map[int64]channelListCacheEntry // Cached LIST results keyed by network ID
-	channelListCacheMu   sync.RWMutex                    // Guards channelListCache; separate from mu to avoid contention
-	startupCtx           context.Context
-	startupCancel        context.CancelFunc
-	startupWg            sync.WaitGroup
-	shutdownOnce         sync.Once // Ensure shutdown only runs once
+	app                   *application.App // Wired in ServiceStartup; nil until the app is running.
+	dataDir               string           // Root for persistent data (DB, plugins, logs); ~/.cascade-chat or $CASCADE_DATA_DIR.
+	storage               *storage.Storage
+	eventBus              *events.EventBus
+	commands              *CommandRegistry
+	pluginManager         *plugin.Manager
+	keychain              *security.Keychain
+	notifier              *notification.Notifier
+	ircClients            map[int64]*irc.IRCClient
+	connectingNetworks    map[string]chan struct{} // Track networks currently connecting by "address:port"
+	reconnectingNetworks  map[int64]bool           // Track networks currently reconnecting (by network ID)
+	connectionGapOpen     map[int64]bool           // Networks with an open disconnect→reconnect gap (by network ID)
+	stsUpgrades           map[int64]stsTarget      // Pending plaintext→TLS STS upgrades (by network ID)
+	stsUpgrading          map[int64]bool           // Networks mid-STS-upgrade; suppresses auto-reconnect (by network ID)
+	intentionalDisconnect map[int64]bool           // Networks the user deliberately disconnected; suppresses auto-reconnect once (by network ID)
+	mu                    sync.RWMutex
+	channelListCache      map[int64]channelListCacheEntry // Cached LIST results keyed by network ID
+	channelListCacheMu    sync.RWMutex                    // Guards channelListCache; separate from mu to avoid contention
+	startupCtx            context.Context
+	startupCancel         context.CancelFunc
+	startupWg             sync.WaitGroup
+	shutdownOnce          sync.Once // Ensure shutdown only runs once
 }
 
 // stsTarget is a pending plaintext→TLS upgrade: a host advertised STS over an
@@ -100,20 +101,21 @@ func NewApp() (*App, error) {
 	notifier := notification.NewNotifier()
 
 	app := &App{
-		dataDir:              baseDir,
-		storage:              stor,
-		eventBus:             eventBus,
-		commands:             buildBuiltinRegistry(),
-		pluginManager:        pluginMgr,
-		keychain:             keychain,
-		notifier:             notifier,
-		ircClients:           make(map[int64]*irc.IRCClient),
-		connectingNetworks:   make(map[string]chan struct{}),
-		reconnectingNetworks: make(map[int64]bool),
-		connectionGapOpen:    make(map[int64]bool),
-		stsUpgrades:          make(map[int64]stsTarget),
-		stsUpgrading:         make(map[int64]bool),
-		channelListCache:     make(map[int64]channelListCacheEntry),
+		dataDir:               baseDir,
+		storage:               stor,
+		eventBus:              eventBus,
+		commands:              buildBuiltinRegistry(),
+		pluginManager:         pluginMgr,
+		keychain:              keychain,
+		notifier:              notifier,
+		ircClients:            make(map[int64]*irc.IRCClient),
+		connectingNetworks:    make(map[string]chan struct{}),
+		reconnectingNetworks:  make(map[int64]bool),
+		connectionGapOpen:     make(map[int64]bool),
+		stsUpgrades:           make(map[int64]stsTarget),
+		stsUpgrading:          make(map[int64]bool),
+		intentionalDisconnect: make(map[int64]bool),
+		channelListCache:      make(map[int64]channelListCacheEntry),
 	}
 
 	pluginMgr.SetBuiltinCommandChecker(func(k string) bool {
