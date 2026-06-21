@@ -2,6 +2,7 @@ package irc
 
 import (
 	"testing"
+	"time"
 
 	"github.com/matt0x6f/irc-client/internal/constants"
 	"github.com/matt0x6f/irc-client/internal/storage"
@@ -28,6 +29,109 @@ func TestPMPeer(t *testing.T) {
 				t.Fatalf("pmPeer(%q, %q) = %q, want %q", tc.sender, tc.target, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestSelfIdentityUsesLiveNick is the regression guard for the nick-collision
+// routing bug: while connected under a fallback nick (the preferred nick was
+// taken, so the server assigned "matt0x6f_0"), self-identification must compare
+// against the LIVE nick (currentNick), not the preferred nick (network.Nickname).
+//
+// With the buggy preferred-nick comparison, an echoed PRIVMSG we sent to NickServ
+// arrives as ":matt0x6f_0 PRIVMSG NickServ ...", whose sender ("matt0x6f_0") does
+// not equal the preferred nick ("matt0x6f"), so it is misread as an inbound
+// message from a stranger and routed into a self-DM instead of NickServ's pane.
+func TestSelfIdentityUsesLiveNick(t *testing.T) {
+	// Preferred nick is matt0x6f, but the server assigned the fallback matt0x6f_0.
+	c := &IRCClient{network: &storage.Network{Nickname: "matt0x6f"}, currentNick: "matt0x6f_0"}
+
+	t.Run("echoed PM keys to the recipient, not a self-DM", func(t *testing.T) {
+		if got := c.pmPeer("matt0x6f_0", "NickServ"); got != "NickServ" {
+			t.Fatalf("pmPeer(live-nick sender, NickServ) = %q, want %q (echo routed to self-DM)", got, "NickServ")
+		}
+	})
+
+	t.Run("received PM still keys to the sender", func(t *testing.T) {
+		if got := c.pmPeer("alice", "matt0x6f_0"); got != "alice" {
+			t.Fatalf("pmPeer(alice, live-nick) = %q, want %q", got, "alice")
+		}
+	})
+
+	t.Run("echoed self-notice keys to the recipient", func(t *testing.T) {
+		if got := c.noticePMTarget("matt0x6f_0!~m@host", "matt0x6f_0", "NickServ"); got != "NickServ" {
+			t.Fatalf("noticePMTarget(echoed self-notice under live nick) = %q, want %q", got, "NickServ")
+		}
+	})
+}
+
+// TestSelfPartUnderFallbackNickClosesChannel is the regression guard for the
+// phantom-channel symptom: while connected under a fallback nick, our OWN PART
+// must mark the channel closed so it leaves the sidebar. With the preferred-nick
+// comparison, the PART arrives as ":matt0x6f_0 PART #ircv3" — sender != preferred
+// nick "matt0x6f" — so it was not recognized as us leaving, and #ircv3 lingered.
+func TestSelfPartUnderFallbackNickClosesChannel(t *testing.T) {
+	c := newNickTestClient(t) // preferred nick "matt0x6f"
+	c.currentNick = "matt0x6f_0"
+
+	mustCreateChannel(t, c.storage, &storage.Channel{
+		NetworkID: c.networkID, Name: "#ircv3", IsOpen: true, CreatedAt: time.Now(),
+	})
+
+	// The server tells us WE parted, under our live (fallback) nick.
+	c.handlePart(parseLine(t, ":matt0x6f_0!~m@host PART #ircv3"))
+
+	ch, err := c.storage.GetChannelByName(c.networkID, "#ircv3")
+	if err != nil {
+		t.Fatalf("GetChannelByName: %v", err)
+	}
+	if ch.IsOpen {
+		t.Fatalf("#ircv3 still open after our own PART under fallback nick %q (phantom channel)", c.currentNick)
+	}
+}
+
+// TestForwardedJoinClosesRequestedChannel guards the channel-forwarding case
+// (Libera +f): joining "#chat" while banned/forwarded yields a 470 redirect to
+// "##chat-overflow" plus a JOIN to the latter. The requested "#chat" buffer was
+// never actually joined, so it must be closed — otherwise it lingers in the
+// sidebar masquerading as a real channel (shown as "#chat" while WHOIS reports
+// only "##chat-overflow").
+func TestForwardedJoinClosesRequestedChannel(t *testing.T) {
+	c := newNickTestClient(t)
+	c.currentNick = "matt0x6f_0"
+
+	// We have a stored, open #chat buffer (e.g. from auto-join).
+	mustCreateChannel(t, c.storage, &storage.Channel{
+		NetworkID: c.networkID, Name: "#chat", IsOpen: true, CreatedAt: time.Now(),
+	})
+
+	c.handleForwardedJoin(parseLine(t, ":lithium.libera.chat 470 matt0x6f_0 #chat ##chat-overflow :Forwarding to another channel"))
+
+	ch, err := c.storage.GetChannelByName(c.networkID, "#chat")
+	if err != nil {
+		t.Fatalf("GetChannelByName: %v", err)
+	}
+	if ch.IsOpen {
+		t.Fatalf("requested #chat still open after 470 forward to ##chat-overflow (stale buffer)")
+	}
+}
+
+// A PART by someone ELSE must NOT close our channel.
+func TestOtherUserPartLeavesChannelOpen(t *testing.T) {
+	c := newNickTestClient(t)
+	c.currentNick = "matt0x6f_0"
+
+	mustCreateChannel(t, c.storage, &storage.Channel{
+		NetworkID: c.networkID, Name: "#ircv3", IsOpen: true, CreatedAt: time.Now(),
+	})
+
+	c.handlePart(parseLine(t, ":alice!~a@host PART #ircv3"))
+
+	ch, err := c.storage.GetChannelByName(c.networkID, "#ircv3")
+	if err != nil {
+		t.Fatalf("GetChannelByName: %v", err)
+	}
+	if !ch.IsOpen {
+		t.Fatalf("#ircv3 wrongly closed after another user's PART")
 	}
 }
 

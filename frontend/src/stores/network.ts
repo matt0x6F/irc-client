@@ -832,6 +832,21 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
         return;
       }
 
+      // /whois [nick] opens the user-info panel for that nick (or yourself when
+      // bare). WHOIS results only ever render in that panel — and the panel
+      // issues its own WHOIS when it opens — so a typed /whois must open the
+      // panel rather than fire a raw WHOIS whose numerics have no UI surface
+      // (which is why a typed /whois previously produced no visible output).
+      const whoisMatch = trimmedMessage.match(/^\/whois(?:\s+(\S+))?\s*$/i);
+      if (whoisMatch) {
+        const currentNetwork = networks.find((n) => n.id === selectedNetwork);
+        const nickname = whoisMatch[1] || currentNetwork?.nickname;
+        if (nickname) {
+          useUIStore.getState().setShowUserInfo({ networkId: selectedNetwork, nickname });
+          return;
+        }
+      }
+
       // Handle /me command — prepend target. The action text is formatting
       // markup like any other message, so convert it to IRC codes.
       if (trimmedMessage.toLowerCase().startsWith('/me ') && selectedChannel !== 'status') {

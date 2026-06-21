@@ -426,6 +426,130 @@ func (c *IRCClient) handleWelcome(e ircmsg.Message) {
 	}
 }
 
+// handlePart processes an inbound PART: it removes the user from the channel's
+// user list and, when WE are the one leaving, marks the channel closed so it
+// drops out of the sidebar. Self-detection uses the live nick (isMe), so a PART
+// arriving under a fallback nick after a collision is still recognized as ours.
+func (c *IRCClient) handlePart(e ircmsg.Message) {
+	channel := e.Params[0]
+	user := e.Nick()
+	reason := ""
+	if len(e.Params) > 1 {
+		reason = e.Params[1]
+	}
+
+	// Get channel and remove user from user list
+	ch, err := c.storage.GetChannelByName(c.networkID, channel)
+	channelUpdated := false
+	if err == nil {
+		if err := c.storage.RemoveChannelUser(ch.ID, user); err != nil {
+			logger.Log.Error().Err(err).Str("user", user).Str("channel", channel).Msg("Failed to remove user from channel user list")
+		} else {
+			logger.Log.Debug().Str("user", user).Str("channel", channel).Msg("Removed user from channel user list")
+			// Verify the write is committed by reading it back (forces WAL sync)
+			// This ensures the user is immediately removed when the frontend queries
+			_, _ = c.storage.GetChannelUsers(ch.ID)
+		}
+
+		// If the current user parted, mark channel as closed (CLOSED state)
+		if c.isMe(user) {
+			c.storage.UpdateChannelIsOpen(ch.ID, false)
+			channelUpdated = true
+		}
+
+		// Store part message
+		rawLine, _ := e.Line()
+		partMsg := storage.Message{
+			NetworkID: c.networkID,
+			ChannelID: &ch.ID,
+			User:      user,
+			Message: fmt.Sprintf("%s left the channel%s", user, func() string {
+				if reason != "" {
+					return fmt.Sprintf(" (%s)", reason)
+				}
+				return ""
+			}()),
+			MessageType: "part",
+			Timestamp:   time.Now(),
+			RawLine:     rawLine,
+		}
+		if err := c.storage.WriteMessageSync(partMsg); err != nil {
+			// During shutdown, storage may be closed - this is expected
+			if err.Error() == "storage is closed" {
+				logger.Log.Debug().Msg("Skipping part message storage (storage closed during shutdown)")
+			} else {
+				logger.Log.Error().Err(err).Msg("Failed to store part message")
+			}
+		}
+	}
+
+	c.eventBus.Emit(events.Event{
+		Type: EventUserParted,
+		Data: map[string]interface{}{
+			"network":   c.network.Address,
+			"networkId": c.networkID,
+			"channel":   channel,
+			"user":      user,
+			"reason":    reason,
+		},
+		Timestamp: time.Now(),
+		Source:    events.EventSourceIRC,
+	})
+
+	// Emit channels changed event if our own part updated the channel state
+	if channelUpdated {
+		c.eventBus.Emit(events.Event{
+			Type: EventChannelsChanged,
+			Data: map[string]interface{}{
+				"network":   c.network.Address,
+				"networkId": c.networkID,
+			},
+			Timestamp: time.Now(),
+			Source:    events.EventSourceIRC,
+		})
+	}
+}
+
+// handleForwardedJoin processes ERR_LINKCHANNEL (470): the server redirected a
+// JOIN from one channel to another (Libera's +f channel forwarding, e.g. when we
+// are banned or quieted on the requested channel). The requested channel was
+// never actually joined, so its buffer must be closed to keep the sidebar
+// faithful to real membership — otherwise it lingers showing the requested name
+// (e.g. "#chat") while we are really only in the forwarded-to channel
+// ("##chat-overflow"). The forwarded-to channel opens via its own JOIN. A status
+// line records the redirect so the change is not silent.
+func (c *IRCClient) handleForwardedJoin(e ircmsg.Message) {
+	if len(e.Params) < 3 {
+		return
+	}
+	from := e.Params[1]
+	to := e.Params[2]
+
+	if ch, err := c.storage.GetChannelByName(c.networkID, from); err == nil {
+		c.storage.UpdateChannelIsOpen(ch.ID, false)
+		c.eventBus.Emit(events.Event{
+			Type: EventChannelsChanged,
+			Data: map[string]interface{}{
+				"network":   c.network.Address,
+				"networkId": c.networkID,
+			},
+			Timestamp: time.Now(),
+			Source:    events.EventSourceIRC,
+		})
+	}
+
+	if err := c.storage.WriteMessageSync(storage.Message{
+		NetworkID:   c.networkID,
+		ChannelID:   nil, // status window
+		User:        "*",
+		Message:     fmt.Sprintf("%s is forwarding new joins to %s — you were redirected there.", from, to),
+		MessageType: "status",
+		Timestamp:   time.Now(),
+	}); err != nil {
+		logger.Log.Debug().Err(err).Msg("Failed to store channel-forward status message")
+	}
+}
+
 // handleNickMessage handles inbound NICK changes. It always updates channel user
 // lists and notifies subscribers (for anyone). When the change is our own —
 // detected because the old nick matches the nick the server currently knows us
@@ -1174,10 +1298,10 @@ func (c *IRCClient) setupHandlers() {
 		// Handle echo-message: when the cap is enabled, the server echoes back our
 		// sent messages as the canonical copy. We store them here and skip storage
 		// in SendMessage. When echo-message is NOT enabled, drop self-to-self echoes.
-		if strings.EqualFold(user, c.network.Nickname) {
+		if c.isMe(user) {
 			if !c.isEchoMessage(e) {
 				// echo-message not enabled; this is a legacy self-echo - skip it
-				if strings.EqualFold(channel, c.network.Nickname) {
+				if c.isMe(channel) {
 					return
 				}
 			}
@@ -1292,7 +1416,7 @@ func (c *IRCClient) setupHandlers() {
 
 		// If the current user joined, mark channel as open (JOINED state)
 		channelUpdated := false
-		if strings.EqualFold(user, c.network.Nickname) && ch != nil {
+		if c.isMe(user) && ch != nil {
 			if !ch.IsOpen {
 				c.storage.UpdateChannelIsOpen(ch.ID, true)
 				channelUpdated = true
@@ -1317,7 +1441,7 @@ func (c *IRCClient) setupHandlers() {
 		// channel.names.complete. We deliberately do NOT send an explicit NAMES
 		// here — it's redundant with the server's automatic reply and doubles the
 		// outgoing burst when rejoining a whole session after a reconnect.
-		if strings.EqualFold(user, c.network.Nickname) {
+		if c.isMe(user) {
 			logger.Log.Info().
 				Str("channel", channel).
 				Int64("network_id", c.networkID).
@@ -1378,7 +1502,7 @@ func (c *IRCClient) setupHandlers() {
 		})
 
 		// Emit channels changed event if channel was created or updated
-		if channelCreated || (channelUpdated && strings.EqualFold(user, c.network.Nickname)) {
+		if channelCreated || (channelUpdated && c.isMe(user)) {
 			c.eventBus.Emit(events.Event{
 				Type: EventChannelsChanged,
 				Data: map[string]interface{}{
@@ -1392,85 +1516,11 @@ func (c *IRCClient) setupHandlers() {
 	})
 
 	// User parted channel
-	c.conn.AddCallback("PART", func(e ircmsg.Message) {
-		channel := e.Params[0]
-		user := e.Nick()
-		reason := ""
-		if len(e.Params) > 1 {
-			reason = e.Params[1]
-		}
+	c.conn.AddCallback("PART", c.handlePart)
 
-		// Get channel and remove user from user list
-		ch, err := c.storage.GetChannelByName(c.networkID, channel)
-		channelUpdated := false
-		if err == nil {
-			if err := c.storage.RemoveChannelUser(ch.ID, user); err != nil {
-				logger.Log.Error().Err(err).Str("user", user).Str("channel", channel).Msg("Failed to remove user from channel user list")
-			} else {
-				logger.Log.Debug().Str("user", user).Str("channel", channel).Msg("Removed user from channel user list")
-				// Verify the write is committed by reading it back (forces WAL sync)
-				// This ensures the user is immediately removed when the frontend queries
-				_, _ = c.storage.GetChannelUsers(ch.ID)
-			}
-
-			// If the current user parted, mark channel as closed (CLOSED state)
-			if strings.EqualFold(user, c.network.Nickname) {
-				c.storage.UpdateChannelIsOpen(ch.ID, false)
-				channelUpdated = true
-			}
-
-			// Store part message
-			rawLine, _ := e.Line()
-			partMsg := storage.Message{
-				NetworkID: c.networkID,
-				ChannelID: &ch.ID,
-				User:      user,
-				Message: fmt.Sprintf("%s left the channel%s", user, func() string {
-					if reason != "" {
-						return fmt.Sprintf(" (%s)", reason)
-					}
-					return ""
-				}()),
-				MessageType: "part",
-				Timestamp:   time.Now(),
-				RawLine:     rawLine,
-			}
-			if err := c.storage.WriteMessageSync(partMsg); err != nil {
-				// During shutdown, storage may be closed - this is expected
-				if err.Error() == "storage is closed" {
-					logger.Log.Debug().Msg("Skipping part message storage (storage closed during shutdown)")
-				} else {
-					logger.Log.Error().Err(err).Msg("Failed to store part message")
-				}
-			}
-		}
-
-		c.eventBus.Emit(events.Event{
-			Type: EventUserParted,
-			Data: map[string]interface{}{
-				"network":   c.network.Address,
-				"networkId": c.networkID,
-				"channel":   channel,
-				"user":      user,
-				"reason":    reason,
-			},
-			Timestamp: time.Now(),
-			Source:    events.EventSourceIRC,
-		})
-
-		// Emit channels changed event if our own part updated the channel state
-		if channelUpdated {
-			c.eventBus.Emit(events.Event{
-				Type: EventChannelsChanged,
-				Data: map[string]interface{}{
-					"network":   c.network.Address,
-					"networkId": c.networkID,
-				},
-				Timestamp: time.Now(),
-				Source:    events.EventSourceIRC,
-			})
-		}
-	})
+	// ERR_LINKCHANNEL (470): a JOIN was forwarded to another channel (+f). Close
+	// the requested channel's buffer so it doesn't linger as a phantom membership.
+	c.conn.AddCallback("470", c.handleForwardedJoin)
 
 	// User quit
 	c.conn.AddCallback("QUIT", func(e ircmsg.Message) {
@@ -1575,7 +1625,7 @@ func (c *IRCClient) setupHandlers() {
 			}
 
 			// If we were kicked, mark channel as closed
-			if strings.EqualFold(kickedUser, c.network.Nickname) {
+			if c.isMe(kickedUser) {
 				c.storage.UpdateChannelIsOpen(ch.ID, false)
 				channelUpdated = true
 			}
@@ -2851,20 +2901,35 @@ func (c *IRCClient) getMessageTime(e ircmsg.Message) time.Time {
 func (c *IRCClient) isEchoMessage(e ircmsg.Message) bool {
 	c.mu.RLock()
 	hasEcho := c.enabledCaps["echo-message"]
+	nick := c.currentNick
 	c.mu.RUnlock()
 
 	if !hasEcho {
 		return false
 	}
-	return strings.EqualFold(e.Nick(), c.network.Nickname)
+	if nick == "" {
+		nick = c.network.Nickname // before registration assigns a live nick
+	}
+	return strings.EqualFold(e.Nick(), nick)
+}
+
+// isMe reports whether the given nick is the one the server currently knows us
+// by. Self-identification (JOIN/PART/KICK/PRIVMSG/NOTICE "is this me?" checks)
+// must use the LIVE nick (CurrentNick), not the preferred nick: while we are on
+// a fallback nick after a collision (e.g. "matt0x6f_0" because "matt0x6f" was
+// taken), comparing against the preferred nick silently fails for every echo and
+// self-membership event, drifting the UI away from the real socket state.
+func (c *IRCClient) isMe(nick string) bool {
+	return strings.EqualFold(nick, c.CurrentNick())
 }
 
 // pmPeer returns the conversation peer (the other party) for a private message.
 // For messages we sent (sender == our nick, e.g. echoed back via echo-message)
 // the peer is the recipient (target); for received messages it is the sender.
-// Uses the same identity comparison as isEchoMessage (c.network.Nickname).
+// Uses the live-nick identity check (isMe) so echoes still key to the recipient
+// while we are on a fallback nick after a collision.
 func (c *IRCClient) pmPeer(sender, target string) string {
-	if strings.EqualFold(sender, c.network.Nickname) {
+	if c.isMe(sender) {
 		return target
 	}
 	return sender
@@ -4338,7 +4403,7 @@ func (c *IRCClient) handleNotice(e ircmsg.Message) {
 	// pm_target exactly like a PRIVMSG PM. Notices with a bare server-name
 	// prefix (or addressed to "*") are genuine server notices and stay in the
 	// Status window.
-	if target == c.network.Nickname || (len(target) > 0 && target[0] != '#' && target[0] != '&') {
+	if c.isMe(target) || (len(target) > 0 && target[0] != '#' && target[0] != '&') {
 		rawLine, _ := e.Line()
 		pmTarget := c.noticePMTarget(e.Source, user, target)
 
