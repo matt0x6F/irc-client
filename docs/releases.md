@@ -51,6 +51,11 @@ until a new stable ships.
 > GitHub does not re-trigger workflows from `GITHUB_TOKEN` events, so creating the
 > release does **not** re-run the `release: published` path. (A PAT *would* loop.)
 
+Each pre-release's notes are GitHub's auto-generated changelog (merged PRs + new
+contributors), diffed from the **previous RC** if one exists, otherwise the
+**latest stable** — so an RC shows just what changed since the last build a tester
+could have installed. The updater hint is prepended to that changelog.
+
 Pre-releases are not pruned — they accumulate on the Releases page. The updater
 only ever reads the single newest release per check, so this is cosmetic.
 

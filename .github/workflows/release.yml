@@ -54,9 +54,11 @@ jobs:
         # the last stable (so Prerelease-channel users are offered it) and below the
         # eventual stable of the same line (so they later roll onto stable). Picking
         # by `sort -V` rather than creation date keeps it correct even if a stable
-        # hotfix is published out of chronological order. Emits both `tag` (with the
-        # leading "v", used for the GitHub release) and `value` (without, stamped as
-        # APP_VERSION).
+        # hotfix is published out of chronological order. Emits `tag` (with the
+        # leading "v", used for the GitHub release), `value` (without, stamped as
+        # APP_VERSION), and `notes_start` — the tag the auto-generated changelog is
+        # diffed from: the previous RC if one exists, else the latest stable, so
+        # each build's notes cover just what changed since the last installable one.
         id: version
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -69,14 +71,21 @@ jobs:
             echo "tag=${TAG_NAME}" >> "$GITHUB_OUTPUT"
             echo "value=${TAG_NAME#v}" >> "$GITHUB_OUTPUT"
           else
-            BASE="$(gh release list --exclude-pre-releases --exclude-drafts --limit 50 \
-                      --json tagName -q '.[].tagName' | sort -V | tail -1)"
-            BASE="${BASE:-v0.0.0}"
+            STABLE_TAG="$(gh release list --exclude-pre-releases --exclude-drafts --limit 50 \
+                            --json tagName -q '.[].tagName' | sort -V | tail -1)"
+            BASE="${STABLE_TAG:-v0.0.0}"
             BASE="${BASE#v}"
             IFS='.' read -r MAJOR MINOR PATCH <<< "$BASE"
             TAG="v${MAJOR}.${MINOR}.$((PATCH + 1))-rc.${RUN_NUMBER}"
+            # Newest non-draft prerelease (by date), empty if there is none. The
+            # changelog diffs from it when present so an RC shows only its own delta;
+            # otherwise it falls back to the latest stable (and finally to empty for a
+            # brand-new repo with neither, where GitHub auto-picks the start point).
+            PREV_RC="$(gh release list --limit 50 --json tagName,isPrerelease,isDraft \
+                         -q 'map(select(.isPrerelease and (.isDraft|not)))[0].tagName // empty')"
             echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
             echo "value=${TAG#v}" >> "$GITHUB_OUTPUT"
+            echo "notes_start=${PREV_RC:-$STABLE_TAG}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build universal app, DMG & update zip
@@ -115,20 +124,33 @@ jobs:
       - name: Publish pre-release (merge to main)
         if: github.event_name == 'push'
         # Auto-publish the merge build as a GitHub pre-release so testers on the
-        # Prerelease update channel pick it up via the in-app updater. gh release
-        # create makes the tag (at this commit) and the pre-release in one call and
-        # attaches the DMG, updater .zip and SHA256SUMS. Using the default
-        # GITHUB_TOKEN means this release event does NOT re-trigger the workflow.
+        # Prerelease update channel pick it up via the in-app updater. Notes are
+        # GitHub's auto-generated changelog (merged PRs + new contributors) diffed
+        # from NOTES_START (previous RC, else last stable), with the updater hint
+        # prepended. gh release create makes the tag at this commit and attaches the
+        # DMG, updater .zip and SHA256SUMS. Using the default GITHUB_TOKEN means this
+        # release event does NOT re-trigger the workflow.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           TAG: ${{ steps.version.outputs.tag }}
           SHA: ${{ github.sha }}
+          NOTES_START: ${{ steps.version.outputs.notes_start }}
         run: |
+          # Generate the changelog body via the Release Notes API (computes the diff
+          # as if TAG were cut at this commit; no tag needs to exist yet). previous_tag_name
+          # is omitted when NOTES_START is empty so GitHub auto-picks the start point.
+          gen=(-f tag_name="$TAG" -f target_commitish="$SHA")
+          if [ -n "$NOTES_START" ]; then gen+=(-f previous_tag_name="$NOTES_START"); fi
+          BODY="$(gh api "repos/$GH_REPO/releases/generate-notes" "${gen[@]}" -q '.body' 2>/dev/null || true)"
+          printf '%s\n\n%s\n' \
+            "Automated pre-release from main @ ${SHA:0:7}. Install via the in-app updater on the Prerelease channel." \
+            "$BODY" > "$RUNNER_TEMP/notes.md"
           gh release create "$TAG" "$DMG" "$ZIP" "$SUMS" \
             --prerelease \
             --target "$SHA" \
             --title "$TAG" \
-            --notes "Automated pre-release from main @ ${SHA:0:7}. Install via the in-app updater on the Prerelease channel."
+            --notes-file "$RUNNER_TEMP/notes.md"
 
       - name: Attach DMG, update zip & checksums to release
         if: github.event_name == 'release'
