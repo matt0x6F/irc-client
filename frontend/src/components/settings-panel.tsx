@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { main, storage } from '../../wailsjs/go/models';
-import { GetNetworks, SaveNetwork, ConnectNetwork, DeleteNetwork, DisconnectNetwork, GetConnectionStatus, GetServers, ListPlugins, EnablePlugin, DisablePlugin, ReloadPlugin, GetBuildInfo, CheckForUpdates, GetLogConfig, SetLogConfig, GetDefaultLogPath, GetSTSPolicies, ClearSTSPolicy } from '../../wailsjs/go/main/App';
+import { GetNetworks, SaveNetwork, ConnectNetwork, DeleteNetwork, DisconnectNetwork, GetConnectionStatus, GetServers, ListPlugins, EnablePlugin, DisablePlugin, ReloadPlugin, GetBuildInfo, CheckForUpdates, GetLogConfig, SetLogConfig, GetDefaultLogPath, GetSTSPolicies, ClearSTSPolicy, RequestNotificationPermission } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import { PluginConfigForm } from './plugin-config-form';
 import {
@@ -14,10 +14,10 @@ import { useThemeStore, ACCENTS, type ThemeMode } from '../stores/theme';
 import { useSettingsStore, type PrefixDisplayMode, type UpdateChannel } from '../stores/settings';
 import { usePreferencesStore } from '../stores/preferences';
 
-export type SettingsSection = 'networks' | 'plugins' | 'display' | 'advanced' | 'about';
+export type SettingsSection = 'networks' | 'plugins' | 'display' | 'notifications' | 'advanced' | 'about';
 
 export const isSettingsSection = (v: string): v is SettingsSection =>
-  v === 'networks' || v === 'plugins' || v === 'display' || v === 'advanced' || v === 'about';
+  v === 'networks' || v === 'plugins' || v === 'display' || v === 'notifications' || v === 'advanced' || v === 'about';
 
 interface SettingsPanelProps {
   /** Currently selected pane (controlled by the host window). */
@@ -90,6 +90,17 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
   const setPrefixDisplayMode = useSettingsStore((s) => s.setPrefixDisplayMode);
   const updateChannel = useSettingsStore((s) => s.updateChannel);
   const setUpdateChannel = useSettingsStore((s) => s.setUpdateChannel);
+  const notificationsEnabled = useSettingsStore((s) => s.notificationsEnabled);
+  const setNotificationsEnabled = useSettingsStore((s) => s.setNotificationsEnabled);
+  const notifyPrivateMessages = useSettingsStore((s) => s.notifyPrivateMessages);
+  const setNotifyPrivateMessages = useSettingsStore((s) => s.setNotifyPrivateMessages);
+  const notifyMentions = useSettingsStore((s) => s.notifyMentions);
+  const setNotifyMentions = useSettingsStore((s) => s.setNotifyMentions);
+  const notifyConnectionLost = useSettingsStore((s) => s.notifyConnectionLost);
+  const setNotifyConnectionLost = useSettingsStore((s) => s.setNotifyConnectionLost);
+  const notifyOnlyWhenUnfocused = useSettingsStore((s) => s.notifyOnlyWhenUnfocused);
+  const setNotifyOnlyWhenUnfocused = useSettingsStore((s) => s.setNotifyOnlyWhenUnfocused);
+  const [notifyNotice, setNotifyNotice] = useState<string | null>(null);
 
   // Theme (appearance + accent)
   const themeMode = useThemeStore((s) => s.mode);
@@ -501,6 +512,24 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
       console.error('Failed to disconnect:', error);
       alert(`Failed to disconnect: ${error}`);
     }
+  };
+
+  const handleToggleNotifications = async (v: boolean) => {
+    if (v) {
+      try {
+        const granted = await RequestNotificationPermission();
+        setNotifyNotice(
+          granted
+            ? null
+            : 'Notifications are blocked. Enable Cascade Chat in System Settings → Notifications, then toggle this again.',
+        );
+      } catch (e) {
+        setNotifyNotice(String(e));
+      }
+    } else {
+      setNotifyNotice(null);
+    }
+    setNotificationsEnabled(v);
   };
 
   const renderContent = () => {
@@ -1234,6 +1263,47 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
             </div>
           </div>
         );
+      case 'notifications':
+        return (
+          <div className="mb-6">
+            <h3 className="text-md font-semibold mb-4">Notifications</h3>
+            <div className="space-y-4">
+              <div className="border border-border rounded-lg p-4 bg-card/50 shadow-[var(--shadow-sm)]">
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-sm font-medium">Enable desktop notifications</span>
+                  <Toggle checked={notificationsEnabled} onChange={(v) => void handleToggleNotifications(v)} />
+                </div>
+                <p className="text-xs text-muted-foreground mt-2">
+                  Show native desktop notifications for messages and connection events. Requires granting permission the first time. Notifications only appear in installed builds.
+                </p>
+                {notifyNotice && (
+                  <p className="text-xs text-amber-500 mt-2" data-testid="notify-permission-notice">
+                    {notifyNotice}
+                  </p>
+                )}
+              </div>
+
+              <div className={`border border-border rounded-lg p-4 bg-card/50 shadow-[var(--shadow-sm)] space-y-3 ${notificationsEnabled ? '' : 'opacity-50 pointer-events-none'}`}>
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-sm font-medium">Private messages</span>
+                  <Toggle checked={notifyPrivateMessages} onChange={setNotifyPrivateMessages} />
+                </div>
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-sm font-medium">Mentions</span>
+                  <Toggle checked={notifyMentions} onChange={setNotifyMentions} />
+                </div>
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-sm font-medium">Connection lost</span>
+                  <Toggle checked={notifyConnectionLost} onChange={setNotifyConnectionLost} />
+                </div>
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-sm font-medium">Only when window is unfocused</span>
+                  <Toggle checked={notifyOnlyWhenUnfocused} onChange={setNotifyOnlyWhenUnfocused} />
+                </div>
+              </div>
+            </div>
+          </div>
+        );
       case 'advanced':
         return (
           <div className="mb-6">
@@ -1394,6 +1464,7 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
     { id: 'networks', label: 'Networks' },
     { id: 'plugins', label: 'Plugins' },
     { id: 'display', label: 'Display' },
+    { id: 'notifications', label: 'Notifications' },
     { id: 'advanced', label: 'Advanced' },
     { id: 'about', label: 'About' },
   ];
