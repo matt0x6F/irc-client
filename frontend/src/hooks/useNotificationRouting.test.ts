@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const handlers: Record<string, (p: unknown) => void> = {};
 const selectPane = vi.fn();
@@ -18,6 +18,8 @@ vi.mock('../stores/network', () => ({
 
 import { registerNotificationRouting } from './useNotificationRouting';
 
+let cleanup: (() => void) | undefined;
+
 describe('notification routing', () => {
   beforeEach(() => {
     selectPane.mockClear();
@@ -25,16 +27,34 @@ describe('notification routing', () => {
     focusMainWindow.mockClear();
   });
 
+  afterEach(() => {
+    cleanup?.();
+    cleanup = undefined;
+  });
+
   it('navigate selects the pane and focuses the window', () => {
-    registerNotificationRouting();
+    cleanup = registerNotificationRouting();
     handlers['notification:navigate']({ networkId: 7, target: 'pm:alice' });
     expect(selectPane).toHaveBeenCalledWith(7, 'pm:alice');
     expect(focusMainWindow).toHaveBeenCalled();
   });
 
   it('mark read clears the activity key', () => {
-    registerNotificationRouting();
+    cleanup = registerNotificationRouting();
     handlers['notification:markRead']({ networkId: 7, target: '#go' });
     expect(clearActivity).toHaveBeenCalledWith('7:#go');
+  });
+
+  it('navigate with empty target focuses window but does not select a pane', () => {
+    cleanup = registerNotificationRouting();
+    handlers['notification:navigate']({ networkId: 7, target: '' });
+    expect(selectPane).not.toHaveBeenCalled();
+    expect(focusMainWindow).toHaveBeenCalled();
+  });
+
+  it('markRead with empty target does not clear activity', () => {
+    cleanup = registerNotificationRouting();
+    handlers['notification:markRead']({ networkId: 7, target: '' });
+    expect(clearActivity).not.toHaveBeenCalled();
   });
 });
