@@ -57,6 +57,12 @@ func main() {
 			Repository:    "matt0x6f/irc-client",
 			ChecksumAsset: "SHA256SUMS",
 			AssetMatcher:  matchDarwinUniversalZip,
+			// Track prereleases (the per-merge builds published from main) only
+			// when the user opted into that channel; the default stable channel
+			// leaves this false so the provider uses /releases/latest, which
+			// excludes prereleases. Read once here — the channel is fixed for
+			// the process lifetime (see updateChannelPrerelease).
+			Prerelease: ircApp.updateChannelPrerelease(),
 		})
 		if err != nil {
 			println("Error creating updater provider:", err.Error())
