@@ -8,3 +8,6 @@ frontend/dist
 .cursor/
 .remember/
 .superpowers/
+# Zensical docs build output + local docs venv
+/site/
+/.venv/
