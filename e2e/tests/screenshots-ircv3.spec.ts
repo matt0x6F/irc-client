@@ -5,7 +5,7 @@ import { addNetworkAndConnect, selectNetwork, joinChannel, openChannel, openSett
 import { IrcPeer } from '../lib/irc-peer';
 
 /**
- * Generates the screenshots embedded in docs/ircv3-support.md.
+ * Generates the screenshots embedded in docs/public/developers/ircv3-support.md.
  *
  * These are documentation artifacts, not assertions, so they only run when
  * explicitly requested via CASCADE_SCREENSHOTS=1 — that keeps the normal e2e /
@@ -13,7 +13,7 @@ import { IrcPeer } from '../lib/irc-peer';
  *
  *   cd e2e && CASCADE_SCREENSHOTS=1 npx playwright test tests/screenshots-ircv3.spec.ts
  *
- * Images land in docs/images/ircv3/ (two levels up from this spec). Traffic is
+ * Images land in docs/public/developers/images/ircv3/ (two levels up from this spec). Traffic is
  * produced by a real IrcPeer against the per-run Ergo server, so what's captured
  * is genuine client behavior.
  */
@@ -22,9 +22,9 @@ import { IrcPeer } from '../lib/irc-peer';
 type Screenshotable = { screenshot(options: { path: string }): Promise<Buffer> };
 type Evaluable = { evaluate(fn: () => void): Promise<void> };
 
-const OUT_DIR = path.resolve(__dirname, '../../docs/images/ircv3');
+const OUT_DIR = path.resolve(__dirname, '../../docs/public/developers/images/ircv3');
 
-/** Save a screenshot of `target` (page or element) under docs/images/ircv3/. */
+/** Save a screenshot of `target` (page or element) under docs/public/developers/images/ircv3/. */
 async function shoot(target: Screenshotable, name: string): Promise<void> {
   await target.screenshot({ path: path.join(OUT_DIR, name) });
 }
@@ -218,7 +218,7 @@ test.describe('IRCv3 documentation screenshots', () => {
   // Note: standard-replies (FAIL/WARN/NOTE) has no screenshot here — triggering a
   // deterministic server standard-reply through the UI isn't reliable, and the
   // rendering reuses the existing error/warning/status message styles (documented
-  // in prose in docs/ircv3-support.md). Unit coverage is in
+  // in prose in docs/public/developers/ircv3-support.md). Unit coverage is in
   // internal/irc/standard_replies_test.go.
 
   test('monitor buddy list shows online presence', async ({ page, runtime }) => {

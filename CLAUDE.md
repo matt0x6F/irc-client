@@ -61,5 +61,5 @@ cd frontend && npx vitest run
 
 - Plugins are executables using JSON-RPC 2.0 over stdin/stdout
 - Discovery: `~/.cascade-chat/plugins/` directory or `cascade-*` in PATH
-- See `docs/plugin-system.md` for protocol details
+- See `docs/public/developers/plugin-system.md` for protocol details
 - Example plugins in `plugins/` directory
