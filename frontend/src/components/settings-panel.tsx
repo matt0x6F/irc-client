@@ -193,6 +193,17 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
     return () => unsubscribe();
   }, []);
 
+  // On Linux, AppImage and system (deb/rpm) installs can't self-update in place,
+  // so the backend emits updater:manual-update with a link instead of opening the
+  // updater window. Point the user at the releases page to grab the new build.
+  useEffect(() => {
+    const unsubscribe = EventsOn('updater:manual-update', (data: any) => {
+      const url = data?.url || 'https://github.com/matt0x6f/irc-client/releases/latest';
+      setUpdateNotice(`A new version may be available — your install type can't update itself. Download the latest build from ${url}`);
+    });
+    return () => unsubscribe();
+  }, []);
+
   // The backend emits sts-policy whenever a policy is learned, refreshed, or cleared
   // (in this or another window), so the lock badges stay live without a reload.
   useEffect(() => {

@@ -3,6 +3,10 @@ package main
 import (
 	"context"
 	"io"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"time"
 
 	"github.com/matt0x6f/irc-client/internal/logger"
@@ -12,6 +16,15 @@ import (
 
 // updateCheckInterval is how often the background loop polls for updates.
 const updateCheckInterval = 6 * time.Hour
+
+// releasesURL is where users sent to a manual update (a non-self-updating Linux
+// install) can download a newer build by hand. It mirrors the repo configured in
+// newGitHubChannelProvider.
+const releasesURL = "https://github.com/matt0x6f/irc-client/releases/latest"
+
+// osExecutable is a seam over os.Executable so tests can simulate the install
+// location when exercising linuxSelfUpdateEligible.
+var osExecutable = os.Executable
 
 // CheckForUpdates is the Wails-bound manual update trigger, called from the
 // "Check for Updates…" menu item and the About-pane button. On a dev build the
@@ -28,6 +41,17 @@ func (a *App) CheckForUpdates() {
 	if a.app.Updater.State() == updater.StateUnconfigured {
 		a.emit("updater:unavailable")
 		return
+	}
+	// On Linux, only a bare-binary install in a writable dir can self-update;
+	// AppImage and system (deb/rpm) installs would fail the in-place swap (and
+	// the framework has no abort hook once CheckAndInstall starts), so surface a
+	// "download it" prompt instead of marching toward a doomed swap.
+	if runtime.GOOS == "linux" {
+		if ok, reason := linuxSelfUpdateEligible(); !ok {
+			logger.Log.Info().Str("reason", reason).Msg("self-update unavailable on this Linux install; prompting manual update")
+			a.emit("updater:manual-update", map[string]string{"reason": reason, "url": releasesURL})
+			return
+		}
 	}
 	// Run off the caller's goroutine; the window and event bus report progress.
 	go func() {
@@ -132,7 +156,7 @@ func newGitHubChannelProvider(usePrerelease func() bool) (updater.Provider, erro
 	base := github.Config{
 		Repository:    "matt0x6f/irc-client",
 		ChecksumAsset: "SHA256SUMS",
-		AssetMatcher:  matchDarwinUniversalZip,
+		AssetMatcher:  matchUpdateAsset,
 	}
 	stableCfg := base
 	stableCfg.Prerelease = false
@@ -153,6 +177,59 @@ func newGitHubChannelProvider(usePrerelease func() bool) (updater.Provider, erro
 	}, nil
 }
 
+// linuxSelfUpdateEligible reports whether the running Linux install can swap
+// itself in place, and if not, a short reason for the manual-update message.
+//
+// The Wails updater replaces the path os.Executable() returns (verified against
+// the vendored updater: bundleTarget is the identity off darwin, and helper_unix
+// does unlink+rename there). That works only for a bare binary in a user-writable
+// directory. Two installs break it and must degrade to a manual download instead:
+//   - AppImage: os.Executable() resolves to the squashfs mount (/tmp/.mount_*),
+//     not the .AppImage file (whose real path is in $APPIMAGE), so a swap would
+//     corrupt the mount and never touch the actual artifact. Detected via the
+//     $APPIMAGE env var, with a /tmp/.mount_ path check as a belt-and-suspenders.
+//   - System packages (.deb/.rpm under root-owned /usr/bin): a user-level swap
+//     fails with EACCES, and because the helper is detached and the app has
+//     already quit, the failure is silent. Detected by probing the install dir
+//     for writability.
+//
+// Returns (true, "") when eligible. This is only meaningful on Linux; callers
+// gate on runtime.GOOS == "linux" before consulting it.
+func linuxSelfUpdateEligible() (bool, string) {
+	if os.Getenv("APPIMAGE") != "" {
+		return false, "appimage"
+	}
+	exe, err := osExecutable()
+	if err != nil {
+		return false, "unknown"
+	}
+	if resolved, rerr := filepath.EvalSymlinks(exe); rerr == nil {
+		exe = resolved
+	}
+	if strings.HasPrefix(exe, "/tmp/.mount_") {
+		return false, "appimage"
+	}
+	if !dirWritable(filepath.Dir(exe)) {
+		return false, "system"
+	}
+	return true, ""
+}
+
+// dirWritable reports whether the current user can create files in dir, by
+// attempting to create and remove a probe file. This is the same directory the
+// updater's in-place rename would target, so it accurately predicts whether the
+// swap can succeed — more reliable than path heuristics like matching /usr/bin.
+func dirWritable(dir string) bool {
+	f, err := os.CreateTemp(dir, ".cascade-wtest-*")
+	if err != nil {
+		return false
+	}
+	name := f.Name()
+	_ = f.Close()
+	_ = os.Remove(name)
+	return true
+}
+
 // startPeriodicUpdateCheck runs a background loop that polls the provider chain
 // on updateCheckInterval and surfaces the updater window only when a newer
 // release is found. It deliberately uses Updater.Check (which opens no window)
@@ -167,6 +244,14 @@ func newGitHubChannelProvider(usePrerelease func() bool) (updater.Provider, erro
 func (a *App) startPeriodicUpdateCheck() {
 	if a.app == nil || a.app.Updater.State() == updater.StateUnconfigured {
 		return
+	}
+	// A download-only Linux install (AppImage / deb / rpm) must not silently poll
+	// and then fail a swap — skip the loop entirely. The user still gets the
+	// manual-update prompt via the "Check for Updates…" menu item.
+	if runtime.GOOS == "linux" {
+		if ok, _ := linuxSelfUpdateEligible(); !ok {
+			return
+		}
 	}
 	a.startupWg.Add(1)
 	go func() {

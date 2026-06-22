@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/matt0x6f/irc-client/internal/storage"
 	"github.com/wailsapp/wails/v3/pkg/updater"
+	"github.com/wailsapp/wails/v3/pkg/updater/providers/github"
 )
 
 // newUpdaterTestApp builds a minimal App backed by a temp-file Storage, enough
@@ -84,6 +86,122 @@ func TestUpdaterAccentCSSPrimaryHoverFix(t *testing.T) {
 	if !strings.Contains(rule, "background") || !strings.Contains(rule, "var(--accent)") {
 		t.Fatalf("primary-hover rule must set background to var(--accent); got: %q", rule)
 	}
+}
+
+// TestMatchUpdateAsset covers the cross-platform release-asset picker the github
+// updater provider calls. It must select the right archive per OS+arch and reject
+// everything else: the wrong format, the wrong arch, sibling installers/checksums,
+// and unknown platforms. Matching is case-insensitive and accepts the common arch
+// aliases (x86_64/x64 for amd64, aarch64 for arm64) so a renamed asset still maps.
+func TestMatchUpdateAsset(t *testing.T) {
+	// A realistic full release asset set; cases index into a per-case subset.
+	mac := github.ReleaseAsset{Name: "Cascade-1.2.0-universal.zip"}
+	macDmg := github.ReleaseAsset{Name: "Cascade-1.2.0-universal.dmg"}
+	winAmd := github.ReleaseAsset{Name: "Cascade-1.2.0-windows-amd64.zip"}
+	winArm := github.ReleaseAsset{Name: "Cascade-1.2.0-windows-arm64.zip"}
+	winInst := github.ReleaseAsset{Name: "cascade-amd64-installer.exe"}
+	linAmd := github.ReleaseAsset{Name: "Cascade-1.2.0-linux-amd64.tar.gz"}
+	linArm := github.ReleaseAsset{Name: "Cascade-1.2.0-linux-arm64.tar.gz"}
+	linDeb := github.ReleaseAsset{Name: "cascade_1.2.0_amd64.deb"}
+	linRpm := github.ReleaseAsset{Name: "cascade-1.2.0.x86_64.rpm"}
+	linAppImage := github.ReleaseAsset{Name: "Cascade-1.2.0-amd64.AppImage"}
+	sums := github.ReleaseAsset{Name: "SHA256SUMS"}
+
+	cases := []struct {
+		name     string
+		platform string
+		arch     string
+		assets   []github.ReleaseAsset
+		want     int // index into assets, or -1
+	}{
+		{"darwin picks universal zip", "darwin", "arm64", []github.ReleaseAsset{macDmg, mac, sums}, 1},
+		{"darwin arch-agnostic (amd64 still gets universal)", "darwin", "amd64", []github.ReleaseAsset{mac, sums}, 0},
+		{"darwin ignores dmg and checksums", "darwin", "amd64", []github.ReleaseAsset{macDmg, sums}, -1},
+
+		{"windows amd64", "windows", "amd64", []github.ReleaseAsset{winArm, winAmd}, 1},
+		{"windows arm64", "windows", "arm64", []github.ReleaseAsset{winAmd, winArm}, 1},
+		{"windows no matching arch", "windows", "arm64", []github.ReleaseAsset{winAmd}, -1},
+		{"windows ignores other-OS assets", "windows", "amd64", []github.ReleaseAsset{linAmd, mac, winAmd}, 2},
+		{"windows ignores installer exe", "windows", "amd64", []github.ReleaseAsset{winInst}, -1},
+
+		{"linux amd64", "linux", "amd64", []github.ReleaseAsset{linArm, linAmd}, 1},
+		{"linux arm64", "linux", "arm64", []github.ReleaseAsset{linAmd, linArm}, 1},
+		{"linux no matching arch", "linux", "arm64", []github.ReleaseAsset{linAmd}, -1},
+		{"linux ignores deb rpm appimage", "linux", "amd64", []github.ReleaseAsset{linDeb, linRpm, linAppImage, linAmd}, 3},
+		{"linux rejects zip (must be tar.gz)", "linux", "amd64", []github.ReleaseAsset{{Name: "Cascade-1.2.0-linux-amd64.zip"}}, -1},
+
+		{"case-insensitive linux", "linux", "amd64", []github.ReleaseAsset{{Name: "CASCADE-1.2.0-LINUX-AMD64.TAR.GZ"}}, 0},
+		{"arch alias x86_64 for amd64", "linux", "amd64", []github.ReleaseAsset{{Name: "cascade-1.2.0-linux-x86_64.tar.gz"}}, 0},
+		{"arch alias aarch64 for arm64", "linux", "arm64", []github.ReleaseAsset{{Name: "cascade-1.2.0-linux-aarch64.tar.gz"}}, 0},
+		{"amd64 never matches arm64 asset", "linux", "amd64", []github.ReleaseAsset{linArm}, -1},
+
+		{"unknown platform", "freebsd", "amd64", []github.ReleaseAsset{mac, winAmd, linAmd}, -1},
+		{"empty asset list", "linux", "amd64", nil, -1},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := updater.CheckRequest{Platform: tc.platform, Arch: tc.arch}
+			if got := matchUpdateAsset(req, tc.assets); got != tc.want {
+				t.Fatalf("matchUpdateAsset(%s/%s) = %d, want %d", tc.platform, tc.arch, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestLinuxSelfUpdateEligible covers the gate that decides whether a Linux
+// install can swap itself in place. Only a bare-binary install in a user-writable
+// directory is eligible; AppImage (detected via $APPIMAGE or a /tmp/.mount_ path)
+// and system installs (non-writable dir, e.g. deb/rpm under /usr/bin) are not, so
+// the updater degrades to a "download it" prompt instead of a doomed swap.
+func TestLinuxSelfUpdateEligible(t *testing.T) {
+	// Restore the os.Executable seam after each subtest.
+	orig := osExecutable
+	t.Cleanup(func() { osExecutable = orig })
+
+	t.Run("bare binary in writable dir is eligible", func(t *testing.T) {
+		dir := t.TempDir()
+		osExecutable = func() (string, error) { return filepath.Join(dir, "cascade"), nil }
+		t.Setenv("APPIMAGE", "")
+		ok, reason := linuxSelfUpdateEligible()
+		if !ok || reason != "" {
+			t.Fatalf("writable bare binary = (%v, %q), want (true, \"\")", ok, reason)
+		}
+	})
+
+	t.Run("APPIMAGE env marks ineligible", func(t *testing.T) {
+		dir := t.TempDir()
+		osExecutable = func() (string, error) { return filepath.Join(dir, "cascade"), nil }
+		t.Setenv("APPIMAGE", "/home/u/Apps/Cascade.AppImage")
+		ok, reason := linuxSelfUpdateEligible()
+		if ok || reason != "appimage" {
+			t.Fatalf("APPIMAGE set = (%v, %q), want (false, \"appimage\")", ok, reason)
+		}
+	})
+
+	t.Run("mount path marks ineligible", func(t *testing.T) {
+		osExecutable = func() (string, error) { return "/tmp/.mount_Cascadexyz/usr/bin/cascade", nil }
+		t.Setenv("APPIMAGE", "")
+		ok, reason := linuxSelfUpdateEligible()
+		if ok || reason != "appimage" {
+			t.Fatalf("mount path = (%v, %q), want (false, \"appimage\")", ok, reason)
+		}
+	})
+
+	t.Run("non-writable dir marks ineligible", func(t *testing.T) {
+		dir := t.TempDir()
+		ro := filepath.Join(dir, "ro")
+		if err := os.Mkdir(ro, 0o500); err != nil {
+			t.Fatalf("mkdir ro: %v", err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(ro, 0o700) })
+		osExecutable = func() (string, error) { return filepath.Join(ro, "cascade"), nil }
+		t.Setenv("APPIMAGE", "")
+		ok, reason := linuxSelfUpdateEligible()
+		if ok || reason != "system" {
+			t.Fatalf("read-only dir = (%v, %q), want (false, \"system\")", ok, reason)
+		}
+	})
 }
 
 // fakeProvider is a minimal updater.Provider that records which methods ran, so

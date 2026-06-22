@@ -119,6 +119,27 @@ tasks:
       - task: create:rpm
       - task: create:aur
 
+  targz:updater:
+    summary: Tars bin/cascade into a per-arch .tar.gz (single top-level entry) for the self-updater
+    deps:
+      - task: build
+        vars:
+          ARCH: '{{.ARCH}}'
+    vars:
+      # Match the binary's version stamp: APP_VERSION env override, else git.
+      VERSION:
+        sh: echo "${APP_VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo dev)}"
+      ARCH: '{{.ARCH | default ARCH}}'
+      TARBALL: 'Cascade-{{.VERSION}}-linux-{{.ARCH}}.tar.gz'
+    cmds:
+      # The Wails updater swaps os.Executable() in place after extracting the
+      # archive, so this ships the bare cascade binary as the single top-level
+      # entry (-C bin cascade keeps it path-free). Only this tarball is
+      # updater-eligible on Linux; the .deb/.rpm/.AppImage are download-only (see
+      # linuxSelfUpdateEligible in app_updater.go).
+      - rm -f "{{.BIN_DIR}}/{{.TARBALL}}" && tar -czf "{{.BIN_DIR}}/{{.TARBALL}}" -C "{{.BIN_DIR}}" "{{.APP_NAME}}"
+      - echo "Built {{.BIN_DIR}}/{{.TARBALL}}"
+
   create:appimage:
     summary: Creates an AppImage
     dir: build/linux/appimage
