@@ -1,10 +1,16 @@
 name: Docs
 
-# Build the Zensical documentation site and deploy it to GitHub Pages.
-# Runs only when docs sources change, plus manual dispatch.
+# Build the Zensical documentation site, and deploy it to GitHub Pages on
+# merge to main. On pull requests the site is built (but not deployed) so docs
+# build failures surface before merge.
 on:
   push:
     branches: [main]
+    paths:
+      - "docs/public/**"
+      - "zensical.toml"
+      - ".github/workflows/docs.yml"
+  pull_request:
     paths:
       - "docs/public/**"
       - "zensical.toml"
@@ -16,17 +22,14 @@ permissions:
   pages: write
   id-token: write
 
-# One deployment at a time; let an in-flight deploy finish rather than cancel it.
+# Serialize deploys per ref; PR builds don't collide with the main deploy.
 concurrency:
-  group: pages
+  group: pages-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -53,6 +56,15 @@ jobs:
         with:
           path: site
 
+  # Deploy only on merge to main (or manual dispatch) — never from a PR.
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
