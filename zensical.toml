@@ -1,6 +1,9 @@
 [project]
 site_name = "Cascade Chat"
 site_description = "A modern, multi-platform IRC client"
+# Project page served under /irc-client/ — required so asset/link base paths
+# resolve correctly on GitHub Pages.
+site_url = "https://matt0x6f.github.io/irc-client/"
 docs_dir = "docs/public"
 nav = [
   { "Home" = "index.md" },
