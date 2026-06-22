@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -315,30 +316,59 @@ func (a *App) handleDesktopNotification(event events.Event) {
 			return
 		}
 
+		prefs := a.notifier.Prefs()
 		if notification.IsPrivateMessage(event.Data) {
-			// Private message
-			title := fmt.Sprintf("PM from %s", user)
-			a.sendNotification(title, message)
+			if !prefs.PrivateMessages {
+				return
+			}
+			a.sendNotification(notification.Notification{
+				ID:         newNotificationID(),
+				Title:      fmt.Sprintf("PM from %s", user),
+				Body:       message,
+				CategoryID: notifyCategoryMessage,
+				Data: map[string]any{
+					"networkId": strconv.FormatInt(networkID, 10),
+					"target":    "pm:" + user,
+					"kind":      "pm",
+				},
+			})
 		} else if notification.IsMention(message, myNick) {
-			// Mention in a channel
-			title := fmt.Sprintf("Mention in %s", channel)
-			a.sendNotification(title, fmt.Sprintf("%s: %s", user, message))
+			if !prefs.Mentions {
+				return
+			}
+			a.sendNotification(notification.Notification{
+				ID:         newNotificationID(),
+				Title:      fmt.Sprintf("Mention in %s", channel),
+				Body:       fmt.Sprintf("%s: %s", user, message),
+				CategoryID: notifyCategoryMessage,
+				Data: map[string]any{
+					"networkId": strconv.FormatInt(networkID, 10),
+					"target":    channel,
+					"kind":      "mention",
+				},
+			})
 		}
 
 	case irc.EventConnectionLost:
 		networkAddress, _ := event.Data["network"].(string)
-		title := fmt.Sprintf("Connection Lost: %s", networkAddress)
-		a.sendNotification(title, "Cascade Chat lost connection to the server.")
+		networkID, _ := event.Data["networkId"].(int64)
+		a.sendNotification(notification.Notification{
+			ID:         newNotificationID(),
+			Title:      fmt.Sprintf("Connection Lost: %s", networkAddress),
+			Body:       "Cascade Chat lost connection to the server.",
+			CategoryID: notifyCategoryConnection,
+			Data: map[string]any{
+				"networkId": strconv.FormatInt(networkID, 10),
+				"target":    "",
+				"kind":      "connection",
+			},
+		})
 	}
 }
 
-// sendNotification is a helper that dispatches a desktop notification.
-func (a *App) sendNotification(title, message string) {
-	go func() {
-		if err := a.notifier.Notify(title, message, ""); err != nil {
-			logger.Log.Debug().Err(err).Str("title", title).Msg("Desktop notification failed")
-		}
-	}()
+// sendNotification dispatches an interactive desktop notification off the hot path.
+func (a *App) sendNotification(n notification.Notification) {
+	go a.notifier.Send(n)
 }
 
 // processPluginActions processes actions from plugins

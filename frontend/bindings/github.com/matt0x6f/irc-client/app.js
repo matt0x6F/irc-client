@@ -20,6 +20,12 @@ import * as irc$0 from "./internal/irc/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
 import * as storage$0 from "./internal/storage/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as application$0 from "../../wailsapp/wails/v3/pkg/application/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as notifications$0 from "../../wailsapp/wails/v3/pkg/services/notifications/models.js";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -35,6 +41,18 @@ import * as $models from "./models.js";
  */
 export function AddMonitor(networkID, nick) {
     return $Call.ByID(3992658754, networkID, nick);
+}
+
+/**
+ * AttachNotifications wires the Wails notification service into the app: it
+ * installs the delivery backend, registers the categories, hooks the response
+ * callback, captures the main window for focus, and seeds the prefs snapshot.
+ * @param {notifications$0.NotificationService | null} svc
+ * @param {application$0.WebviewWindow | null} win
+ * @returns {$CancellablePromise<void>}
+ */
+export function AttachNotifications(svc, win) {
+    return $Call.ByID(3749664784, svc, win);
 }
 
 /**
@@ -120,6 +138,16 @@ export function DisconnectNetwork(networkID) {
  */
 export function EnablePlugin(name) {
     return $Call.ByID(3947152785, name);
+}
+
+/**
+ * FocusMainWindow raises the main window. Bound to the frontend and called from
+ * the notification:navigate handler so window focus runs on the framework's
+ * webview-request path rather than the off-main notification callback.
+ * @returns {$CancellablePromise<void>}
+ */
+export function FocusMainWindow() {
+    return $Call.ByID(1159429910);
 }
 
 /**
@@ -705,6 +733,15 @@ export function RequestChatHistoryBefore(networkID, target, beforeISO, limit) {
  */
 export function RequestChatHistoryLatest(networkID, target, limit) {
     return $Call.ByID(1762900095, networkID, target, limit);
+}
+
+/**
+ * RequestNotificationPermission asks the OS for notification permission. Bound to
+ * the frontend; called when the user enables notifications in settings.
+ * @returns {$CancellablePromise<boolean>}
+ */
+export function RequestNotificationPermission() {
+    return $Call.ByID(3109134518);
 }
 
 /**

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/services/notifications"
 	"github.com/wailsapp/wails/v3/pkg/updater"
 	"github.com/wailsapp/wails/v3/pkg/updater/providers/github"
 )
@@ -21,6 +22,8 @@ func main() {
 		return
 	}
 
+	ns := notifications.New()
+
 	// Create the Wails application. In v3 the backend is registered as a
 	// service: its ServiceStartup/ServiceShutdown hooks drive connect/cleanup,
 	// and its exported methods are bound for the frontend. v3 installs its own
@@ -30,6 +33,7 @@ func main() {
 		Description: "Modern multi-platform IRC client",
 		Services: []application.Service{
 			application.NewService(ircApp),
+			application.NewService(ns),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.BundledAssetFileServer(assets),
@@ -74,7 +78,7 @@ func main() {
 
 	// Create the main window. v2's options.App size/colour fields move onto the
 	// per-window options struct in v3.
-	app.Window.NewWithOptions(application.WebviewWindowOptions{
+	mainWindow := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:            "Cascade Chat",
 		Width:            1280,
 		Height:           800,
@@ -82,6 +86,9 @@ func main() {
 		MinHeight:        600,
 		BackgroundColour: application.NewRGB(27, 38, 54),
 	})
+
+	// Wire native notifications now that the service and window exist.
+	ircApp.AttachNotifications(ns, mainWindow)
 
 	if err := app.Run(); err != nil {
 		println("Error:", err.Error())
