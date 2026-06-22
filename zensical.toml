@@ -1,10 +1,19 @@
 [project]
 site_name = "Cascade Chat"
 site_description = "A modern, multi-platform IRC client"
+site_author = "Matt Ouille"
 # Project page served under /irc-client/ — required so asset/link base paths
 # resolve correctly on GitHub Pages.
 site_url = "https://matt0x6f.github.io/irc-client/"
 docs_dir = "docs/public"
+
+# Repository wiring powers the header source link and the per-page
+# "Edit"/"View source" content actions (content.action.* features below).
+repo_url = "https://github.com/matt0x6F/irc-client"
+repo_name = "matt0x6F/irc-client"
+
+copyright = "Copyright &copy; 2026 Matt Ouille"
+
 nav = [
   { "Home" = "index.md" },
   { "User Guide" = [
@@ -21,8 +30,69 @@ nav = [
   ] },
 ]
 
+# Zensical ships its own modern default theme. Set variant = "classic" to fall
+# back to the traditional Material for MkDocs look.
+#
+# Feature toggles have NO defaults — omitting this list ships the bare theme
+# (no dark mode, no prev/next, no instant nav). Keep this curated.
 [project.theme]
-# Zensical defaults to its own modern theme. To retain the Material for MkDocs
-# look-and-feel, confirm the exact key against the live docs during Task 4
-# (zensical.org/docs → theme/customization). Leave this section minimal until
-# the build in Task 4 confirms valid keys; do NOT guess keys that error.
+features = [
+  # Lets readers dismiss the announcement bar once read.
+  "announce.dismiss",
+  # Per-page "Edit" / "View source" buttons (requires repo_url above).
+  "content.action.edit",
+  "content.action.view",
+  # Code block niceties: annotations, copy button, line-range selection.
+  "content.code.annotate",
+  "content.code.copy",
+  "content.code.select",
+  # Render footnotes inline as tooltips.
+  "content.footnote.tooltips",
+  # Linked content tabs switch together across the page (e.g. all "macOS" tabs).
+  "content.tabs.link",
+  # Hover tooltips on links with titles / abbreviations.
+  "content.tooltips",
+  # Previous/next links in the footer.
+  "navigation.footer",
+  # Section index pages — a section can point at an overview document.
+  "navigation.indexes",
+  # SPA-style instant page loads, with prefetch on hover.
+  "navigation.instant",
+  "navigation.instant.prefetch",
+  # Breadcrumb path above each page title.
+  "navigation.path",
+  # Top-level sections rendered as sidebar groups on wide viewports.
+  "navigation.sections",
+  # Top-level sections rendered as tabs below the header on wide viewports.
+  "navigation.tabs",
+  # Back-to-top button after scrolling up.
+  "navigation.top",
+  # Keep the URL anchor in sync with the active table-of-contents entry.
+  "navigation.tracking",
+  # Highlight search terms on the target page after following a result.
+  "search.highlight",
+  # Auto-scroll the table of contents to keep the active anchor visible.
+  "toc.follow",
+]
+
+# A built-in icon used as the header logo (no asset file required). "waves"
+# nods to the Cascade name. See https://github.com/zensical/ui/tree/master/dist/.icons
+[project.theme.icon]
+logo = "lucide/waves"
+
+# Light/dark color schemes with a header toggle. Without this block there is
+# no dark mode switch at all.
+[[project.theme.palette]]
+scheme = "default"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+scheme = "slate"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to light mode"
+
+# GitHub link rendered in the footer.
+[[project.extra.social]]
+icon = "fontawesome/brands/github"
+link = "https://github.com/matt0x6F/irc-client"
