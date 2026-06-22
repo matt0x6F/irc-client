@@ -1,0 +1,70 @@
+name: Docs
+
+# Build the Zensical documentation site, and deploy it to GitHub Pages on
+# merge to main. On pull requests the site is built (but not deployed) so docs
+# build failures surface before merge.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/public/**"
+      - "zensical.toml"
+      - ".github/workflows/docs.yml"
+  pull_request:
+    paths:
+      - "docs/public/**"
+      - "zensical.toml"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Serialize deploys per ref; PR builds don't collide with the main deploy.
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      # Pin the engine: Zensical is pre-1.0 and releases rapidly. Bump
+      # deliberately; do not float the version. (No CI cache — Zensical's
+      # caching is still being optimized and is not recommended in CI yet.)
+      - name: Install Zensical (pinned)
+        run: pip install zensical==0.0.46
+
+      - name: Build site
+        run: zensical build --clean
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+  # Deploy only on merge to main (or manual dispatch) — never from a PR.
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

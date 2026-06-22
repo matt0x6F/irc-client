@@ -502,7 +502,7 @@ regenerate as the UI evolves and can't silently drift from real behavior.
   capabilities Cascade negotiates, so the rendered behavior is genuine.
 - **Traffic:** `e2e/lib/irc-peer.ts` (`IrcPeer`) generates real IRC messages against Ergo;
   helpers in `e2e/lib/actions.ts` drive connect/join/select.
-- **Output:** committed under `docs/images/ircv3/` and referenced from this document.
+- **Output:** committed under `docs/public/developers/images/ircv3/` and referenced from this document.
 
 The specs are gated behind the `CASCADE_SCREENSHOTS` env var, so a normal `task e2e` / CI run
 skips them and never rewrites the committed PNGs. Regenerate them intentionally:

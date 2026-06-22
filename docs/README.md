@@ -31,7 +31,7 @@ Architecture and technical implementation details (located in project root).
 - Code organization
 - Development workflows
 
-### [Events System](./events.md)
+### [Events System](./public/developers/events.md)
 Comprehensive documentation of the event-driven architecture, event types, and how to use the EventBus.
 
 **Use this for:**
@@ -40,7 +40,7 @@ Comprehensive documentation of the event-driven architecture, event types, and h
 - Implementing event subscribers
 - Event flow and architecture
 
-### [Plugin System](./plugin-system.md)
+### [Plugin System](./public/developers/plugin-system.md)
 Complete guide to the plugin architecture, protocol, and how to write plugins.
 
 **Use this for:**
@@ -50,7 +50,7 @@ Complete guide to the plugin architecture, protocol, and how to write plugins.
 - UI metadata system
 - JSON-RPC protocol details
 
-### [IRCv3 Support](./ircv3-support.md)
+### [IRCv3 Support](./public/developers/ircv3-support.md)
 Reference for every IRCv3 capability Cascade negotiates, what it does with each, and how each surfaces in the client. Includes a full capability status matrix (supported and not-yet-supported) that doubles as a roadmap.
 
 **Use this for:**
@@ -59,7 +59,7 @@ Reference for every IRCv3 capability Cascade negotiates, what it does with each,
 - Tracking unsupported capabilities and what blocks them
 - Knowing how the capability screenshots are generated
 
-### [Releases & Update Channels](./releases.md)
+### [Releases & Update Channels](./public/developers/releases.md)
 How Cascade builds and ships (manual stable releases + auto pre-releases on every merge to `main`), and how the in-app updater's Stable/Prerelease channels work.
 
 **Use this for:**
@@ -78,9 +78,9 @@ How Cascade builds and ships (manual stable releases + auto pre-releases on ever
 
 4. **Implementing a feature?** Check the user story acceptance criteria and follow the planning guide.
 
-5. **Working with events?** See the [Events System](./events.md) documentation.
+5. **Working with events?** See the [Events System](./public/developers/events.md) documentation.
 
-6. **Writing a plugin?** See the [Plugin System](./plugin-system.md) documentation.
+6. **Writing a plugin?** See the [Plugin System](./public/developers/plugin-system.md) documentation.
 
 ## Contributing
 
@@ -106,6 +106,6 @@ Track story status using:
 - Check the [Technical Documentation](../agents.md) for implementation details
 - Review existing code patterns in the codebase
 - Check [User Stories](./user-stories.md) for feature requirements
-- See [Events System](./events.md) for event-related questions
-- See [Plugin System](./plugin-system.md) for plugin development questions
+- See [Events System](./public/developers/events.md) for event-related questions
+- See [Plugin System](./public/developers/plugin-system.md) for plugin development questions
 
