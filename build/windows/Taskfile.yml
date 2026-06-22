@@ -115,6 +115,32 @@ tasks:
       FORMAT: '{{.FORMAT | default "nsis"}}'
       INSTALL_SCOPE: '{{.INSTALL_SCOPE | default "machine"}}'
 
+  zip:updater:
+    summary: Zips bin/cascade.exe into a per-arch .zip (single top-level entry) for the self-updater
+    deps:
+      - task: build
+        vars:
+          ARCH: '{{.ARCH}}'
+    vars:
+      # Match the binary's version stamp: APP_VERSION env override, else git.
+      VERSION:
+        sh: echo "${APP_VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo dev)}"
+      ARCH: '{{.ARCH | default ARCH}}'
+      ZIP_NAME: 'Cascade-{{.VERSION}}-windows-{{.ARCH}}.zip'
+    cmds:
+      # The Wails updater swaps os.Executable() in place after extracting the
+      # archive, and rejects archives with more than one top-level entry — so the
+      # zip must contain the bare cascade.exe at the root (no directory). On a
+      # Windows runner use Compress-Archive; the `zip -j` branch keeps the target
+      # usable from a non-Windows host (zip junks paths so the exe stays top-level).
+      - |
+        {{if eq OS "windows"}}
+        powershell -NoProfile -Command "Remove-Item -Force -ErrorAction SilentlyContinue '{{.BIN_DIR}}\{{.ZIP_NAME}}'; Compress-Archive -Path '{{.BIN_DIR}}\{{.APP_NAME}}.exe' -DestinationPath '{{.BIN_DIR}}\{{.ZIP_NAME}}' -Force"
+        {{else}}
+        rm -f "{{.BIN_DIR}}/{{.ZIP_NAME}}" && zip -j "{{.BIN_DIR}}/{{.ZIP_NAME}}" "{{.BIN_DIR}}/{{.APP_NAME}}.exe"
+        {{end}}
+      - echo "Built {{.BIN_DIR}}/{{.ZIP_NAME}}"
+
   generate:syso:
     summary: Generates Windows `.syso` file
     dir: build

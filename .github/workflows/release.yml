@@ -1,17 +1,23 @@
-name: macOS Build & Release
+name: Build & Release
 
-# Two intentional paths, one build job:
-#   - Every merge to main: build + package the macOS app and auto-publish it as a
-#     GitHub *pre-release*. The version is derived from the highest stable release
-#     (patch-bumped, suffixed -rc.<run_number>) so it ranks above the last stable
-#     but below the eventual stable of that line — exactly what the in-app updater
-#     needs to offer it to users on the Prerelease channel. The DMG, updater .zip
-#     and SHA256SUMS are attached just like a stable release. (A 45-day workflow
-#     artifact is also uploaded for a quick grab from the Actions tab.)
-#   - Publishing a GitHub Release: build + package and attach the DMG to that
-#     release. The release/tag is created by a human, so publishing is the
-#     deliberate act that ships a stable build. Version comes from the release's
+# Two intentional paths, fanning out across macOS / Windows / Linux (amd64+arm64):
+#   - Every merge to main: build + package all platforms and auto-publish them as a
+#     single GitHub *pre-release*. The version is derived from the highest stable
+#     release (patch-bumped, suffixed -rc.<run_number>) so it ranks above the last
+#     stable but below the eventual stable of that line — exactly what the in-app
+#     updater needs to offer it to users on the Prerelease channel. Every platform's
+#     updater archive + installer is attached, with one combined SHA256SUMS.
+#   - Publishing a GitHub Release: build + package all platforms and attach the
+#     assets to that release. The release/tag is created by a human, so publishing is
+#     the deliberate act that ships a stable build. Version comes from the release's
 #     tag (minus the leading "v"). Drafts don't trigger anything until published.
+#
+# Topology: a derive-version job computes the version once; five native build legs
+# (one per OS+arch; macOS is a single universal binary) fan out and upload their
+# artifacts; a final release job fans in, computes ONE SHA256SUMS over every asset,
+# and does the gh release create/upload. All legs build natively (no Docker cross)
+# on GA hosted runners, so CGO + the fts5 SQLite tag + version ldflags are applied
+# correctly per target.
 #
 # The pre-release is created with the default GITHUB_TOKEN, whose events do NOT
 # re-trigger this workflow's `release: published` path — so there's no recursion.
@@ -21,51 +27,38 @@ on:
   release:
     types: [published]
 
-# Required so the release path can upload the DMG asset to the release.
+# Required so the release path can upload assets to the release.
 permissions:
   contents: write
 
 jobs:
-  macos:
-    name: Build & package macOS app
-    runs-on: macos-latest
+  derive-version:
+    name: Derive version
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      value: ${{ steps.version.outputs.value }}
+      notes_start: ${{ steps.version.outputs.notes_start }}
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.25'
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Install Wails v3 CLI
-        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha2.103
-
       - name: Derive version
-        # Runs before the build so the version can be stamped into the binary via
-        # -ldflags. Release builds use the release's tag (minus the leading "v").
-        # Merge-to-main builds derive an auto pre-release version: take the highest
-        # STABLE release by SemVer order (never a prerelease), bump the patch, and
-        # append a monotonic -rc.<run_number>. That guarantees the tag sorts above
-        # the last stable (so Prerelease-channel users are offered it) and below the
-        # eventual stable of the same line (so they later roll onto stable). Picking
-        # by `sort -V` rather than creation date keeps it correct even if a stable
-        # hotfix is published out of chronological order. Emits `tag` (with the
-        # leading "v", used for the GitHub release), `value` (without, stamped as
-        # APP_VERSION), and `notes_start` — the tag the auto-generated changelog is
-        # diffed from: the previous RC if one exists, else the latest stable, so
-        # each build's notes cover just what changed since the last installable one.
+        # Release builds use the release's tag (minus the leading "v"). Merge-to-main
+        # builds derive an auto pre-release version: take the highest STABLE release by
+        # SemVer order (never a prerelease), bump the patch, and append a monotonic
+        # -rc.<run_number>. That guarantees the tag sorts above the last stable (so
+        # Prerelease-channel users are offered it) and below the eventual stable of the
+        # same line (so they later roll onto stable). Picking by `sort -V` rather than
+        # creation date keeps it correct even if a stable hotfix is published out of
+        # chronological order. Emits `tag` (with the leading "v", used for the GitHub
+        # release), `value` (without, stamped as APP_VERSION and into filenames), and
+        # `notes_start` — the tag the auto-generated changelog is diffed from: the
+        # previous RC if one exists, else the latest stable.
         id: version
         env:
           EVENT_NAME: ${{ github.event_name }}
           TAG_NAME: ${{ github.event.release.tag_name }}
-          SHA: ${{ github.sha }}
           RUN_NUMBER: ${{ github.run_number }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
           if [[ "$EVENT_NAME" == "release" ]]; then
             echo "tag=${TAG_NAME}" >> "$GITHUB_OUTPUT"
@@ -88,77 +81,206 @@ jobs:
             echo "notes_start=${PREV_RC:-$STABLE_TAG}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Build universal app, DMG & update zip
-        # The fts5 tag + CGO (SQLite FTS) and version ldflags are applied by the v3
-        # platform Taskfile (build/darwin/Taskfile.yml). It reads APP_VERSION/
-        # APP_COMMIT/APP_BUILD_DATE env overrides to stamp the release metadata
-        # read by GetBuildInfo (see version.go). Produces bin/cascade.app (universal).
-        env:
-          CGO_ENABLED: '1'
-          APP_VERSION: ${{ steps.version.outputs.value }}
-          APP_COMMIT: ${{ github.sha }}
+  build-macos:
+    name: Build macOS (universal)
+    needs: derive-version
+    runs-on: macos-latest
+    env:
+      CGO_ENABLED: '1'
+      APP_VERSION: ${{ needs.derive-version.outputs.value }}
+      APP_COMMIT: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install Wails v3 CLI
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha2.103
+      - name: Build universal app, DMG & updater zip
+        # The fts5 tag + CGO and version ldflags are applied by the v3 platform
+        # Taskfile (build/darwin/Taskfile.yml), which reads APP_VERSION/APP_COMMIT/
+        # APP_BUILD_DATE to stamp the metadata GetBuildInfo reports. dmg:universal
+        # produces the human-download .dmg; zip:universal produces the updater .zip
+        # (the .app wrapped as a single top-level entry).
         run: |
           export APP_COMMIT="${APP_COMMIT::7}"
           export APP_BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          # Builds the universal .app and wraps it in a .dmg via the same Taskfile
-          # path as local `task dmg-universal` (proper staging + Applications link).
-          # Uses hdiutil; run `brew install create-dmg` first for a prettier layout.
           wails3 task darwin:dmg:universal
-          echo "DMG=bin/Cascade-${APP_VERSION}-universal.dmg" >> "$GITHUB_ENV"
-          # Always produce the updater artifact: a .zip of the .app (the self-updater
-          # rejects .dmg) plus a SHA256SUMS sidecar the github provider verifies
-          # downloads against. Both the stable-release path and the merge-to-main
-          # pre-release path ship these so the in-app updater works on either channel.
           wails3 task darwin:zip:universal
-          echo "ZIP=bin/Cascade-${APP_VERSION}-universal.zip" >> "$GITHUB_ENV"
-          echo "SUMS=bin/SHA256SUMS" >> "$GITHUB_ENV"
-
-      - name: Upload build artifact (merge to main)
-        if: github.event_name == 'push'
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: cascade-macos-universal
-          path: ${{ env.DMG }}
+          name: dist-macos
+          path: |
+            bin/Cascade-*-universal.dmg
+            bin/Cascade-*-universal.zip
           retention-days: 45
+          if-no-files-found: error
 
+  build-windows:
+    name: Build Windows (${{ matrix.arch }})
+    needs: derive-version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: windows-latest
+          - arch: arm64
+            runner: windows-11-arm
+    runs-on: ${{ matrix.runner }}
+    env:
+      CGO_ENABLED: '1'
+      APP_VERSION: ${{ needs.derive-version.outputs.value }}
+      APP_COMMIT: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install Wails v3 CLI
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha2.103
+      - name: Install NSIS
+        # NSIS is not preinstalled on the hosted Windows images. makensis runs under
+        # x64 emulation on the arm64 runner; the .nsi itself is arch-agnostic (only
+        # the embedded binary differs). The updater zip needs no NSIS.
+        run: choco install nsis -y --no-progress
+      - name: Build updater zip & NSIS installer
+        shell: bash
+        # CGO_ENABLED=1 is read from the process env by the platform Taskfile, so the
+        # native Windows build carries fts5 + version ldflags. zip:updater wraps the
+        # bare cascade.exe (single top-level entry) for the in-app updater; package
+        # builds the download-only NSIS installer.
+        run: |
+          export APP_COMMIT="${APP_COMMIT::7}"
+          export APP_BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          wails3 task windows:zip:updater ARCH=${{ matrix.arch }}
+          wails3 task windows:package ARCH=${{ matrix.arch }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-windows-${{ matrix.arch }}
+          path: |
+            bin/Cascade-*-windows-${{ matrix.arch }}.zip
+            bin/cascade-${{ matrix.arch }}-installer.exe
+          retention-days: 45
+          if-no-files-found: error
+
+  build-linux:
+    name: Build Linux (${{ matrix.arch }})
+    needs: derive-version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    env:
+      CGO_ENABLED: '1'
+      APP_VERSION: ${{ needs.derive-version.outputs.value }}
+      APP_COMMIT: ${{ github.sha }}
+      GOARCH: ${{ matrix.arch }}
+      # appimagetool needs FUSE to mount; extract-and-run avoids requiring libfuse2
+      # on the runner. nfpm reads APP_VERSION + GOARCH for the deb/rpm version+arch,
+      # and the maintainer field from the git committer identity.
+      APPIMAGE_EXTRACT_AND_RUN: '1'
+      GIT_COMMITTER_NAME: 'Cascade CI'
+      GIT_COMMITTER_EMAIL: 'ci@users.noreply.github.com'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install GTK/WebKit build dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev
+      - name: Install Wails v3 CLI
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha2.103
+      - name: Build updater tarball, AppImage, deb & rpm
+        # CGO_ENABLED=1 (process env) + the native gcc give an fts5 binary. The native
+        # leg builds in-place (no Docker) because OS==linux and target arch == host
+        # arch. targz:updater wraps the bare cascade binary (single top-level entry)
+        # for the in-app updater; package builds the download-only AppImage/deb/rpm.
+        run: |
+          export APP_COMMIT="${APP_COMMIT::7}"
+          export APP_BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          wails3 task linux:targz:updater ARCH=${{ matrix.arch }}
+          wails3 task linux:package ARCH=${{ matrix.arch }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-linux-${{ matrix.arch }}
+          path: |
+            bin/Cascade-*-linux-${{ matrix.arch }}.tar.gz
+            bin/*.AppImage
+            bin/*.deb
+            bin/*.rpm
+          retention-days: 45
+          if-no-files-found: error
+
+  release:
+    name: Assemble checksums & publish
+    needs: [derive-version, build-macos, build-windows, build-linux]
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+      - name: Compute combined SHA256SUMS
+        # One checksum file over every attached asset. Listing by BASENAME (run from
+        # inside dist/) is what the updater's github provider needs: it matches the
+        # SHA256SUMS line to the downloaded asset's name. Excludes the file itself.
+        working-directory: dist
+        run: |
+          find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%P\n' | sort | xargs shasum -a 256 > SHA256SUMS
+          echo "Assets:" && cat SHA256SUMS
       - name: Publish pre-release (merge to main)
         if: github.event_name == 'push'
         # Auto-publish the merge build as a GitHub pre-release so testers on the
-        # Prerelease update channel pick it up via the in-app updater. Notes are
-        # GitHub's auto-generated changelog (merged PRs + new contributors) diffed
-        # from NOTES_START (previous RC, else last stable), with the updater hint
-        # prepended. gh release create makes the tag at this commit and attaches the
-        # DMG, updater .zip and SHA256SUMS. Using the default GITHUB_TOKEN means this
-        # release event does NOT re-trigger the workflow.
+        # Prerelease update channel pick it up. Notes are GitHub's auto-generated
+        # changelog diffed from NOTES_START (previous RC, else last stable), with the
+        # updater hint prepended. Using the default GITHUB_TOKEN means this release
+        # event does NOT re-trigger the workflow.
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          TAG: ${{ steps.version.outputs.tag }}
+          TAG: ${{ needs.derive-version.outputs.tag }}
           SHA: ${{ github.sha }}
-          NOTES_START: ${{ steps.version.outputs.notes_start }}
+          NOTES_START: ${{ needs.derive-version.outputs.notes_start }}
         run: |
-          # Generate the changelog body via the Release Notes API (computes the diff
-          # as if TAG were cut at this commit; no tag needs to exist yet). previous_tag_name
-          # is omitted when NOTES_START is empty so GitHub auto-picks the start point.
           gen=(-f tag_name="$TAG" -f target_commitish="$SHA")
           if [ -n "$NOTES_START" ]; then gen+=(-f previous_tag_name="$NOTES_START"); fi
           BODY="$(gh api "repos/$GH_REPO/releases/generate-notes" "${gen[@]}" -q '.body' 2>/dev/null || true)"
           printf '%s\n\n%s\n' \
             "Automated pre-release from main @ ${SHA:0:7}. Install via the in-app updater on the Prerelease channel." \
             "$BODY" > "$RUNNER_TEMP/notes.md"
-          gh release create "$TAG" "$DMG" "$ZIP" "$SUMS" \
+          gh release create "$TAG" dist/* \
             --prerelease \
             --target "$SHA" \
             --title "$TAG" \
             --notes-file "$RUNNER_TEMP/notes.md"
-
-      - name: Attach DMG, update zip & checksums to release
+      - name: Attach assets to release (published)
         if: github.event_name == 'release'
-        # The release already exists (a human published it), so we only upload the
-        # assets. The DMG is the first-time human download; the .zip + SHA256SUMS are
-        # what app.Updater pulls and verifies. --clobber overwrites stale assets if
-        # the workflow is re-run.
+        # The release already exists (a human published it), so only upload assets.
+        # --clobber overwrites stale assets if the workflow is re-run.
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG_NAME: ${{ github.event.release.tag_name }}
-        run: gh release upload "$TAG_NAME" "$DMG" "$ZIP" "$SUMS" --clobber
+        run: gh release upload "$TAG_NAME" dist/* --clobber

@@ -6,7 +6,10 @@
 name: "cascade"
 arch: ${GOARCH}
 platform: "linux"
-version: "0.0.1"
+# Real version comes from CI: APP_VERSION is exported (without the leading "v")
+# alongside GOARCH so deb/rpm packages carry the same version as the binary.
+# nfpm expands env vars at package time; falls back here only if unset.
+version: ${APP_VERSION}
 section: "default"
 priority: "extra"
 maintainer: ${GIT_COMMITTER_NAME} <${GIT_COMMITTER_EMAIL}>

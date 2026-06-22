@@ -142,22 +142,57 @@ func buildMenu(app *application.App, ircApp *App) *application.Menu {
 	return menu
 }
 
-// matchDarwinUniversalZip selects the universal macOS .zip asset the updater
-// should download from a GitHub release. The stock github.DefaultAssetMatcher
-// keys on GOOS+GOARCH substrings, but Cascade ships a single universal binary
-// whose asset name carries neither "arm64" nor "amd64" — so we match the darwin
-// .zip explicitly and let the .dmg and SHA256SUMS siblings fall through.
-func matchDarwinUniversalZip(req updater.CheckRequest, assets []github.ReleaseAsset) int {
-	if req.Platform != "darwin" {
-		return -1
-	}
+// matchUpdateAsset selects the release asset the in-app updater should download
+// for the running client's OS+arch. The stock github.DefaultAssetMatcher keys on
+// GOOS+GOARCH substrings, but Cascade's asset names and update-container formats
+// differ per platform, so we match explicitly and let siblings (the .dmg, the
+// NSIS installer, the .deb/.rpm/.AppImage, SHA256SUMS) fall through:
+//   - darwin: the single universal .zip (carries the .app; no arch in its name)
+//   - windows: the per-arch .zip wrapping the bare cascade.exe
+//   - linux: the per-arch .tar.gz wrapping the bare cascade binary
+//
+// Only the bare-binary archive is updater-eligible per platform — the framework
+// swaps os.Executable() in place after extracting a .zip/.tar.gz, so the .dmg and
+// the Linux installers (deb/rpm/AppImage) are download-only and deliberately not
+// matched. Matching is case-insensitive and accepts common arch aliases so a
+// mismatched arch never resolves. Returns the asset index, or -1 for no match
+// (the github provider turns that into a clean "no asset" error, not a panic).
+func matchUpdateAsset(req updater.CheckRequest, assets []github.ReleaseAsset) int {
 	for i, a := range assets {
 		name := strings.ToLower(a.Name)
-		if strings.Contains(name, "universal") && strings.HasSuffix(name, ".zip") {
-			return i
+		switch req.Platform {
+		case "darwin":
+			if strings.Contains(name, "universal") && strings.HasSuffix(name, ".zip") {
+				return i
+			}
+		case "windows":
+			if strings.Contains(name, "windows") && strings.HasSuffix(name, ".zip") && archMatches(name, req.Arch) {
+				return i
+			}
+		case "linux":
+			if strings.Contains(name, "linux") && strings.HasSuffix(name, ".tar.gz") && archMatches(name, req.Arch) {
+				return i
+			}
 		}
 	}
 	return -1
+}
+
+// archMatches reports whether a (lowercased) asset name targets the given GOARCH.
+// It accepts the literal GOARCH plus the common aliases shippers use — x86_64/x64
+// for amd64 and aarch64 for arm64 — so a renamed asset still resolves while an
+// amd64 client never matches an arm64 asset (and vice-versa).
+func archMatches(lowerName, arch string) bool {
+	if strings.Contains(lowerName, arch) {
+		return true
+	}
+	switch arch {
+	case "amd64":
+		return strings.Contains(lowerName, "x86_64") || strings.Contains(lowerName, "x64")
+	case "arm64":
+		return strings.Contains(lowerName, "aarch64")
+	}
+	return false
 }
 
 // isReleaseVersion reports whether v looks like a published release version
