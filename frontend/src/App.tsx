@@ -18,6 +18,7 @@ import { SearchModal } from './components/search-modal';
 import { ChannelListModal } from './components/channel-list-modal';
 import { KeyboardShortcutsModal } from './components/keyboard-shortcuts-modal';
 import { HelpDialog } from './components/help-dialog';
+import { UpdateAvailableDialog } from './components/update-available-dialog';
 import { List, Settings } from 'lucide-react';
 
 function App() {
@@ -1021,6 +1022,7 @@ function App() {
       )}
 
       <HelpDialog />
+      <UpdateAvailableDialog />
     </div>
   );
 }

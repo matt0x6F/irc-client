@@ -226,6 +226,66 @@ func (f *fakeProvider) Download(_ context.Context, _ *updater.Release, _ io.Writ
 	return nil
 }
 
+// TestShouldSurfaceUpdate proves the background-check gate suppresses exactly
+// the version the user skipped and nothing else — a newer (or any different)
+// version still surfaces, and an empty found version never surfaces.
+func TestShouldSurfaceUpdate(t *testing.T) {
+	cases := []struct {
+		name    string
+		found   string
+		skipped string
+		want    bool
+	}{
+		{"no update found", "", "", false},
+		{"no update found even if a version was skipped", "", "26.6.6-rc.51", false},
+		{"found, nothing skipped", "26.6.6-rc.51", "", true},
+		{"found equals skipped — suppressed", "26.6.6-rc.51", "26.6.6-rc.51", false},
+		{"newer than skipped still surfaces", "26.6.7", "26.6.6-rc.51", true},
+		{"different older still surfaces (skip is exact-match)", "26.6.5", "26.6.6-rc.51", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shouldSurfaceUpdate(tc.found, tc.skipped); got != tc.want {
+				t.Fatalf("shouldSurfaceUpdate(%q, %q) = %v, want %v", tc.found, tc.skipped, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestSkipUpdateVersion proves the user's "Skip This Version" choice is
+// persisted to the settings table (so it survives restarts) and round-trips
+// through the same key the background check reads.
+func TestSkipUpdateVersion(t *testing.T) {
+	a := newUpdaterTestApp(t)
+
+	// Nothing skipped initially.
+	if v, err := a.GetSetting(settingSkippedUpdateVersion); err != nil || v != "" {
+		t.Fatalf("initial skipped = %q, err %v; want empty", v, err)
+	}
+
+	if err := a.SkipUpdateVersion("26.6.6-rc.51"); err != nil {
+		t.Fatalf("SkipUpdateVersion: %v", err)
+	}
+
+	v, err := a.GetSetting(settingSkippedUpdateVersion)
+	if err != nil {
+		t.Fatalf("GetSetting: %v", err)
+	}
+	if v != "26.6.6-rc.51" {
+		t.Fatalf("persisted skipped = %q, want 26.6.6-rc.51", v)
+	}
+
+	// The persisted value is exactly what the background gate compares against,
+	// so the just-skipped version must now be suppressed.
+	if shouldSurfaceUpdate("26.6.6-rc.51", v) {
+		t.Fatal("skipped version should be suppressed after SkipUpdateVersion")
+	}
+	// A newer version must still surface.
+	if !shouldSurfaceUpdate("26.6.7", v) {
+		t.Fatal("a newer version must still surface after skipping an older one")
+	}
+}
+
 // TestChannelRoutingProvider proves a channel switch takes effect on the very
 // next Check/Download with no provider rebuild — the fix for the updater
 // ignoring a live "Prerelease" selection until restart.
