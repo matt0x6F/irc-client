@@ -860,6 +860,20 @@ export function SetSetting(key, value) {
 }
 
 /**
+ * SkipUpdateVersion is the Wails-bound handler for the in-app update prompt's
+ * "Skip This Version" button. It persists the version to the settings table so
+ * the background check stops re-surfacing it — including across restarts, which
+ * the framework updater's own in-memory skip does not survive. A newer release
+ * still prompts (see shouldSurfaceUpdate), and a manual "Check for Updates…"
+ * still shows the skipped version, since that is an explicit user request.
+ * @param {string} version
+ * @returns {$CancellablePromise<void>}
+ */
+export function SkipUpdateVersion(version) {
+    return $Call.ByID(3143090493, version);
+}
+
+/**
  * ToggleChannelAutoJoin toggles the auto-join setting for a channel
  * @param {number} networkID
  * @param {string} channelName

@@ -17,6 +17,23 @@ import (
 // updateCheckInterval is how often the background loop polls for updates.
 const updateCheckInterval = 6 * time.Hour
 
+// settingSkippedUpdateVersion is the settings-table key holding the release the
+// user dismissed via the in-app "Skip This Version" button. The background
+// check reads it to suppress re-surfacing that exact version; it persists
+// across restarts (the framework updater's own skip state is in-memory only).
+// A manual "Check for Updates…" deliberately ignores it — an explicit check is
+// the user asking to see what's available regardless of a past skip.
+const settingSkippedUpdateVersion = "updater.skippedVersion"
+
+// shouldSurfaceUpdate reports whether a release found by a background check
+// should be surfaced to the user. A non-empty version surfaces unless it
+// exactly matches the version the user skipped — so a newer (or any different)
+// release still prompts, but the skipped one stays quiet. The match is exact:
+// "skip" suppresses one specific version, never a range.
+func shouldSurfaceUpdate(foundVersion, skippedVersion string) bool {
+	return foundVersion != "" && foundVersion != skippedVersion
+}
+
 // releasesURL is where users sent to a manual update (a non-self-updating Linux
 // install) can download a newer build by hand. It mirrors the repo configured in
 // newGitHubChannelProvider.
@@ -59,6 +76,20 @@ func (a *App) CheckForUpdates() {
 			logger.Log.Warn().Err(err).Msg("update check failed")
 		}
 	}()
+}
+
+// SkipUpdateVersion is the Wails-bound handler for the in-app update prompt's
+// "Skip This Version" button. It persists the version to the settings table so
+// the background check stops re-surfacing it — including across restarts, which
+// the framework updater's own in-memory skip does not survive. A newer release
+// still prompts (see shouldSurfaceUpdate), and a manual "Check for Updates…"
+// still shows the skipped version, since that is an explicit user request.
+func (a *App) SkipUpdateVersion(version string) error {
+	if version == "" {
+		return nil
+	}
+	logger.Log.Info().Str("version", version).Msg("user skipped update version")
+	return a.SetSetting(settingSkippedUpdateVersion, version)
 }
 
 // updaterAccentCSS returns a CSS snippet that themes the framework's built-in
@@ -231,12 +262,17 @@ func dirWritable(dir string) bool {
 }
 
 // startPeriodicUpdateCheck runs a background loop that polls the provider chain
-// on updateCheckInterval and surfaces the updater window only when a newer
-// release is found. It deliberately uses Updater.Check (which opens no window)
-// rather than Config.CheckInterval / CheckAndInstall, so a routine up-to-date
-// poll never pops a window at the user; only a found update escalates to
-// CheckAndInstall. Updater.Check already treats a skipped version as
-// up-to-date, so "Skip This Version" is honoured for free.
+// on updateCheckInterval and, when a newer release is found, asks the frontend
+// to show the in-app update prompt. It deliberately uses Updater.Check (which
+// opens no window and downloads nothing) rather than CheckAndInstall: a routine
+// poll never pops a window or pre-downloads a release at the user. Only the
+// prompt's "Install" button escalates to the download/verify/restart flow.
+//
+// This is what makes "Skip This Version" actually stick. The framework updater's
+// own skip state is in-memory only (lost on restart) and unreachable once a
+// release has auto-downloaded to the "Update Ready" state — its only dismiss
+// action there is "Close", which records nothing. We instead persist the skip
+// in the settings table and gate the surfacing here (see surfaceUpdateIfAvailable).
 //
 // It is a no-op on dev builds where the updater was never configured. The loop
 // is tracked by startupWg and cancelled when startupCtx is closed in
@@ -263,19 +299,40 @@ func (a *App) startPeriodicUpdateCheck() {
 			case <-a.startupCtx.Done():
 				return
 			case <-ticker.C:
-				rel, err := a.app.Updater.Check(a.startupCtx)
-				if err != nil {
-					logger.Log.Debug().Err(err).Msg("periodic update check failed")
-					continue
-				}
-				if rel == nil {
-					continue // up to date (or the available version was skipped)
-				}
-				logger.Log.Info().Str("version", rel.Version).Msg("update available; surfacing updater window")
-				if err := a.app.Updater.CheckAndInstall(a.startupCtx); err != nil {
-					logger.Log.Warn().Err(err).Msg("update install flow failed")
-				}
+				a.surfaceUpdateIfAvailable()
 			}
 		}
 	}()
+}
+
+// surfaceUpdateIfAvailable runs one silent background check and, when a release
+// is found that the user hasn't skipped, emits updater:update-available so the
+// frontend can show the in-app prompt (Install / Remind Me Later / Skip This
+// Version). It never opens the framework's updater window or downloads anything
+// — that only happens if the user clicks Install (which calls CheckForUpdates).
+//
+// The skipped-version gate is read from settings on every check, so a skip
+// persists across restarts. A newer release still surfaces (shouldSurfaceUpdate
+// matches exactly), and "Remind Me Later" persists nothing, so the next poll
+// re-prompts as expected.
+func (a *App) surfaceUpdateIfAvailable() {
+	rel, err := a.app.Updater.Check(a.startupCtx)
+	if err != nil {
+		logger.Log.Debug().Err(err).Msg("periodic update check failed")
+		return
+	}
+	if rel == nil {
+		return // up to date
+	}
+	skipped, _ := a.GetSetting(settingSkippedUpdateVersion)
+	if !shouldSurfaceUpdate(rel.Version, skipped) {
+		logger.Log.Debug().Str("version", rel.Version).Msg("update available but suppressed; user skipped this version")
+		return
+	}
+	logger.Log.Info().Str("version", rel.Version).Msg("update available; prompting via in-app dialog")
+	a.emit("updater:update-available", map[string]string{
+		"currentVersion": a.app.Updater.CurrentVersion(),
+		"version":        rel.Version,
+		"notes":          rel.Notes,
+	})
 }
