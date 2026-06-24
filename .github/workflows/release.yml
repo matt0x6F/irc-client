@@ -150,10 +150,34 @@ jobs:
       - name: Install Wails v3 CLI
         run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha2.103
       - name: Install NSIS
-        # NSIS is not preinstalled on the hosted Windows images. makensis runs under
-        # x64 emulation on the arm64 runner; the .nsi itself is arch-agnostic (only
-        # the embedded binary differs). The updater zip needs no NSIS.
-        run: choco install nsis -y --no-progress
+        # NSIS is not preinstalled on the hosted Windows images. choco updates the
+        # *machine* PATH in the registry, but this job's environment was captured at
+        # start and isn't refreshed — so the later build step's makensis lookup fails
+        # (exit 127) unless we add the install dir to GITHUB_PATH ourselves. makensis
+        # runs under x64 emulation on the arm64 runner; the .nsi itself is arch-agnostic
+        # (only the embedded binary differs). The updater zip needs no NSIS.
+        run: |
+          choco install nsis -y --no-progress
+          "C:\Program Files (x86)\NSIS" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+      - name: Install ARM64 C toolchain (llvm-mingw)
+        # The gcc preinstalled on windows-11-arm is an x86_64 mingw build: its
+        # assembler can't emit ARM64, so go-sqlite3's cgo dies with
+        # "gcc_arm64.S: no such instruction: stp x29,x30,...". llvm-mingw gives a
+        # native aarch64, GNU-ABI clang that drops straight into cgo's mingw flow.
+        # Host == target == arm64, so this is a native build, not a cross-compile.
+        # bsdtar (System32) extracts the zip; pin the version for reproducibility.
+        if: matrix.arch == 'arm64'
+        shell: bash
+        env:
+          LLVM_MINGW_VERSION: '20260616'
+        run: |
+          url="https://github.com/mstorsjo/llvm-mingw/releases/download/${LLVM_MINGW_VERSION}/llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-aarch64.zip"
+          curl -fsSL -o "$RUNNER_TEMP/llvm-mingw.zip" "$url"
+          mkdir -p "$RUNNER_TEMP/llvm-mingw"
+          tar -xf "$RUNNER_TEMP/llvm-mingw.zip" -C "$RUNNER_TEMP/llvm-mingw"
+          echo "$RUNNER_TEMP/llvm-mingw/llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-aarch64/bin" >> "$GITHUB_PATH"
+          echo "CC=aarch64-w64-mingw32-clang" >> "$GITHUB_ENV"
+          echo "CXX=aarch64-w64-mingw32-clang++" >> "$GITHUB_ENV"
       - name: Build updater zip & NSIS installer
         shell: bash
         # CGO_ENABLED=1 is read from the process env by the platform Taskfile, so the
