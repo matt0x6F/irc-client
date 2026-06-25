@@ -21,8 +21,10 @@ These are part of the **ratified** IRCv3 spec, so they count toward baseline com
 | Bot mode `+B` user-mode half | High | ◐ | `BOT=` token in the `005` handler (`client.go:2449`); user-mode handling at `client.go:2024` |
 | `+typing` (client-only tag) | High | ⛔ | New tag emit/parse; UI typing indicator |
 | `+reply` / `+channel-context` | Medium | ⛔ | Pairs with stored `@msgid`; threaded-reply UI |
-| `no-implicit-names` | Low | ⛔ | `requestedCaps` (`client.go:31`); suppress NAMES-driven roster seed, rely on WHOX |
-| `UTF8ONLY` | Low | ⛔ | `005` handler; advertise/enforce UTF-8 |
+| `extended-monitor` | — | ✅ | Done (#77) — ratified, not draft; away/account/host/realname for monitored nicks. See the [support matrix](ircv3-support.md#capability-status-matrix). |
+| `account-extban` | — | ✅ | Done (#77) — `EXTBAN` `$a`/`$a:account` masks in the mode editor. |
+| `no-implicit-names` | — | ✅ | Done (#77) — explicit `NAMES` on self-join when the cap is enabled. |
+| `UTF8ONLY` | — | ✅ | Done (#77) — recorded in the `005` handler; UTF-8 by construction. |
 
 ### Detail
 
@@ -41,11 +43,12 @@ These are part of the **ratified** IRCv3 spec, so they count toward baseline com
       quoting. Cascade already stores `@msgid` per message (used for history dedup), which is the
       anchor a reply points at — so the backend groundwork is partly there; the work is mostly
       emit + a reply-rendering UI.
-- [ ] **`no-implicit-names`** — Ratified. Lets the client tell the server not to send the
-      implicit NAMES burst on JOIN; Cascade already seeds the roster from WHOX, so this trims
-      redundant traffic on large channels. Add to `requestedCaps` and gate the NAMES path.
-- [ ] **`UTF8ONLY`** — Ratified ISUPPORT token. Cheap correctness win: parse it in the `005`
-      handler and enforce/advertise UTF-8.
+- [x] **`no-implicit-names`** — Done (#77). Note the correction to the original plan: WHOX seeds
+      *attributes*, not membership prefixes, so we can't just "rely on WHOX" — when the cap is
+      enabled we send an explicit `NAMES <channel>` on self-join (`namesOnSelfJoin`) and the
+      `353`/`366` handlers rebuild the roster as before.
+- [x] **`UTF8ONLY`** — Done (#77). Recorded in the `005` handler (`applyISUPPORTToken`); Cascade
+      already emits UTF-8 exclusively, so no enforcement change was needed.
 
 ## Draft extensions (future modern-chat)
 
@@ -58,8 +61,10 @@ with Cascade's multi-platform story. Sequenced by value.
       handling in storage + UI. The one draft already tracked (⛔) in the support matrix.
 - [ ] **`draft/multiline`** — Send/receive true multi-line messages instead of split lines.
 - [ ] **`+draft/react`** — Emoji reactions (client-only tag). UX polish.
-- [ ] **`draft/extended-monitor`** — Builds on the existing MONITOR: away/account changes for
-      monitored nicks without a separate WHOX. Low effort given MONITOR is done.
+- [x] **`extended-monitor`** — Done (#77). (Was listed here as `draft/extended-monitor`, but it is
+      in fact **ratified** — hence its move to the gaps table above.) Builds on the existing
+      MONITOR: away/account/host/realname for monitored nicks. Low effort because the live-roster
+      `applyUserMeta` path is membership-agnostic.
 - [ ] **`draft/metadata-2`** — Avatars, status, display names. Larger effort.
 - [ ] **`draft/channel-rename`** — Handle `RENAME` of a channel.
 - [ ] **`draft/pre-away`** — Away-on-idle support.
@@ -71,7 +76,8 @@ with Cascade's multi-platform story. Sequenced by value.
    multi-platform identity (live conversations; sessions stay in sync).
 3. **`draft/message-redaction`** + **`draft/multiline`** — modern messaging table-stakes that
    Ergo/Soju already speak.
-4. Mop up the cheap ratified items (`no-implicit-names`, `UTF8ONLY`) opportunistically.
+4. ~~Mop up the cheap ratified items (`no-implicit-names`, `UTF8ONLY`).~~ Done in #77, along with
+   `extended-monitor` and `account-extban` — the ratified set is now complete except Bot mode `+B`.
 5. UX polish (`+reply`, `+react`) and the larger `draft/metadata-2` later.
 
 ## When you implement a cap
