@@ -12,6 +12,8 @@ const NOTIFY_PM_KEY = 'notifications.privateMessages';
 const NOTIFY_MENTIONS_KEY = 'notifications.mentions';
 const NOTIFY_CONNECTION_KEY = 'notifications.connectionLost';
 const NOTIFY_UNFOCUSED_KEY = 'notifications.onlyWhenUnfocused';
+const TYPING_SEND_KEY = 'typing.send';
+const TYPING_RECEIVE_KEY = 'typing.receive';
 
 // How a user's channel-membership prefixes are shown in the nick list:
 // 'icon' shows a single icon for their highest role; 'text' shows the full
@@ -48,6 +50,14 @@ interface SettingsState {
   setNotifyConnectionLost: (value: boolean) => void;
   notifyOnlyWhenUnfocused: boolean;
   setNotifyOnlyWhenUnfocused: (value: boolean) => void;
+  // Broadcast our own IRCv3 +typing notifications. Off => we still see others'
+  // typing but never advertise our own (privacy / quiet a channel).
+  typingSend: boolean;
+  setTypingSend: (value: boolean) => void;
+  // Display others' typing indicators. Off => the typing store ignores all
+  // inbound typing events.
+  typingReceive: boolean;
+  setTypingReceive: (value: boolean) => void;
 }
 
 /**
@@ -120,6 +130,20 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       console.error('Failed to persist notifications.onlyWhenUnfocused:', error),
     );
   },
+  typingSend: true,
+  setTypingSend: (value) => {
+    set({ typingSend: value });
+    SetSetting(TYPING_SEND_KEY, value ? 'true' : 'false').catch((error) =>
+      console.error('Failed to persist typing.send:', error),
+    );
+  },
+  typingReceive: true,
+  setTypingReceive: (value) => {
+    set({ typingReceive: value });
+    SetSetting(TYPING_RECEIVE_KEY, value ? 'true' : 'false').catch((error) =>
+      console.error('Failed to persist typing.receive:', error),
+    );
+  },
 }));
 
 /**
@@ -128,17 +152,29 @@ export const useSettingsStore = create<SettingsState>((set) => ({
  */
 export async function initSettings(): Promise<void> {
   try {
-    const [consolidate, prefixMode, channel, nEnabled, nPm, nMentions, nConn, nUnfocused] =
-      await Promise.all([
-        GetSetting(CONSOLIDATE_JOIN_QUIT_KEY),
-        GetSetting(PREFIX_DISPLAY_MODE_KEY),
-        GetSetting(UPDATE_CHANNEL_KEY),
-        GetSetting(NOTIFY_ENABLED_KEY),
-        GetSetting(NOTIFY_PM_KEY),
-        GetSetting(NOTIFY_MENTIONS_KEY),
-        GetSetting(NOTIFY_CONNECTION_KEY),
-        GetSetting(NOTIFY_UNFOCUSED_KEY),
-      ]);
+    const [
+      consolidate,
+      prefixMode,
+      channel,
+      nEnabled,
+      nPm,
+      nMentions,
+      nConn,
+      nUnfocused,
+      tSend,
+      tReceive,
+    ] = await Promise.all([
+      GetSetting(CONSOLIDATE_JOIN_QUIT_KEY),
+      GetSetting(PREFIX_DISPLAY_MODE_KEY),
+      GetSetting(UPDATE_CHANNEL_KEY),
+      GetSetting(NOTIFY_ENABLED_KEY),
+      GetSetting(NOTIFY_PM_KEY),
+      GetSetting(NOTIFY_MENTIONS_KEY),
+      GetSetting(NOTIFY_CONNECTION_KEY),
+      GetSetting(NOTIFY_UNFOCUSED_KEY),
+      GetSetting(TYPING_SEND_KEY),
+      GetSetting(TYPING_RECEIVE_KEY),
+    ]);
     useSettingsStore.setState({
       consolidateJoinQuit: consolidate === 'true',
       ...(prefixMode === 'text' || prefixMode === 'icon'
@@ -151,6 +187,8 @@ export async function initSettings(): Promise<void> {
       notifyMentions: nMentions !== 'false',
       notifyConnectionLost: nConn !== 'false',
       notifyOnlyWhenUnfocused: nUnfocused !== 'false',
+      typingSend: tSend !== 'false',
+      typingReceive: tReceive !== 'false',
     });
   } catch (error) {
     console.error('Failed to load settings:', error);
@@ -180,6 +218,10 @@ export async function initSettings(): Promise<void> {
       useSettingsStore.setState({ notifyConnectionLost: payload.value !== 'false' });
     } else if (payload.key === NOTIFY_UNFOCUSED_KEY) {
       useSettingsStore.setState({ notifyOnlyWhenUnfocused: payload.value !== 'false' });
+    } else if (payload.key === TYPING_SEND_KEY) {
+      useSettingsStore.setState({ typingSend: payload.value !== 'false' });
+    } else if (payload.key === TYPING_RECEIVE_KEY) {
+      useSettingsStore.setState({ typingReceive: payload.value !== 'false' });
     }
   });
 }

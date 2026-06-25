@@ -789,6 +789,19 @@ export function SendMessage(networkID, target, message) {
 }
 
 /**
+ * SendTyping emits an IRCv3 +typing client tag (active/paused/done) for target.
+ * Best-effort: a disconnected network or a server without message-tags yields no
+ * error so the frontend's typing state machine can fire freely.
+ * @param {number} networkID
+ * @param {string} target
+ * @param {string} state
+ * @returns {$CancellablePromise<void>}
+ */
+export function SendTyping(networkID, target, state) {
+    return $Call.ByID(892939144, networkID, target, state);
+}
+
+/**
  * SetChannelOpen sets the is_open state for a channel
  * @param {number} networkID
  * @param {string} channelName

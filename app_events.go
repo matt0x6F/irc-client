@@ -111,6 +111,18 @@ func (a *App) OnEvent(event events.Event) {
 		return
 	}
 
+	// Forward IRCv3 +typing client tags to the frontend typing store. Ephemeral and
+	// best-effort — no persistence, and the store self-expires stale entries.
+	if event.Type == irc.EventTypingReceived {
+		a.emit("typing-event", map[string]interface{}{
+			"networkId": event.Data["networkId"],
+			"target":    event.Data["target"],
+			"nick":      event.Data["nick"],
+			"state":     event.Data["state"],
+		})
+		return
+	}
+
 	// Forward channel list events to frontend, caching the result first so that
 	// reopening the modal can render instantly without a fresh LIST. This runs after
 	// the IRC 323 handler has cleared its accumulation buffer, so it is race-free.

@@ -2247,6 +2247,11 @@ func (c *IRCClient) setupHandlers() {
 	// Also handle CTCP responses (CTCP replies come as NOTICE)
 	c.conn.AddCallback("NOTICE", c.handleNotice)
 
+	// TAGMSG carries IRCv3 client-only tags with no message body; handleTypingTag
+	// surfaces the +typing client tag (typing indicators) and ignores everything
+	// else. Ephemeral — nothing is stored.
+	c.conn.AddCallback("TAGMSG", c.handleTypingTag)
+
 	// CHATHISTORY replays arrive wrapped in a BATCH. The library buffers the whole
 	// group and hands it to batch callbacks; handleChatHistoryBatch claims the
 	// "chathistory" batches (bulk dedup-insert + a single history event) and lets
@@ -3917,6 +3922,86 @@ func (c *IRCClient) Disconnect() error {
 	}
 	c.connected = false
 	return nil
+}
+
+// validTypingState reports whether s is one of the IRCv3 +typing client-tag
+// values (ircv3.net/specs/client-tags/typing). Shared by the send and receive
+// paths so an unknown value is rejected consistently in both directions.
+func validTypingState(s string) bool {
+	switch s {
+	case "active", "paused", "done":
+		return true
+	default:
+		return false
+	}
+}
+
+// SendTyping emits an IRCv3 +typing client tag for target as a TAGMSG. Typing
+// is best-effort and ephemeral: if message-tags was not negotiated we silently
+// no-op (the server would not relay the client tag anyway). An invalid state is
+// a programming error and is rejected. The frontend owns the throttle/idle/done
+// state machine; this method is a thin relay (mirrors SendMessage's guards).
+func (c *IRCClient) SendTyping(target, state string) error {
+	if !validTypingState(state) {
+		return fmt.Errorf("invalid typing state %q", state)
+	}
+	if !c.capEnabled("message-tags") {
+		return nil
+	}
+
+	c.mu.RLock()
+	if !c.connected {
+		c.mu.RUnlock()
+		return fmt.Errorf("not connected")
+	}
+	c.mu.RUnlock()
+
+	c.rateLimiter.Wait()
+	if err := c.conn.SendWithTags(map[string]string{"+typing": state}, "TAGMSG", target); err != nil {
+		return fmt.Errorf("failed to send typing tag: %w", err)
+	}
+	return nil
+}
+
+// handleTypingTag processes an inbound TAGMSG carrying the IRCv3 +typing client
+// tag. It drops our own echo (echo-message can reflect our TAGMSG back), ignores
+// unknown/absent states, and emits EventTypingReceived for the frontend. The
+// conversation target is the channel for channel-addressed tags, or the sender
+// for a tag addressed to us by nick (a PM). Nothing is persisted — typing state
+// is purely ephemeral.
+func (c *IRCClient) handleTypingTag(e ircmsg.Message) {
+	present, state := e.GetTag("+typing")
+	if !present || !validTypingState(state) {
+		return
+	}
+	nick := e.Nick()
+	if c.isMe(nick) {
+		return
+	}
+	if len(e.Params) < 1 {
+		return
+	}
+	dest := e.Params[0]
+
+	// Channel-addressed: the conversation is the channel. Otherwise the tag was
+	// addressed to us by nick, so the conversation is the sender (the PM peer).
+	target := nick
+	if len(dest) > 0 && (dest[0] == '#' || dest[0] == '&') {
+		target = dest
+	}
+
+	c.eventBus.Emit(events.Event{
+		Type: EventTypingReceived,
+		Data: map[string]interface{}{
+			"network":   c.network.Address,
+			"networkId": c.networkID,
+			"target":    target,
+			"nick":      nick,
+			"state":     state,
+		},
+		Timestamp: time.Now(),
+		Source:    events.EventSourceIRC,
+	})
 }
 
 // SendMessage sends a message to a channel or user

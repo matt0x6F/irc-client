@@ -100,6 +100,10 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
   const setNotifyConnectionLost = useSettingsStore((s) => s.setNotifyConnectionLost);
   const notifyOnlyWhenUnfocused = useSettingsStore((s) => s.notifyOnlyWhenUnfocused);
   const setNotifyOnlyWhenUnfocused = useSettingsStore((s) => s.setNotifyOnlyWhenUnfocused);
+  const typingSend = useSettingsStore((s) => s.typingSend);
+  const setTypingSend = useSettingsStore((s) => s.setTypingSend);
+  const typingReceive = useSettingsStore((s) => s.typingReceive);
+  const setTypingReceive = useSettingsStore((s) => s.setTypingReceive);
   const [notifyNotice, setNotifyNotice] = useState<string | null>(null);
 
   // Theme (appearance + accent)
@@ -1230,6 +1234,24 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
                 </div>
                 <p className="text-xs text-muted-foreground mt-2">
                   Show the bold/italic/underline/colour buttons above the message input. Emoji and mention buttons stay available either way, and you can also toggle this with the "Aa" button in the composer.
+                </p>
+              </div>
+
+              {/* Typing notifications */}
+              <div className="border border-border rounded-lg p-4 bg-card/50 shadow-[var(--shadow-sm)] space-y-3">
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-sm font-medium">Send typing notifications</span>
+                  <Toggle checked={typingSend} onChange={setTypingSend} />
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Let others see when you're typing a message (IRCv3 +typing). When off, you still see others' typing but never broadcast your own. Only works on servers that support it.
+                </p>
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-sm font-medium">Show others' typing</span>
+                  <Toggle checked={typingReceive} onChange={setTypingReceive} />
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Display a "typing…" line above the message input when people in a channel or PM are composing.
                 </p>
               </div>
 
