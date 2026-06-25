@@ -51,7 +51,7 @@ Legend: ✅ Supported · ◐ Partial · ⛔ Not yet
 | CAP LS 302 negotiation | ✅ | n/a | Full LS/REQ/ACK/NAK/END lifecycle |
 | ISUPPORT (`005`) | ✅ | n/a | PREFIX / CHANMODES parsing for mode handling |
 | WHOIS account (`330`) | ✅ | n/a | Shows the account a user is logged in as |
-| Bot mode | ✅ | n/a (via `message-tags` + `335`) | Bots flagged from the `bot` tag and RPL_WHOISBOT; badged in the nick list and WHOIS |
+| Bot mode | ◐ | n/a (via `message-tags` + `335`) | Detection only: bots flagged from the `bot` tag and RPL_WHOISBOT, badged in the nick list and WHOIS. The `+B` user-mode half — the `BOT=` ISUPPORT token and setting `+B` on self — is **not** handled |
 | `multi-prefix` | ✅ | Yes | All membership prefixes parsed; shown as icon (highest) or text (full) per setting |
 | `cap-notify` | ✅ | Yes | `CAP NEW` auto-requests newly-offered wanted caps; `CAP DEL` disables withdrawn caps live |
 | `account-notify` | ✅ | Yes | Live account login/logout drives the roster + WHOIS |
@@ -391,6 +391,15 @@ select via `GetNetworkBots`.
 in the WHOIS panel (`user-info.tsx:138`), so automated participants are visually distinct from
 people.
 
+**Partial — the `+B` user-mode half is not implemented.** The spec also defines a *persistent*
+bot marker carried as a user mode (commonly `+B`), advertised via the `BOT=<letter>` ISUPPORT
+token and surfaced in WHOIS / `MODE`. Cascade does **not** parse the `BOT=` token (the `005`
+handler reads `PREFIX` / `CHANMODES` / `WHOX` / `MONITOR` only, `client.go:2449`), and the MODE
+handler deliberately ignores user modes (`client.go:2024`), so a `+B` flag never marks anyone.
+There is also no path to set `+B` on *self* — relevant because Cascade's plugin system can host
+bots that should be able to announce themselves. Consequence: a tag-only bot is invisible as a
+bot until it actually speaks; `+B` is what would identify it at rest.
+
 ### Strict Transport Security (STS)
 
 [STS](https://ircv3.net/specs/extensions/sts) lets a server tell the client to always use
@@ -480,13 +489,21 @@ with the IRCv3 features above.
 
 ## Not yet supported
 
-Every **ratified** IRCv3 capability is now supported (see the matrix above). What remains is
-*draft* extensions, which are deliberately out of scope for ratified compliance and belong to
-the future modern-chat product rather than this client:
+The **ratified** set is supported with one known gap (see the matrix above):
+
+- **Bot mode (`+B` user-mode half)** — ◐ partial. Detection via the `bot` tag and RPL_WHOISBOT
+  is complete, but the `BOT=` ISUPPORT token and the `+B` user mode (including setting it on
+  self) are not yet handled. See [Bot mode](#bot-mode).
+
+Everything else outstanding is a *draft* extension, deliberately out of scope for ratified
+compliance and belonging to the future modern-chat product rather than this client:
 
 - `draft/message-redaction` (handle REDACT/DELETE) — needs message-mutation handling.
 - `draft/multiline`, `draft/metadata-2`, `draft/extended-monitor`, and the client-only UX tags
   (`+typing`, `draft/react`, `draft/reply`).
+
+A prioritized, checkbox-tracked list of all outstanding work — including the ratified gaps
+above and the draft extensions below — lives in the [IRCv3 Roadmap](ircv3-roadmap.md).
 
 When implementing any future cap, add it to `requestedCaps` (`client.go:31`), gate behavior on
 `enabledCaps` (or the relevant ISUPPORT token), and update this matrix.

@@ -15,4 +15,5 @@ SQLite-backed message store, and full IRCv3 capability handling.
 - [Plugin system](developers/plugin-system.md)
 - [Events](developers/events.md)
 - [IRCv3 support](developers/ircv3-support.md)
+- [IRCv3 roadmap](developers/ircv3-roadmap.md)
 - [Releases & update channels](developers/releases.md)
