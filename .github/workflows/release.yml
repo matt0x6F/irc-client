@@ -165,7 +165,11 @@ jobs:
         # "gcc_arm64.S: no such instruction: stp x29,x30,...". llvm-mingw gives a
         # native aarch64, GNU-ABI clang that drops straight into cgo's mingw flow.
         # Host == target == arm64, so this is a native build, not a cross-compile.
-        # bsdtar (System32) extracts the zip; pin the version for reproducibility.
+        # Extract with System32's bsdtar by absolute path: in a `shell: bash` step the
+        # bare `tar` is Git's GNU tar (its usr/bin precedes System32 on PATH), which
+        # can't read a .zip AND parses the C:/D: drive colon as an rsh host — failing
+        # with "tar: Cannot connect to C: resolve failed". bsdtar handles zips and
+        # Windows drive paths natively. Pin the llvm-mingw version for reproducibility.
         if: matrix.arch == 'arm64'
         shell: bash
         env:
@@ -174,7 +178,7 @@ jobs:
           url="https://github.com/mstorsjo/llvm-mingw/releases/download/${LLVM_MINGW_VERSION}/llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-aarch64.zip"
           curl -fsSL -o "$RUNNER_TEMP/llvm-mingw.zip" "$url"
           mkdir -p "$RUNNER_TEMP/llvm-mingw"
-          tar -xf "$RUNNER_TEMP/llvm-mingw.zip" -C "$RUNNER_TEMP/llvm-mingw"
+          /c/Windows/System32/tar.exe -xf "$RUNNER_TEMP/llvm-mingw.zip" -C "$RUNNER_TEMP/llvm-mingw"
           echo "$RUNNER_TEMP/llvm-mingw/llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-aarch64/bin" >> "$GITHUB_PATH"
           echo "CC=aarch64-w64-mingw32-clang" >> "$GITHUB_ENV"
           echo "CXX=aarch64-w64-mingw32-clang++" >> "$GITHUB_ENV"
