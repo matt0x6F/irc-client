@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
-	"github.com/wailsapp/wails/v3/pkg/services/notifications"
 	"github.com/wailsapp/wails/v3/pkg/updater"
 	"github.com/wailsapp/wails/v3/pkg/updater/providers/github"
 )
@@ -22,19 +21,26 @@ func main() {
 		return
 	}
 
-	ns := notifications.New()
+	// Native notifications are gated behind a build tag (notify.go /
+	// notify_server.go): the headless `server` build returns nil and skips both
+	// registering the service and wiring it. macOS notifications require a valid
+	// app-bundle identifier, which the bare server binary lacks — registering the
+	// service fails its startup ("notifications require a valid bundle
+	// identifier") and AttachNotifications would abort in CGO.
+	ns := newNotificationService()
 
 	// Create the Wails application. In v3 the backend is registered as a
 	// service: its ServiceStartup/ServiceShutdown hooks drive connect/cleanup,
 	// and its exported methods are bound for the frontend. v3 installs its own
 	// signal handler, so the manual SIGTERM/SIGINT plumbing from v2 is gone.
+	services := []application.Service{application.NewService(ircApp)}
+	if ns != nil {
+		services = append(services, application.NewService(ns))
+	}
 	app := application.New(application.Options{
 		Name:        "Cascade Chat",
 		Description: "Modern multi-platform IRC client",
-		Services: []application.Service{
-			application.NewService(ircApp),
-			application.NewService(ns),
-		},
+		Services:    services,
 		Assets: application.AssetOptions{
 			Handler: application.BundledAssetFileServer(assets),
 		},
@@ -87,8 +93,12 @@ func main() {
 		BackgroundColour: application.NewRGB(27, 38, 54),
 	})
 
-	// Wire native notifications now that the service and window exist.
-	ircApp.AttachNotifications(ns, mainWindow)
+	// Wire native notifications now that the service and window exist. Routed
+	// through a build-tagged seam (notify.go / notify_server.go) because the
+	// headless `server` build must skip it: the bare binary has no macOS app
+	// bundle, so registering notification categories aborts the process at
+	// startup (a CGO exception the Go error guards can't catch).
+	attachNotifications(ircApp, ns, mainWindow)
 
 	if err := app.Run(); err != nil {
 		println("Error:", err.Error())

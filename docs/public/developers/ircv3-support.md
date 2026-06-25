@@ -32,7 +32,8 @@ Because of its IRCv3 support, Cascade gives you:
 - **Every role at a glance** — with `multi-prefix`, the nick list shows all of a user's channel
   roles (e.g. an op who is also voiced), not just the highest one.
 - **A buddy list** — track specific nicks' online/offline presence across restarts, even when
-  you share no channel with them (`monitor`), in a dedicated Buddies pane.
+  you share no channel with them (`monitor`), in a dedicated Buddies pane. With
+  `extended-monitor`, buddies also show live **away** state, not just online/offline.
 
 ## Capability status matrix
 
@@ -65,13 +66,17 @@ Legend: ✅ Supported · ◐ Partial · ⛔ Not yet
 | `monitor` | ✅ | n/a (ISUPPORT) | Durable per-network buddy list with live presence |
 | `labeled-response` | ✅ | Yes | Correlates the WHOX roster query's reply by `@label` |
 | `standard-replies` | ✅ | Yes | FAIL/WARN/NOTE shown as error/warning/status lines |
-| `draft/message-redaction` | ⛔ | No | No REDACT handling |
+| `extended-monitor` | ✅ | Yes | MONITORed nicks deliver AWAY/ACCOUNT/CHGHOST/SETNAME; buddy away state surfaces in the Buddies pane |
+| `no-implicit-names` | ✅ | Yes | Suppresses the post-JOIN NAMES reply; we send an explicit `NAMES` on self-join so the roster still builds |
+| `UTF8ONLY` | ✅ | n/a (ISUPPORT) | Server accepts only UTF-8; we already emit UTF-8 exclusively, so the token is recorded and honored by default |
+| `account-extban` | ✅ | n/a (ISUPPORT `EXTBAN`) | `$a` / `$a:account` ban masks rendered with a semantic label in the mode editor |
 | `WHOX` (`354`) | ✅ | n/a (ISUPPORT) | Extended WHO on join bulk-seeds the roster |
+| `draft/message-redaction` | ⛔ | No | No REDACT handling (draft, out of scope) |
 
 The set of requested capabilities lives in one place — `internal/irc/client.go:31`:
 
 ```go
-var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "multi-prefix", "cap-notify", "away-notify", "account-notify", "extended-join", "chghost", "account-tag", "userhost-in-names", "setname", "invite-notify", "standard-replies", "labeled-response"}
+var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "multi-prefix", "cap-notify", "away-notify", "account-notify", "extended-join", "chghost", "account-tag", "userhost-in-names", "setname", "invite-notify", "standard-replies", "labeled-response", "extended-monitor", "no-implicit-names"}
 ```
 
 `sasl` is only requested when the network has SASL configured (`client.go:1927`); the others
@@ -367,6 +372,71 @@ message type: `FAIL` → `error`, `WARN` → `warning`, `NOTE` → `status`. Cov
 the new `warning` type in amber with a ⚠, and `NOTE` as a dimmed status line
 (`message-view.tsx`) — so a server-side failure is visually distinct from an informational note.
 
+### extended-monitor
+
+[extended-monitor](https://ircv3.net/specs/extensions/extended-monitor) extends
+[MONITOR](#monitor-buddy-list) so the server also pushes `AWAY`, `ACCOUNT`, `CHGHOST`, and
+`SETNAME` notifications for nicks you monitor — even ones you share no channel with. Without it,
+a buddy's only observable state is online/offline.
+
+This was nearly free in Cascade because the live-roster path is membership-agnostic: `applyUserMeta`
+(`client.go`) stores metadata for *any* nick unconditionally, and the existing
+`handleAway`/`handleAccount`/`handleChghost`/`handleSetname` handlers already funnel into it. So the
+backend change is just adding `extended-monitor` to `requestedCaps` (`client.go:31`); once the
+server ACKs it, notifications for monitored-only nicks flow through the same idempotent
+`EventUserMetaChanged` → `usermeta-event` path as channel members. Coverage:
+`internal/irc/extended_monitor_test.go`.
+
+**In the client:** the Buddies pane (`monitor-list.tsx`) now renders a three-state dot — green
+(online), amber (online but away, with the away message on hover), grey (offline) — via the pure
+`buddyPresence` helper (`frontend/src/lib/presence.ts`), joining live MONITOR presence with the
+roster's away state. Previously a buddy could only be green or grey.
+
+### no-implicit-names
+
+[no-implicit-names](https://ircv3.net/specs/extensions/no-implicit-names) lets a client opt out of
+the implicit `NAMES` reply (`353`/`366`) the server sends after each `JOIN` — a real win for
+bouncers and mobile clients rejoining many channels at once.
+
+There is a sharp edge: Cascade builds its nick list *solely* from that post-join `353`, and the
+WHOX roster seed fills only attributes (away/account/host/realname), **not** membership prefixes
+(`@`/`+`). So negotiating the cap naively would leave joined channels with a flat or empty roster.
+Cascade handles this by issuing an explicit `NAMES <channel>` on our own JOIN when the cap is
+enabled (`namesOnSelfJoin`, gated on `enabledCaps`, wired into the JOIN handler in `client.go`); the
+unchanged `353`/`366` handlers then rebuild the roster exactly as before. Coverage:
+`internal/irc/no_implicit_names_test.go`.
+
+**In the client:** no visible change — the cap is a wire-level optimization. The roster appears on
+join just as it does without the cap.
+
+### UTF8ONLY
+
+[UTF8ONLY](https://ircv3.net/specs/extensions/utf8-only) is a valueless ISUPPORT token by which a
+server declares it accepts only UTF-8 content; a compliant client MUST set its outgoing encoding to
+UTF-8 without user intervention. Cascade already emits Go strings (UTF-8) exclusively and has no
+legacy-charset path, so it is compliant by construction. The `005` handler records the token onto
+`ServerCapabilities.UTF8Only` (`applyISUPPORTToken`, `client.go`), exposed to the frontend via
+`GetServerCapabilities`; no encoding change is required. Coverage:
+`internal/irc/isupport_test.go`.
+
+### account-extban
+
+Account [EXTBAN](https://ircv3.net/specs/extensions/extended-ban) is the ratified account-based ban
+type: a server advertises `EXTBAN=<prefix>,<types>` (e.g. `EXTBAN=$,ajrxc`) and, when the `a` type
+is present, a ban mask like `$a` (any logged-in user) or `$a:account` bans by services account
+rather than hostmask.
+
+The `005` handler parses `EXTBAN` into `ServerCapabilities.ExtbanPrefix` (the prefix rune) and
+`ExtbanTypes` (the type set) via the pure `parseExtban` (`modeparse.go`), surfaced to the frontend
+through `ExtbanInfo` / `GetServerCapabilities`. Coverage: `internal/irc/extban_test.go`,
+`internal/irc/isupport_test.go`.
+
+**In the client:** the channel mode editor's ban list (`channel-mode-editor.tsx`) renders extban
+masks with a semantic label via the pure `describeBan` helper
+(`frontend/src/lib/extban.ts`) — `$a:alice` shows as an **account** badge with "account: alice",
+`$a` as "any logged-in account" — instead of the opaque raw mask, and the add-ban placeholder hints
+the `$a:account` form when the server advertises it. Coverage: `frontend/src/lib/extban.test.ts`.
+
 ### Bot mode
 
 [Bot mode](https://ircv3.net/specs/extensions/bot-mode) lets a server mark certain users as
@@ -495,12 +565,17 @@ The **ratified** set is supported with one known gap (see the matrix above):
   is complete, but the `BOT=` ISUPPORT token and the `+B` user mode (including setting it on
   self) are not yet handled. See [Bot mode](#bot-mode).
 
-Everything else outstanding is a *draft* extension, deliberately out of scope for ratified
-compliance and belonging to the future modern-chat product rather than this client:
+The previously-missing ratified tail — `extended-monitor`, `no-implicit-names`, `UTF8ONLY`, and
+`account-extban` — is now implemented (see the matrix). Everything else outstanding is a *draft*
+extension, deliberately out of scope for ratified compliance and belonging to the future
+modern-chat product rather than this client:
 
 - `draft/message-redaction` (handle REDACT/DELETE) — needs message-mutation handling.
-- `draft/multiline`, `draft/metadata-2`, `draft/extended-monitor`, and the client-only UX tags
-  (`+typing`, `draft/react`, `draft/reply`).
+- `draft/multiline`, `draft/metadata-2`, `draft/read-marker`, `draft/chathistory` targets, and the
+  client-only UX tags (`+typing`, `draft/react`, `draft/reply`).
+
+`WebSocket` and `WebIRC` are ratified but server/transport-side (gateway concerns), not
+client-negotiated capabilities, so they are intentionally absent.
 
 A prioritized, checkbox-tracked list of all outstanding work — including the ratified gaps
 above and the draft extensions below — lives in the [IRCv3 Roadmap](ircv3-roadmap.md).

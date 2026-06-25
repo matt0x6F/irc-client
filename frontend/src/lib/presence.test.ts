@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isServiceNick, dmPresenceState } from './presence';
+import { isServiceNick, dmPresenceState, buddyPresence } from './presence';
 
 describe('isServiceNick', () => {
   it('recognizes well-known network services case-insensitively', () => {
@@ -28,5 +28,18 @@ describe('dmPresenceState', () => {
     expect(dmPresenceState('NickServ', true)).toBe('unknown');
     expect(dmPresenceState('ChanServ', false)).toBe('unknown');
     expect(dmPresenceState('SaslServ', undefined)).toBe('unknown');
+  });
+});
+
+describe('buddyPresence', () => {
+  it('is offline when the buddy is not online, regardless of away', () => {
+    expect(buddyPresence(false, false)).toBe('offline');
+    expect(buddyPresence(false, true)).toBe('offline');
+  });
+  it('is online when the buddy is online and not away', () => {
+    expect(buddyPresence(true, false)).toBe('online');
+  });
+  it('is away when the buddy is online but away (extended-monitor)', () => {
+    expect(buddyPresence(true, true)).toBe('away');
   });
 });

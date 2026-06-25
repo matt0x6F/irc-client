@@ -251,4 +251,21 @@ test.describe('IRCv3 documentation screenshots', () => {
       peer.close();
     }
   });
+
+  // Note: extended-monitor (away state for a MONITORed nick) has no screenshot
+  // here, for the same reason as standard-replies/account-extban below. The cap
+  // makes the server *push* AWAY/ACCOUNT/CHGHOST/SETNAME for monitored nicks we
+  // share no channel with — but the test server (ghcr.io/ergochat/ergo:stable)
+  // does not reliably relay the AWAY to a monitor-only watcher, so the amber away
+  // dot can't be captured deterministically. The away-dot rendering is covered by
+  // a unit test (frontend/src/lib/presence.test.ts, buddyPresence) and the backend
+  // path by internal/irc/extended_monitor_test.go; both are documented in prose in
+  // docs/public/developers/ircv3-support.md.
+
+  // Note: account-extban ($a / $a:account ban masks) has no screenshot here, for the
+  // same reason as standard-replies — reliably producing a server-confirmed account
+  // extban through the UI depends on the test server advertising EXTBAN with the 'a'
+  // type and accepting "+b $a:…", which isn't guaranteed across server builds. The
+  // semantic-label rendering is covered by unit tests (frontend/src/lib/extban.test.ts)
+  // and documented in prose in docs/public/developers/ircv3-support.md.
 });

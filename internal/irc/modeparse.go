@@ -120,6 +120,28 @@ func classifyChanModes(chanModes string) (a, b, c, d map[rune]bool) {
 	return
 }
 
+// parseExtban parses an EXTBAN ISUPPORT value of the form "<prefix>,<types>"
+// (e.g. "$,ajrxc" or "~,qjncrRa") into the single prefix rune and the set of
+// supported extban type letters. A value whose prefix field is empty (",a")
+// yields prefix 0. ok is false when the value is empty or has no comma.
+//
+// The ratified account-extban feature corresponds to the 'a' type: with prefix
+// '$' it matches masks like "$a" (any logged-in user) or "$a:account".
+func parseExtban(value string) (prefix rune, types map[rune]bool, ok bool) {
+	pfx, list, found := strings.Cut(value, ",")
+	if !found {
+		return 0, nil, false
+	}
+	if r := []rune(pfx); len(r) > 0 {
+		prefix = r[0]
+	}
+	types = map[rune]bool{}
+	for _, r := range list {
+		types[r] = true
+	}
+	return prefix, types, true
+}
+
 // sortedRunes renders a set of mode letters as a deterministic, sorted string
 // (e.g. for exposing a CHANMODES class to the frontend).
 func sortedRunes(m map[rune]bool) string {
