@@ -20,6 +20,21 @@ func (a *App) SendMessage(networkID int64, target, message string) error {
 	return client.SendMessage(target, message)
 }
 
+// SendTyping emits an IRCv3 +typing client tag (active/paused/done) for target.
+// Best-effort: a disconnected network or a server without message-tags yields no
+// error so the frontend's typing state machine can fire freely.
+func (a *App) SendTyping(networkID int64, target, state string) error {
+	a.mu.RLock()
+	client, exists := a.ircClients[networkID]
+	a.mu.RUnlock()
+
+	if !exists {
+		return nil
+	}
+
+	return client.SendTyping(target, state)
+}
+
 // RequestChatHistoryLatest asks the server to replay the most recent `limit`
 // messages for target (channel name or PM nick). Used for on-open catch-up of a
 // PM/query pane (channel catch-up fires automatically on JOIN). Replays are stored

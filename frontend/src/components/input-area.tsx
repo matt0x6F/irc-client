@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { GetChannelInfo } from '../../wailsjs/go/main/App';
 import { main, storage } from '../../wailsjs/go/models';
 import { FormattingToolbar } from './formatting-toolbar';
@@ -6,6 +6,8 @@ import { MessagePreview } from './message-preview';
 import { wrapSelection, applyToInput } from '../lib/input-insert';
 import { useCommandsStore, filterCommands, lookupCommand } from '../stores/commands';
 import { parseCommandLine } from '../lib/command-line';
+import { useTypingStore, typingNicksFor, formatTypingLabel } from '../stores/typing';
+import { useTypingSender } from '../hooks/useTypingSender';
 
 interface InputAreaProps {
   onSendMessage: (message: string) => Promise<void>;
@@ -30,6 +32,16 @@ export function InputArea({ onSendMessage, placeholder = 'Type a message...', ne
   const commands = useCommandsStore((s) => s.commands);
   const [cmdSelIndex, setCmdSelIndex] = useState(0);
   const [cmdPopupDismissed, setCmdPopupDismissed] = useState(false);
+
+  // IRCv3 +typing: send our own typing state, and surface peers' typing as a line
+  // above the input. `channelName` is already the normalized conversation key
+  // ('#chan' or 'pm:<nick>'); the sender strips the pm: prefix for the wire.
+  const typingSender = useTypingSender(networkId, channelName);
+  const typingMap = useTypingStore((s) => s.typing);
+  const typingLabel = useMemo(() => {
+    if (networkId == null || !channelName) return null;
+    return formatTypingLabel(typingNicksFor(typingMap, networkId, channelName));
+  }, [typingMap, networkId, channelName]);
 
   const cmdLine = parseCommandLine(message);
   const cmdMatches =
@@ -119,6 +131,7 @@ export function InputArea({ onSendMessage, placeholder = 'Type a message...', ne
       historyIndexRef.current = -1;
       draftRef.current = '';
 
+      typingSender.onSubmit();
       setMessage('');
       setCompletionIndex(-1);
       setCompletions([]);
@@ -329,12 +342,21 @@ export function InputArea({ onSendMessage, placeholder = 'Type a message...', ne
         networkId={networkId}
         channelName={channelName}
       />
+      {typingLabel && (
+        <div
+          className="mb-1 px-2 text-xs italic text-muted-foreground"
+          aria-live="polite"
+          data-testid="typing-indicator"
+        >
+          {typingLabel}
+        </div>
+      )}
       <form onSubmit={handleSubmit} className="flex space-x-3">
         <input
           ref={inputRef}
           type="text"
           value={message}
-          onChange={(e) => setMessage(e.target.value)}
+          onChange={(e) => { setMessage(e.target.value); typingSender.onChange(e.target.value); }}
           onKeyDown={(e) => { if (handleCommandKeys(e)) return; handleFormattingShortcut(e); handleHistoryNavigation(e); performTabCompletion(e); }}
           placeholder={placeholder}
           className="flex-1 px-4 py-2.5 border border-border rounded-full bg-background text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all shadow-[var(--shadow-sm)] focus:shadow-[var(--shadow-md)]"

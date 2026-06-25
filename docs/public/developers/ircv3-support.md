@@ -34,6 +34,9 @@ Because of its IRCv3 support, Cascade gives you:
 - **A buddy list** — track specific nicks' online/offline presence across restarts, even when
   you share no channel with them (`monitor`), in a dedicated Buddies pane. With
   `extended-monitor`, buddies also show live **away** state, not just online/offline.
+- **Typing indicators** — see when people in a channel or PM are composing a message, and
+  (optionally) let them see when you are (`+typing` client tag). Both directions are
+  independently toggleable in Settings.
 
 ## Capability status matrix
 
@@ -70,6 +73,7 @@ Legend: ✅ Supported · ◐ Partial · ⛔ Not yet
 | `no-implicit-names` | ✅ | Yes | Suppresses the post-JOIN NAMES reply; we send an explicit `NAMES` on self-join so the roster still builds |
 | `UTF8ONLY` | ✅ | n/a (ISUPPORT) | Server accepts only UTF-8; we already emit UTF-8 exclusively, so the token is recorded and honored by default |
 | `account-extban` | ✅ | n/a (ISUPPORT `EXTBAN`) | `$a` / `$a:account` ban masks rendered with a semantic label in the mode editor |
+| `+typing` (client tag) | ✅ | n/a (via `message-tags`) | Typing indicators in channels + PMs; send/receive independently toggleable |
 | `WHOX` (`354`) | ✅ | n/a (ISUPPORT) | Extended WHO on join bulk-seeds the roster |
 | `draft/message-redaction` | ⛔ | No | No REDACT handling (draft, out of scope) |
 
@@ -470,6 +474,37 @@ There is also no path to set `+B` on *self* — relevant because Cascade's plugi
 bots that should be able to announce themselves. Consequence: a tag-only bot is invisible as a
 bot until it actually speaks; `+B` is what would identify it at rest.
 
+### Typing indicators (`+typing` client tag)
+
+The [`typing` client tag](https://ircv3.net/specs/client-tags/typing) carries a peer's
+composing state — `active`, `paused`, or `done` — as a `TAGMSG` with no message body. It
+needs no dedicated capability: it rides on `message-tags` (already negotiated) and the
+server relays the client-only `+typing` tag like any other message.
+
+**Send.** The React composer owns the timing so the wire stays quiet. A small DOM-free state
+machine (`frontend/src/lib/typing-sender.ts`) re-asserts `active` at most once every 3s while
+you type, emits `paused` after 6s idle with text still in the box, and `done` when you send,
+clear the input, or leave the conversation. Slash commands never broadcast typing
+(`shouldBroadcastTyping`) — composing `/msg` or `/join` isn't writing a message. Each transition calls the bound `App.SendTyping`
+(`app_commands.go`), which is a thin relay over `IRCClient.SendTyping` (`internal/irc/client.go`):
+it validates the state, no-ops silently if `message-tags` isn't enabled, and otherwise sends
+`conn.SendWithTags({"+typing": state}, "TAGMSG", target)`.
+
+**Receive.** `handleTypingTag` (`internal/irc/client.go`) reads the `+typing` tag off an
+inbound `TAGMSG`, drops our own `echo-message` echo via `isMe`, routes channel-vs-PM by the
+target, and emits `EventTypingReceived` — nothing is persisted. The backend forwards it to the
+frontend as `typing-event` (`app_events.go`), where an ephemeral store
+(`frontend/src/stores/typing.ts`) tracks who is typing per conversation and self-expires each
+entry after 6s (so a dropped `done` can't leave a stuck indicator); it also clears a network's
+typers on disconnect. Coverage: `internal/irc/typing_test.go`, `frontend/src/lib/typing-sender.test.ts`,
+`frontend/src/stores/typing.test.ts`, `frontend/src/hooks/useTypingRouting.test.ts`.
+
+**In the client:** a line above the message input shows "Alice is typing…", aggregating in
+channels ("Alice and 2 others are typing…"). Two durable settings (**Settings → Display →
+Typing notifications**) gate it independently — *Send typing notifications* (default on) and
+*Show others' typing* (default on) — so you can keep seeing others while staying invisible
+yourself, or quiet a busy channel's indicators.
+
 ### Strict Transport Security (STS)
 
 [STS](https://ircv3.net/specs/extensions/sts) lets a server tell the client to always use
@@ -572,7 +607,8 @@ modern-chat product rather than this client:
 
 - `draft/message-redaction` (handle REDACT/DELETE) — needs message-mutation handling.
 - `draft/multiline`, `draft/metadata-2`, `draft/read-marker`, `draft/chathistory` targets, and the
-  client-only UX tags (`+typing`, `draft/react`, `draft/reply`).
+  remaining client-only UX tags (`draft/react`, `draft/reply`). The `+typing` client tag is now
+  supported — see [Typing indicators](#typing-indicators-typing-client-tag).
 
 `WebSocket` and `WebIRC` are ratified but server/transport-side (gateway concerns), not
 client-negotiated capabilities, so they are intentionally absent.

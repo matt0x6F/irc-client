@@ -4,7 +4,10 @@ import { InputArea } from './input-area';
 import { useCommandsStore } from '../stores/commands';
 import { main } from '../../wailsjs/go/models';
 
-vi.mock('../../wailsjs/go/main/App', () => ({ GetChannelInfo: vi.fn().mockResolvedValue({ users: [] }) }));
+vi.mock('../../wailsjs/go/main/App', () => ({
+  GetChannelInfo: vi.fn().mockResolvedValue({ users: [] }),
+  SendTyping: vi.fn().mockResolvedValue(undefined),
+}));
 
 const mk = (name: string, usage = '', description = ''): main.CommandInfo =>
   ({ name, aliases: [], category: 'server', usage, description, source: '' } as main.CommandInfo);

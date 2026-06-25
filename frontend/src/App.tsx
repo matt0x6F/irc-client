@@ -6,6 +6,7 @@ import { useUIStore } from './stores/ui';
 import { eventMatchesPane } from './lib/pane-routing';
 import { initCommands } from './stores/commands';
 import { useNotificationRouting } from './hooks/useNotificationRouting';
+import { useTypingRouting } from './hooks/useTypingRouting';
 import { ServerTree } from './components/server-tree';
 import { MessageView } from './components/message-view';
 import { InputArea } from './components/input-area';
@@ -57,6 +58,7 @@ function App() {
   const restoreLastPane = useNetworkStore((s) => s.restoreLastPane);
 
   useNotificationRouting();
+  useTypingRouting();
 
   // UI store
   const showTopicModal = useUIStore((s) => s.showTopicModal);
