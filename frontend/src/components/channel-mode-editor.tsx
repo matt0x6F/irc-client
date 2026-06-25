@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { SendCommand, GetNetworks, RequestChannelBans } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import { main, storage } from '../../wailsjs/go/models';
+import { describeBan } from '../lib/extban';
 
 interface ChannelModeEditorProps {
   networkId: number;
@@ -147,6 +148,10 @@ export function ChannelModeEditor({
   const paramC = (capabilities?.chanmodes_c || 'l').split('');
   const paramLetters = new Set([...paramB, ...paramC]);
   const supportsBans = (capabilities?.chanmodes_a || 'b').includes('b');
+  // Ratified account-extban: the server advertised an EXTBAN prefix (e.g. "$")
+  // and the account type 'a', so "$a" / "$a:account" ban masks are meaningful.
+  const extbanPrefix = capabilities?.extban_prefix || '';
+  const supportsAccountExtban = extbanPrefix !== '' && (capabilities?.extban_types || '').includes('a');
 
   const initialRef = useRef<ModeFormState>(parseModes(currentModes, paramLetters));
   const [flags, setFlags] = useState<Set<string>>(new Set(initialRef.current.flags));
@@ -394,21 +399,34 @@ export function ChannelModeEditor({
                 <p className="text-xs text-muted-foreground mb-2">No active bans.</p>
               ) : (
                 <ul className="mb-2 space-y-1">
-                  {bans.map((b) => (
-                    <li key={b.mask} className="flex items-center justify-between text-sm gap-2">
-                      <span className="font-mono truncate" title={b.by ? `set by ${b.by}` : undefined}>
-                        {b.mask}
-                      </span>
-                      <button
-                        type="button"
-                        data-testid={`mode-ban-remove-${b.mask}`}
-                        onClick={() => removeBan(b.mask)}
-                        className="text-xs text-destructive hover:underline shrink-0"
-                      >
-                        Remove
-                      </button>
-                    </li>
-                  ))}
+                  {bans.map((b) => {
+                    const desc = describeBan(b.mask, extbanPrefix);
+                    const titleParts = [];
+                    if (desc.kind !== 'mask') titleParts.push(b.mask);
+                    if (b.by) titleParts.push(`set by ${b.by}`);
+                    return (
+                      <li key={b.mask} className="flex items-center justify-between text-sm gap-2">
+                        <span className="flex items-center gap-1.5 min-w-0">
+                          {desc.kind === 'account' && (
+                            <span className="text-[10px] uppercase tracking-wide px-1 py-0.5 rounded bg-accent text-accent-foreground shrink-0">
+                              account
+                            </span>
+                          )}
+                          <span className="font-mono truncate" title={titleParts.join(' · ') || undefined}>
+                            {desc.label}
+                          </span>
+                        </span>
+                        <button
+                          type="button"
+                          data-testid={`mode-ban-remove-${b.mask}`}
+                          onClick={() => removeBan(b.mask)}
+                          className="text-xs text-destructive hover:underline shrink-0"
+                        >
+                          Remove
+                        </button>
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
               <div className="flex gap-2">
@@ -424,7 +442,7 @@ export function ChannelModeEditor({
                     }
                   }}
                   className="flex-1 px-3 py-2 text-sm border border-border rounded"
-                  placeholder="nick!user@host"
+                  placeholder={supportsAccountExtban ? `nick!user@host or ${extbanPrefix}a:account` : 'nick!user@host'}
                 />
                 <button
                   type="button"

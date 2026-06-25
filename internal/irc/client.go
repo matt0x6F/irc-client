@@ -28,7 +28,12 @@ import (
 // CAP DEL; it is implicitly enabled by CAP LS 302, but we request it explicitly
 // so it surfaces in enabledCaps. The away-notify/account-notify/extended-join/
 // chghost/account-tag cluster keeps the live roster current (see UserMeta).
-var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "multi-prefix", "cap-notify", "away-notify", "account-notify", "extended-join", "chghost", "account-tag", "userhost-in-names", "setname", "invite-notify", "standard-replies", "labeled-response"}
+// "extended-monitor" extends that cluster to MONITORed nicks: with it the server
+// also pushes AWAY/ACCOUNT/CHGHOST/SETNAME for monitored users we share no channel
+// with, so the Buddies pane / DM dots can reflect their away state. "no-implicit-names"
+// suppresses the automatic NAMES reply after our JOIN; when it is ACKed we send an
+// explicit NAMES so the roster still builds (see the JOIN handler).
+var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "multi-prefix", "cap-notify", "away-notify", "account-notify", "extended-join", "chghost", "account-tag", "userhost-in-names", "setname", "invite-notify", "standard-replies", "labeled-response", "extended-monitor", "no-implicit-names"}
 
 // IRCClient manages IRC connections
 type IRCClient struct {
@@ -88,6 +93,9 @@ type ServerCapabilities struct {
 	ChanModesB   map[rune]bool // Type B modes (always parameterized, e.g. k)
 	ChanModesC   map[rune]bool // Type C modes (parameterized only when set, e.g. l)
 	ChanModesD   map[rune]bool // Type D modes (boolean flags, e.g. imnpst)
+	UTF8Only     bool          // UTF8ONLY token present: server accepts only UTF-8 (ratified)
+	ExtbanPrefix rune          // EXTBAN prefix char (e.g. '$'); 0 if none/unadvertised
+	ExtbanTypes  map[rune]bool // EXTBAN type letters (e.g. 'a' for account-extban)
 	mu           sync.RWMutex  // Mutex for thread-safe access
 }
 
@@ -1451,6 +1459,15 @@ func (c *IRCClient) setupHandlers() {
 				Int64("network_id", c.networkID).
 				Msg("Our user joined; awaiting server NAMES reply to populate user list")
 
+			// With no-implicit-names the server won't send the automatic NAMES
+			// reply, so request it explicitly — otherwise the roster stays empty
+			// (WHOX seeds attributes but not membership prefixes).
+			if cmd := c.namesOnSelfJoin(channel); cmd != "" {
+				if err := c.conn.SendRaw(cmd); err != nil {
+					logger.Log.Debug().Err(err).Str("channel", channel).Msg("explicit NAMES request failed")
+				}
+			}
+
 			// Catch-up: pull recent server-side history for the channel so anything
 			// said while we were away is backfilled. No-op when the server didn't
 			// grant CHATHISTORY. Replays arrive via handleChatHistoryBatch and are
@@ -2460,45 +2477,7 @@ func (c *IRCClient) setupHandlers() {
 				// Last parameter starts with ':' and is usually a description
 				break
 			}
-
-			// Parse PREFIX parameter: PREFIX=(ov)@+
-			if strings.HasPrefix(param, "PREFIX=") {
-				prefixValue := param[7:] // Skip "PREFIX="
-				c.parsePREFIX(prefixValue)
-			}
-
-			// WHOX is a valueless token announcing extended-WHO (354) support.
-			if param == "WHOX" {
-				c.mu.Lock()
-				c.supportsWHOX = true
-				c.mu.Unlock()
-			}
-
-			// MONITOR=<limit> announces presence-monitoring support and the max
-			// number of targets we may track (0 = unlimited/unspecified).
-			if limit, ok := parseMonitorLimit(param); ok {
-				c.mu.Lock()
-				c.supportsMonitor = true
-				c.monitorLimit = limit
-				c.mu.Unlock()
-			}
-
-			// Parse CHANMODES parameter: CHANMODES=b,k,l,imnpst
-			if strings.HasPrefix(param, "CHANMODES=") {
-				chanModesValue := param[10:] // Skip "CHANMODES="
-				a, b, cc, d := classifyChanModes(chanModesValue)
-				c.mu.Lock()
-				c.serverCapabilities.ChanModes = chanModesValue
-				c.serverCapabilities.ChanModesA = a
-				c.serverCapabilities.ChanModesB = b
-				c.serverCapabilities.ChanModesC = cc
-				c.serverCapabilities.ChanModesD = d
-				c.mu.Unlock()
-				logger.Log.Debug().
-					Str("chanmodes", chanModesValue).
-					Str("network", c.network.Name).
-					Msg("Parsed CHANMODES from ISUPPORT")
-			}
+			c.applyISUPPORTToken(param)
 		}
 	})
 
@@ -3009,6 +2988,18 @@ func (c *IRCClient) chatHistoryEnabled() bool {
 }
 
 // capEnabled reports whether the server granted a named IRCv3 capability.
+// namesOnSelfJoin returns the explicit NAMES command to issue after our own JOIN,
+// or "" when none is needed. The roster is built solely from the post-JOIN NAMES
+// reply (353/366); normally the server sends it automatically. With the ratified
+// no-implicit-names cap that automatic reply is suppressed, so we must request it
+// ourselves or the channel's nick list would be empty.
+func (c *IRCClient) namesOnSelfJoin(channel string) string {
+	if channel == "" || !c.capEnabled("no-implicit-names") {
+		return ""
+	}
+	return "NAMES " + channel
+}
+
 func (c *IRCClient) capEnabled(name string) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -4156,6 +4147,82 @@ func (c *IRCClient) SendRawCommand(command string) error {
 // parsePREFIX parses the PREFIX parameter from ISUPPORT
 // Format: (ov)@+ where (ov) are the mode letters and @+ are the prefix characters
 // This maps '@' -> 'o' (op) and '+' -> 'v' (voice)
+// applyISUPPORTToken parses a single RPL_ISUPPORT (005) token and records it on
+// the client's server capabilities. Both valueless tokens (WHOX, UTF8ONLY) and
+// key=value tokens (PREFIX, CHANMODES, MONITOR, EXTBAN) are handled here so the
+// dispatch is unit-testable independent of the 005 callback wiring.
+func (c *IRCClient) applyISUPPORTToken(param string) {
+	switch {
+	case strings.HasPrefix(param, "PREFIX="):
+		c.parsePREFIX(param[len("PREFIX="):])
+
+	case param == "WHOX":
+		// Valueless token announcing extended-WHO (354) support.
+		c.mu.Lock()
+		c.supportsWHOX = true
+		c.mu.Unlock()
+
+	case param == "UTF8ONLY":
+		// Ratified UTF8ONLY: the server accepts only UTF-8 content. We already
+		// emit UTF-8 exclusively, so recording the token is sufficient to be
+		// compliant — no outgoing-encoding change is required.
+		c.mu.Lock()
+		c.serverCapabilities.UTF8Only = true
+		c.mu.Unlock()
+
+	case strings.HasPrefix(param, "EXTBAN="):
+		// Ratified extban (incl. account-extban): EXTBAN=<prefix>,<types>, e.g.
+		// "$,ajrxc". The 'a' type with this prefix matches "$a" / "$a:account".
+		if prefix, types, ok := parseExtban(param[len("EXTBAN="):]); ok {
+			c.mu.Lock()
+			c.serverCapabilities.ExtbanPrefix = prefix
+			c.serverCapabilities.ExtbanTypes = types
+			c.mu.Unlock()
+		}
+
+	case strings.HasPrefix(param, "CHANMODES="):
+		chanModesValue := param[len("CHANMODES="):]
+		a, b, cc, d := classifyChanModes(chanModesValue)
+		c.mu.Lock()
+		c.serverCapabilities.ChanModes = chanModesValue
+		c.serverCapabilities.ChanModesA = a
+		c.serverCapabilities.ChanModesB = b
+		c.serverCapabilities.ChanModesC = cc
+		c.serverCapabilities.ChanModesD = d
+		c.mu.Unlock()
+		logger.Log.Debug().
+			Str("chanmodes", chanModesValue).
+			Str("network", c.network.Name).
+			Msg("Parsed CHANMODES from ISUPPORT")
+	}
+
+	// MONITOR=<limit> (also the valueless "MONITOR") announces presence-monitoring
+	// support and the max targets we may track. Handled outside the switch because
+	// parseMonitorLimit accepts both the valued and valueless forms.
+	if limit, ok := parseMonitorLimit(param); ok {
+		c.mu.Lock()
+		c.supportsMonitor = true
+		c.monitorLimit = limit
+		c.mu.Unlock()
+	}
+}
+
+// ExtbanInfo returns the advertised EXTBAN prefix as a string (e.g. "$", or empty
+// when unadvertised) and the supported type letters sorted (e.g. "acjrx"). The
+// frontend uses this to detect account-extban support (type 'a') and to render
+// "$a:account" ban masks meaningfully.
+func (c *IRCClient) ExtbanInfo() (prefix string, types string) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.serverCapabilities == nil {
+		return "", ""
+	}
+	if c.serverCapabilities.ExtbanPrefix != 0 {
+		prefix = string(c.serverCapabilities.ExtbanPrefix)
+	}
+	return prefix, sortedRunes(c.serverCapabilities.ExtbanTypes)
+}
+
 func (c *IRCClient) parsePREFIX(prefixValue string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -4215,11 +4282,21 @@ func (c *IRCClient) GetServerCapabilities() *ServerCapabilities {
 		Prefix:       make(map[rune]rune),
 		PrefixString: c.serverCapabilities.PrefixString,
 		ChanModes:    c.serverCapabilities.ChanModes,
+		UTF8Only:     c.serverCapabilities.UTF8Only,
+		ExtbanPrefix: c.serverCapabilities.ExtbanPrefix,
 	}
 
 	// Copy the prefix map
 	for k, v := range c.serverCapabilities.Prefix {
 		cap.Prefix[k] = v
+	}
+
+	// Copy the extban type set
+	if c.serverCapabilities.ExtbanTypes != nil {
+		cap.ExtbanTypes = make(map[rune]bool, len(c.serverCapabilities.ExtbanTypes))
+		for k, v := range c.serverCapabilities.ExtbanTypes {
+			cap.ExtbanTypes[k] = v
+		}
 	}
 
 	return cap

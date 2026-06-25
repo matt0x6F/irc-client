@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import { useNetworkStore } from '../stores/network';
+import { buddyPresence } from '../lib/presence';
 
 interface MonitorListProps {
   networkId: number | null;
@@ -12,6 +13,9 @@ interface MonitorListProps {
 // via the 'monitor-event' the store listens for.
 export function MonitorList({ networkId }: MonitorListProps) {
   const buddies = useNetworkStore((s) => (networkId !== null ? s.monitor[networkId] : undefined));
+  // Per-network roster metadata: with extended-monitor this carries live away
+  // state for monitored buddies even when we share no channel with them.
+  const userMeta = useNetworkStore((s) => (networkId !== null ? s.userMeta[networkId] : undefined));
   const loadMonitor = useNetworkStore((s) => s.loadMonitor);
   const addMonitorNick = useNetworkStore((s) => s.addMonitorNick);
   const removeMonitorNick = useNetworkStore((s) => s.removeMonitorNick);
@@ -61,14 +65,22 @@ export function MonitorList({ networkId }: MonitorListProps) {
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        {list.map((b) => (
+        {list.map((b) => {
+          const meta = userMeta?.[b.nick.toLowerCase()];
+          const presence = buddyPresence(b.online, meta?.away ?? false);
+          const dotClass =
+            presence === 'online' ? 'bg-green-500' : presence === 'away' ? 'bg-amber-500' : 'bg-muted-foreground/40';
+          const awayMsg = meta?.away_message?.trim();
+          const dotTitle =
+            presence === 'away' ? (awayMsg ? `Away — ${awayMsg}` : 'Away') : presence === 'online' ? 'Online' : 'Offline';
+          return (
           <div
             key={b.nick}
             className="group flex items-center gap-2 text-sm py-1.5 px-2 rounded-md hover:bg-accent/70"
           >
             <span
-              className={`w-2 h-2 rounded-full flex-shrink-0 ${b.online ? 'bg-green-500' : 'bg-muted-foreground/40'}`}
-              title={b.online ? 'Online' : 'Offline'}
+              className={`w-2 h-2 rounded-full flex-shrink-0 ${dotClass}`}
+              title={dotTitle}
             />
             <span className={`font-medium truncate flex-1 ${b.online ? '' : 'opacity-60'}`}>{b.nick}</span>
             <button
@@ -80,7 +92,8 @@ export function MonitorList({ networkId }: MonitorListProps) {
               <X className="w-3.5 h-3.5" />
             </button>
           </div>
-        ))}
+          );
+        })}
         {list.length === 0 && (
           <div className="text-sm text-muted-foreground px-2">No buddies yet — add a nick to track when they come online.</div>
         )}

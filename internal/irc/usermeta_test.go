@@ -73,14 +73,15 @@ func newUserMetaTestClient(t *testing.T) (*IRCClient, *metaCounter) {
 	bus.Subscribe(EventUserMetaChanged, counter)
 
 	c := &IRCClient{
-		eventBus:      bus,
-		storage:       s,
-		networkID:     net.ID,
-		network:       net,
-		userMeta:      make(map[string]*UserMeta),
-		monitorStatus: make(map[string]bool),
-		monitorArmed:  make(map[string]bool),
-		enabledCaps:   make(map[string]bool),
+		eventBus:           bus,
+		storage:            s,
+		networkID:          net.ID,
+		network:            net,
+		userMeta:           make(map[string]*UserMeta),
+		monitorStatus:      make(map[string]bool),
+		monitorArmed:       make(map[string]bool),
+		enabledCaps:        make(map[string]bool),
+		serverCapabilities: &ServerCapabilities{},
 	}
 	return c, counter
 }

@@ -672,6 +672,31 @@ export class ServerCapabilitiesInfo {
              */
             this["chanmodes_d"] = "";
         }
+        if (!("utf8only" in $$source)) {
+            /**
+             * Ratified IRCv3 ISUPPORT tokens.
+             * server accepts only UTF-8 content
+             * @member
+             * @type {boolean}
+             */
+            this["utf8only"] = false;
+        }
+        if (!("extban_prefix" in $$source)) {
+            /**
+             * EXTBAN prefix, e.g. "$" (empty if none)
+             * @member
+             * @type {string}
+             */
+            this["extban_prefix"] = "";
+        }
+        if (!("extban_types" in $$source)) {
+            /**
+             * sorted EXTBAN type letters, e.g. "acjrx"
+             * @member
+             * @type {string}
+             */
+            this["extban_types"] = "";
+        }
 
         Object.assign(this, $$source);
     }

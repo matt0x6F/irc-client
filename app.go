@@ -603,6 +603,10 @@ type ServerCapabilitiesInfo struct {
 	ChanModesB string `json:"chanmodes_b"`
 	ChanModesC string `json:"chanmodes_c"`
 	ChanModesD string `json:"chanmodes_d"`
+	// Ratified IRCv3 ISUPPORT tokens.
+	UTF8Only     bool   `json:"utf8only"`      // server accepts only UTF-8 content
+	ExtbanPrefix string `json:"extban_prefix"` // EXTBAN prefix, e.g. "$" (empty if none)
+	ExtbanTypes  string `json:"extban_types"`  // sorted EXTBAN type letters, e.g. "acjrx"
 }
 
 // GetChannelInfo retrieves channel information including topic and users
@@ -657,6 +661,7 @@ func (a *App) GetServerCapabilities(networkID int64) (*ServerCapabilitiesInfo, e
 	}
 
 	clsA, clsB, clsC, clsD := client.GetChanModeClasses()
+	extbanPrefix, extbanTypes := client.ExtbanInfo()
 	return &ServerCapabilitiesInfo{
 		Prefix:       prefixMap,
 		PrefixString: cap.PrefixString,
@@ -665,6 +670,9 @@ func (a *App) GetServerCapabilities(networkID int64) (*ServerCapabilitiesInfo, e
 		ChanModesB:   clsB,
 		ChanModesC:   clsC,
 		ChanModesD:   clsD,
+		UTF8Only:     cap.UTF8Only,
+		ExtbanPrefix: extbanPrefix,
+		ExtbanTypes:  extbanTypes,
 	}, nil
 }
 

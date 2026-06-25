@@ -22,3 +22,14 @@ export function dmPresenceState(nick: string, online: boolean | undefined): DmPr
   if (online === undefined) return 'unknown';
   return online ? 'online' : 'offline';
 }
+
+export type BuddyPresence = 'online' | 'away' | 'offline';
+
+// buddyPresence maps a monitored buddy's live state to a three-way dot. With the
+// ratified extended-monitor cap the server also pushes AWAY for monitored nicks
+// (even ones we share no channel with), so an online-but-away buddy is shown
+// distinctly from an active one. Away only applies while online.
+export function buddyPresence(online: boolean, away: boolean): BuddyPresence {
+  if (!online) return 'offline';
+  return away ? 'away' : 'online';
+}
