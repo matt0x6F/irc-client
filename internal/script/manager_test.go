@@ -11,7 +11,6 @@ import (
 // fakeSender records Reply sends.
 type fakeSender struct {
 	mu   sync.Mutex
-	args [][3]string // networkID(as text not needed)->we store target+message; keep simple
 	sent []sentMsg
 }
 type sentMsg struct {
@@ -81,6 +80,15 @@ func TestManagerDMRepliesToSender(t *testing.T) {
 		if s.message == "Hi carol" && s.target != "carol" {
 			t.Fatalf("DM reply target = %q; want carol (the sender)", s.target)
 		}
+	}
+	found := false
+	for _, s := range fs.sent {
+		if s.message == "Hi carol" && s.target == "carol" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected greeter DM reply 'Hi carol' to target 'carol'; got %+v", fs.sent)
 	}
 }
 
