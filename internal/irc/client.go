@@ -3936,6 +3936,9 @@ func (c *IRCClient) doAutoJoin() {
 	// registration is complete (same trigger as auto-join).
 	c.sendInitialMonitor()
 
+	// Announce ourselves as a bot if configured (gated on server BOT= support).
+	c.announceBotMode()
+
 	channels, err := c.channelsToJoin(reconnect)
 	if err != nil {
 		logger.Log.Error().Err(err).Bool("reconnect", reconnect).Msg("Failed to get channels to join")
@@ -3948,6 +3951,26 @@ func (c *IRCClient) doAutoJoin() {
 		if err := c.conn.Join(channel.Name); err != nil {
 			logger.Log.Error().Err(err).Str("channel", channel.Name).Msg("Failed to join channel")
 		}
+	}
+}
+
+// announceBotMode marks this connection as a bot when the network is configured
+// to (IdentifyAsBot) and the server advertised a BOT= letter. It is called once
+// per connection from doAutoJoin, alongside auto-join and the MONITOR re-arm, so
+// it re-asserts on every (re)connect. When the setting is on but the server has
+// no bot mode, it writes a single warning status line instead of failing silently.
+func (c *IRCClient) announceBotMode() {
+	if !c.network.IdentifyAsBot {
+		return
+	}
+	letter := c.BotMode()
+	if letter == "" {
+		c.writeStatusLine("warning", "Server does not support bot mode; +B not set")
+		return
+	}
+	nick := c.CurrentNick()
+	if err := c.conn.SendRaw(fmt.Sprintf("MODE %s +%s", nick, letter)); err != nil {
+		logger.Log.Warn().Err(err).Msg("Failed to send bot mode announcement")
 	}
 }
 
