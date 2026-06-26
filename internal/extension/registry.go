@@ -38,24 +38,24 @@ func (r *Registry) Register(ext *Extension, host Host, eventTypes []string) {
 	r.entries[ext.ID] = &entry{ext: ext, host: host, events: evs}
 }
 
-// Get returns the extension by id.
-func (r *Registry) Get(id ID) (*Extension, bool) {
+// Get returns a snapshot copy of the extension by id.
+func (r *Registry) Get(id ID) (Extension, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	e, ok := r.entries[id]
 	if !ok {
-		return nil, false
+		return Extension{}, false
 	}
-	return e.ext, true
+	return *e.ext, true
 }
 
 // List returns a snapshot of all registered extensions.
-func (r *Registry) List() []*Extension {
+func (r *Registry) List() []Extension {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	out := make([]*Extension, 0, len(r.entries))
+	out := make([]Extension, 0, len(r.entries))
 	for _, e := range r.entries {
-		out = append(out, e.ext)
+		out = append(out, *e.ext)
 	}
 	return out
 }
