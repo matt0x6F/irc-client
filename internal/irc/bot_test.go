@@ -257,7 +257,6 @@ func TestUserModeEcho_NonBotModeIgnored(t *testing.T) {
 
 	c.markSelfBotFromUserMode("robodan", "+i")
 
-	time.Sleep(50 * time.Millisecond)
 	if botNickSet(c)["robodan"] {
 		t.Fatalf("robodan must not be marked a bot from +i mode change")
 	}
@@ -272,7 +271,6 @@ func TestUserModeEcho_RemoveBotModeIgnored(t *testing.T) {
 
 	c.markSelfBotFromUserMode("robodan", "-B")
 
-	time.Sleep(50 * time.Millisecond)
 	if botNickSet(c)["robodan"] {
 		t.Fatalf("robodan must not be marked a bot from -B mode change")
 	}
@@ -287,7 +285,6 @@ func TestUserModeEcho_DifferentNickNotMarked(t *testing.T) {
 
 	c.markSelfBotFromUserMode("someoneelse", "+B")
 
-	time.Sleep(50 * time.Millisecond)
 	if botNickSet(c)["someoneelse"] || botNickSet(c)["notme"] {
 		t.Fatalf("different-nick +B must not mark anyone; bots=%v", c.BotNicks())
 	}
@@ -302,7 +299,6 @@ func TestUserModeEcho_NoBotModeCharIgnored(t *testing.T) {
 
 	c.markSelfBotFromUserMode("robodan", "+B")
 
-	time.Sleep(50 * time.Millisecond)
 	if botNickSet(c)["robodan"] {
 		t.Fatalf("robodan must not be marked a bot when BotModeChar is not advertised")
 	}

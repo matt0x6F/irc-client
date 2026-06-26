@@ -100,3 +100,20 @@ func TestBotMode_Unadvertised(t *testing.T) {
 		t.Fatalf("BotMode() = %q, want empty", got)
 	}
 }
+
+func TestApplyISUPPORTToken_BotMode_Malformed(t *testing.T) {
+	t.Run("empty value", func(t *testing.T) {
+		c, _ := newUserMetaTestClient(t)
+		c.applyISUPPORTToken("BOT=")
+		if got := c.BotMode(); got != "" {
+			t.Fatalf("BotMode() = %q, want empty for BOT=", got)
+		}
+	})
+	t.Run("two-letter value", func(t *testing.T) {
+		c, _ := newUserMetaTestClient(t)
+		c.applyISUPPORTToken("BOT=AB")
+		if got := c.BotMode(); got != "" {
+			t.Fatalf("BotMode() = %q, want empty for BOT=AB", got)
+		}
+	})
+}

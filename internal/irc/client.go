@@ -2072,9 +2072,7 @@ func (c *IRCClient) setupHandlers() {
 		// we only care about our own +<botletter> echo (so our own nick carries the
 		// bot badge consistently), then return — other user modes are still ignored.
 		if len(target) == 0 || (target[0] != '#' && target[0] != '&') {
-			if len(e.Params) >= 2 {
-				c.markSelfBotFromUserMode(target, e.Params[1])
-			}
+			c.markSelfBotFromUserMode(target, e.Params[1])
 			return
 		}
 

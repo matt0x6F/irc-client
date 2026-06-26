@@ -157,8 +157,6 @@ func TestApplyWhoxRow_NoBotFlag(t *testing.T) {
 	// Params: [ourNick, token, channel, user, host, nick, flags, account, realname]
 	c.applyWhoxRow([]string{"me", "332", "#chan", "~u", "host", "alice", "H", "0", "Alice"})
 
-	// Give any async event a chance to land, then assert no bot entry.
-	time.Sleep(50 * time.Millisecond)
 	if botNickSet(c)["alice"] {
 		t.Fatalf("alice has no B flag and must not be marked a bot")
 	}
