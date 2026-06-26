@@ -7,6 +7,7 @@ require (
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/mattn/go-sqlite3 v1.14.33
 	github.com/rs/zerolog v1.34.0
+	github.com/traefik/yaegi v0.16.1
 	github.com/wailsapp/wails/v3 v3.0.0-alpha2.103
 	github.com/zalando/go-keyring v0.2.6
 	golang.org/x/crypto v0.50.0
