@@ -29,3 +29,9 @@ func TestTypeErrorFailsAtLoad(t *testing.T) {
 		t.Fatalf("expected load to fail on a type error, got nil error (script=%v)", s)
 	}
 }
+
+func TestForbiddenImportFailsToLoad(t *testing.T) {
+	if _, err := LoadPackage("testdata/forbidden"); err == nil {
+		t.Fatalf("expected import \"os\" to fail (not in symbol table); got nil error")
+	}
+}
