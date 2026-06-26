@@ -704,6 +704,15 @@ export class ServerCapabilitiesInfo {
              */
             this["extban_types"] = "";
         }
+        if (!("software_family" in $$source)) {
+            /**
+             * Detected server software family ("solanum", "unrealircd", "inspircd", "ergo", or
+             * "" when unknown). Derived from server-sent signals; drives per-family mode labels.
+             * @member
+             * @type {string}
+             */
+            this["software_family"] = "";
+        }
 
         Object.assign(this, $$source);
     }

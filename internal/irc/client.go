@@ -96,6 +96,7 @@ type ServerCapabilities struct {
 	UTF8Only     bool          // UTF8ONLY token present: server accepts only UTF-8 (ratified)
 	ExtbanPrefix rune          // EXTBAN prefix char (e.g. '$'); 0 if none/unadvertised
 	ExtbanTypes  map[rune]bool // EXTBAN type letters (e.g. 'a' for account-extban)
+	Software     string        // Raw version token from RPL_MYINFO (004), e.g. "solanum-1.0"
 	BotModeChar  rune          // BOT=<letter> ISUPPORT: the user mode that marks a bot (e.g. 'B'); 0 if unadvertised
 	mu           sync.RWMutex  // Mutex for thread-safe access
 }
@@ -2500,6 +2501,9 @@ func (c *IRCClient) setupHandlers() {
 	// RPL_WHOISBOT (335) - Target is a bot (IRCv3 bot mode)
 	c.conn.AddCallback("335", c.handleWhoisBot)
 
+	// RPL_MYINFO (004) - Server software identity.
+	c.conn.AddCallback("004", func(e ircmsg.Message) { c.applyMyInfo(e) })
+
 	// ISUPPORT (005) - Server capabilities
 	c.conn.AddCallback("005", func(e ircmsg.Message) {
 		// RPL_ISUPPORT - Server capability parameters
@@ -4459,6 +4463,7 @@ func (c *IRCClient) GetServerCapabilities() *ServerCapabilities {
 		ChanModes:    c.serverCapabilities.ChanModes,
 		UTF8Only:     c.serverCapabilities.UTF8Only,
 		ExtbanPrefix: c.serverCapabilities.ExtbanPrefix,
+		Software:     c.serverCapabilities.Software,
 	}
 
 	// Copy the prefix map

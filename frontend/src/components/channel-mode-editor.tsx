@@ -3,6 +3,7 @@ import { SendCommand, GetNetworks, RequestChannelBans } from '../../wailsjs/go/m
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import { main, storage } from '../../wailsjs/go/models';
 import { describeBan } from '../lib/extban';
+import { describeMode, type ModeContext } from '../lib/chanmodes';
 
 interface ChannelModeEditorProps {
   networkId: number;
@@ -11,25 +12,6 @@ interface ChannelModeEditorProps {
   capabilities?: main.ServerCapabilitiesInfo;
   onClose: () => void;
   onUpdate: () => void;
-}
-
-// Human-readable labels for common channel modes. Unknown letters fall back to "+<letter>".
-const MODE_LABELS: Record<string, string> = {
-  i: 'Invite only',
-  m: 'Moderated',
-  n: 'No external messages',
-  p: 'Private',
-  s: 'Secret',
-  t: 'Topic locked to ops',
-  k: 'Key (password)',
-  l: 'User limit',
-  C: 'Block CTCP',
-  R: 'Registered users only',
-  M: 'Must be registered to speak',
-};
-
-function modeLabel(letter: string): string {
-  return MODE_LABELS[letter] || `Mode +${letter}`;
 }
 
 interface ModeFormState {
@@ -152,6 +134,16 @@ export function ChannelModeEditor({
   // and the account type 'a', so "$a" / "$a:account" ban masks are meaningful.
   const extbanPrefix = capabilities?.extban_prefix || '';
   const supportsAccountExtban = extbanPrefix !== '' && (capabilities?.extban_types || '').includes('a');
+
+  // Context for resolving human-readable mode labels per detected server family. Uses
+  // the same class fallbacks as above so the resolver's type-consistency guard lines up.
+  const modeCtx: ModeContext = {
+    family: capabilities?.software_family || '',
+    classA: capabilities?.chanmodes_a || 'b',
+    classB: capabilities?.chanmodes_b || 'k',
+    classC: capabilities?.chanmodes_c || 'l',
+    classD: capabilities?.chanmodes_d || 'imnpst',
+  };
 
   const initialRef = useRef<ModeFormState>(parseModes(currentModes, paramLetters));
   const [flags, setFlags] = useState<Set<string>>(new Set(initialRef.current.flags));
@@ -351,15 +343,17 @@ export function ChannelModeEditor({
               <label className="block text-sm font-medium mb-2">Settings</label>
               <div className="grid grid-cols-2 gap-2">
                 {flagLetters.map((letter) => (
-                  <label key={letter} className="flex items-center gap-2 text-sm cursor-pointer">
+                  <label key={letter} className="flex items-start gap-2 text-sm cursor-pointer">
                     <input
                       type="checkbox"
                       data-testid={`mode-flag-${letter}`}
                       checked={flags.has(letter)}
                       onChange={() => toggleFlag(letter)}
+                      className="mt-0.5 shrink-0"
                     />
                     <span>
-                      {modeLabel(letter)} <span className="text-muted-foreground">(+{letter})</span>
+                      {describeMode(letter, modeCtx).label}{' '}
+                      <span className="text-muted-foreground">(+{letter})</span>
                     </span>
                   </label>
                 ))}
@@ -374,7 +368,7 @@ export function ChannelModeEditor({
               {[...paramB, ...paramC].map((letter) => (
                 <div key={letter}>
                   <label className="block text-xs text-muted-foreground mb-1">
-                    {modeLabel(letter)} (+{letter})
+                    {describeMode(letter, modeCtx).label} (+{letter})
                   </label>
                   <input
                     type="text"
