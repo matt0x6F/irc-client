@@ -607,6 +607,9 @@ type ServerCapabilitiesInfo struct {
 	UTF8Only     bool   `json:"utf8only"`      // server accepts only UTF-8 content
 	ExtbanPrefix string `json:"extban_prefix"` // EXTBAN prefix, e.g. "$" (empty if none)
 	ExtbanTypes  string `json:"extban_types"`  // sorted EXTBAN type letters, e.g. "acjrx"
+	// Detected server software family ("solanum", "unrealircd", "inspircd", "ergo", or
+	// "" when unknown). Derived from server-sent signals; drives per-family mode labels.
+	SoftwareFamily string `json:"software_family"`
 }
 
 // GetChannelInfo retrieves channel information including topic and users
@@ -663,16 +666,17 @@ func (a *App) GetServerCapabilities(networkID int64) (*ServerCapabilitiesInfo, e
 	clsA, clsB, clsC, clsD := client.GetChanModeClasses()
 	extbanPrefix, extbanTypes := client.ExtbanInfo()
 	return &ServerCapabilitiesInfo{
-		Prefix:       prefixMap,
-		PrefixString: cap.PrefixString,
-		ChanModes:    cap.ChanModes,
-		ChanModesA:   clsA,
-		ChanModesB:   clsB,
-		ChanModesC:   clsC,
-		ChanModesD:   clsD,
-		UTF8Only:     cap.UTF8Only,
-		ExtbanPrefix: extbanPrefix,
-		ExtbanTypes:  extbanTypes,
+		Prefix:         prefixMap,
+		PrefixString:   cap.PrefixString,
+		ChanModes:      cap.ChanModes,
+		ChanModesA:     clsA,
+		ChanModesB:     clsB,
+		ChanModesC:     clsC,
+		ChanModesD:     clsD,
+		UTF8Only:       cap.UTF8Only,
+		ExtbanPrefix:   extbanPrefix,
+		ExtbanTypes:    extbanTypes,
+		SoftwareFamily: client.SoftwareFamily(),
 	}, nil
 }
 
