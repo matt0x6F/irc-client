@@ -2,6 +2,8 @@ module github.com/matt0x6f/irc-client
 
 go 1.25.0
 
+require github.com/matt0x6f/irc-client/cascade v1.0.0
+
 require (
 	github.com/ergochat/irc-go v0.4.0
 	github.com/jmoiron/sqlx v1.4.0
@@ -30,5 +32,7 @@ require (
 	golang.org/x/mod v0.35.0 // indirect
 	golang.org/x/sys v0.43.0 // indirect
 )
+
+replace github.com/matt0x6f/irc-client/cascade => ./cascade
 
 // replace github.com/wailsapp/wails/v2 v2.10.2 => /Users/matt/go/pkg/mod

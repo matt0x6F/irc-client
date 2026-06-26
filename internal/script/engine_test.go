@@ -3,7 +3,7 @@ package script
 import (
 	"testing"
 
-	"github.com/matt0x6f/irc-client/internal/script/cascade"
+	"github.com/matt0x6f/irc-client/cascade"
 )
 
 func TestLoadAndDispatchOnText(t *testing.T) {

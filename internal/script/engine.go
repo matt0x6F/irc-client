@@ -14,7 +14,7 @@ import (
 
 	"github.com/traefik/yaegi/interp"
 
-	"github.com/matt0x6f/irc-client/internal/script/cascade"
+	"github.com/matt0x6f/irc-client/cascade"
 	"github.com/matt0x6f/irc-client/internal/script/syms"
 )
 

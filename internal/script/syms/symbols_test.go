@@ -15,7 +15,7 @@ func TestCascadeSymbolsResolveImport(t *testing.T) {
 		t.Fatalf("Use(Table()): %v", err)
 	}
 	src := `package main
-import "cascade"
+import "github.com/matt0x6f/irc-client/cascade"
 func OnText(e cascade.TextEvent) { _ = e.Message }
 `
 	if _, err := i.Eval(src); err != nil {
