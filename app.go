@@ -14,6 +14,7 @@ import (
 	"github.com/matt0x6f/irc-client/internal/logger"
 	"github.com/matt0x6f/irc-client/internal/notification"
 	"github.com/matt0x6f/irc-client/internal/plugin"
+	"github.com/matt0x6f/irc-client/internal/script"
 	"github.com/matt0x6f/irc-client/internal/security"
 	"github.com/matt0x6f/irc-client/internal/storage"
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -28,6 +29,7 @@ type App struct {
 	eventBus      *events.EventBus
 	commands      *CommandRegistry
 	pluginManager *plugin.Manager
+	scriptMgr     *script.Manager
 	keychain      *security.Keychain
 	notifier      *notification.Notifier
 	// notifyWindow is set once at startup (AttachNotifications) and only read on
@@ -121,6 +123,9 @@ func NewApp() (*App, error) {
 		channelListCache:      make(map[int64]channelListCacheEntry),
 	}
 
+	scriptDir := filepath.Join(baseDir, "scripts")
+	app.scriptMgr = script.NewManager(eventBus, scriptDir, app.SendMessage)
+
 	pluginMgr.SetBuiltinCommandChecker(func(k string) bool {
 		_, ok := app.commands.Lookup(k)
 		return ok
@@ -199,6 +204,10 @@ func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) 
 			}
 		}
 	}()
+
+	if err := a.scriptMgr.LoadAll(); err != nil {
+		logger.Log.Warn().Err(err).Msg("failed to load scripts")
+	}
 
 	logger.Log.Info().Msg("Plugin loading started in background, proceeding to auto-connect setup")
 
