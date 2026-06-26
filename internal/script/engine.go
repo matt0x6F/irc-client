@@ -84,7 +84,7 @@ func mergePackageSource(files []string) (string, error) {
 	for _, f := range files {
 		src, err := os.ReadFile(f)
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("read %s: %w", filepath.Base(f), err)
 		}
 		af, err := parser.ParseFile(fset, f, src, parser.ParseComments)
 		if err != nil {
