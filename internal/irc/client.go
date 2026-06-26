@@ -3153,6 +3153,17 @@ func (c *IRCClient) applyWhoxRow(params []string) {
 	}
 	// The flags field begins with H (here) or G (gone/away).
 	away := len(flags) > 0 && flags[0] == 'G'
+
+	// Bot mode: the BOT= letter appears within the WHO flags field (after the
+	// here/gone marker and any '*' oper flag), so scan the whole field — not just
+	// index 0. Recognizes a bot the instant we WHOX a channel, before it speaks.
+	c.mu.RLock()
+	botChar := c.serverCapabilities.BotModeChar
+	c.mu.RUnlock()
+	if botChar != 0 && strings.ContainsRune(flags, botChar) {
+		c.markBot(nick)
+	}
+
 	userhost := ""
 	if user != "" && host != "" {
 		userhost = user + "@" + host
