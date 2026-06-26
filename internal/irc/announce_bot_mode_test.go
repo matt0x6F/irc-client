@@ -55,15 +55,24 @@ func newConnectedPipe(t *testing.T) (*ircevent.Connection, <-chan string) {
 	t.Helper()
 
 	serverConn, clientConn := net.Pipe()
+	// Close both pipe ends on cleanup. Registered before Connect() so the stub
+	// goroutine (blocked on ReadString) is unblocked even if Connect() fails and
+	// t.Fatalf aborts before the post-Connect cleanup runs — avoids a leak.
+	t.Cleanup(func() {
+		_ = serverConn.Close()
+		_ = clientConn.Close()
+	})
 
 	// sentLines receives every raw line that the client writes to the socket.
-	sentLines := make(chan string, 64)
+	// Buffered generously and written with a blocking send so no line is ever
+	// silently dropped (a dropped MODE line would surface as an unhelpful
+	// drainUntilPrefix timeout instead of a clear failure).
+	sentLines := make(chan string, 256)
 
 	// Stub server: reads each line, forwards it to sentLines, and replies with
 	// 001 + 376 (RPL_ENDOFMOTD) once it has seen NICK + USER. ircevent waits
 	// for 376 (or 422 ERR_NOMOTD) in handleRegistration to unblock Connect().
 	go func() {
-		defer serverConn.Close()
 		r := bufio.NewReader(serverConn)
 		sentNick := false
 		sentUser := false
@@ -73,11 +82,9 @@ func newConnectedPipe(t *testing.T) (*ircevent.Connection, <-chan string) {
 				return
 			}
 			trimmed := strings.TrimRight(line, "\r\n")
-			// Deliver to the test (non-blocking; buffer is large enough).
-			select {
-			case sentLines <- trimmed:
-			default:
-			}
+			// Blocking send: the goroutine owns the pipe and the test drains
+			// promptly, so this never deadlocks but guarantees no line is lost.
+			sentLines <- trimmed
 			if strings.HasPrefix(trimmed, "NICK ") {
 				sentNick = true
 			}
@@ -108,14 +115,12 @@ func newConnectedPipe(t *testing.T) (*ircevent.Connection, <-chan string) {
 		},
 	}
 
-	// Connect blocks until we receive 001 from the stub server above.
+	// Connect blocks until registration (376) from the stub server above.
+	// On failure the pipe-close cleanup registered earlier still runs.
 	if err := conn.Connect(); err != nil {
 		t.Fatalf("ircevent.Connection.Connect(): %v", err)
 	}
-	t.Cleanup(func() {
-		conn.Quit()
-		clientConn.Close()
-	})
+	t.Cleanup(func() { conn.Quit() })
 
 	return conn, sentLines
 }
