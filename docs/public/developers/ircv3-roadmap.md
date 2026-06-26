@@ -18,7 +18,7 @@ These are part of the **ratified** IRCv3 spec, so they count toward baseline com
 
 | Capability | Priority | Status | Where to start |
 |------------|:--------:|:------:|----------------|
-| Bot mode `+B` user-mode half | High | ◐ | `BOT=` token in the `005` handler (`client.go:2449`); user-mode handling at `client.go:2024` |
+| Bot mode `+B` | — | ✅ | Done — `BOT=` token → `BotModeChar`; WHO `B` flag → `markBot`; `identify_as_bot` setting → `MODE +<letter>` at connect; self-echo via `markSelfBotFromUserMode`. |
 | `+typing` (client-only tag) | High | ⛔ | New tag emit/parse; UI typing indicator |
 | `+reply` / `+channel-context` | Medium | ⛔ | Pairs with stored `@msgid`; threaded-reply UI |
 | `extended-monitor` | — | ✅ | Done (#77) — ratified, not draft; away/account/host/realname for monitored nicks. See the [support matrix](ircv3-support.md#capability-status-matrix). |
@@ -28,13 +28,13 @@ These are part of the **ratified** IRCv3 spec, so they count toward baseline com
 
 ### Detail
 
-- [ ] **Bot mode `+B`** — Detection (the `bot` tag + RPL_WHOISBOT) is already done; this is the
-      *persistent* half. Parse the `BOT=<letter>` ISUPPORT token (the `005` handler currently
-      reads `PREFIX` / `CHANMODES` / `WHOX` / `MONITOR` only, `client.go:2449`), stop ignoring
-      user modes for this case (`client.go:2024`), and add a path to set `+B` on self — relevant
-      because Cascade's plugin system can host bots that should announce themselves. See the
-      [Bot mode](ircv3-support.md#bot-mode) section. A prior design note exists:
-      `docs/plans/2026-06-16-bot-mode-recognition.md`.
+- [x] **Bot mode `+B`** — Done. The `BOT=<letter>` ISUPPORT token is parsed into
+      `ServerCapabilities.BotModeChar` (`applyISUPPORTToken`); the WHO/WHOX `B` flag is folded
+      through the existing `markBot`; a durable per-network `identify_as_bot` setting sends
+      `MODE <nick> +<letter>` after registration (gated on `BOT=` support, with a status-line
+      warning if unsupported); and Cascade's own `+B` MODE echo calls `markSelfBotFromUserMode`
+      → `markBot`. The ratified set is now fully complete. See
+      [Bot mode](ircv3-support.md#bot-mode).
 - [ ] **`+typing`** — Ratified client-only tag for real-time typing indicators. Emit `@+typing`
       on the local input path and parse inbound tags into a transient per-conversation state
       (same lifetime model as the session roster — never persisted). High UX visibility and the
@@ -71,13 +71,13 @@ with Cascade's multi-platform story. Sequenced by value.
 
 ## Suggested sequencing
 
-1. **Bot mode `+B`** — closes the one ratified gap that's only *partial* today; design note exists.
+1. ~~**Bot mode `+B`**~~ — Done. The ratified set is now **fully complete**.
 2. **`+typing`** + **`draft/read-marker`** — the two features that most reinforce Cascade's
    multi-platform identity (live conversations; sessions stay in sync).
 3. **`draft/message-redaction`** + **`draft/multiline`** — modern messaging table-stakes that
    Ergo/Soju already speak.
 4. ~~Mop up the cheap ratified items (`no-implicit-names`, `UTF8ONLY`).~~ Done in #77, along with
-   `extended-monitor` and `account-extban` — the ratified set is now complete except Bot mode `+B`.
+   `extended-monitor` and `account-extban`.
 5. UX polish (`+reply`, `+react`) and the larger `draft/metadata-2` later.
 
 ## When you implement a cap

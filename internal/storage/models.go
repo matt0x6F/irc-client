@@ -19,6 +19,7 @@ type Network struct {
 	SASLPassword     *string   `db:"sasl_password" json:"sasl_password"`
 	SASLExternalCert *string   `db:"sasl_external_cert" json:"sasl_external_cert"`
 	AutoConnect      bool      `db:"auto_connect" json:"auto_connect"`
+	IdentifyAsBot    bool      `db:"identify_as_bot" json:"identify_as_bot"`
 	CreatedAt        time.Time `db:"created_at" json:"created_at"`
 	UpdatedAt        time.Time `db:"updated_at" json:"updated_at"`
 }

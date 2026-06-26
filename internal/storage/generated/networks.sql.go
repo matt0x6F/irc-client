@@ -12,9 +12,9 @@ import (
 )
 
 const createNetwork = `-- name: CreateNetwork :one
-INSERT INTO networks (name, address, port, tls, nickname, username, realname, password, sasl_enabled, sasl_mechanism, sasl_username, sasl_password, sasl_external_cert, auto_connect, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, name, address, port, tls, nickname, username, realname, password, sasl_enabled, sasl_mechanism, sasl_username, sasl_password, sasl_external_cert, auto_connect, created_at, updated_at
+INSERT INTO networks (name, address, port, tls, nickname, username, realname, password, sasl_enabled, sasl_mechanism, sasl_username, sasl_password, sasl_external_cert, auto_connect, identify_as_bot, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, name, address, port, tls, nickname, username, realname, password, sasl_enabled, sasl_mechanism, sasl_username, sasl_password, sasl_external_cert, auto_connect, identify_as_bot, created_at, updated_at
 `
 
 type CreateNetworkParams struct {
@@ -32,6 +32,7 @@ type CreateNetworkParams struct {
 	SaslPassword     sql.NullString `json:"sasl_password"`
 	SaslExternalCert sql.NullString `json:"sasl_external_cert"`
 	AutoConnect      bool           `json:"auto_connect"`
+	IdentifyAsBot    bool           `json:"identify_as_bot"`
 	CreatedAt        time.Time      `json:"created_at"`
 	UpdatedAt        time.Time      `json:"updated_at"`
 }
@@ -52,6 +53,7 @@ func (q *Queries) CreateNetwork(ctx context.Context, arg CreateNetworkParams) (N
 		arg.SaslPassword,
 		arg.SaslExternalCert,
 		arg.AutoConnect,
+		arg.IdentifyAsBot,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)
@@ -72,6 +74,7 @@ func (q *Queries) CreateNetwork(ctx context.Context, arg CreateNetworkParams) (N
 		&i.SaslPassword,
 		&i.SaslExternalCert,
 		&i.AutoConnect,
+		&i.IdentifyAsBot,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -88,7 +91,7 @@ func (q *Queries) DeleteNetwork(ctx context.Context, id int64) error {
 }
 
 const getNetwork = `-- name: GetNetwork :one
-SELECT id, name, address, port, tls, nickname, username, realname, password, sasl_enabled, sasl_mechanism, sasl_username, sasl_password, sasl_external_cert, auto_connect, created_at, updated_at FROM networks WHERE id = ?
+SELECT id, name, address, port, tls, nickname, username, realname, password, sasl_enabled, sasl_mechanism, sasl_username, sasl_password, sasl_external_cert, auto_connect, identify_as_bot, created_at, updated_at FROM networks WHERE id = ?
 `
 
 func (q *Queries) GetNetwork(ctx context.Context, id int64) (Network, error) {
@@ -110,6 +113,7 @@ func (q *Queries) GetNetwork(ctx context.Context, id int64) (Network, error) {
 		&i.SaslPassword,
 		&i.SaslExternalCert,
 		&i.AutoConnect,
+		&i.IdentifyAsBot,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -117,7 +121,7 @@ func (q *Queries) GetNetwork(ctx context.Context, id int64) (Network, error) {
 }
 
 const getNetworks = `-- name: GetNetworks :many
-SELECT id, name, address, port, tls, nickname, username, realname, password, sasl_enabled, sasl_mechanism, sasl_username, sasl_password, sasl_external_cert, auto_connect, created_at, updated_at FROM networks ORDER BY name
+SELECT id, name, address, port, tls, nickname, username, realname, password, sasl_enabled, sasl_mechanism, sasl_username, sasl_password, sasl_external_cert, auto_connect, identify_as_bot, created_at, updated_at FROM networks ORDER BY name
 `
 
 func (q *Queries) GetNetworks(ctx context.Context) ([]Network, error) {
@@ -145,6 +149,7 @@ func (q *Queries) GetNetworks(ctx context.Context) ([]Network, error) {
 			&i.SaslPassword,
 			&i.SaslExternalCert,
 			&i.AutoConnect,
+			&i.IdentifyAsBot,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -162,12 +167,12 @@ func (q *Queries) GetNetworks(ctx context.Context) ([]Network, error) {
 }
 
 const updateNetwork = `-- name: UpdateNetwork :exec
-UPDATE networks 
-SET name = ?, address = ?, port = ?, tls = ?, 
-    nickname = ?, username = ?, realname = ?, 
+UPDATE networks
+SET name = ?, address = ?, port = ?, tls = ?,
+    nickname = ?, username = ?, realname = ?,
     password = ?, sasl_enabled = ?, sasl_mechanism = ?,
     sasl_username = ?, sasl_password = ?, sasl_external_cert = ?,
-    auto_connect = ?, updated_at = ?
+    auto_connect = ?, identify_as_bot = ?, updated_at = ?
 WHERE id = ?
 `
 
@@ -186,6 +191,7 @@ type UpdateNetworkParams struct {
 	SaslPassword     sql.NullString `json:"sasl_password"`
 	SaslExternalCert sql.NullString `json:"sasl_external_cert"`
 	AutoConnect      bool           `json:"auto_connect"`
+	IdentifyAsBot    bool           `json:"identify_as_bot"`
 	UpdatedAt        time.Time      `json:"updated_at"`
 	ID               int64          `json:"id"`
 }
@@ -206,6 +212,7 @@ func (q *Queries) UpdateNetwork(ctx context.Context, arg UpdateNetworkParams) er
 		arg.SaslPassword,
 		arg.SaslExternalCert,
 		arg.AutoConnect,
+		arg.IdentifyAsBot,
 		arg.UpdatedAt,
 		arg.ID,
 	)

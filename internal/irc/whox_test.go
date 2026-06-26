@@ -1,9 +1,13 @@
 package irc
 
 import (
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/ergochat/irc-go/ircevent"
+	"github.com/matt0x6f/irc-client/internal/events"
+	"github.com/matt0x6f/irc-client/internal/storage"
 )
 
 // 354 field order for our "%tcuhnfar" query:
@@ -88,4 +92,72 @@ func TestWhoxBatchSeedsRosterFromItems(t *testing.T) {
 func TestWhoxBatchNilSafe(t *testing.T) {
 	c, _ := newUserMetaTestClient(t)
 	c.handleWhoxBatch(nil) // must not panic
+}
+
+// newWhoxBotTestClient builds an IRCClient that can exercise both applyWhoxRow
+// (needs userMeta + serverCapabilities) and markBot (needs knownBots + eventBus).
+func newWhoxBotTestClient(t *testing.T) (*IRCClient, *botCounter) {
+	t.Helper()
+	dir := t.TempDir()
+	s, err := storage.NewStorage(filepath.Join(dir, "test.db"), 100, 20*time.Millisecond)
+	if err != nil {
+		t.Fatalf("NewStorage: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	net := &storage.Network{Name: "Libera", Address: "irc.libera.chat", Nickname: "matt0x6f", CreatedAt: time.Now()}
+	if err := s.CreateNetwork(net); err != nil {
+		t.Fatalf("CreateNetwork: %v", err)
+	}
+
+	bus := events.NewEventBus()
+	counter := &botCounter{}
+	bus.Subscribe(EventBotDetected, counter)
+
+	c := &IRCClient{
+		eventBus:           bus,
+		storage:            s,
+		networkID:          net.ID,
+		network:            net,
+		userMeta:           make(map[string]*UserMeta),
+		monitorStatus:      make(map[string]bool),
+		monitorArmed:       make(map[string]bool),
+		enabledCaps:        make(map[string]bool),
+		serverCapabilities: &ServerCapabilities{},
+		knownBots:          make(map[string]bool),
+		whoisInProgress:    make(map[string]*WhoisInfo),
+	}
+	return c, counter
+}
+
+func TestApplyWhoxRow_BotFlagMarksBot(t *testing.T) {
+	c, counter := newWhoxBotTestClient(t)
+	c.serverCapabilities.BotModeChar = 'B'
+
+	// Params: [ourNick, token, channel, user, host, nick, flags, account, realname]
+	// flags "H*B" = here, oper, bot.
+	c.applyWhoxRow([]string{"me", "332", "#chan", "~u", "host", "robodan", "H*B", "0", "Robo Dan"})
+
+	_, got := waitForBotCount(t, counter, 1)
+	found := false
+	for _, n := range got {
+		if n == "robodan" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected robodan to be marked as a bot from WHOX B flag; got nicks %v", got)
+	}
+}
+
+func TestApplyWhoxRow_NoBotFlag(t *testing.T) {
+	c, _ := newWhoxBotTestClient(t)
+	c.serverCapabilities.BotModeChar = 'B'
+
+	// Params: [ourNick, token, channel, user, host, nick, flags, account, realname]
+	c.applyWhoxRow([]string{"me", "332", "#chan", "~u", "host", "alice", "H", "0", "Alice"})
+
+	if botNickSet(c)["alice"] {
+		t.Fatalf("alice has no B flag and must not be marked a bot")
+	}
 }

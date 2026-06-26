@@ -20,19 +20,20 @@ func convertSTSPolicyFromDB(p db.StsPolicy) STSPolicy {
 
 func convertNetworkFromDB(n db.Network) Network {
 	result := Network{
-		ID:          n.ID,
-		Name:        n.Name,
-		Address:     n.Address,
-		Port:        int(n.Port), // Convert int64 to int
-		TLS:         n.Tls,
-		Nickname:    n.Nickname,
-		Username:    n.Username,
-		Realname:    n.Realname,
-		Password:    convertNullString(n.Password),
-		SASLEnabled: n.SaslEnabled,
-		AutoConnect: n.AutoConnect,
-		CreatedAt:   n.CreatedAt,
-		UpdatedAt:   n.UpdatedAt,
+		ID:            n.ID,
+		Name:          n.Name,
+		Address:       n.Address,
+		Port:          int(n.Port), // Convert int64 to int
+		TLS:           n.Tls,
+		Nickname:      n.Nickname,
+		Username:      n.Username,
+		Realname:      n.Realname,
+		Password:      convertNullString(n.Password),
+		SASLEnabled:   n.SaslEnabled,
+		AutoConnect:   n.AutoConnect,
+		IdentifyAsBot: n.IdentifyAsBot,
+		CreatedAt:     n.CreatedAt,
+		UpdatedAt:     n.UpdatedAt,
 	}
 	if n.SaslMechanism.Valid {
 		result.SASLMechanism = &n.SaslMechanism.String
@@ -51,18 +52,19 @@ func convertNetworkFromDB(n db.Network) Network {
 
 func convertNetworkToDBCreateParams(n *Network) db.CreateNetworkParams {
 	params := db.CreateNetworkParams{
-		Name:        n.Name,
-		Address:     n.Address,
-		Port:        int64(n.Port), // Convert int to int64
-		Tls:         n.TLS,
-		Nickname:    n.Nickname,
-		Username:    n.Username,
-		Realname:    n.Realname,
-		Password:    convertToNullString(n.Password),
-		SaslEnabled: n.SASLEnabled,
-		AutoConnect: n.AutoConnect,
-		CreatedAt:   n.CreatedAt,
-		UpdatedAt:   n.UpdatedAt,
+		Name:          n.Name,
+		Address:       n.Address,
+		Port:          int64(n.Port), // Convert int to int64
+		Tls:           n.TLS,
+		Nickname:      n.Nickname,
+		Username:      n.Username,
+		Realname:      n.Realname,
+		Password:      convertToNullString(n.Password),
+		SaslEnabled:   n.SASLEnabled,
+		AutoConnect:   n.AutoConnect,
+		IdentifyAsBot: n.IdentifyAsBot,
+		CreatedAt:     n.CreatedAt,
+		UpdatedAt:     n.UpdatedAt,
 	}
 	if n.SASLMechanism != nil {
 		params.SaslMechanism = sql.NullString{String: *n.SASLMechanism, Valid: true}
@@ -81,18 +83,19 @@ func convertNetworkToDBCreateParams(n *Network) db.CreateNetworkParams {
 
 func convertNetworkToDBUpdateParams(n *Network) db.UpdateNetworkParams {
 	params := db.UpdateNetworkParams{
-		Name:        n.Name,
-		Address:     n.Address,
-		Port:        int64(n.Port),
-		Tls:         n.TLS,
-		Nickname:    n.Nickname,
-		Username:    n.Username,
-		Realname:    n.Realname,
-		Password:    convertToNullString(n.Password),
-		SaslEnabled: n.SASLEnabled,
-		AutoConnect: n.AutoConnect,
-		UpdatedAt:   n.UpdatedAt,
-		ID:          n.ID,
+		Name:          n.Name,
+		Address:       n.Address,
+		Port:          int64(n.Port),
+		Tls:           n.TLS,
+		Nickname:      n.Nickname,
+		Username:      n.Username,
+		Realname:      n.Realname,
+		Password:      convertToNullString(n.Password),
+		SaslEnabled:   n.SASLEnabled,
+		AutoConnect:   n.AutoConnect,
+		IdentifyAsBot: n.IdentifyAsBot,
+		UpdatedAt:     n.UpdatedAt,
+		ID:            n.ID,
 	}
 	if n.SASLMechanism != nil {
 		params.SaslMechanism = sql.NullString{String: *n.SASLMechanism, Valid: true}
