@@ -73,3 +73,30 @@ func TestExtbanInfo(t *testing.T) {
 		t.Errorf("types = %q, want %q (sorted)", types, "acjrx")
 	}
 }
+
+func TestApplyISUPPORTToken_BotMode(t *testing.T) {
+	c, _ := newUserMetaTestClient(t)
+
+	c.applyISUPPORTToken("BOT=B")
+	if got := c.BotMode(); got != "B" {
+		t.Fatalf("BotMode() = %q, want %q", got, "B")
+	}
+	if c.serverCapabilities.BotModeChar != 'B' {
+		t.Fatalf("BotModeChar = %q, want 'B'", c.serverCapabilities.BotModeChar)
+	}
+}
+
+func TestApplyISUPPORTToken_BotMode_LowercaseLetter(t *testing.T) {
+	c, _ := newUserMetaTestClient(t)
+	c.applyISUPPORTToken("BOT=b")
+	if got := c.BotMode(); got != "b" {
+		t.Fatalf("BotMode() = %q, want %q", got, "b")
+	}
+}
+
+func TestBotMode_Unadvertised(t *testing.T) {
+	c, _ := newUserMetaTestClient(t)
+	if got := c.BotMode(); got != "" {
+		t.Fatalf("BotMode() = %q, want empty", got)
+	}
+}

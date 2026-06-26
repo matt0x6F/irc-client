@@ -96,6 +96,7 @@ type ServerCapabilities struct {
 	UTF8Only     bool          // UTF8ONLY token present: server accepts only UTF-8 (ratified)
 	ExtbanPrefix rune          // EXTBAN prefix char (e.g. '$'); 0 if none/unadvertised
 	ExtbanTypes  map[rune]bool // EXTBAN type letters (e.g. 'a' for account-extban)
+	BotModeChar  rune          // BOT=<letter> ISUPPORT: the user mode that marks a bot (e.g. 'B'); 0 if unadvertised
 	mu           sync.RWMutex  // Mutex for thread-safe access
 }
 
@@ -4265,6 +4266,17 @@ func (c *IRCClient) applyISUPPORTToken(param string) {
 			c.mu.Unlock()
 		}
 
+	case strings.HasPrefix(param, "BOT="):
+		// Ratified bot mode: BOT=<letter> advertises the user mode that marks a
+		// client as a bot. We record the server's letter (conventionally 'B', but
+		// servers may use 'b') so both recognition and self-announce use it verbatim.
+		letters := []rune(param[len("BOT="):])
+		if len(letters) == 1 {
+			c.mu.Lock()
+			c.serverCapabilities.BotModeChar = letters[0]
+			c.mu.Unlock()
+		}
+
 	case strings.HasPrefix(param, "CHANMODES="):
 		chanModesValue := param[len("CHANMODES="):]
 		a, b, cc, d := classifyChanModes(chanModesValue)
@@ -4306,6 +4318,18 @@ func (c *IRCClient) ExtbanInfo() (prefix string, types string) {
 		prefix = string(c.serverCapabilities.ExtbanPrefix)
 	}
 	return prefix, sortedRunes(c.serverCapabilities.ExtbanTypes)
+}
+
+// BotMode returns the server-advertised bot user-mode letter (from the BOT=
+// ISUPPORT token) as a string, or "" when the server did not advertise one.
+// Self-announce and WHO-flag recognition both key off this letter.
+func (c *IRCClient) BotMode() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.serverCapabilities == nil || c.serverCapabilities.BotModeChar == 0 {
+		return ""
+	}
+	return string(c.serverCapabilities.BotModeChar)
 }
 
 func (c *IRCClient) parsePREFIX(prefixValue string) {
