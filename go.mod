@@ -7,6 +7,7 @@ require (
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/mattn/go-sqlite3 v1.14.33
 	github.com/rs/zerolog v1.34.0
+	github.com/traefik/yaegi v0.16.1
 	github.com/wailsapp/wails/v3 v3.0.0-alpha2.103
 	github.com/zalando/go-keyring v0.2.6
 	golang.org/x/crypto v0.50.0
@@ -25,7 +26,6 @@ require (
 	github.com/jchv/go-winloader v0.0.0-20250406163304-c1995be93bd1 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
-	github.com/traefik/yaegi v0.16.1 // indirect
 	github.com/wailsapp/wails/webview2 v1.0.24 // indirect
 	golang.org/x/mod v0.35.0 // indirect
 	golang.org/x/sys v0.43.0 // indirect
