@@ -215,6 +215,15 @@ tasks:
       - echo "Generated code is up to date"
 
   # ---------------------------------------------------------------------------
+  # Scripting
+  # ---------------------------------------------------------------------------
+  script-symbols:
+    desc: Regenerate the Yaegi symbol table for the cascade scripting API
+    cmds:
+      - yaegi extract -name syms github.com/matt0x6f/irc-client/internal/script/cascade
+      - mv github_com-matt0x6f-irc-client-internal-script-cascade.go internal/script/syms/cascade_extract.go
+
+  # ---------------------------------------------------------------------------
   # Plugins / Setup
   # ---------------------------------------------------------------------------
   plugin-dir:
