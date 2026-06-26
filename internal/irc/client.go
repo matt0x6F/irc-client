@@ -737,6 +737,35 @@ func (c *IRCClient) markBot(nick string) {
 	})
 }
 
+// markSelfBotFromUserMode handles a user-mode MODE line targeting ourselves. If
+// it ADDS the advertised bot letter to our own nick, we mark ourselves via the
+// shared markBot path so the self nick shows the bot badge. All other user-mode
+// changes are intentionally ignored (we track no general self-usermode state).
+func (c *IRCClient) markSelfBotFromUserMode(target, modeStr string) {
+	if !strings.EqualFold(target, c.CurrentNick()) {
+		return
+	}
+	c.mu.RLock()
+	botChar := c.serverCapabilities.BotModeChar
+	c.mu.RUnlock()
+	if botChar == 0 {
+		return
+	}
+	adding := true
+	for _, r := range modeStr {
+		switch r {
+		case '+':
+			adding = true
+		case '-':
+			adding = false
+		case botChar:
+			if adding {
+				c.markBot(c.CurrentNick())
+			}
+		}
+	}
+}
+
 // maybeMarkBotFromTag recognizes the sender as a bot when an incoming message
 // carries the IRCv3 `bot` tag. Per spec the tag is valueless and any value is
 // ignored, so we only check presence. Shared by the PRIVMSG, NOTICE, and JOIN
@@ -2039,8 +2068,13 @@ func (c *IRCClient) setupHandlers() {
 			return
 		}
 		target := e.Params[0]
-		// Only handle channel modes (target starts with # or &); ignore user modes.
+		// Channel modes start with # or &. A non-channel target is a user mode;
+		// we only care about our own +<botletter> echo (so our own nick carries the
+		// bot badge consistently), then return — other user modes are still ignored.
 		if len(target) == 0 || (target[0] != '#' && target[0] != '&') {
+			if len(e.Params) >= 2 {
+				c.markSelfBotFromUserMode(target, e.Params[1])
+			}
 			return
 		}
 
