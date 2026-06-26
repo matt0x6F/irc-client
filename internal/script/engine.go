@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 
 	"github.com/traefik/yaegi/interp"
@@ -91,7 +92,11 @@ func mergePackageSource(files []string) (string, error) {
 		}
 		pkgName = af.Name.Name
 		for _, imp := range af.Imports {
-			imports[imp.Path.Value] = struct{}{}
+			line := imp.Path.Value
+			if imp.Name != nil { // aliased, dot, or blank import
+				line = imp.Name.Name + " " + imp.Path.Value
+			}
+			imports[line] = struct{}{}
 		}
 		// Re-print declarations except imports.
 		for _, d := range af.Decls {
@@ -108,7 +113,12 @@ func mergePackageSource(files []string) (string, error) {
 
 	var out strings.Builder
 	fmt.Fprintf(&out, "package %s\n", pkgName)
-	for imp := range imports {
+	keys := make([]string, 0, len(imports))
+	for k := range imports {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, imp := range keys {
 		fmt.Fprintf(&out, "import %s\n", imp)
 	}
 	for _, b := range bodies {

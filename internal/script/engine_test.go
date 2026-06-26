@@ -47,3 +47,15 @@ func TestMultiFilePackageLoads(t *testing.T) {
 		t.Fatalf("reply = %v; want [yo cara]", got)
 	}
 }
+
+func TestAliasedImportSurvivesMerge(t *testing.T) {
+	s, err := LoadPackage("testdata/aliasedimport")
+	if err != nil {
+		t.Fatalf("LoadPackage(aliasedimport): %v", err)
+	}
+	var got []string
+	s.DispatchText(cascade.NewTextEvent("dee", "!x", func(m string) { got = append(got, m) }))
+	if len(got) != 1 || got[0] != "aliased dee" {
+		t.Fatalf("reply = %v; want [aliased dee]", got)
+	}
+}
