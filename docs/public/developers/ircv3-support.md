@@ -55,7 +55,7 @@ Legend: ✅ Supported · ◐ Partial · ⛔ Not yet
 | CAP LS 302 negotiation | ✅ | n/a | Full LS/REQ/ACK/NAK/END lifecycle |
 | ISUPPORT (`005`) | ✅ | n/a | PREFIX / CHANMODES parsing for mode handling |
 | WHOIS account (`330`) | ✅ | n/a | Shows the account a user is logged in as |
-| Bot mode | ◐ | n/a (via `message-tags` + `335`) | Detection only: bots flagged from the `bot` tag and RPL_WHOISBOT, badged in the nick list and WHOIS. The `+B` user-mode half — the `BOT=` ISUPPORT token and setting `+B` on self — is **not** handled |
+| Bot mode | ✅ | n/a (via `message-tags` + `335` + ISUPPORT) | Detection via `bot` tag and RPL_WHOISBOT; `BOT=<letter>` token parsed into `ServerCapabilities.BotModeChar`; WHO `B` flag recognised via `markBot`; durable per-network "Identify as a bot" setting sends `MODE <nick> +<letter>` at connect |
 | `multi-prefix` | ✅ | Yes | All membership prefixes parsed; shown as icon (highest) or text (full) per setting |
 | `cap-notify` | ✅ | Yes | `CAP NEW` auto-requests newly-offered wanted caps; `CAP DEL` disables withdrawn caps live |
 | `account-notify` | ✅ | Yes | Live account login/logout drives the roster + WHOIS |
@@ -465,14 +465,18 @@ select via `GetNetworkBots`.
 in the WHOIS panel (`user-info.tsx:138`), so automated participants are visually distinct from
 people.
 
-**Partial — the `+B` user-mode half is not implemented.** The spec also defines a *persistent*
-bot marker carried as a user mode (commonly `+B`), advertised via the `BOT=<letter>` ISUPPORT
-token and surfaced in WHOIS / `MODE`. Cascade does **not** parse the `BOT=` token (the `005`
-handler reads `PREFIX` / `CHANMODES` / `WHOX` / `MONITOR` only, `client.go:2449`), and the MODE
-handler deliberately ignores user modes (`client.go:2024`), so a `+B` flag never marks anyone.
-There is also no path to set `+B` on *self* — relevant because Cascade's plugin system can host
-bots that should be able to announce themselves. Consequence: a tag-only bot is invisible as a
-bot until it actually speaks; `+B` is what would identify it at rest.
+The `+B` user-mode half is now fully implemented. The `BOT=<letter>` ISUPPORT token is parsed
+by `applyISUPPORTToken` (`client.go`) into `ServerCapabilities.BotModeChar` — the server's
+advertised letter, never hardcoded. A bot is recognised *at rest* from the `B` flag in a
+WHO/WHOX reply (the `flags` field), folded through the existing `markBot` path. A durable
+per-network **"Identify as a bot (+B)"** setting (`identify_as_bot`) sends
+`MODE <nick> +<letter>` after registration on each connect, using the server-advertised letter
+from `BotModeChar`; the setting is gated on the server advertising `BOT=` and writes a
+status-line warning when it does not. Cascade's own `+B` MODE echo is handled by
+`markSelfBotFromUserMode`, which calls `markBot` on our own nick so the bot badge appears for
+self. The pre-existing recognition surfaces — the `bot` tag and RPL_WHOISBOT (`335`) — are
+unchanged. The only new user-facing surface is the **"Identify as a bot (+B)"** checkbox in
+network settings; the bot badge in the nick list and WHOIS panel reuses the existing UI.
 
 ### Typing indicators (`+typing` client tag)
 
@@ -594,16 +598,9 @@ with the IRCv3 features above.
 
 ## Not yet supported
 
-The **ratified** set is supported with one known gap (see the matrix above):
-
-- **Bot mode (`+B` user-mode half)** — ◐ partial. Detection via the `bot` tag and RPL_WHOISBOT
-  is complete, but the `BOT=` ISUPPORT token and the `+B` user mode (including setting it on
-  self) are not yet handled. See [Bot mode](#bot-mode).
-
-The previously-missing ratified tail — `extended-monitor`, `no-implicit-names`, `UTF8ONLY`, and
-`account-extban` — is now implemented (see the matrix). Everything else outstanding is a *draft*
-extension, deliberately out of scope for ratified compliance and belonging to the future
-modern-chat product rather than this client:
+The **ratified** IRCv3 set is now fully implemented — there are no remaining ratified gaps (see
+the matrix above). Everything outstanding is a *draft* extension, deliberately out of scope for
+ratified compliance and belonging to the future modern-chat product rather than this client:
 
 - `draft/message-redaction` (handle REDACT/DELETE) — needs message-mutation handling.
 - `draft/multiline`, `draft/metadata-2`, `draft/read-marker`, `draft/chathistory` targets, and the
