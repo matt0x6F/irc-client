@@ -1,6 +1,22 @@
 package irc
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/ergochat/irc-go/ircmsg"
+)
+
+// applyMyInfo records the server software version from RPL_MYINFO (004). Params are
+// <client> <servername> <version> <usermodes> <chanmodes> [chanmodes-with-params];
+// the version token later drives server-family detection (see SoftwareFamily).
+func (c *IRCClient) applyMyInfo(e ircmsg.Message) {
+	if len(e.Params) < 3 {
+		return
+	}
+	c.mu.Lock()
+	c.serverCapabilities.Software = e.Params[2]
+	c.mu.Unlock()
+}
 
 // detectServerFamily identifies the IRC server software family from server-sent
 // signals only — never from any user-configured value such as a connection label.

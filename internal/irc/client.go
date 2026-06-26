@@ -2468,17 +2468,8 @@ func (c *IRCClient) setupHandlers() {
 	// RPL_WHOISBOT (335) - Target is a bot (IRCv3 bot mode)
 	c.conn.AddCallback("335", c.handleWhoisBot)
 
-	// RPL_MYINFO (004) - Server software identity. Params are
-	// <client> <servername> <version> <usermodes> <chanmodes> [chanmodes-with-params].
-	// We capture the version token so the mode editor can label modes per server family.
-	c.conn.AddCallback("004", func(e ircmsg.Message) {
-		if len(e.Params) < 3 {
-			return
-		}
-		c.mu.Lock()
-		c.serverCapabilities.Software = e.Params[2]
-		c.mu.Unlock()
-	})
+	// RPL_MYINFO (004) - Server software identity.
+	c.conn.AddCallback("004", func(e ircmsg.Message) { c.applyMyInfo(e) })
 
 	// ISUPPORT (005) - Server capabilities
 	c.conn.AddCallback("005", func(e ircmsg.Message) {
