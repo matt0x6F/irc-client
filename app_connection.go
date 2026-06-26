@@ -37,6 +37,7 @@ type NetworkConfig struct {
 	SASLPassword     string         `json:"sasl_password"`
 	SASLExternalCert string         `json:"sasl_external_cert"`
 	AutoConnect      bool           `json:"auto_connect"`
+	IdentifyAsBot    bool           `json:"identify_as_bot"`
 }
 
 // stringPtr converts a string to *string, returning nil for empty strings
@@ -103,6 +104,7 @@ func (a *App) buildNetworkFromConfig(config NetworkConfig, servers []ServerConfi
 			SASLPassword:     stringPtr(config.SASLPassword),
 			SASLExternalCert: stringPtr(config.SASLExternalCert),
 			AutoConnect:      persistAutoConnect && config.AutoConnect,
+			IdentifyAsBot:    persistAutoConnect && config.IdentifyAsBot,
 			CreatedAt:        time.Now(),
 			UpdatedAt:        time.Now(),
 		}
@@ -126,6 +128,7 @@ func (a *App) buildNetworkFromConfig(config NetworkConfig, servers []ServerConfi
 		// a connect operation must preserve the stored value.
 		if persistAutoConnect {
 			network.AutoConnect = config.AutoConnect
+			network.IdentifyAsBot = config.IdentifyAsBot
 		}
 		network.UpdatedAt = time.Now()
 		if err := a.storage.UpdateNetwork(network); err != nil {
@@ -726,14 +729,15 @@ func (a *App) buildReconnectConfig(networkID int64, network *storage.Network) (N
 	}
 
 	config := NetworkConfig{
-		Name:        network.Name,
-		Nickname:    network.Nickname,
-		Username:    network.Username,
-		Realname:    network.Realname,
-		Password:    network.Password,
-		SASLEnabled: network.SASLEnabled,
-		AutoConnect: network.AutoConnect,
-		Servers:     serverConfigs,
+		Name:          network.Name,
+		Nickname:      network.Nickname,
+		Username:      network.Username,
+		Realname:      network.Realname,
+		Password:      network.Password,
+		SASLEnabled:   network.SASLEnabled,
+		AutoConnect:   network.AutoConnect,
+		IdentifyAsBot: network.IdentifyAsBot,
+		Servers:       serverConfigs,
 	}
 
 	if network.SASLMechanism != nil {
@@ -865,14 +869,15 @@ func (a *App) autoConnect(ctx context.Context) {
 					}
 				}
 				config := NetworkConfig{
-					Servers:     serverConfigs,
-					Name:        network.Name,
-					Nickname:    network.Nickname,
-					Username:    network.Username,
-					Realname:    network.Realname,
-					Password:    network.Password,
-					SASLEnabled: network.SASLEnabled,
-					AutoConnect: network.AutoConnect,
+					Servers:       serverConfigs,
+					Name:          network.Name,
+					Nickname:      network.Nickname,
+					Username:      network.Username,
+					Realname:      network.Realname,
+					Password:      network.Password,
+					SASLEnabled:   network.SASLEnabled,
+					AutoConnect:   network.AutoConnect,
+					IdentifyAsBot: network.IdentifyAsBot,
 				}
 				if network.SASLMechanism != nil {
 					config.SASLMechanism = *network.SASLMechanism

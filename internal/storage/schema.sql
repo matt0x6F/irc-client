@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS networks (
     sasl_password TEXT,
     sasl_external_cert TEXT,
     auto_connect BOOLEAN NOT NULL DEFAULT 0,
+    identify_as_bot BOOLEAN NOT NULL DEFAULT 0,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

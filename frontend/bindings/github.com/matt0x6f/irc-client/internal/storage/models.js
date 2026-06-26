@@ -383,6 +383,13 @@ export class Network {
              */
             this["auto_connect"] = false;
         }
+        if (!("identify_as_bot" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["identify_as_bot"] = false;
+        }
         if (!("created_at" in $$source)) {
             /**
              * @member

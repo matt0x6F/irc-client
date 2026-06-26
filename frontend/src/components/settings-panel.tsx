@@ -363,6 +363,7 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
       sasl_password: network.sasl_password || '',
       sasl_external_cert: network.sasl_external_cert || '',
       auto_connect: network.auto_connect || false,
+      identify_as_bot: network.identify_as_bot || false,
     }));
     setShowAddForm(false);
   };
@@ -446,6 +447,7 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
         sasl_password: formData.sasl_password || '',
         sasl_external_cert: formData.sasl_external_cert || '',
         auto_connect: (formData as any).auto_connect || false,
+        identify_as_bot: (formData as any).identify_as_bot || false,
       });
       
       await SaveNetwork(config);
@@ -858,6 +860,21 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
                     </label>
                     <p className="text-xs text-muted-foreground mt-1 ml-6">
                       Automatically connect to this network when the application starts
+                    </p>
+                  </div>
+
+                  {/* Bot Mode Section */}
+                  <div className="mt-4">
+                    <label className="flex items-center space-x-2">
+                      <input
+                        type="checkbox"
+                        checked={(formData as any).identify_as_bot || false}
+                        onChange={(e) => setFormData(main.NetworkConfig.createFrom({ ...formData, identify_as_bot: e.target.checked }))}
+                      />
+                      <span className="text-sm">Identify as a bot (+B)</span>
+                    </label>
+                    <p className="text-xs text-muted-foreground mt-1 ml-6">
+                      Marks this connection as an automated bot when the server supports IRCv3 bot mode.
                     </p>
                   </div>
 

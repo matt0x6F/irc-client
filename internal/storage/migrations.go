@@ -45,6 +45,11 @@ func Migrate(db *sqlx.DB) error {
 		return fmt.Errorf("auto_connect migration failed: %w", err)
 	}
 
+	// Handle identify_as_bot field migration (bot mode +B self-announce)
+	if err := migrateIdentifyAsBot(db); err != nil {
+		return fmt.Errorf("identify_as_bot migration failed: %w", err)
+	}
+
 	// Handle channel is_open field migration
 	if err := migrateChannelIsOpen(db); err != nil {
 		return fmt.Errorf("channel is_open migration failed: %w", err)
@@ -411,6 +416,27 @@ func migrateAutoConnect(db *sqlx.DB) error {
 			// Ignore "duplicate column" errors
 			if !strings.Contains(err.Error(), "duplicate column") {
 				return fmt.Errorf("failed to add auto_connect column: %w", err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// migrateIdentifyAsBot adds identify_as_bot field to networks table if it doesn't exist
+func migrateIdentifyAsBot(db *sqlx.DB) error {
+	var columnExists int
+	err := db.Get(&columnExists,
+		"SELECT COUNT(*) FROM pragma_table_info('networks') WHERE name='identify_as_bot'")
+	if err != nil {
+		return fmt.Errorf("failed to check for identify_as_bot column: %w", err)
+	}
+
+	if columnExists == 0 {
+		if _, err := db.Exec("ALTER TABLE networks ADD COLUMN identify_as_bot BOOLEAN NOT NULL DEFAULT 0"); err != nil {
+			// Ignore "duplicate column" errors
+			if !strings.Contains(err.Error(), "duplicate column") {
+				return fmt.Errorf("failed to add identify_as_bot column: %w", err)
 			}
 		}
 	}

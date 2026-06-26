@@ -483,6 +483,13 @@ export class NetworkConfig {
              */
             this["auto_connect"] = false;
         }
+        if (!("identify_as_bot" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["identify_as_bot"] = false;
+        }
 
         Object.assign(this, $$source);
     }

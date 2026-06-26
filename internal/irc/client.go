@@ -97,6 +97,7 @@ type ServerCapabilities struct {
 	ExtbanPrefix rune          // EXTBAN prefix char (e.g. '$'); 0 if none/unadvertised
 	ExtbanTypes  map[rune]bool // EXTBAN type letters (e.g. 'a' for account-extban)
 	Software     string        // Raw version token from RPL_MYINFO (004), e.g. "solanum-1.0"
+	BotModeChar  rune          // BOT=<letter> ISUPPORT: the user mode that marks a bot (e.g. 'B'); 0 if unadvertised
 	mu           sync.RWMutex  // Mutex for thread-safe access
 }
 
@@ -735,6 +736,35 @@ func (c *IRCClient) markBot(nick string) {
 		Timestamp: time.Now(),
 		Source:    events.EventSourceIRC,
 	})
+}
+
+// markSelfBotFromUserMode handles a user-mode MODE line targeting ourselves. If
+// it ADDS the advertised bot letter to our own nick, we mark ourselves via the
+// shared markBot path so the self nick shows the bot badge. All other user-mode
+// changes are intentionally ignored (we track no general self-usermode state).
+func (c *IRCClient) markSelfBotFromUserMode(target, modeStr string) {
+	if !strings.EqualFold(target, c.CurrentNick()) {
+		return
+	}
+	c.mu.RLock()
+	botChar := c.serverCapabilities.BotModeChar
+	c.mu.RUnlock()
+	if botChar == 0 {
+		return
+	}
+	adding := true
+	for _, r := range modeStr {
+		switch r {
+		case '+':
+			adding = true
+		case '-':
+			adding = false
+		case botChar:
+			if adding {
+				c.markBot(c.CurrentNick())
+			}
+		}
+	}
 }
 
 // maybeMarkBotFromTag recognizes the sender as a bot when an incoming message
@@ -2039,8 +2069,11 @@ func (c *IRCClient) setupHandlers() {
 			return
 		}
 		target := e.Params[0]
-		// Only handle channel modes (target starts with # or &); ignore user modes.
+		// Channel modes start with # or &. A non-channel target is a user mode;
+		// we only care about our own +<botletter> echo (so our own nick carries the
+		// bot badge consistently), then return — other user modes are still ignored.
 		if len(target) == 0 || (target[0] != '#' && target[0] != '&') {
+			c.markSelfBotFromUserMode(target, e.Params[1])
 			return
 		}
 
@@ -3156,6 +3189,17 @@ func (c *IRCClient) applyWhoxRow(params []string) {
 	}
 	// The flags field begins with H (here) or G (gone/away).
 	away := len(flags) > 0 && flags[0] == 'G'
+
+	// Bot mode: the BOT= letter appears within the WHO flags field (after the
+	// here/gone marker and any '*' oper flag), so scan the whole field — not just
+	// index 0. Recognizes a bot the instant we WHOX a channel, before it speaks.
+	c.mu.RLock()
+	botChar := c.serverCapabilities.BotModeChar
+	c.mu.RUnlock()
+	if botChar != 0 && strings.ContainsRune(flags, botChar) {
+		c.markBot(nick)
+	}
+
 	userhost := ""
 	if user != "" && host != "" {
 		userhost = user + "@" + host
@@ -3894,6 +3938,9 @@ func (c *IRCClient) doAutoJoin() {
 	// registration is complete (same trigger as auto-join).
 	c.sendInitialMonitor()
 
+	// Announce ourselves as a bot if configured (gated on server BOT= support).
+	c.announceBotMode()
+
 	channels, err := c.channelsToJoin(reconnect)
 	if err != nil {
 		logger.Log.Error().Err(err).Bool("reconnect", reconnect).Msg("Failed to get channels to join")
@@ -3906,6 +3953,26 @@ func (c *IRCClient) doAutoJoin() {
 		if err := c.conn.Join(channel.Name); err != nil {
 			logger.Log.Error().Err(err).Str("channel", channel.Name).Msg("Failed to join channel")
 		}
+	}
+}
+
+// announceBotMode marks this connection as a bot when the network is configured
+// to (IdentifyAsBot) and the server advertised a BOT= letter. It is called once
+// per connection from doAutoJoin, alongside auto-join and the MONITOR re-arm, so
+// it re-asserts on every (re)connect. When the setting is on but the server has
+// no bot mode, it writes a single warning status line instead of failing silently.
+func (c *IRCClient) announceBotMode() {
+	if !c.network.IdentifyAsBot {
+		return
+	}
+	letter := c.BotMode()
+	if letter == "" {
+		c.writeStatusLine("warning", "Server does not support bot mode; +B not set")
+		return
+	}
+	nick := c.CurrentNick()
+	if err := c.conn.SendRaw(fmt.Sprintf("MODE %s +%s", nick, letter)); err != nil {
+		logger.Log.Warn().Err(err).Msg("Failed to send bot mode announcement")
 	}
 }
 
@@ -4269,6 +4336,17 @@ func (c *IRCClient) applyISUPPORTToken(param string) {
 			c.mu.Unlock()
 		}
 
+	case strings.HasPrefix(param, "BOT="):
+		// Ratified bot mode: BOT=<letter> advertises the user mode that marks a
+		// client as a bot. We record the server's letter (conventionally 'B', but
+		// servers may use 'b') so both recognition and self-announce use it verbatim.
+		letters := []rune(param[len("BOT="):])
+		if len(letters) == 1 {
+			c.mu.Lock()
+			c.serverCapabilities.BotModeChar = letters[0]
+			c.mu.Unlock()
+		}
+
 	case strings.HasPrefix(param, "CHANMODES="):
 		chanModesValue := param[len("CHANMODES="):]
 		a, b, cc, d := classifyChanModes(chanModesValue)
@@ -4310,6 +4388,18 @@ func (c *IRCClient) ExtbanInfo() (prefix string, types string) {
 		prefix = string(c.serverCapabilities.ExtbanPrefix)
 	}
 	return prefix, sortedRunes(c.serverCapabilities.ExtbanTypes)
+}
+
+// BotMode returns the server-advertised bot user-mode letter (from the BOT=
+// ISUPPORT token) as a string, or "" when the server did not advertise one.
+// Self-announce and WHO-flag recognition both key off this letter.
+func (c *IRCClient) BotMode() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.serverCapabilities == nil || c.serverCapabilities.BotModeChar == 0 {
+		return ""
+	}
+	return string(c.serverCapabilities.BotModeChar)
 }
 
 func (c *IRCClient) parsePREFIX(prefixValue string) {

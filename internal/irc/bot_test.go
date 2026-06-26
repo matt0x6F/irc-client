@@ -206,3 +206,100 @@ func TestHandleWhoisBotSetsIsBotAndMarks(t *testing.T) {
 		t.Fatalf("helperbot not added to bot set; BotNicks=%v", c.BotNicks())
 	}
 }
+
+// TestUserModeEcho_SelfBotMarksSelf verifies that a self-targeted +B user-mode
+// echo marks our own nick as a bot via the shared markBot path.
+func TestUserModeEcho_SelfBotMarksSelf(t *testing.T) {
+	c, counter := newWhoxBotTestClient(t)
+	c.currentNick = "robodan"
+	c.serverCapabilities.BotModeChar = 'B'
+
+	c.markSelfBotFromUserMode("robodan", "+B")
+
+	_, nicks := waitForBotCount(t, counter, 1)
+	found := false
+	for _, n := range nicks {
+		if n == "robodan" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected robodan to be marked bot via +B user-mode echo; nicks=%v", nicks)
+	}
+}
+
+// TestUserModeEcho_SelfBotCaseInsensitive verifies nick comparison is case-insensitive.
+func TestUserModeEcho_SelfBotCaseInsensitive(t *testing.T) {
+	c, counter := newWhoxBotTestClient(t)
+	c.currentNick = "RoboDan"
+	c.serverCapabilities.BotModeChar = 'B'
+
+	c.markSelfBotFromUserMode("robodan", "+B")
+
+	_, nicks := waitForBotCount(t, counter, 1)
+	found := false
+	for _, n := range nicks {
+		if n == "robodan" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected robodan (case-insensitive) to be marked bot; nicks=%v", nicks)
+	}
+}
+
+// TestUserModeEcho_NonBotModeIgnored verifies that a self-targeted mode that
+// does NOT add the bot letter does not mark us as a bot.
+func TestUserModeEcho_NonBotModeIgnored(t *testing.T) {
+	c, _ := newWhoxBotTestClient(t)
+	c.currentNick = "robodan"
+	c.serverCapabilities.BotModeChar = 'B'
+
+	c.markSelfBotFromUserMode("robodan", "+i")
+
+	if botNickSet(c)["robodan"] {
+		t.Fatalf("robodan must not be marked a bot from +i mode change")
+	}
+}
+
+// TestUserModeEcho_RemoveBotModeIgnored verifies that -B (removing bot mode)
+// does not mark us as a bot.
+func TestUserModeEcho_RemoveBotModeIgnored(t *testing.T) {
+	c, _ := newWhoxBotTestClient(t)
+	c.currentNick = "robodan"
+	c.serverCapabilities.BotModeChar = 'B'
+
+	c.markSelfBotFromUserMode("robodan", "-B")
+
+	if botNickSet(c)["robodan"] {
+		t.Fatalf("robodan must not be marked a bot from -B mode change")
+	}
+}
+
+// TestUserModeEcho_DifferentNickNotMarked verifies that a +B targeting a different
+// nick does not mark our own nick.
+func TestUserModeEcho_DifferentNickNotMarked(t *testing.T) {
+	c, _ := newWhoxBotTestClient(t)
+	c.currentNick = "notme"
+	c.serverCapabilities.BotModeChar = 'B'
+
+	c.markSelfBotFromUserMode("someoneelse", "+B")
+
+	if botNickSet(c)["someoneelse"] || botNickSet(c)["notme"] {
+		t.Fatalf("different-nick +B must not mark anyone; bots=%v", c.BotNicks())
+	}
+}
+
+// TestUserModeEcho_NoBotModeCharIgnored verifies that if the server has not
+// advertised a bot mode char, we never mark anyone.
+func TestUserModeEcho_NoBotModeCharIgnored(t *testing.T) {
+	c, _ := newWhoxBotTestClient(t)
+	c.currentNick = "robodan"
+	// BotModeChar deliberately left as 0 (not advertised)
+
+	c.markSelfBotFromUserMode("robodan", "+B")
+
+	if botNickSet(c)["robodan"] {
+		t.Fatalf("robodan must not be marked a bot when BotModeChar is not advertised")
+	}
+}

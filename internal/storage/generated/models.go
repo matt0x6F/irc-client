@@ -72,6 +72,7 @@ type Network struct {
 	SaslPassword     sql.NullString `json:"sasl_password"`
 	SaslExternalCert sql.NullString `json:"sasl_external_cert"`
 	AutoConnect      bool           `json:"auto_connect"`
+	IdentifyAsBot    bool           `json:"identify_as_bot"`
 	CreatedAt        time.Time      `json:"created_at"`
 	UpdatedAt        time.Time      `json:"updated_at"`
 }
