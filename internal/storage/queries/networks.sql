@@ -5,17 +5,17 @@ SELECT * FROM networks WHERE id = ?;
 SELECT * FROM networks ORDER BY name;
 
 -- name: CreateNetwork :one
-INSERT INTO networks (name, address, port, tls, nickname, username, realname, password, sasl_enabled, sasl_mechanism, sasl_username, sasl_password, sasl_external_cert, auto_connect, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO networks (name, address, port, tls, nickname, username, realname, password, sasl_enabled, sasl_mechanism, sasl_username, sasl_password, sasl_external_cert, auto_connect, identify_as_bot, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: UpdateNetwork :exec
-UPDATE networks 
-SET name = ?, address = ?, port = ?, tls = ?, 
-    nickname = ?, username = ?, realname = ?, 
+UPDATE networks
+SET name = ?, address = ?, port = ?, tls = ?,
+    nickname = ?, username = ?, realname = ?,
     password = ?, sasl_enabled = ?, sasl_mechanism = ?,
     sasl_username = ?, sasl_password = ?, sasl_external_cert = ?,
-    auto_connect = ?, updated_at = ?
+    auto_connect = ?, identify_as_bot = ?, updated_at = ?
 WHERE id = ?;
 
 -- name: UpdateNetworkAutoConnect :exec

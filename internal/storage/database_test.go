@@ -1278,3 +1278,23 @@ func TestSettingsPersistAcrossReopen(t *testing.T) {
 		t.Errorf("theme.accent: expected %q after reopen, got %q", "rose", accent)
 	}
 }
+
+func TestNetwork_IdentifyAsBot_RoundTrips(t *testing.T) {
+	s := newTestStorage(t)
+	now := time.Now()
+	n := &Network{
+		Name: "libera", Address: "irc.libera.chat", Port: 6697, TLS: true,
+		Nickname: "robodan", Username: "robodan", Realname: "Robo Dan",
+		IdentifyAsBot: true, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := s.CreateNetwork(n); err != nil {
+		t.Fatalf("CreateNetwork: %v", err)
+	}
+	got, err := s.GetNetwork(n.ID)
+	if err != nil {
+		t.Fatalf("GetNetwork: %v", err)
+	}
+	if !got.IdentifyAsBot {
+		t.Fatalf("IdentifyAsBot did not persist: got false, want true")
+	}
+}

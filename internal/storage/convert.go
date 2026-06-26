@@ -29,10 +29,11 @@ func convertNetworkFromDB(n db.Network) Network {
 		Username:    n.Username,
 		Realname:    n.Realname,
 		Password:    convertNullString(n.Password),
-		SASLEnabled: n.SaslEnabled,
-		AutoConnect: n.AutoConnect,
-		CreatedAt:   n.CreatedAt,
-		UpdatedAt:   n.UpdatedAt,
+		SASLEnabled:   n.SaslEnabled,
+		AutoConnect:   n.AutoConnect,
+		IdentifyAsBot: n.IdentifyAsBot,
+		CreatedAt:     n.CreatedAt,
+		UpdatedAt:     n.UpdatedAt,
 	}
 	if n.SaslMechanism.Valid {
 		result.SASLMechanism = &n.SaslMechanism.String
@@ -59,10 +60,11 @@ func convertNetworkToDBCreateParams(n *Network) db.CreateNetworkParams {
 		Username:    n.Username,
 		Realname:    n.Realname,
 		Password:    convertToNullString(n.Password),
-		SaslEnabled: n.SASLEnabled,
-		AutoConnect: n.AutoConnect,
-		CreatedAt:   n.CreatedAt,
-		UpdatedAt:   n.UpdatedAt,
+		SaslEnabled:   n.SASLEnabled,
+		AutoConnect:   n.AutoConnect,
+		IdentifyAsBot: n.IdentifyAsBot,
+		CreatedAt:     n.CreatedAt,
+		UpdatedAt:     n.UpdatedAt,
 	}
 	if n.SASLMechanism != nil {
 		params.SaslMechanism = sql.NullString{String: *n.SASLMechanism, Valid: true}
@@ -89,10 +91,11 @@ func convertNetworkToDBUpdateParams(n *Network) db.UpdateNetworkParams {
 		Username:    n.Username,
 		Realname:    n.Realname,
 		Password:    convertToNullString(n.Password),
-		SaslEnabled: n.SASLEnabled,
-		AutoConnect: n.AutoConnect,
-		UpdatedAt:   n.UpdatedAt,
-		ID:          n.ID,
+		SaslEnabled:   n.SASLEnabled,
+		AutoConnect:   n.AutoConnect,
+		IdentifyAsBot: n.IdentifyAsBot,
+		UpdatedAt:     n.UpdatedAt,
+		ID:            n.ID,
 	}
 	if n.SASLMechanism != nil {
 		params.SaslMechanism = sql.NullString{String: *n.SASLMechanism, Valid: true}
