@@ -144,7 +144,8 @@ func (m *Manager) buildTextEvent(ev events.Event) (cascade.TextEvent, bool) {
 	channel, _ := ev.Data["channel"].(string)
 	message, _ := ev.Data["message"].(string)
 	networkID, _ := ev.Data["networkId"].(int64)
-	if nick == "" {
+	// "*" is the server/status pseudo-user (not a real sender); never deliver it to scripts.
+	if nick == "" || nick == "*" {
 		return cascade.TextEvent{}, false
 	}
 

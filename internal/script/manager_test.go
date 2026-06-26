@@ -106,3 +106,19 @@ func TestManagerPanicIsRecoveredAndMarksError(t *testing.T) {
 		t.Fatalf("panicker status = %+v, %v; want StatusError", ext, ok)
 	}
 }
+
+func TestManagerSkipsServerStatusUser(t *testing.T) {
+	fs := &fakeSender{}
+	bus := events.NewEventBus()
+	m := NewManager(bus, "testdata", fs.send)
+	_ = m.LoadAll()
+
+	// Server/status line: user is "*". No script should be invoked / no reply sent.
+	bus.EmitSync(msgEvent(1, "#chan", "*", "!hello", ""))
+
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	if len(fs.sent) != 0 {
+		t.Fatalf("expected no replies for user=\"*\" status line; got %+v", fs.sent)
+	}
+}
