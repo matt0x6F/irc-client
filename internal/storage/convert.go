@@ -20,15 +20,15 @@ func convertSTSPolicyFromDB(p db.StsPolicy) STSPolicy {
 
 func convertNetworkFromDB(n db.Network) Network {
 	result := Network{
-		ID:          n.ID,
-		Name:        n.Name,
-		Address:     n.Address,
-		Port:        int(n.Port), // Convert int64 to int
-		TLS:         n.Tls,
-		Nickname:    n.Nickname,
-		Username:    n.Username,
-		Realname:    n.Realname,
-		Password:    convertNullString(n.Password),
+		ID:            n.ID,
+		Name:          n.Name,
+		Address:       n.Address,
+		Port:          int(n.Port), // Convert int64 to int
+		TLS:           n.Tls,
+		Nickname:      n.Nickname,
+		Username:      n.Username,
+		Realname:      n.Realname,
+		Password:      convertNullString(n.Password),
 		SASLEnabled:   n.SaslEnabled,
 		AutoConnect:   n.AutoConnect,
 		IdentifyAsBot: n.IdentifyAsBot,
@@ -52,14 +52,14 @@ func convertNetworkFromDB(n db.Network) Network {
 
 func convertNetworkToDBCreateParams(n *Network) db.CreateNetworkParams {
 	params := db.CreateNetworkParams{
-		Name:        n.Name,
-		Address:     n.Address,
-		Port:        int64(n.Port), // Convert int to int64
-		Tls:         n.TLS,
-		Nickname:    n.Nickname,
-		Username:    n.Username,
-		Realname:    n.Realname,
-		Password:    convertToNullString(n.Password),
+		Name:          n.Name,
+		Address:       n.Address,
+		Port:          int64(n.Port), // Convert int to int64
+		Tls:           n.TLS,
+		Nickname:      n.Nickname,
+		Username:      n.Username,
+		Realname:      n.Realname,
+		Password:      convertToNullString(n.Password),
 		SaslEnabled:   n.SASLEnabled,
 		AutoConnect:   n.AutoConnect,
 		IdentifyAsBot: n.IdentifyAsBot,
@@ -83,14 +83,14 @@ func convertNetworkToDBCreateParams(n *Network) db.CreateNetworkParams {
 
 func convertNetworkToDBUpdateParams(n *Network) db.UpdateNetworkParams {
 	params := db.UpdateNetworkParams{
-		Name:        n.Name,
-		Address:     n.Address,
-		Port:        int64(n.Port),
-		Tls:         n.TLS,
-		Nickname:    n.Nickname,
-		Username:    n.Username,
-		Realname:    n.Realname,
-		Password:    convertToNullString(n.Password),
+		Name:          n.Name,
+		Address:       n.Address,
+		Port:          int64(n.Port),
+		Tls:           n.TLS,
+		Nickname:      n.Nickname,
+		Username:      n.Username,
+		Realname:      n.Realname,
+		Password:      convertToNullString(n.Password),
 		SaslEnabled:   n.SASLEnabled,
 		AutoConnect:   n.AutoConnect,
 		IdentifyAsBot: n.IdentifyAsBot,
