@@ -64,3 +64,18 @@ func TestRegistryRecipientsFiltersByTypeAndEnabled(t *testing.T) {
 		t.Fatalf("recipients(privmsg) = %+v; want only a", rcpts)
 	}
 }
+
+func TestRegistryRegisterReplacesEntry(t *testing.T) {
+	r := NewRegistry()
+	ext := &Extension{ID: "x", Enabled: true, Status: StatusLoaded}
+	r.Register(ext, nopHost{}, []string{"a"})
+	// Re-register the same id with a different subscription set.
+	r.Register(ext, nopHost{}, []string{"b"})
+
+	if rc := r.recipients("a"); len(rc) != 0 {
+		t.Fatalf("after replace, recipients(a) = %v; want empty (subscriptions replaced, not merged)", rc)
+	}
+	if rc := r.recipients("b"); len(rc) != 1 || rc[0].id != "x" {
+		t.Fatalf("after replace, recipients(b) = %v; want [x]", rc)
+	}
+}
