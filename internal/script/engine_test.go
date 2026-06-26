@@ -16,7 +16,7 @@ func TestLoadAndDispatchOnText(t *testing.T) {
 	}
 
 	var got []string
-	s.DispatchText(cascade.NewTextEvent("bob", "!hello world", func(m string) { got = append(got, m) }))
+	s.DispatchText(cascade.NewTextEvent("bob", "#chan", "!hello world", func(m string) { got = append(got, m) }))
 
 	if len(got) != 1 || got[0] != "Hi bob" {
 		t.Fatalf("reply = %v; want [Hi bob]", got)
@@ -42,7 +42,7 @@ func TestMultiFilePackageLoads(t *testing.T) {
 		t.Fatalf("LoadPackage(multifile): %v", err)
 	}
 	var got []string
-	s.DispatchText(cascade.NewTextEvent("cara", "!x", func(m string) { got = append(got, m) }))
+	s.DispatchText(cascade.NewTextEvent("cara", "#chan", "!x", func(m string) { got = append(got, m) }))
 	if len(got) != 1 || got[0] != "yo cara" {
 		t.Fatalf("reply = %v; want [yo cara]", got)
 	}
@@ -54,7 +54,7 @@ func TestAliasedImportSurvivesMerge(t *testing.T) {
 		t.Fatalf("LoadPackage(aliasedimport): %v", err)
 	}
 	var got []string
-	s.DispatchText(cascade.NewTextEvent("dee", "!x", func(m string) { got = append(got, m) }))
+	s.DispatchText(cascade.NewTextEvent("dee", "#chan", "!x", func(m string) { got = append(got, m) }))
 	if len(got) != 1 || got[0] != "aliased dee" {
 		t.Fatalf("reply = %v; want [aliased dee]", got)
 	}

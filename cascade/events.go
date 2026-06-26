@@ -6,14 +6,20 @@ import "strings"
 // NewTextEvent and wires Reply to a sink; the script only reads fields and replies.
 type TextEvent struct {
 	Nick    string
+	Channel string // "#chan" for a channel message; the bot's own nick for a DM
 	Message string
 
 	replyFn func(string)
 }
 
 // NewTextEvent is the host-side constructor. Scripts never call it.
-func NewTextEvent(nick, message string, reply func(string)) TextEvent {
-	return TextEvent{Nick: nick, Message: message, replyFn: reply}
+func NewTextEvent(nick, channel, message string, reply func(string)) TextEvent {
+	return TextEvent{Nick: nick, Channel: channel, Message: message, replyFn: reply}
+}
+
+// IsDM reports whether this message was a direct message (Channel is not a channel name).
+func (e TextEvent) IsDM() bool {
+	return e.Channel == "" || (e.Channel[0] != '#' && e.Channel[0] != '&')
 }
 
 // HasPrefix reports whether the message starts with s.
