@@ -35,3 +35,15 @@ func TestForbiddenImportFailsToLoad(t *testing.T) {
 		t.Fatalf("expected import \"os\" to fail (not in symbol table); got nil error")
 	}
 }
+
+func TestMultiFilePackageLoads(t *testing.T) {
+	s, err := LoadPackage("testdata/multifile")
+	if err != nil {
+		t.Fatalf("LoadPackage(multifile): %v", err)
+	}
+	var got []string
+	s.DispatchText(cascade.NewTextEvent("cara", "!x", func(m string) { got = append(got, m) }))
+	if len(got) != 1 || got[0] != "yo cara" {
+		t.Fatalf("reply = %v; want [yo cara]", got)
+	}
+}

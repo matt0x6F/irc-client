@@ -2,9 +2,14 @@ package script
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/printer"
+	"go/token"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 
 	"github.com/traefik/yaegi/interp"
 
@@ -34,14 +39,12 @@ func LoadPackage(dir string) (*Script, error) {
 		return nil, fmt.Errorf("script %s: inject symbols: %w", dir, err)
 	}
 
-	for _, f := range files {
-		src, err := os.ReadFile(f)
-		if err != nil {
-			return nil, err
-		}
-		if _, err := i.Eval(string(src)); err != nil {
-			return nil, fmt.Errorf("script %s: load %s: %w", dir, filepath.Base(f), err)
-		}
+	merged, err := mergePackageSource(files)
+	if err != nil {
+		return nil, fmt.Errorf("script %s: %w", dir, err)
+	}
+	if _, err := i.Eval(merged); err != nil {
+		return nil, fmt.Errorf("script %s: load: %w", dir, err)
 	}
 
 	handlers := map[string]reflect.Value{}
@@ -66,4 +69,51 @@ func (s *Script) DispatchText(e cascade.TextEvent) {
 		return
 	}
 	fn.Call([]reflect.Value{reflect.ValueOf(e)})
+}
+
+// mergePackageSource concatenates a package's files into one source string,
+// keeping a single `package` clause and de-duplicating import lines. Uses
+// go/parser + go/printer so it's robust to formatting.
+func mergePackageSource(files []string) (string, error) {
+	fset := token.NewFileSet()
+	imports := map[string]struct{}{}
+	var pkgName string
+	var bodies []string
+
+	for _, f := range files {
+		src, err := os.ReadFile(f)
+		if err != nil {
+			return "", err
+		}
+		af, err := parser.ParseFile(fset, f, src, parser.ParseComments)
+		if err != nil {
+			return "", fmt.Errorf("parse %s: %w", filepath.Base(f), err)
+		}
+		pkgName = af.Name.Name
+		for _, imp := range af.Imports {
+			imports[imp.Path.Value] = struct{}{}
+		}
+		// Re-print declarations except imports.
+		for _, d := range af.Decls {
+			if gd, ok := d.(*ast.GenDecl); ok && gd.Tok == token.IMPORT {
+				continue
+			}
+			var b strings.Builder
+			if err := printer.Fprint(&b, fset, d); err != nil {
+				return "", err
+			}
+			bodies = append(bodies, b.String())
+		}
+	}
+
+	var out strings.Builder
+	fmt.Fprintf(&out, "package %s\n", pkgName)
+	for imp := range imports {
+		fmt.Fprintf(&out, "import %s\n", imp)
+	}
+	for _, b := range bodies {
+		out.WriteString(b)
+		out.WriteString("\n")
+	}
+	return out.String(), nil
 }
