@@ -22,3 +22,10 @@ func TestLoadAndDispatchOnText(t *testing.T) {
 		t.Fatalf("reply = %v; want [Hi bob]", got)
 	}
 }
+
+func TestTypeErrorFailsAtLoad(t *testing.T) {
+	s, err := LoadPackage("testdata/typeerror")
+	if err == nil {
+		t.Fatalf("expected load to fail on a type error, got nil error (script=%v)", s)
+	}
+}
