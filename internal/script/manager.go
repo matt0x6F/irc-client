@@ -18,6 +18,11 @@ import (
 // package (avoids an import cycle; the string is the contract).
 const eventMessageReceived = "message.received"
 
+const (
+	eventUserJoined = "user.joined"
+	eventUserParted = "user.parted"
+)
+
 // cascadeSDKVersion is the cascade SDK module version the scaffolded scripts
 // go.mod requires. Bump this when the app ships against a newer cascade tag.
 const cascadeSDKVersion = "v1.0.0"
@@ -134,8 +139,14 @@ func (m *Manager) loadDir(dir string) {
 	}
 
 	var evs []string
-	if s.Has("OnText") {
+	if s.Has("OnText") || s.Has("OnNotice") {
 		evs = append(evs, eventMessageReceived)
+	}
+	if s.Has("OnJoin") {
+		evs = append(evs, eventUserJoined)
+	}
+	if s.Has("OnPart") {
+		evs = append(evs, eventUserParted)
 	}
 
 	m.mu.Lock()
@@ -180,13 +191,32 @@ func (m *Manager) dispatch(id extension.ID, ev events.Event) (err error) {
 
 	switch ev.Type {
 	case eventMessageReceived:
-		te, ok := m.buildTextEvent(ev)
-		if !ok {
+		mt, _ := ev.Data["messageType"].(string)
+		if mt == "notice" {
+			if ne, ok := m.buildNoticeEvent(ev); ok {
+				l.mu.Lock()
+				defer l.mu.Unlock()
+				l.script.DispatchNotice(ne)
+			}
 			return nil
 		}
-		l.mu.Lock()
-		defer l.mu.Unlock()
-		l.script.DispatchText(te)
+		if te, ok := m.buildTextEvent(ev); ok {
+			l.mu.Lock()
+			defer l.mu.Unlock()
+			l.script.DispatchText(te)
+		}
+	case eventUserJoined:
+		if je, ok := m.buildJoinEvent(ev); ok {
+			l.mu.Lock()
+			defer l.mu.Unlock()
+			l.script.DispatchJoin(je)
+		}
+	case eventUserParted:
+		if pe, ok := m.buildPartEvent(ev); ok {
+			l.mu.Lock()
+			defer l.mu.Unlock()
+			l.script.DispatchPart(pe)
+		}
 	}
 	return nil
 }
@@ -197,27 +227,73 @@ func (m *Manager) disableScript(id extension.ID, reason string) {
 	logger.Log.Warn().Str("script", string(id)).Str("reason", reason).Msg("script auto-disabled by watchdog")
 }
 
+// msgFields extracts the common sender fields from a message.received event and
+// applies the self/pseudo-user guards. Returns ok=false if delivery should be suppressed.
+func (m *Manager) msgFields(ev events.Event) (nick, channel, message string, networkID int64, ok bool) {
+	nick, _ = ev.Data["user"].(string)
+	channel, _ = ev.Data["channel"].(string)
+	message, _ = ev.Data["message"].(string)
+	networkID, _ = ev.Data["networkId"].(int64)
+	// "*" is the server/status pseudo-user (not a real sender); never deliver it.
+	if nick == "" || nick == "*" {
+		return "", "", "", 0, false
+	}
+	if m.selfNick != nil && nick == m.selfNick(networkID) {
+		return "", "", "", 0, false
+	}
+	return nick, channel, message, networkID, true
+}
+
+// replyTo returns a Reply closure that routes to the channel (for channel messages)
+// or to the sender nick (for DMs).
+func (m *Manager) replyTo(networkID int64, channel, nick string) func(string) {
+	target := channel
+	if !isChannel(channel) {
+		target = nick
+	}
+	return func(msg string) { _ = m.sender(networkID, target, msg) }
+}
+
 // buildTextEvent maps a message.received event into a cascade.TextEvent with a
 // Reply closure routed to the right network + target.
 func (m *Manager) buildTextEvent(ev events.Event) (cascade.TextEvent, bool) {
-	nick, _ := ev.Data["user"].(string)
-	channel, _ := ev.Data["channel"].(string)
-	message, _ := ev.Data["message"].(string)
-	networkID, _ := ev.Data["networkId"].(int64)
-	// "*" is the server/status pseudo-user (not a real sender); never deliver it to scripts.
-	if nick == "" || nick == "*" {
+	nick, channel, message, networkID, ok := m.msgFields(ev)
+	if !ok {
 		return cascade.TextEvent{}, false
 	}
-	if m.selfNick != nil && nick == m.selfNick(networkID) {
-		return cascade.TextEvent{}, false // the bot's own (possibly echoed) message
-	}
+	return cascade.NewTextEvent(nick, channel, message, m.replyTo(networkID, channel, nick)), true
+}
 
-	target := channel
-	if !isChannel(channel) {
-		target = nick // DM: reply to the sender
+// buildNoticeEvent maps a message.received/notice event into a cascade.NoticeEvent.
+func (m *Manager) buildNoticeEvent(ev events.Event) (cascade.NoticeEvent, bool) {
+	nick, channel, message, networkID, ok := m.msgFields(ev)
+	if !ok {
+		return cascade.NoticeEvent{}, false
 	}
-	reply := func(msg string) { _ = m.sender(networkID, target, msg) }
-	return cascade.NewTextEvent(nick, channel, message, reply), true
+	return cascade.NewNoticeEvent(nick, channel, message, m.replyTo(networkID, channel, nick)), true
+}
+
+// buildJoinEvent maps a user.joined event into a cascade.JoinEvent.
+func (m *Manager) buildJoinEvent(ev events.Event) (cascade.JoinEvent, bool) {
+	nick, _ := ev.Data["user"].(string)
+	channel, _ := ev.Data["channel"].(string)
+	networkID, _ := ev.Data["networkId"].(int64)
+	if nick == "" || nick == "*" || (m.selfNick != nil && nick == m.selfNick(networkID)) {
+		return cascade.JoinEvent{}, false
+	}
+	return cascade.NewJoinEvent(nick, channel, m.replyTo(networkID, channel, nick)), true
+}
+
+// buildPartEvent maps a user.parted event into a cascade.PartEvent.
+func (m *Manager) buildPartEvent(ev events.Event) (cascade.PartEvent, bool) {
+	nick, _ := ev.Data["user"].(string)
+	channel, _ := ev.Data["channel"].(string)
+	reason, _ := ev.Data["reason"].(string)
+	networkID, _ := ev.Data["networkId"].(int64)
+	if nick == "" || nick == "*" || (m.selfNick != nil && nick == m.selfNick(networkID)) {
+		return cascade.PartEvent{}, false
+	}
+	return cascade.NewPartEvent(nick, channel, reason, m.replyTo(networkID, channel, nick)), true
 }
 
 func isChannel(s string) bool {

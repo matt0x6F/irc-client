@@ -11,6 +11,67 @@ import (
 	"github.com/matt0x6f/irc-client/internal/extension"
 )
 
+func TestManagerRoutesNoticeJoinPart(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) {
+		d := filepath.Join(dir, name)
+		os.MkdirAll(d, 0o755)
+		src := "package main\nimport \"github.com/matt0x6f/irc-client/cascade\"\n" + body
+		os.WriteFile(filepath.Join(d, "s.go"), []byte(src), 0o644)
+	}
+	write("noticer", `func OnNotice(e cascade.NoticeEvent){ e.Reply("got-notice") }`)
+	write("joiner", `func OnJoin(e cascade.JoinEvent){ e.Reply("hi "+e.Nick) }`)
+	write("parter", `func OnPart(e cascade.PartEvent){ e.Reply("bye "+e.Nick) }`)
+	write("texter", `func OnText(e cascade.TextEvent){ e.Reply("got-text") }`)
+
+	fs := &fakeSender{}
+	bus := events.NewEventBus()
+	m := NewManager(bus, dir, fs.send, noSelf)
+	if err := m.LoadAll(); err != nil {
+		t.Fatal(err)
+	}
+
+	// a NOTICE must reach OnNotice, NOT OnText
+	bus.EmitSync(events.Event{Type: "message.received", Data: map[string]interface{}{
+		"networkId": int64(1), "channel": "#c", "user": "bob", "message": "x", "messageType": "notice"}})
+	// a PRIVMSG must reach OnText, NOT OnNotice
+	bus.EmitSync(events.Event{Type: "message.received", Data: map[string]interface{}{
+		"networkId": int64(1), "channel": "#c", "user": "bob", "message": "x", "messageType": "privmsg"}})
+	// a JOIN / PART
+	bus.EmitSync(events.Event{Type: "user.joined", Data: map[string]interface{}{
+		"networkId": int64(1), "channel": "#c", "user": "dave"}})
+	bus.EmitSync(events.Event{Type: "user.parted", Data: map[string]interface{}{
+		"networkId": int64(1), "channel": "#c", "user": "dave", "reason": "z"}})
+
+	has := func(msg string) bool {
+		for _, s := range fs.sent {
+			if s.message == msg {
+				return true
+			}
+		}
+		return false
+	}
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	if !has("got-notice") || !has("got-text") || !has("hi dave") || !has("bye dave") {
+		t.Fatalf("missing a routed reply; got %+v", fs.sent)
+	}
+	// the notice must NOT have triggered OnText, and privmsg must NOT have triggered OnNotice:
+	// noticer replies only "got-notice"; texter replies only "got-text"; counts must be 1 each.
+	cN, cT := 0, 0
+	for _, s := range fs.sent {
+		if s.message == "got-notice" {
+			cN++
+		}
+		if s.message == "got-text" {
+			cT++
+		}
+	}
+	if cN != 1 || cT != 1 {
+		t.Fatalf("routing leaked: got-notice=%d got-text=%d (want 1,1)", cN, cT)
+	}
+}
+
 // noSelf is a selfNick stub that always returns "" (bot has no nick).
 func noSelf(int64) string { return "" }
 

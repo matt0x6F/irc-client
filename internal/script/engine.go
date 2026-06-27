@@ -63,14 +63,26 @@ func (s *Script) Has(handler string) bool {
 	return ok
 }
 
-// DispatchText calls the script's OnText handler, if present.
-func (s *Script) DispatchText(e cascade.TextEvent) {
-	fn, ok := s.handlers["OnText"]
+// call invokes the named handler with arg, if the handler is present.
+func (s *Script) call(name string, arg any) {
+	fn, ok := s.handlers[name]
 	if !ok {
 		return
 	}
-	fn.Call([]reflect.Value{reflect.ValueOf(e)})
+	fn.Call([]reflect.Value{reflect.ValueOf(arg)})
 }
+
+// DispatchText calls the script's OnText handler, if present.
+func (s *Script) DispatchText(e cascade.TextEvent) { s.call("OnText", e) }
+
+// DispatchNotice calls the script's OnNotice handler, if present.
+func (s *Script) DispatchNotice(e cascade.NoticeEvent) { s.call("OnNotice", e) }
+
+// DispatchJoin calls the script's OnJoin handler, if present.
+func (s *Script) DispatchJoin(e cascade.JoinEvent) { s.call("OnJoin", e) }
+
+// DispatchPart calls the script's OnPart handler, if present.
+func (s *Script) DispatchPart(e cascade.PartEvent) { s.call("OnPart", e) }
 
 // mergePackageSource concatenates a package's files into one source string,
 // keeping a single `package` clause and de-duplicating import lines. Uses
