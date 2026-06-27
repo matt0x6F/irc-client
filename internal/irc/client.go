@@ -2655,6 +2655,12 @@ func (c *IRCClient) setupHandlers() {
 				toRequest := capsToRequest(allCaps, c.enabledCaps, c.saslEnabled && !done)
 				c.mu.RUnlock()
 
+				// Required SASL not on offer: abort rather than register unauthenticated.
+				if c.saslEnabled && !done && !contains(allCaps, "sasl") {
+					c.handleCapLSMissingSASL(allCaps)
+					return
+				}
+
 				if len(toRequest) > 0 {
 					reqStr := strings.Join(toRequest, " ")
 					c.storage.WriteMessage(storage.Message{
@@ -2721,6 +2727,7 @@ func (c *IRCClient) setupHandlers() {
 			// post-registration CAP NEW request just means we don't get that cap.
 			c.mu.RLock()
 			negotiationDone := c.capNegotiationDone
+			saslRequired := c.saslEnabled
 			c.mu.RUnlock()
 			rejected := ""
 			if len(e.Params) >= 3 {
@@ -2739,7 +2746,13 @@ func (c *IRCClient) setupHandlers() {
 				Timestamp:   time.Now(),
 			})
 			if !negotiationDone {
-				c.endCapNegotiation()
+				// If the server refused the sasl cap and SASL is required, abort
+				// rather than register unauthenticated.
+				if saslRequired && contains(rejected, "sasl") {
+					c.handleSASLFailure("server refused SASL")
+				} else {
+					c.endCapNegotiation()
+				}
 			}
 		case "NEW":
 			if len(e.Params) >= 3 {

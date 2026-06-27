@@ -58,3 +58,39 @@ func TestSASLFailureAbortsWithoutCapEnd(t *testing.T) {
 		t.Fatal("SASL failure must NOT send CAP END (that registers unauthenticated)")
 	}
 }
+
+// TestSASLEnabledButNotOfferedAborts verifies that when SASL is required but
+// the server's CAP LS list does not include "sasl", the client aborts with QUIT
+// (via handleSASLFailure) and never sends CAP END.
+func TestSASLEnabledButNotOfferedAborts(t *testing.T) {
+	c := newAnnounceBotTestClient(t)
+	conn, sentLines := newConnectedPipe(t)
+	c.conn = conn
+	c.saslEnabled = true
+
+	// Call with a CAP list that does NOT include "sasl".
+	c.handleCapLSMissingSASL("multi-prefix server-time")
+
+	if !c.AuthFailed() {
+		t.Fatal("SASL enabled but not offered must mark AuthFailed")
+	}
+
+	var sawQUIT, sawCapEnd bool
+	deadline := time.After(time.Second)
+	for !sawQUIT {
+		select {
+		case line := <-sentLines:
+			if strings.HasPrefix(line, "QUIT") {
+				sawQUIT = true
+			}
+			if strings.HasPrefix(line, "CAP END") {
+				sawCapEnd = true
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for QUIT after SASL not offered")
+		}
+	}
+	if sawCapEnd {
+		t.Fatal("must not send CAP END when required SASL is unavailable")
+	}
+}

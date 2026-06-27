@@ -57,6 +57,18 @@ func (c *IRCClient) handleSASLFailure(reason string) {
 	c.abortAuth()
 }
 
+// handleCapLSMissingSASL aborts when SASL is required but the server's CAP LS
+// did not advertise it. Without this the handshake would proceed and register
+// the user unauthenticated. allCaps is the space-separated CAP LS token list.
+func (c *IRCClient) handleCapLSMissingSASL(allCaps string) {
+	c.mu.RLock()
+	required := c.saslEnabled && !c.capNegotiationDone
+	c.mu.RUnlock()
+	if required && !contains(allCaps, "sasl") {
+		c.handleSASLFailure("server does not support SASL")
+	}
+}
+
 // abortAuth tears the connection down after an authentication failure. The QUIT
 // routes through the library DisconnectCallback -> EventConnectionLost, where
 // the app layer sees AuthFailed() and suppresses auto-reconnect unless the user
