@@ -6,9 +6,13 @@ import {
   SendCommand,
 } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
+import { parseChannelFilter, matchesChannelFilter } from '../lib/channel-filter';
 
 interface ChannelListModalProps {
   networkId: number;
+  // Filter text from a typed `/list <arg>`. Seeds the modal's client-side filter
+  // box so the full list opens already narrowed (matched on channel name + topic).
+  initialFilter?: string;
   onClose: () => void;
 }
 
@@ -51,12 +55,14 @@ function mapEntries(items: any[], networkId: number): ChannelListEntry[] {
   }));
 }
 
-export function ChannelListModal({ networkId, onClose }: ChannelListModalProps) {
+export function ChannelListModal({ networkId, initialFilter, onClose }: ChannelListModalProps) {
   const [channels, setChannels] = useState<ChannelListEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [filter, setFilter] = useState('');
+  // A typed `/list <arg>` seeds the client-side filter, so the full list opens
+  // already narrowed to the arg (matched against channel name and topic).
+  const [filter, setFilter] = useState((initialFilter ?? '').trim());
   const [sortField, setSortField] = useState<SortField>('users');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const [joiningChannel, setJoiningChannel] = useState<string | null>(null);
@@ -148,18 +154,12 @@ export function ChannelListModal({ networkId, onClose }: ChannelListModalProps) 
     return () => unsubscribe();
   }, [networkId, doRefresh]);
 
-  // Filter and sort channels
+  // Filter and sort channels. The filter accepts name/topic text and ELIST-style
+  // user-count bounds (>N, <N) — see parseChannelFilter. .filter() always returns
+  // a fresh array, so the sort below never mutates the channels state in place.
   const filteredChannels = useMemo(() => {
-    let result = channels;
-
-    if (filter.trim()) {
-      const lowerFilter = filter.toLowerCase();
-      result = result.filter(
-        (ch) =>
-          ch.channel.toLowerCase().includes(lowerFilter) ||
-          ch.topic.toLowerCase().includes(lowerFilter)
-      );
-    }
+    const parsed = parseChannelFilter(filter);
+    const result = channels.filter((ch) => matchesChannelFilter(ch, parsed));
 
     result.sort((a, b) => {
       let cmp = 0;
@@ -251,7 +251,7 @@ export function ChannelListModal({ networkId, onClose }: ChannelListModalProps) 
           <input
             ref={inputRef}
             type="text"
-            placeholder="Filter by channel name or topic..."
+            placeholder="Filter by name, topic, or user count (e.g. >50)..."
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
             className="w-full px-3 py-2 rounded-md border border-border bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm"

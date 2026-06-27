@@ -1015,6 +1015,7 @@ function App() {
       {showChannelList && (
         <ChannelListModal
           networkId={showChannelList.networkId}
+          initialFilter={showChannelList.filter}
           onClose={closeChannelList}
         />
       )}

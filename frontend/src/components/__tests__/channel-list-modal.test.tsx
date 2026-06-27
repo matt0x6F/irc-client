@@ -74,4 +74,39 @@ describe('ChannelListModal cache behavior', () => {
     await waitFor(() => expect(requestListMock).toHaveBeenCalledWith(1))
     expect(screen.getByText('Loading channel list...')).toBeInTheDocument()
   })
+
+  it('seeds the client-side filter from initialFilter and narrows the cached rows', async () => {
+    getCachedMock.mockResolvedValue({
+      found: true,
+      fetchedAt: Date.now(),
+      channels: [
+        { channel: '#linux', users: 50, topic: 'penguins', networkId: 1 },
+        { channel: '#windows', users: 30, topic: 'gates', networkId: 1 },
+      ],
+    })
+
+    render(<ChannelListModal networkId={1} initialFilter="linux" onClose={() => {}} />)
+
+    // The full list still loads from cache (no special fetch) and the typed arg
+    // pre-fills the existing client-side filter, hiding non-matching rows.
+    expect(await screen.findByText('#linux')).toBeInTheDocument()
+    expect(screen.queryByText('#windows')).not.toBeInTheDocument()
+    expect(screen.getByPlaceholderText(/Filter by name/i)).toHaveValue('linux')
+  })
+
+  it('honors a >N user-count filter from initialFilter', async () => {
+    getCachedMock.mockResolvedValue({
+      found: true,
+      fetchedAt: Date.now(),
+      channels: [
+        { channel: '#big', users: 80, topic: '', networkId: 1 },
+        { channel: '#small', users: 12, topic: '', networkId: 1 },
+      ],
+    })
+
+    render(<ChannelListModal networkId={1} initialFilter=">50" onClose={() => {}} />)
+
+    expect(await screen.findByText('#big')).toBeInTheDocument()
+    expect(screen.queryByText('#small')).not.toBeInTheDocument()
+  })
 })

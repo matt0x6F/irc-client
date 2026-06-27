@@ -22,16 +22,22 @@ describe('/list interception', () => {
     });
   });
 
-  it('/list opens the browse-channels modal and does not hit SendCommand', async () => {
+  it('/list opens the browse-channels modal with no filter and does not hit SendCommand', async () => {
     await useNetworkStore.getState().sendMessage('/list');
     expect(useUIStore.getState().showChannelList).toEqual({ networkId: 1 });
     // The modal issues its own RequestChannelList, so we must not double-send.
     expect(sendCommand).not.toHaveBeenCalled();
   });
 
-  it('/list with args still opens the modal (no raw LIST to the server)', async () => {
+  it('/list <arg> opens the modal with the arg as a server-side filter', async () => {
     await useNetworkStore.getState().sendMessage('/list >50');
-    expect(useUIStore.getState().showChannelList).toEqual({ networkId: 1 });
+    expect(useUIStore.getState().showChannelList).toEqual({ networkId: 1, filter: '>50' });
+    expect(sendCommand).not.toHaveBeenCalled();
+  });
+
+  it('/list trims surrounding whitespace from the filter arg', async () => {
+    await useNetworkStore.getState().sendMessage('/list   #linux*  ');
+    expect(useUIStore.getState().showChannelList).toEqual({ networkId: 1, filter: '#linux*' });
     expect(sendCommand).not.toHaveBeenCalled();
   });
 });

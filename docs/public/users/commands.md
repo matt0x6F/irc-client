@@ -79,7 +79,7 @@ Many commands have shorter aliases, shown in parentheses.
 | `/time` | `target` | Ask for a user's local time. |
 | `/version` | `target` | Ask for a user's client version. |
 | `/clientinfo` | `target` | Ask which CTCP commands a user supports. |
-| `/list` | `[args]` | List channels on the network. |
+| `/list` | `[filter]` | Open the Browse Channels list. An optional filter pre-narrows it by channel name or topic (e.g. `/list linux`) or by user count (e.g. `/list >50`). |
 | `/quote` (`/raw`) | `command [args]` | Send a raw IRC line to the server. |
 
 !!! note

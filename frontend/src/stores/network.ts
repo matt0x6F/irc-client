@@ -851,10 +851,12 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
       // RPL_LIST numerics only render in that modal — and the modal issues its
       // own RequestChannelList when it opens (with cache + de-dupe handling) —
       // so a typed /list must open the modal, not send a LIST whose results have
-      // no UI surface (the same reasoning as /whois above). Any args are dropped:
-      // the modal fetches a full list and offers its own client-side filter.
-      if (/^\/list(?:\s|$)/i.test(trimmedMessage)) {
-        useUIStore.getState().openChannelList(selectedNetwork);
+      // no UI surface (the same reasoning as /whois above). Any arg is passed as
+      // a server-side LIST filter (e.g. /list >50, /list #linux*) the modal honors.
+      const listMatch = /^\/list(?:\s+(.*))?$/i.exec(trimmedMessage);
+      if (listMatch) {
+        const filter = (listMatch[1] ?? '').trim();
+        useUIStore.getState().openChannelList(selectedNetwork, filter || undefined);
         return;
       }
 
