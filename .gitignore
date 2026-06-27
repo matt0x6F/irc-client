@@ -11,3 +11,5 @@ frontend/dist
 # Zensical docs build output + local docs venv
 /site/
 /.venv/
+# Implementation plans are local-only (see PR #98); never commit them.
+docs/plans/
