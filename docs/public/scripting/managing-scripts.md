@@ -8,6 +8,8 @@ The Scripts panel is your control center for every script Cascade knows about. O
 
 The panel lists every script Cascade has discovered in your scripts folder. Each script is a row showing:
 
+![The Scripts panel showing a loaded script with its status badge and per-row actions](images/scripts-panel.png)
+
 - **Name** — the display name from the `// cascade:name` manifest header, or the folder name if none is declared.
 - **Status badge** — one of **Loaded**, **Disabled**, **Runaway**, or **Error**. See [Lifecycle & limits](lifecycle-and-limits.md) for what each status means.
 - **Description** — the free-text summary from `// cascade:description`, if any.

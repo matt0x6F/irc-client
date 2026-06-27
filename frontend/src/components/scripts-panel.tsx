@@ -91,7 +91,7 @@ export function ScriptsPanel() {
   };
 
   return (
-    <div className="mb-6">
+    <div className="mb-6" data-testid="scripts-panel">
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-md font-semibold">Scripts</h3>
         <button
