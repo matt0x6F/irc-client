@@ -18,6 +18,7 @@ import {
   RequestChatHistoryLatest,
   GetChannelInfo,
   GetOpenChannels,
+  GetJoinedChannels,
   GetLastOpenPane,
   SetPaneFocus,
   ClearPaneFocus,
@@ -191,6 +192,7 @@ interface NetworkState {
   setSelectedNetwork: (id: number | null) => void;
   setSelectedChannel: (channel: string | null) => void;
   selectPane: (networkId: number, channel: string | null) => Promise<void>;
+  openOrJoinChannel: (networkId: number, channel: string) => Promise<void>;
 
   // Network actions
   connectNetwork: (config: main.NetworkConfig) => Promise<void>;
@@ -758,6 +760,20 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
       } catch (error) {
         console.error('Failed to set focus on pane:', error);
       }
+    }
+  },
+
+  openOrJoinChannel: async (networkId, channel) => {
+    try {
+      const joined = await GetJoinedChannels(networkId);
+      const isJoined =
+        joined?.some((c) => c.name?.toLowerCase() === channel.toLowerCase()) ?? false;
+      if (!isJoined) {
+        await SendCommand(networkId, `/join ${channel}`);
+      }
+      await get().selectPane(networkId, channel);
+    } catch (error) {
+      console.error('Failed to open/join channel:', error);
     }
   },
 
