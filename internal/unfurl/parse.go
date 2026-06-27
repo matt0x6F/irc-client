@@ -19,17 +19,17 @@ type metadata struct {
 // wins; Twitter-card and <title> are fallbacks only when OG is absent.
 func parseMetadata(r io.Reader) metadata {
 	var md metadata
-	var twTitle, twDesc, htmlTitle string
+	var twTitle, twDesc, twImage, htmlTitle string
 
 	z := html.NewTokenizer(r)
 	for {
 		switch z.Next() {
 		case html.ErrorToken:
-			return finalize(md, twTitle, twDesc, htmlTitle)
+			return finalize(md, twTitle, twDesc, twImage, htmlTitle)
 
 		case html.EndTagToken:
 			if name, _ := z.TagName(); string(name) == "head" {
-				return finalize(md, twTitle, twDesc, htmlTitle)
+				return finalize(md, twTitle, twDesc, twImage, htmlTitle)
 			}
 
 		case html.StartTagToken, html.SelfClosingTagToken:
@@ -58,9 +58,7 @@ func parseMetadata(r io.Reader) metadata {
 				case "twitter:description":
 					twDesc = content
 				case "twitter:image":
-					if md.ImageURL == "" {
-						md.ImageURL = content
-					}
+					twImage = content
 				case "description":
 					if md.Description == "" {
 						md.Description = content
@@ -88,12 +86,15 @@ func metaAttrs(z *html.Tokenizer) (key, content string) {
 	}
 }
 
-func finalize(md metadata, twTitle, twDesc, htmlTitle string) metadata {
+func finalize(md metadata, twTitle, twDesc, twImage, htmlTitle string) metadata {
 	if md.Title == "" {
 		md.Title = firstNonEmpty(twTitle, htmlTitle)
 	}
 	if md.Description == "" {
 		md.Description = twDesc
+	}
+	if md.ImageURL == "" {
+		md.ImageURL = twImage
 	}
 	return md
 }
