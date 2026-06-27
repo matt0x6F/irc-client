@@ -7,6 +7,7 @@ import { SettingsWindow } from './components/settings-window'
 import { initTheme } from './stores/theme'
 import { initSettings } from './stores/settings'
 import { initPreferences } from './stores/preferences'
+import { initScripts } from './stores/scripts'
 import { installExternalLinkHandler } from './lib/external-links'
 
 // The same bundle backs both the main window and the standalone Settings window.
@@ -75,6 +76,7 @@ const root = createRoot(container!)
 // windows. Non-blocking — stores carry sensible defaults until they resolve.
 void initSettings()
 void initPreferences()
+void initScripts()
 
 // Load the persisted theme (stored in the backend DB, not localStorage) before
 // the first paint to avoid a flash of the wrong theme — in both windows, so the
