@@ -98,7 +98,7 @@ func buildBuiltinRegistry() *CommandRegistry {
 	reg(&CommandSpec{Name: "DEOP", Aliases: []string{"DEHOP"}, Category: CategoryServer, Usage: "#channel nickname", Description: "Remove operator status", MinArgs: 2, handler: cmdDeop})
 	reg(&CommandSpec{Name: "VOICE", Aliases: []string{"V"}, Category: CategoryServer, Usage: "#channel nickname", Description: "Grant voice", MinArgs: 2, handler: cmdVoice})
 	reg(&CommandSpec{Name: "DEVOICE", Aliases: []string{"DEV"}, Category: CategoryServer, Usage: "#channel nickname", Description: "Remove voice", MinArgs: 2, handler: cmdDevoice})
-	reg(&CommandSpec{Name: "LIST", Category: CategoryServer, Usage: "[args]", Description: "List channels", MinArgs: 0, handler: cmdList})
+	reg(&CommandSpec{Name: "LIST", Category: CategoryServer, Usage: "[filter]", Description: "Browse channels (optional name/topic filter)", MinArgs: 0, handler: cmdList})
 	reg(&CommandSpec{Name: "NAMES", Category: CategoryServer, Usage: "[#channel]", Description: "List users in a channel", MinArgs: 0, handler: cmdNames})
 	reg(&CommandSpec{Name: "NOTICE", Category: CategoryServer, Usage: "target message", Description: "Send a notice", MinArgs: 2, handler: cmdNotice})
 	reg(&CommandSpec{Name: "QUERY", Aliases: []string{"Q"}, Category: CategoryClient, Usage: "nickname [message]", Description: "Open a private conversation", MinArgs: 1, handler: cmdQuery})

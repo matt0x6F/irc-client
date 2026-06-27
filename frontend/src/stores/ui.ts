@@ -22,9 +22,10 @@ interface UIState {
   openSearch: () => void;
   closeSearch: () => void;
 
-  // Channel list modal
-  showChannelList: { networkId: number } | null;
-  openChannelList: (networkId: number) => void;
+  // Channel list modal. An optional filter is the server-side LIST arg (e.g. ">50")
+  // a typed `/list <arg>` carries; the modal fetches a filtered list when it is set.
+  showChannelList: { networkId: number; filter?: string } | null;
+  openChannelList: (networkId: number, filter?: string) => void;
   closeChannelList: () => void;
 
   // Keyboard shortcuts modal
@@ -71,7 +72,7 @@ export const useUIStore = create<UIState>((set) => ({
   closeSearch: () => set({ showSearch: false }),
 
   showChannelList: null,
-  openChannelList: (networkId) => set({ showChannelList: { networkId } }),
+  openChannelList: (networkId, filter) => set({ showChannelList: { networkId, filter } }),
   closeChannelList: () => set({ showChannelList: null }),
 
   showKeyboardShortcuts: false,

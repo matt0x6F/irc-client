@@ -9,6 +9,9 @@ import { EventsOn } from '../../wailsjs/runtime/runtime';
 
 interface ChannelListModalProps {
   networkId: number;
+  // Filter text from a typed `/list <arg>`. Seeds the modal's client-side filter
+  // box so the full list opens already narrowed (matched on channel name + topic).
+  initialFilter?: string;
   onClose: () => void;
 }
 
@@ -51,12 +54,14 @@ function mapEntries(items: any[], networkId: number): ChannelListEntry[] {
   }));
 }
 
-export function ChannelListModal({ networkId, onClose }: ChannelListModalProps) {
+export function ChannelListModal({ networkId, initialFilter, onClose }: ChannelListModalProps) {
   const [channels, setChannels] = useState<ChannelListEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [filter, setFilter] = useState('');
+  // A typed `/list <arg>` seeds the client-side filter, so the full list opens
+  // already narrowed to the arg (matched against channel name and topic).
+  const [filter, setFilter] = useState((initialFilter ?? '').trim());
   const [sortField, setSortField] = useState<SortField>('users');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const [joiningChannel, setJoiningChannel] = useState<string | null>(null);
