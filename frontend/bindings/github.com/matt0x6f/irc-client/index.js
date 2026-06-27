@@ -17,6 +17,7 @@ export {
     MonitorEntry,
     NetworkConfig,
     PluginInfo,
+    ScriptInfo,
     ServerCapabilitiesInfo,
     ServerConfig
 } from "./models.js";

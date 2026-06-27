@@ -123,6 +123,15 @@ export function DisablePlugin(name) {
 }
 
 /**
+ * DisableScript stops a script's timers and marks it disabled.
+ * @param {string} id
+ * @returns {$CancellablePromise<void>}
+ */
+export function DisableScript(id) {
+    return $Call.ByID(3841329420, id);
+}
+
+/**
  * DisconnectNetwork disconnects from a network
  * @param {number} networkID
  * @returns {$CancellablePromise<void>}
@@ -138,6 +147,15 @@ export function DisconnectNetwork(networkID) {
  */
 export function EnablePlugin(name) {
     return $Call.ByID(3947152785, name);
+}
+
+/**
+ * EnableScript re-enables a previously disabled or runaway script.
+ * @param {string} id
+ * @returns {$CancellablePromise<void>}
+ */
+export function EnableScript(id) {
+    return $Call.ByID(1252903669, id);
 }
 
 /**
@@ -593,12 +611,43 @@ export function ListPlugins() {
 }
 
 /**
+ * ListScripts returns a snapshot of every loaded script and its current status.
+ * @returns {$CancellablePromise<$models.ScriptInfo[]>}
+ */
+export function ListScripts() {
+    return $Call.ByID(3467580111).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType34($result);
+    }));
+}
+
+/**
+ * NewScript creates a new script directory with a starter file under the
+ * scripts directory and returns the path to the created file.
+ * @param {string} name
+ * @returns {$CancellablePromise<string>}
+ */
+export function NewScript(name) {
+    return $Call.ByID(3860963958, name);
+}
+
+/**
  * OnEvent implements the events.Subscriber interface to forward events to frontend
  * @param {events$0.Event} event
  * @returns {$CancellablePromise<void>}
  */
 export function OnEvent(event) {
     return $Call.ByID(844865600, event);
+}
+
+/**
+ * OpenScriptsDir reveals the scripts directory in the OS file manager.
+ * Uses "open" on macOS, "xdg-open" on Linux, and "explorer" on Windows.
+ * Note: no existing reveal-in-finder helper was found in the codebase;
+ * this is a minimal exec-based implementation.
+ * @returns {$CancellablePromise<void>}
+ */
+export function OpenScriptsDir() {
+    return $Call.ByID(1353712790);
 }
 
 /**
@@ -673,6 +722,15 @@ export function PrintLocalLines(networkID, target, lines) {
  */
 export function ReloadPlugin(name) {
     return $Call.ByID(2644883255, name);
+}
+
+/**
+ * ReloadScript reloads a script from disk by its ID.
+ * @param {string} id
+ * @returns {$CancellablePromise<void>}
+ */
+export function ReloadScript(id) {
+    return $Call.ByID(3845221199, id);
 }
 
 /**
@@ -762,7 +820,7 @@ export function SaveNetwork(config) {
  */
 export function SearchMessages(query, networkID, limit) {
     return $Call.ByID(3203246577, query, networkID, limit).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType34($result);
+        return $$createType36($result);
     }));
 }
 
@@ -948,5 +1006,7 @@ const $$createType29 = storage$0.Server.createFrom;
 const $$createType30 = $Create.Array($$createType29);
 const $$createType31 = $models.PluginInfo.createFrom;
 const $$createType32 = $Create.Array($$createType31);
-const $$createType33 = storage$0.SearchResult.createFrom;
+const $$createType33 = $models.ScriptInfo.createFrom;
 const $$createType34 = $Create.Array($$createType33);
+const $$createType35 = storage$0.SearchResult.createFrom;
+const $$createType36 = $Create.Array($$createType35);

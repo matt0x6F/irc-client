@@ -35,6 +35,11 @@ type Host struct {
 	Send           Sender                          // App.SendMessage
 	SelfNick       func(networkID int64) string    // App.GetCurrentNick wrapper
 	ResolveNetwork func(name string) (int64, bool) // name → networkID (via App.GetNetworks)
+	// LoadDisabled returns the set of script IDs that should start disabled.
+	// Nil-safe: a nil func is treated as returning an empty map.
+	LoadDisabled func() map[string]bool
+	// PersistEnabled persists an enable/disable toggle. Nil-safe.
+	PersistEnabled func(id string, enabled bool)
 }
 
 // loaded is a loaded script plus a mutex serializing its dispatch (Yaegi
@@ -117,6 +122,13 @@ func (m *Manager) LoadAll() error {
 	if err := m.scaffoldModule(); err != nil {
 		return fmt.Errorf("scaffold scripts module: %w", err)
 	}
+	// Load the persisted-disabled set once; nil-safe.
+	disabled := map[string]bool{}
+	if m.host.LoadDisabled != nil {
+		if d := m.host.LoadDisabled(); d != nil {
+			disabled = d
+		}
+	}
 	entries, err := os.ReadDir(m.dir)
 	if err != nil {
 		return fmt.Errorf("read scripts dir: %w", err)
@@ -130,6 +142,12 @@ func (m *Manager) LoadAll() error {
 			continue
 		}
 		m.loadDir(sub)
+		// Apply persisted-disabled state: scripts start inert if they were
+		// disabled in a previous session.
+		id := extension.ID(e.Name())
+		if disabled[string(id)] {
+			m.Disable(id)
+		}
 	}
 	return nil
 }
@@ -361,6 +379,84 @@ func (m *Manager) unload(id extension.ID) {
 
 // List returns a snapshot of all registered scripts.
 func (m *Manager) List() []extension.Extension { return m.reg.List() }
+
+// Snapshot returns a snapshot of all registered scripts (alias for List,
+// intended for the Wails-bound App.ListScripts method).
+func (m *Manager) Snapshot() []extension.Extension { return m.reg.List() }
+
+// Disable stops a script's timers, marks it disabled in the registry, and
+// optionally persists the toggle via host.PersistEnabled.
+func (m *Manager) Disable(id extension.ID) {
+	m.sched.stopTimers(id)
+	m.reg.SetEnabled(id, false)
+	if m.host.PersistEnabled != nil {
+		m.host.PersistEnabled(string(id), false)
+	}
+}
+
+// Enable re-enables a previously disabled or runaway script, clears its strike
+// count, re-runs Setup (to restore timers), and optionally persists the toggle.
+func (m *Manager) Enable(id extension.ID) {
+	m.reg.SetEnabled(id, true)
+	m.reg.SetStatus(id, extension.StatusLoaded, "") // clears runaway/error
+	m.watchdog.clearStrikes(id)
+
+	// Stop any existing timers before re-running Setup so that calling Enable
+	// on an already-running script does not register a second set of timers
+	// (which would double tick frequency). This mirrors how reload() clears
+	// timers before re-running Setup.
+	m.sched.stopTimers(id)
+
+	// Re-run Setup to restore timers.
+	m.mu.RLock()
+	l, ok := m.scripts[id]
+	m.mu.RUnlock()
+	if ok && l.script.HasSetup() {
+		if err := l.script.RunSetup(m.makeClient(id)); err != nil {
+			logger.Log.Warn().Str("script", string(id)).Err(err).Msg("Enable: Setup re-run failed")
+		}
+	}
+
+	if m.host.PersistEnabled != nil {
+		m.host.PersistEnabled(string(id), true)
+	}
+}
+
+// ReloadByID reloads a script by its ID (directory name under m.dir).
+func (m *Manager) ReloadByID(id extension.ID) {
+	m.reload(filepath.Join(m.dir, string(id)))
+}
+
+// NewScript creates a new script directory and starter file at <dir>/<name>/<name>.go.
+// name must be a safe single directory segment (no separators, no "..").
+// Returns the path to the created file. Errors if the directory already exists.
+func (m *Manager) NewScript(name string) (string, error) {
+	if name == "" {
+		return "", fmt.Errorf("script name must not be empty")
+	}
+	// Reject any path separator, ".", or ".." to enforce a single safe dir segment.
+	if strings.ContainsAny(name, `/\`) || name == "." || name == ".." || strings.Contains(name, "..") {
+		return "", fmt.Errorf("script name %q is not a safe directory name", name)
+	}
+	scriptDir := filepath.Join(m.dir, name)
+	if _, err := os.Stat(scriptDir); err == nil {
+		return "", fmt.Errorf("script %q already exists", name)
+	}
+	if err := os.MkdirAll(scriptDir, 0o755); err != nil {
+		return "", fmt.Errorf("create script dir: %w", err)
+	}
+	filePath := filepath.Join(scriptDir, name+".go")
+	content := "package main\n\n" +
+		"// cascade:name " + name + "\n\n" +
+		"import \"github.com/matt0x6f/irc-client/cascade\"\n\n" +
+		"func OnText(e cascade.TextEvent) {\n" +
+		"\t// TODO: implement\n" +
+		"}\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		return "", fmt.Errorf("write script file: %w", err)
+	}
+	return filePath, nil
+}
 
 // registry exposes the registry for tests.
 func (m *Manager) registry() *extension.Registry { return m.reg }

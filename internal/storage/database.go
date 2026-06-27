@@ -1394,6 +1394,38 @@ func (s *Storage) SetPluginConfig(name string, config map[string]interface{}) er
 	return nil
 }
 
+// SetScriptEnabled persists the enabled/disabled state for a script. A disabled
+// script (enabled=false) gets a row; an enabled script gets enabled=1 (the default),
+// so callers can toggle either direction idempotently.
+func (s *Storage) SetScriptEnabled(id string, enabled bool) error {
+	enabledInt := int64(1)
+	if !enabled {
+		enabledInt = 0
+	}
+	if err := s.queries.UpsertScriptEnabled(context.Background(), db.UpsertScriptEnabledParams{
+		ScriptID: id,
+		Enabled:  enabledInt,
+	}); err != nil {
+		return fmt.Errorf("failed to set script enabled state for %q: %w", id, err)
+	}
+	return nil
+}
+
+// DisabledScripts returns the set of script IDs that have been explicitly
+// disabled. A missing row means enabled (the default), so only disabled scripts
+// appear here. The returned map is keyed by script_id; a present key means disabled.
+func (s *Storage) DisabledScripts() (map[string]bool, error) {
+	ids, err := s.queries.ListDisabledScripts(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("failed to list disabled scripts: %w", err)
+	}
+	result := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		result[id] = true
+	}
+	return result, nil
+}
+
 // SetPluginConfigSchema stores the configuration schema for a plugin
 func (s *Storage) SetPluginConfigSchema(name string, schema map[string]interface{}) error {
 	// Encode config_schema as JSON

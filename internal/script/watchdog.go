@@ -62,6 +62,14 @@ func (w *watchdog) run(id extension.ID, dispatch func() error) error {
 	}
 }
 
+// clearStrikes resets the strike count for id. Called by Enable so a
+// previously-runaway script starts fresh.
+func (w *watchdog) clearStrikes(id extension.ID) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	delete(w.strikes, id)
+}
+
 // record updates the strike count; disable is called (outside the lock) once the
 // count reaches maxStrikes.
 func (w *watchdog) record(id extension.ID, err error) {

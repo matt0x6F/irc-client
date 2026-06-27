@@ -60,6 +60,7 @@ type Querier interface {
 	GetSTSPolicy(ctx context.Context, hostname string) (StsPolicy, error)
 	GetServers(ctx context.Context, networkID int64) ([]Server, error)
 	GetSetting(ctx context.Context, key string) (string, error)
+	ListDisabledScripts(ctx context.Context) ([]string, error)
 	PinMessage(ctx context.Context, arg PinMessageParams) error
 	RemoveChannelUser(ctx context.Context, arg RemoveChannelUserParams) error
 	RemoveMonitoredNick(ctx context.Context, arg RemoveMonitoredNickParams) error
@@ -78,6 +79,7 @@ type Querier interface {
 	UpdatePMConversationIsOpen(ctx context.Context, arg UpdatePMConversationIsOpenParams) error
 	UpdateServer(ctx context.Context, arg UpdateServerParams) error
 	UpsertSTSPolicy(ctx context.Context, arg UpsertSTSPolicyParams) error
+	UpsertScriptEnabled(ctx context.Context, arg UpsertScriptEnabledParams) error
 }
 
 var _ Querier = (*Queries)(nil)

@@ -125,6 +125,13 @@ CREATE TABLE IF NOT EXISTS sts_policies (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Durable enabled/disabled state for cascade scripts. A missing row means
+-- enabled (default 1); only disabled scripts need a row.
+CREATE TABLE IF NOT EXISTS script_state (
+    script_id TEXT PRIMARY KEY,
+    enabled   INTEGER NOT NULL DEFAULT 1
+);
+
 -- IRCv3 MONITOR: the per-network buddy list of nicks whose online/offline
 -- presence is tracked. Durable, and re-sent via MONITOR + on each connect.
 CREATE TABLE IF NOT EXISTS monitored_nicks (
