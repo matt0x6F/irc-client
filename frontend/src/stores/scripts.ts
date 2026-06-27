@@ -53,7 +53,7 @@ export const useScriptsStore = create<ScriptsState>((set, get) => ({
     set({ loading: true });
     try {
       const list = await ListScripts();
-      set({ scripts: list ?? [], loading: false });
+      set({ scripts: list ?? [], loading: false, error: null });
     } catch (e) {
       console.error('Failed to list scripts:', e);
       set({ scripts: [], loading: false, error: String(e) });
@@ -62,53 +62,61 @@ export const useScriptsStore = create<ScriptsState>((set, get) => ({
 
   enable: async (id) => {
     set((s) => ({ busy: withBusy(s.busy, id, true), error: null }));
+    let actionError: string | null = null;
     try {
       await EnableScript(id);
     } catch (e) {
       console.error('Failed to enable script:', e);
-      set({ error: String(e) });
+      actionError = String(e);
     } finally {
       set((s) => ({ busy: withBusy(s.busy, id, false) }));
     }
     await get().fetch();
+    if (actionError !== null) set({ error: actionError });
   },
 
   disable: async (id) => {
     set((s) => ({ busy: withBusy(s.busy, id, true), error: null }));
+    let actionError: string | null = null;
     try {
       await DisableScript(id);
     } catch (e) {
       console.error('Failed to disable script:', e);
-      set({ error: String(e) });
+      actionError = String(e);
     } finally {
       set((s) => ({ busy: withBusy(s.busy, id, false) }));
     }
     await get().fetch();
+    if (actionError !== null) set({ error: actionError });
   },
 
   reload: async (id) => {
     set((s) => ({ busy: withBusy(s.busy, id, true), error: null }));
+    let actionError: string | null = null;
     try {
       await ReloadScript(id);
     } catch (e) {
       console.error('Failed to reload script:', e);
-      set({ error: String(e) });
+      actionError = String(e);
     } finally {
       set((s) => ({ busy: withBusy(s.busy, id, false) }));
     }
     await get().fetch();
+    if (actionError !== null) set({ error: actionError });
   },
 
   create: async (name) => {
     set({ error: null });
+    let createError: string | null = null;
     try {
       const path = await NewScript(name);
       set({ lastCreatedPath: path });
     } catch (e) {
       console.error('Failed to create script:', e);
-      set({ error: String(e) });
+      createError = String(e);
     }
     await get().fetch();
+    if (createError !== null) set({ error: createError });
   },
 
   openDir: async () => {

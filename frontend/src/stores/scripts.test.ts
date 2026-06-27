@@ -77,6 +77,12 @@ describe('scripts store', () => {
     expect(useScriptsStore.getState().lastCreatedPath).toBeNull();
   });
 
+  it('fetch() clears a stale error on success', async () => {
+    useScriptsStore.setState({ error: 'previous error' });
+    await useScriptsStore.getState().fetch();
+    expect(useScriptsStore.getState().error).toBeNull();
+  });
+
   it('initScripts() subscribes to script-lifecycle and refetches on it', async () => {
     initScripts();
     expect(lifecycleCb).toBeTypeOf('function');

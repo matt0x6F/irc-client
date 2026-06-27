@@ -70,6 +70,7 @@ function ScriptRow({ script }: { script: main.ScriptInfo }) {
 
 export function ScriptsPanel() {
   const scripts = useScriptsStore((s) => s.scripts);
+  const loading = useScriptsStore((s) => s.loading);
   const error = useScriptsStore((s) => s.error);
   const lastCreatedPath = useScriptsStore((s) => s.lastCreatedPath);
   const fetch = useScriptsStore((s) => s.fetch);
@@ -140,7 +141,7 @@ export function ScriptsPanel() {
 
       {error && <p className="text-sm text-destructive mb-3">{error}</p>}
 
-      {scripts.length === 0 ? (
+      {scripts.length === 0 && !loading ? (
         <div className="text-center text-muted-foreground py-8">
           No scripts yet. Create one above, then edit its <code>.go</code> file.
         </div>

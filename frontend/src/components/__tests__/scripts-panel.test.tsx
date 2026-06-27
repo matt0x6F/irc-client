@@ -39,6 +39,12 @@ describe('ScriptsPanel', () => {
     expect(screen.getByText(/no scripts/i)).toBeInTheDocument();
   });
 
+  it('does not show empty-state while loading', () => {
+    state.loading = true;
+    render(<ScriptsPanel />);
+    expect(screen.queryByText(/no scripts/i)).not.toBeInTheDocument();
+  });
+
   it('renders a script row with its name and status', () => {
     state.scripts = [row()];
     render(<ScriptsPanel />);
