@@ -25,6 +25,10 @@ func (a *App) ListScripts() []ScriptInfo {
 	exts := a.scriptMgr.Snapshot()
 	out := make([]ScriptInfo, 0, len(exts))
 	for _, e := range exts {
+		perms := e.Perms
+		if perms == nil {
+			perms = []string{}
+		}
 		out = append(out, ScriptInfo{
 			ID:          string(e.ID),
 			Name:        e.Name,
@@ -32,7 +36,7 @@ func (a *App) ListScripts() []ScriptInfo {
 			Status:      string(e.Status),
 			Enabled:     e.Enabled,
 			Error:       e.Err,
-			Perms:       e.Perms,
+			Perms:       perms,
 		})
 	}
 	return out
