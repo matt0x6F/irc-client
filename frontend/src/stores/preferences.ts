@@ -20,12 +20,17 @@ const HELP_DISPLAY_MODE_KEY = 'help.display_mode';
 type HelpDisplayMode = 'dialog' | 'buffer';
 const DEFAULT_HELP_DISPLAY_MODE: HelpDisplayMode = 'dialog';
 
+const CLOSE_BUFFER_ON_LEAVE_KEY = 'closeBufferOnLeave';
+const DEFAULT_CLOSE_BUFFER_ON_LEAVE = true; // leaving a channel also closes its buffer
+
 interface PreferencesState {
   showFormattingToolbar: boolean;
   setShowFormattingToolbar: (show: boolean) => void;
   toggleFormattingToolbar: () => void;
   helpDisplayMode: HelpDisplayMode;
   setHelpDisplayMode: (mode: HelpDisplayMode) => void;
+  closeBufferOnLeave: boolean;
+  setCloseBufferOnLeave: (close: boolean) => void;
 }
 
 export const usePreferencesStore = create<PreferencesState>((set, get) => ({
@@ -44,6 +49,13 @@ export const usePreferencesStore = create<PreferencesState>((set, get) => ({
     set({ helpDisplayMode: mode });
     SetSetting(HELP_DISPLAY_MODE_KEY, mode).catch((error) => {
       console.error('Failed to persist helpDisplayMode:', error);
+    });
+  },
+  closeBufferOnLeave: DEFAULT_CLOSE_BUFFER_ON_LEAVE, // until initPreferences() hydrates
+  setCloseBufferOnLeave: (close) => {
+    set({ closeBufferOnLeave: close });
+    SetSetting(CLOSE_BUFFER_ON_LEAVE_KEY, close ? 'true' : 'false').catch((error) => {
+      console.error('Failed to persist closeBufferOnLeave:', error);
     });
   },
 }));
@@ -73,6 +85,15 @@ export async function initPreferences(): Promise<void> {
     console.error('Failed to load help display mode:', error);
   }
 
+  try {
+    const value = await GetSetting(CLOSE_BUFFER_ON_LEAVE_KEY);
+    if (value === 'true' || value === 'false') {
+      usePreferencesStore.setState({ closeBufferOnLeave: value === 'true' });
+    }
+  } catch (error) {
+    console.error('Failed to load closeBufferOnLeave:', error);
+  }
+
   // Reconcile when the value is changed from another window. This only updates
   // in-memory state — it must never call SetSetting back, or it would loop.
   EventsOn('setting:changed', (payload: { key: string; value: string }) => {
@@ -81,6 +102,9 @@ export async function initPreferences(): Promise<void> {
     }
     if (payload.key === HELP_DISPLAY_MODE_KEY && (payload.value === 'dialog' || payload.value === 'buffer')) {
       usePreferencesStore.setState({ helpDisplayMode: payload.value });
+    }
+    if (payload.key === CLOSE_BUFFER_ON_LEAVE_KEY && (payload.value === 'true' || payload.value === 'false')) {
+      usePreferencesStore.setState({ closeBufferOnLeave: payload.value === 'true' });
     }
   });
 }
