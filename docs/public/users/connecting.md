@@ -5,7 +5,7 @@ each is saved locally and can reconnect automatically on launch.
 
 ## Add a network
 
-Open **Settings → Networks → Add Network** and fill in:
+Open **Settings → Networks → Add network** and fill in:
 
 | Field | Required | Notes |
 |---|---|---|
