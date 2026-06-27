@@ -39,7 +39,7 @@ export async function addNetwork(
   const name = opts.name ?? 'e2e';
   const nick = opts.nick ?? 'e2euser';
 
-  // "+ Add Network" reveals the add form (the networks pane is the default).
+  // "+ Add network" opens the editor view (the networks pane is the default).
   await settings.getByTestId('add-network-button').waitFor({ state: 'visible', timeout: 10_000 });
   await settings.getByTestId('add-network-button').click();
 
