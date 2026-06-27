@@ -126,6 +126,64 @@ func TestManagerSkipsServerStatusUser(t *testing.T) {
 	}
 }
 
+func TestManagerReloadPicksUpNewBehavior(t *testing.T) {
+	dir := t.TempDir()
+	sdir := filepath.Join(dir, "g")
+	if err := os.MkdirAll(sdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(reply string) {
+		src := "package main\nimport \"github.com/matt0x6f/irc-client/cascade\"\nfunc OnText(e cascade.TextEvent){ e.Reply(\"" + reply + "\") }\n"
+		if err := os.WriteFile(filepath.Join(sdir, "g.go"), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("first")
+
+	fs := &fakeSender{}
+	bus := events.NewEventBus()
+	m := NewManager(bus, dir, fs.send)
+	if err := m.LoadAll(); err != nil {
+		t.Fatal(err)
+	}
+	bus.EmitSync(msgEvent(1, "#c", "bob", "hi", ""))
+
+	write("second")
+	m.reload(sdir)
+	bus.EmitSync(msgEvent(1, "#c", "bob", "hi", ""))
+
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	var sawSecond bool
+	for _, s := range fs.sent {
+		if s.message == "second" {
+			sawSecond = true
+		}
+	}
+	if !sawSecond {
+		t.Fatalf("after reload expected a 'second' reply; got %+v", fs.sent)
+	}
+}
+
+func TestManagerUnloadStopsDelivery(t *testing.T) {
+	fs := &fakeSender{}
+	bus := events.NewEventBus()
+	m := NewManager(bus, "testdata", fs.send)
+	_ = m.LoadAll()
+	m.unload(extension.ID("greeter"))
+	if _, ok := m.registry().Get(extension.ID("greeter")); ok {
+		t.Fatalf("greeter should be gone after unload")
+	}
+	bus.EmitSync(msgEvent(1, "#c", "bob", "!hello", ""))
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	for _, s := range fs.sent {
+		if s.message == "Hi bob" {
+			t.Fatalf("greeter still delivered after unload")
+		}
+	}
+}
+
 func TestScaffoldModuleWritesGoMod(t *testing.T) {
 	dir := t.TempDir()
 	m := NewManager(events.NewEventBus(), dir, func(int64, string, string) error { return nil })

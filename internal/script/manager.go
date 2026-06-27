@@ -116,6 +116,9 @@ func (m *Manager) loadDir(dir string) {
 	if err != nil {
 		ext.Status = extension.StatusError
 		ext.Err = err.Error()
+		m.mu.Lock()
+		delete(m.scripts, id) // a prior (working) version must not keep running
+		m.mu.Unlock()
 		m.reg.Register(ext, m, nil) // registered (visible) but no subscriptions
 		return
 	}
@@ -186,6 +189,19 @@ func (m *Manager) buildTextEvent(ev events.Event) (cascade.TextEvent, bool) {
 
 func isChannel(s string) bool {
 	return len(s) > 0 && (s[0] == '#' || s[0] == '&')
+}
+
+// reload re-loads the script directory (used for hot reload + manual reload).
+// loadDir already replaces the registry entry and scripts map slot, so reload
+// is just a re-load by directory.
+func (m *Manager) reload(dir string) { m.loadDir(dir) }
+
+// unload removes a script entirely (used when its directory is deleted).
+func (m *Manager) unload(id extension.ID) {
+	m.mu.Lock()
+	delete(m.scripts, id)
+	m.mu.Unlock()
+	m.reg.Remove(id)
 }
 
 // List returns a snapshot of all registered scripts.

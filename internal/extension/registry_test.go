@@ -65,6 +65,19 @@ func TestRegistryRecipientsFiltersByTypeAndEnabled(t *testing.T) {
 	}
 }
 
+func TestRegistryRemove(t *testing.T) {
+	r := NewRegistry()
+	r.Register(&Extension{ID: "x", Enabled: true, Status: StatusLoaded}, nopHost{}, []string{"a"})
+	r.Remove("x")
+	if _, ok := r.Get("x"); ok {
+		t.Fatalf("Get after Remove should be false")
+	}
+	if rc := r.recipients("a"); len(rc) != 0 {
+		t.Fatalf("recipients after Remove = %v; want empty", rc)
+	}
+	r.Remove("x") // no-op, must not panic
+}
+
 func TestRegistryRegisterReplacesEntry(t *testing.T) {
 	r := NewRegistry()
 	ext := &Extension{ID: "x", Enabled: true, Status: StatusLoaded}
