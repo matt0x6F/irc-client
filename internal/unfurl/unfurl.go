@@ -102,44 +102,18 @@ func fetchBounded(ctx context.Context, c *http.Client, rawURL, wantType string, 
 }
 
 func fetchImage(ctx context.Context, c *http.Client, imgURL string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, imgURL, nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("User-Agent", "Cascade-Chat-LinkPreview/1.0")
-	req.Header.Set("Accept-Language", "en")
-	req.Header.Set("DNT", "1")
-
-	resp, err := c.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("unfurl: image status %d", resp.StatusCode)
-	}
-	// Validate the server's declared content-type first — reject anything that
-	// doesn't claim to be an image.
-	serverCT := strings.ToLower(resp.Header.Get("Content-Type"))
-	if !strings.HasPrefix(serverCT, "image/") {
-		return "", fmt.Errorf("unfurl: unexpected image content-type %q", serverCT)
-	}
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxImgBytes))
+	// fetchBounded enforces status==200 and server Content-Type prefix "image/".
+	body, _, err := fetchBounded(ctx, c, imgURL, "image/", maxImgBytes)
 	if err != nil {
 		return "", err
 	}
 
-	// Re-derive mime from magic bytes (http.DetectContentType needs ≥512 bytes
-	// for a confident match). When detection produces a recognised image type,
-	// use it; otherwise fall back to the already-validated server header so that
-	// small test payloads (e.g. 4-byte PNG magic) still produce a correct URI.
+	// DetectContentType is the sole authority for the data-URI mime type.
+	// We never echo the server-declared Content-Type into the URI, so a lying
+	// server cannot inject an arbitrary mime type.
 	mime := http.DetectContentType(body)
 	if !strings.HasPrefix(mime, "image/") {
-		// DetectContentType wasn't confident — use the server-declared type, which
-		// we already verified starts with "image/".
-		mime = serverCT
+		return "", fmt.Errorf("unfurl: payload is not an image (%s)", mime)
 	}
 	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(body), nil
 }
