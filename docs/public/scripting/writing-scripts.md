@@ -64,17 +64,24 @@ Cascade **never** delivers your own messages back to you — `OnText` and `OnNot
 
 ## Reading and replying to messages
 
-Every `TextEvent` and `NoticeEvent` carries the same core fields and helpers:
+Both `TextEvent` and `NoticeEvent` carry the same core fields and share two methods:
 
 | Field / method | What it gives you |
 |---|---|
 | `e.Nick` | The sender's nick |
 | `e.Channel` | The channel name (or your own nick if it's a DM) |
 | `e.Message` | The full message text |
-| `e.HasPrefix("!cmd")` | `true` if the message starts with `!cmd` (case-sensitive) |
-| `e.Arg(n)` | The nth whitespace-separated word of the message (1-based). Returns `""` if out of range. |
 | `e.IsDM()` | `true` if the message was sent directly to you, not a channel |
 | `e.Reply(text)` | Send `text` back to the channel, or to the sender if it's a DM |
+
+`TextEvent` also provides two convenience helpers that `NoticeEvent` does **not** have:
+
+| Method | What it gives you |
+|---|---|
+| `e.HasPrefix("!cmd")` | `true` if the message starts with `!cmd` (case-sensitive) |
+| `e.Arg(n)` | The nth whitespace-separated word of the message (1-based). Returns `""` if out of range. |
+
+Calling `e.HasPrefix(...)` or `e.Arg(...)` inside an `OnNotice` handler will produce a load-time error. If you need prefix matching in a notice handler, compare `e.Message` directly using string operations — for example `e.Message[:5] == "!cmd "` — since there is no `strings` package in the sandbox.
 
 `e.Arg(1)` is the first word of the message — typically the command name. Here is a complete script that uses it:
 
