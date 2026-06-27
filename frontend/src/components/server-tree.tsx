@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { main, storage } from '../../wailsjs/go/models';
-import { GetChannels, GetJoinedChannels, GetOpenChannels, GetServers, LeaveChannel, ToggleChannelAutoJoin, ToggleNetworkAutoConnect, SetChannelOpen, GetPrivateMessageConversations, SendCommand, SetPrivateMessageOpen, ClearPaneFocus } from '../../wailsjs/go/main/App';
+import { GetChannels, GetJoinedChannels, GetOpenChannels, GetServers, LeaveChannel, CloseChannel, ToggleChannelAutoJoin, ToggleNetworkAutoConnect, SetChannelOpen, GetPrivateMessageConversations, SendCommand, SetPrivateMessageOpen, ClearPaneFocus } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import { useUIStore } from '../stores/ui';
 import { useNetworkStore } from '../stores/network';
+import { usePreferencesStore } from '../stores/preferences';
 import { dmPresenceState } from '../lib/presence';
 import markUrl from '../assets/brand/cascade-mark.svg';
 import { Terminal } from 'lucide-react';
@@ -329,6 +330,51 @@ export function ServerTree({
     });
     return () => unsubscribe();
   }, [expandedServers]);
+
+  const refreshChannelList = async (serverId: number) => {
+    const channelList = await GetOpenChannels(serverId);
+    if (channelList && Array.isArray(channelList)) {
+      setChannels((prev) => ({ ...prev, [serverId]: channelList.map((c: Channel) => c.name) }));
+      const channelMap: Record<string, Channel> = {};
+      channelList.forEach((c: Channel) => { channelMap[c.name] = c; });
+      setChannelData((prev) => ({ ...prev, [serverId]: channelMap }));
+    } else {
+      setChannels((prev) => ({ ...prev, [serverId]: [] }));
+    }
+  };
+
+  // Close = hide the buffer pane, stay joined on the server.
+  const handleCloseChannel = async (serverId: number, channelName: string) => {
+    try {
+      await CloseChannel(serverId, channelName);
+      await refreshChannelList(serverId);
+      if (selectedServer === serverId && selectedChannel === channelName) {
+        onSelectChannel(serverId, 'status');
+      }
+    } catch (error) {
+      console.error('Failed to close channel:', error);
+      alert(`Failed to close channel: ${error}`);
+    }
+    setContextMenu({ x: 0, y: 0, type: null });
+  };
+
+  // Leave = send a real PART. If the preference is on, also close the buffer.
+  const handleLeaveChannel = async (serverId: number, channelName: string) => {
+    try {
+      await LeaveChannel(serverId, channelName);
+      if (usePreferencesStore.getState().closeBufferOnLeave) {
+        await CloseChannel(serverId, channelName);
+      }
+      await refreshChannelList(serverId);
+      if (selectedServer === serverId && selectedChannel === channelName) {
+        onSelectChannel(serverId, 'status');
+      }
+    } catch (error) {
+      console.error('Failed to leave channel:', error);
+      alert(`Failed to leave channel: ${error}`);
+    }
+    setContextMenu({ x: 0, y: 0, type: null });
+  };
 
   return (
     <div data-testid="server-tree" className="h-full flex flex-col relative bg-card/30">
@@ -706,147 +752,49 @@ export function ServerTree({
                   ? 'Disable Auto-Join'
                   : 'Enable Auto-Join'}
               </button>
-              {contextMenuIsJoined ? (
+              {contextMenuIsJoined && (
                 <button
                   className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
                   style={{ transition: 'var(--transition-base)' }}
+                  onClick={() => {
+                    if (contextMenu.serverId && contextMenu.channel) {
+                      handleLeaveChannel(contextMenu.serverId, contextMenu.channel);
+                    }
+                  }}
+                >
+                  Leave Channel
+                </button>
+              )}
+              <button
+                className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground"
+                onClick={() => {
+                  if (contextMenu.serverId && contextMenu.channel) {
+                    handleCloseChannel(contextMenu.serverId, contextMenu.channel);
+                  }
+                }}
+              >
+                Close Channel
+              </button>
+              {!contextMenuIsJoined && (
+                <button
+                  className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground"
                   onClick={async () => {
                     if (contextMenu.serverId && contextMenu.channel) {
-                      const serverId = contextMenu.serverId; // Capture for TypeScript
-                      const channelName = contextMenu.channel; // Capture for TypeScript
+                      const serverId = contextMenu.serverId;
+                      const channelName = contextMenu.channel;
                       try {
-                        await LeaveChannel(serverId, channelName);
-                        // Manually refresh channels after leaving - try multiple times to ensure it works
-                        const refreshAfterLeave = (attempt = 1) => {
-                          GetOpenChannels(serverId).then(channelList => {
-                            console.log(`[ServerTree] Manually refreshed after LeaveChannel (attempt ${attempt}):`, channelList?.map((c: Channel) => c.name), 'count:', channelList?.length);
-                            if (channelList && Array.isArray(channelList)) {
-                              setChannels(prev => ({
-                                ...prev,
-                                [serverId]: channelList.map((c: Channel) => c.name),
-                              }));
-                              const channelMap: Record<string, Channel> = {};
-                              channelList.forEach((c: Channel) => {
-                                channelMap[c.name] = c;
-                              });
-                              setChannelData(prev => ({
-                                ...prev,
-                                [serverId]: channelMap,
-                              }));
-                              
-                              // If channel is still in list and this is first attempt, retry
-                              const channelStillThere = channelList.some((c: Channel) => c.name === channelName);
-                              if (channelStillThere && attempt < 3) {
-                                console.log('[ServerTree] Channel still in list, retrying refresh...');
-                                setTimeout(() => refreshAfterLeave(attempt + 1), 200);
-                              }
-                            } else {
-                              setChannels(prev => ({
-                                ...prev,
-                                [serverId]: [],
-                              }));
-                            }
-                          }).catch(err => {
-                            console.error(`[ServerTree] Failed to manually refresh after leave (attempt ${attempt}):`, err);
-                            if (attempt < 3) {
-                              setTimeout(() => refreshAfterLeave(attempt + 1), 200);
-                            }
-                          });
-                        };
-                        
-                        // Try immediately, then retry a couple times
-                        setTimeout(() => refreshAfterLeave(1), 100);
-                        setTimeout(() => refreshAfterLeave(2), 300);
-                        setTimeout(() => refreshAfterLeave(3), 500);
-                        // If we left the currently selected channel, switch to status
-                        if (selectedServer === serverId && selectedChannel === channelName) {
-                          onSelectChannel(serverId, 'status');
-                        }
+                        await SendCommand(serverId, `/join ${channelName}`);
+                        await refreshChannelList(serverId);
                       } catch (error) {
-                        console.error('Failed to leave channel:', error);
-                        alert(`Failed to leave channel: ${error}`);
+                        console.error('Failed to join channel:', error);
+                        alert(`Failed to join channel: ${error}`);
                       }
                     }
                     setContextMenu({ x: 0, y: 0, type: null });
                   }}
                 >
-                  Leave Channel
+                  Join Channel
                 </button>
-              ) : (
-                <>
-                  <button
-                    className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground"
-                    onClick={async () => {
-                      if (contextMenu.serverId && contextMenu.channel) {
-                        const serverId = contextMenu.serverId;
-                        const channelName = contextMenu.channel;
-                        try {
-                          await LeaveChannel(serverId, channelName);
-                          // Refresh channels after closing
-                          const channelList = await GetOpenChannels(serverId);
-                          if (channelList && Array.isArray(channelList)) {
-                            setChannels(prev => ({
-                              ...prev,
-                              [serverId]: channelList.map((c: Channel) => c.name),
-                            }));
-                            const channelMap: Record<string, Channel> = {};
-                            channelList.forEach((c: Channel) => {
-                              channelMap[c.name] = c;
-                            });
-                            setChannelData(prev => ({
-                              ...prev,
-                              [serverId]: channelMap,
-                            }));
-                          }
-                          // If we closed the currently selected channel, switch to status
-                          if (selectedServer === serverId && selectedChannel === channelName) {
-                            onSelectChannel(serverId, 'status');
-                          }
-                        } catch (error) {
-                          console.error('Failed to close channel:', error);
-                          alert(`Failed to close channel: ${error}`);
-                        }
-                      }
-                      setContextMenu({ x: 0, y: 0, type: null });
-                    }}
-                  >
-                    Close Channel
-                  </button>
-                  <button
-                    className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground"
-                    onClick={async () => {
-                      if (contextMenu.serverId && contextMenu.channel) {
-                        const serverId = contextMenu.serverId;
-                        const channelName = contextMenu.channel;
-                        try {
-                          await SendCommand(serverId, `/join ${channelName}`);
-                          // Refresh channels after joining
-                          const channelList = await GetOpenChannels(serverId);
-                          if (channelList && Array.isArray(channelList)) {
-                            setChannels(prev => ({
-                              ...prev,
-                              [serverId]: channelList.map((c: Channel) => c.name),
-                            }));
-                            const channelMap: Record<string, Channel> = {};
-                            channelList.forEach((c: Channel) => {
-                              channelMap[c.name] = c;
-                            });
-                            setChannelData(prev => ({
-                              ...prev,
-                              [serverId]: channelMap,
-                            }));
-                          }
-                        } catch (error) {
-                          console.error('Failed to join channel:', error);
-                          alert(`Failed to join channel: ${error}`);
-                        }
-                      }
-                      setContextMenu({ x: 0, y: 0, type: null });
-                    }}
-                  >
-                    Join Channel
-                  </button>
-                </>
               )}
             </>
           )}

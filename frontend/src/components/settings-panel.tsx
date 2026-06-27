@@ -121,6 +121,9 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
   // Help display mode: show /help output as a dialog or in the buffer
   const helpDisplayMode = usePreferencesStore((s) => s.helpDisplayMode);
   const setHelpDisplayMode = usePreferencesStore((s) => s.setHelpDisplayMode);
+  // Close buffer on leave: also remove buffer from sidebar when parting a channel
+  const closeBufferOnLeave = usePreferencesStore((s) => s.closeBufferOnLeave);
+  const setCloseBufferOnLeave = usePreferencesStore((s) => s.setCloseBufferOnLeave);
   const [pluginLoading, setPluginLoading] = useState<Set<string>>(new Set());
   const [expandedPlugins, setExpandedPlugins] = useState<Set<string>>(new Set());
   const [formData, setFormData] = useState<main.NetworkConfig>(main.NetworkConfig.createFrom({
@@ -1303,6 +1306,17 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
                 </label>
                 <p className="text-xs text-muted-foreground mt-2">
                   Choose whether /help opens a dialog or prints directly into the current buffer.
+                </p>
+              </div>
+
+              {/* Close buffer on leave */}
+              <div className="border border-border rounded-lg p-4 bg-card/50 shadow-[var(--shadow-sm)]">
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-sm font-medium">Close the channel buffer when leaving a channel</span>
+                  <Toggle checked={closeBufferOnLeave} onChange={setCloseBufferOnLeave} />
+                </div>
+                <p className="text-xs text-muted-foreground mt-2">
+                  When you choose "Leave Channel", also remove its buffer from the sidebar. Turn off to part the channel but keep the buffer open for scrollback.
                 </p>
               </div>
 
