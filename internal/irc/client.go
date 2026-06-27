@@ -1184,6 +1184,23 @@ func (c *IRCClient) handlePrivmsg(e ircmsg.Message) {
 					MsgID:       c.getMsgID(e),
 				}
 				c.storage.WriteMessageSync(msg)
+				c.eventBus.Emit(events.Event{
+					Type: EventMessageReceived,
+					Data: map[string]interface{}{
+						"network":     c.network.Address,
+						"networkId":   c.networkID,
+						"networkName": c.network.Name,
+						"channel":     channel,
+						"user":        user,
+						"message":     ctcpArgs,
+						"account":     c.accountFor(user),
+						"msgid":       c.getMsgID(e),
+						"messageUnix": c.getMessageTime(e).Unix(),
+						"isAction":    true,
+					},
+					Timestamp: time.Now(),
+					Source:    events.EventSourceIRC,
+				})
 			} else {
 				// Other CTCP requests - send response
 				c.handleCTCPRequest(user, ctcpCommand, ctcpArgs)

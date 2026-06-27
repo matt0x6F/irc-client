@@ -39,6 +39,32 @@ func newPrivmsgTestClient(t *testing.T) *IRCClient {
 	return c
 }
 
+func TestActionEmitsMessageReceived(t *testing.T) {
+	c := newPrivmsgTestClient(t)
+	got := make(chan events.Event, 1)
+	c.eventBus.Subscribe(EventMessageReceived, capturingSub{got: got})
+
+	// CTCP ACTION: body is \x01ACTION waves\x01
+	line := ":alittlefang!u@h PRIVMSG #chan :\x01ACTION waves at matt0x6f\x01"
+	msg, err := ircmsg.ParseLine(line)
+	if err != nil {
+		t.Fatalf("ParseLine: %v", err)
+	}
+	c.handlePrivmsg(msg)
+
+	select {
+	case ev := <-got:
+		if ev.Data["isAction"] != true {
+			t.Fatalf("isAction = %v; want true", ev.Data["isAction"])
+		}
+		if ev.Data["message"] != "waves at matt0x6f" {
+			t.Fatalf("message = %q; want %q", ev.Data["message"], "waves at matt0x6f")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("action did not emit message.received")
+	}
+}
+
 func TestPrivmsgEmitsContextFields(t *testing.T) {
 	c := newPrivmsgTestClient(t)
 	// Roster knows alittlefang's account.
