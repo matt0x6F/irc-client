@@ -1578,6 +1578,14 @@ func (c *IRCClient) setupHandlers() {
 	// the requested channel's buffer so it doesn't linger as a phantom membership.
 	c.conn.AddCallback("470", c.handleForwardedJoin)
 
+	// Standard JOIN-failure numerics: close the phantom channel and explain why,
+	// reusing the 470 forwarding pattern. Protocol-standard, no services logic.
+	c.conn.AddCallback("471", c.handleJoinError) // ERR_CHANNELISFULL
+	c.conn.AddCallback("473", c.handleJoinError) // ERR_INVITEONLYCHAN
+	c.conn.AddCallback("474", c.handleJoinError) // ERR_BANNEDFROMCHAN
+	c.conn.AddCallback("475", c.handleJoinError) // ERR_BADCHANNELKEY
+	c.conn.AddCallback("477", c.handleJoinError) // ERR_NEEDREGGEDNICK
+
 	// User quit
 	c.conn.AddCallback("QUIT", func(e ircmsg.Message) {
 		user := e.Nick()

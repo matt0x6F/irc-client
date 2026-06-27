@@ -3,7 +3,9 @@ package irc
 import (
 	"time"
 
+	"github.com/ergochat/irc-go/ircmsg"
 	"github.com/matt0x6f/irc-client/internal/events"
+	"github.com/matt0x6f/irc-client/internal/logger"
 	"github.com/matt0x6f/irc-client/internal/storage"
 )
 
@@ -109,4 +111,62 @@ func (c *IRCClient) abortAuth() {
 	c.mu.Lock()
 	c.connected = false
 	c.mu.Unlock()
+}
+
+// joinErrorReasons maps the standard join-failure numerics to a short,
+// user-facing explanation. These are protocol-standard numerics — no services
+// or NOTICE-text assumptions.
+var joinErrorReasons = map[string]string{
+	"471": "the channel is full (+l)",
+	"473": "the channel is invite-only (+i)",
+	"474": "you are banned from the channel",
+	"475": "the channel key is wrong (+k)",
+	"477": "the channel requires a registered, identified nick (+r) — identify and rejoin",
+}
+
+// handleJoinError gives feedback for a JOIN that the server rejected, mirroring
+// handleForwardedJoin (470): close the phantom channel buffer so the sidebar
+// reflects real membership, and write a status line explaining why. The channel
+// is e.Params[1]; the server's own reason text is the trailing param.
+func (c *IRCClient) handleJoinError(e ircmsg.Message) {
+	if len(e.Params) < 2 {
+		return
+	}
+	channel := e.Params[1]
+	reason := joinErrorReasons[e.Command]
+	if reason == "" {
+		reason = "the server rejected the join"
+	}
+	serverText := ""
+	if len(e.Params) >= 3 {
+		serverText = e.Params[len(e.Params)-1]
+	}
+
+	if ch, err := c.storage.GetChannelByName(c.networkID, channel); err == nil {
+		c.storage.UpdateChannelIsOpen(ch.ID, false)
+		c.eventBus.Emit(events.Event{
+			Type: EventChannelsChanged,
+			Data: map[string]interface{}{
+				"network":   c.network.Address,
+				"networkId": c.networkID,
+			},
+			Timestamp: time.Now(),
+			Source:    events.EventSourceIRC,
+		})
+	}
+
+	msg := "Couldn't join " + channel + ": " + reason + "."
+	if serverText != "" {
+		msg += " (" + serverText + ")"
+	}
+	if err := c.storage.WriteMessageSync(storage.Message{
+		NetworkID:   c.networkID,
+		ChannelID:   nil,
+		User:        "*",
+		Message:     msg,
+		MessageType: "status",
+		Timestamp:   time.Now(),
+	}); err != nil {
+		logger.Log.Debug().Err(err).Msg("Failed to store join-error status message")
+	}
 }
