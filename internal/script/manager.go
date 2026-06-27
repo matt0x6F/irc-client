@@ -193,8 +193,7 @@ func (m *Manager) dispatch(id extension.ID, ev events.Event) (err error) {
 
 // disableScript is the watchdog's disable callback: stop delivery and record why.
 func (m *Manager) disableScript(id extension.ID, reason string) {
-	m.reg.SetEnabled(id, false)
-	m.reg.SetStatus(id, extension.StatusRunaway, reason)
+	m.reg.DisableAsRunaway(id, reason)
 	logger.Log.Warn().Str("script", string(id)).Str("reason", reason).Msg("script auto-disabled by watchdog")
 }
 

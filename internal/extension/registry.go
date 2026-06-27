@@ -88,6 +88,19 @@ func (r *Registry) SetStatus(id ID, status Status, errMsg string) {
 	}
 }
 
+// DisableAsRunaway disables an extension and marks it StatusRunaway with a
+// reason, atomically (one lock). Used by the watchdog's auto-disable so a reader
+// never observes the transient StatusDisabled state between two calls.
+func (r *Registry) DisableAsRunaway(id ID, reason string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if e, ok := r.entries[id]; ok {
+		e.ext.Enabled = false
+		e.ext.Status = StatusRunaway
+		e.ext.Err = reason
+	}
+}
+
 // Remove deletes an extension from the registry. A subsequent recipients() will
 // not include it. No-op if absent.
 func (r *Registry) Remove(id ID) {
