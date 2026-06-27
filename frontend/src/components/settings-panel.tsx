@@ -560,36 +560,127 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
     }
   };
 
-  const renderContent = () => {
-    switch (section) {
-      case 'networks':
-        return (
-          <div className="mb-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-md font-semibold">IRC Networks</h3>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  handleAdd();
-                }}
-                className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-accent transition-all shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)] disabled:opacity-50 disabled:cursor-not-allowed"
-                style={{ transition: 'var(--transition-base)' }}
-                disabled={showAddForm || editingNetwork !== null}
-                data-testid="add-network-button"
-              >
-                + Add Network
-              </button>
-            </div>
+  const renderNetworkList = () => (
+    <>
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-md font-semibold">IRC networks</h3>
+        <button
+          type="button"
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleAdd(); }}
+          className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-accent transition-all shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)]"
+          style={{ transition: 'var(--transition-base)' }}
+          data-testid="add-network-button"
+        >
+          + Add network
+        </button>
+      </div>
+      <div data-testid="network-list">
+        {networks.length === 0 ? (
+          <div className="text-center text-muted-foreground py-8">
+            No networks configured. Click "Add Network" to get started.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {networks.map((network) => {
+              const isConnected = connectionStatus[network.id] || false;
+              const isEditing = editingNetwork?.id === network.id;
 
-            {/* Add/Edit Form */}
-            {(showAddForm || editingNetwork) && (
-              <div className="mb-4 p-5 border border-border rounded-lg bg-card/50 shadow-[var(--shadow-sm)]">
-                <h4 className="font-semibold mb-4 text-lg">
-                  {editingNetwork ? 'Edit Network' : 'Add Network'}
-                </h4>
-                <form onSubmit={handleSave} className="space-y-4">
+              return (
+                <div
+                  key={network.id}
+                  className={`border border-border rounded-lg p-4 shadow-[var(--shadow-sm)] transition-all ${
+                    isEditing ? 'bg-primary/10 border-primary' : 'hover:shadow-[var(--shadow-md)]'
+                  }`}
+                  style={{ transition: 'var(--transition-base)' }}
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-2">
+                        <h4 className="font-semibold">{network.name}</h4>
+                        <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full ${
+                          isConnected
+                            ? 'bg-green-500/15 text-green-700 dark:text-green-400'
+                            : 'bg-muted text-muted-foreground'
+                        }`} title={isConnected ? 'Connected' : 'Disconnected'}>
+                          <span
+                            className="w-1.5 h-1.5 rounded-full"
+                            style={{ background: isConnected ? 'var(--presence-online)' : 'var(--presence-offline)' }}
+                          />
+                          {isConnected ? 'Connected' : 'Disconnected'}
+                        </span>
+                      </div>
+                      <div className="text-sm text-muted-foreground space-y-1">
+                        {networkServers[network.id] && networkServers[network.id].length > 0 ? (
+                          <div className="space-y-1">
+                            {networkServers[network.id].map((srv, idx) => (
+                              <div key={idx} className="flex flex-wrap items-center gap-2">
+                                <span>{srv.address}:{srv.port} {srv.tls && '(TLS)'} {idx === 0 && '(Primary)'}</span>
+                                <StsIndicator policy={stsPolicies[srv.address]} onClear={() => handleClearSts(srv.address)} />
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span>{network.address}:{network.port} {network.tls && '(TLS)'}</span>
+                            <StsIndicator policy={stsPolicies[network.address]} onClear={() => handleClearSts(network.address)} />
+                          </div>
+                        )}
+                        <div>Nickname: {network.nickname}</div>
+                        {network.username && <div>Username: {network.username}</div>}
+                        {network.realname && <div>Realname: {network.realname}</div>}
+                      </div>
+                    </div>
+                    <div className="flex gap-2 ml-4">
+                      {isConnected ? (
+                        <button
+                          onClick={() => handleDisconnect(network.id)}
+                          className="px-3 py-1.5 text-xs border border-border rounded-lg hover:bg-destructive hover:text-destructive-foreground transition-all shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)]"
+                          style={{ transition: 'var(--transition-base)' }}
+                        >
+                          Disconnect
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleConnect(network)}
+                          className="px-3 py-1.5 text-xs border border-border rounded-lg hover:bg-primary hover:text-primary-foreground transition-all shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)]"
+                          style={{ transition: 'var(--transition-base)' }}
+                          data-testid="network-connect-button"
+                        >
+                          Connect
+                        </button>
+                      )}
+                      <button
+                        onClick={() => handleEdit(network)}
+                        className="px-3 py-1.5 text-xs border border-border rounded-lg hover:bg-accent transition-all shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)]"
+                        style={{ transition: 'var(--transition-base)' }}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => handleDelete(network.id)}
+                        className="px-3 py-1.5 text-xs border border-border rounded-lg hover:bg-destructive hover:text-destructive-foreground transition-all shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)] disabled:opacity-50 disabled:cursor-not-allowed"
+                        style={{ transition: 'var(--transition-base)' }}
+                        disabled={isConnected || isEditing}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </>
+  );
+
+  const renderNetworkEditor = () => (
+    <div data-testid="network-editor" className="p-5 border border-border rounded-lg bg-card/50 shadow-[var(--shadow-sm)]">
+      <h4 className="font-semibold mb-4 text-lg">
+        {editingNetwork ? 'Edit Network' : 'Add Network'}
+      </h4>
+      <form onSubmit={handleSave} className="space-y-4">
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-sm font-medium mb-1.5">Name</label>
@@ -987,109 +1078,25 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
                     </button>
                   </div>
                 </form>
-              </div>
-            )}
+    </div>
+  );
 
-            {/* Network List */}
-            {networks.length === 0 ? (
-              <div className="text-center text-muted-foreground py-8">
-                No networks configured. Click "Add Network" to get started.
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {networks.map((network) => {
-                  const isConnected = connectionStatus[network.id] || false;
-                  const isEditing = editingNetwork?.id === network.id;
-                  
-                  return (
-                    <div
-                      key={network.id}
-                      className={`border border-border rounded-lg p-4 shadow-[var(--shadow-sm)] transition-all ${
-                        isEditing ? 'bg-primary/10 border-primary' : 'hover:shadow-[var(--shadow-md)]'
-                      }`}
-                      style={{ transition: 'var(--transition-base)' }}
-                    >
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-2">
-                            <h4 className="font-semibold">{network.name}</h4>
-                            <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full ${
-                              isConnected
-                                ? 'bg-green-500/15 text-green-700 dark:text-green-400'
-                                : 'bg-muted text-muted-foreground'
-                            }`} title={isConnected ? 'Connected' : 'Disconnected'}>
-                              <span
-                                className="w-1.5 h-1.5 rounded-full"
-                                style={{ background: isConnected ? 'var(--presence-online)' : 'var(--presence-offline)' }}
-                              />
-                              {isConnected ? 'Connected' : 'Disconnected'}
-                            </span>
-                          </div>
-                          <div className="text-sm text-muted-foreground space-y-1">
-                            {networkServers[network.id] && networkServers[network.id].length > 0 ? (
-                              <div className="space-y-1">
-                                {networkServers[network.id].map((srv, idx) => (
-                                  <div key={idx} className="flex flex-wrap items-center gap-2">
-                                    <span>{srv.address}:{srv.port} {srv.tls && '(TLS)'} {idx === 0 && '(Primary)'}</span>
-                                    <StsIndicator policy={stsPolicies[srv.address]} onClear={() => handleClearSts(srv.address)} />
-                                  </div>
-                                ))}
-                              </div>
-                            ) : (
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span>{network.address}:{network.port} {network.tls && '(TLS)'}</span>
-                                <StsIndicator policy={stsPolicies[network.address]} onClear={() => handleClearSts(network.address)} />
-                              </div>
-                            )}
-                            <div>Nickname: {network.nickname}</div>
-                            {network.username && <div>Username: {network.username}</div>}
-                            {network.realname && <div>Realname: {network.realname}</div>}
-                          </div>
-                        </div>
-                        <div className="flex gap-2 ml-4">
-                          {isConnected ? (
-                            <button
-                              onClick={() => handleDisconnect(network.id)}
-                              className="px-3 py-1.5 text-xs border border-border rounded-lg hover:bg-destructive hover:text-destructive-foreground transition-all shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)]"
-                              style={{ transition: 'var(--transition-base)' }}
-                            >
-                              Disconnect
-                            </button>
-                          ) : (
-                            <button
-                              onClick={() => handleConnect(network)}
-                              className="px-3 py-1.5 text-xs border border-border rounded-lg hover:bg-primary hover:text-primary-foreground transition-all shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)]"
-                              style={{ transition: 'var(--transition-base)' }}
-                              data-testid="network-connect-button"
-                            >
-                              Connect
-                            </button>
-                          )}
-                          <button
-                            onClick={() => handleEdit(network)}
-                            className="px-3 py-1.5 text-xs border border-border rounded-lg hover:bg-accent transition-all shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)] disabled:opacity-50 disabled:cursor-not-allowed"
-                            style={{ transition: 'var(--transition-base)' }}
-                            disabled={showAddForm}
-                          >
-                            Edit
-                          </button>
-                          <button
-                            onClick={() => handleDelete(network.id)}
-                            className="px-3 py-1.5 text-xs border border-border rounded-lg hover:bg-destructive hover:text-destructive-foreground transition-all shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)] disabled:opacity-50 disabled:cursor-not-allowed"
-                            style={{ transition: 'var(--transition-base)' }}
-                            disabled={isConnected || isEditing}
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+  const renderContent = () => {
+    switch (section) {
+      case 'networks': {
+        const inEditor = showAddForm || editingNetwork !== null;
+        return (
+          <div className="mb-6">
+            <div
+              key={inEditor ? 'editor' : 'list'}
+              data-testid="network-view"
+              className={inEditor ? 'cc-view-enter-forward' : 'cc-view-enter-back'}
+            >
+              {inEditor ? renderNetworkEditor() : renderNetworkList()}
+            </div>
           </div>
         );
+      }
       case 'plugins':
         return (
           <div className="mb-6">

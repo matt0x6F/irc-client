@@ -309,6 +309,22 @@ button, a, input, select, textarea {
     animation: pin-flash 1.6s ease-out;
 }
 
+/* Settings master-detail view transition: slide the incoming view in.
+   Forward = entering a detail (editor) view; back = returning to the list. */
+@keyframes cc-view-in-forward {
+    0% { opacity: 0; transform: translateX(12px); }
+    100% { opacity: 1; transform: translateX(0); }
+}
+@keyframes cc-view-in-back {
+    0% { opacity: 0; transform: translateX(-12px); }
+    100% { opacity: 1; transform: translateX(0); }
+}
+.cc-view-enter-forward { animation: cc-view-in-forward 0.18s ease-out; }
+.cc-view-enter-back { animation: cc-view-in-back 0.18s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+    .cc-view-enter-forward, .cc-view-enter-back { animation: none; }
+}
+
 /* Active-pane indicator: a soft left-edge glow instead of a hard border bar.
    Softer in light, fuller in dark (matches the design system's final iteration). */
 .cc-active-pane {

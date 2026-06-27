@@ -20,11 +20,36 @@ import '@testing-library/jest-dom/vitest'
 // full vitest suite with this mock in place.
 vi.mock('@wailsio/runtime', () => {
   const call = () => Promise.resolve(undefined)
-  const passthrough = new Proxy({}, { get: () => (value: unknown) => value })
   return {
     Call: { ByID: call, ByName: call },
     CancellablePromise: Promise,
-    Create: passthrough,
+    // Create must implement Array/Map/Struct properly so model createFrom calls work
+    // correctly when tests exercise component paths that render server lists.
+    Create: {
+      Any: (source: unknown) => source,
+      ByteSlice: (source: unknown) => (source == null ? '' : source),
+      Array: (element: (s: unknown) => unknown) =>
+        (source: unknown[] | null) => {
+          if (source === null) return []
+          for (let i = 0; i < source.length; i++) source[i] = element(source[i])
+          return source
+        },
+      Map: (key: unknown, value: (s: unknown) => unknown) =>
+        (source: Record<string, unknown> | null) => {
+          if (source === null) return {}
+          for (const k in source) source[k] = value(source[k])
+          return source
+        },
+      Nullable: (element: (s: unknown) => unknown) =>
+        (source: unknown) => (source === null ? null : element(source)),
+      Struct: (createField: Record<string, (s: unknown) => unknown>) =>
+        (source: Record<string, unknown>) => {
+          for (const name in createField) {
+            if (name in source) source[name] = createField[name](source[name])
+          }
+          return source
+        },
+    },
     Events: { On: () => () => {}, Off: () => {}, Emit: () => {}, OnMultiple: () => () => {} },
   }
 })
