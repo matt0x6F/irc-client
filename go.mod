@@ -2,11 +2,15 @@ module github.com/matt0x6f/irc-client
 
 go 1.25.0
 
+require github.com/matt0x6f/irc-client/cascade v1.0.0
+
 require (
 	github.com/ergochat/irc-go v0.4.0
+	github.com/fsnotify/fsnotify v1.10.1
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/mattn/go-sqlite3 v1.14.33
 	github.com/rs/zerolog v1.34.0
+	github.com/traefik/yaegi v0.16.1
 	github.com/wailsapp/wails/v3 v3.0.0-alpha2.103
 	github.com/zalando/go-keyring v0.2.6
 	golang.org/x/crypto v0.50.0
@@ -29,5 +33,7 @@ require (
 	golang.org/x/mod v0.35.0 // indirect
 	golang.org/x/sys v0.43.0 // indirect
 )
+
+replace github.com/matt0x6f/irc-client/cascade => ./cascade
 
 // replace github.com/wailsapp/wails/v2 v2.10.2 => /Users/matt/go/pkg/mod

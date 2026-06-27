@@ -14,6 +14,7 @@ import (
 	"github.com/matt0x6f/irc-client/internal/logger"
 	"github.com/matt0x6f/irc-client/internal/notification"
 	"github.com/matt0x6f/irc-client/internal/plugin"
+	"github.com/matt0x6f/irc-client/internal/script"
 	"github.com/matt0x6f/irc-client/internal/security"
 	"github.com/matt0x6f/irc-client/internal/storage"
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -28,6 +29,7 @@ type App struct {
 	eventBus      *events.EventBus
 	commands      *CommandRegistry
 	pluginManager *plugin.Manager
+	scriptMgr     *script.Manager
 	keychain      *security.Keychain
 	notifier      *notification.Notifier
 	// notifyWindow is set once at startup (AttachNotifications) and only read on
@@ -121,6 +123,37 @@ func NewApp() (*App, error) {
 		channelListCache:      make(map[int64]channelListCacheEntry),
 	}
 
+	scriptDir := filepath.Join(baseDir, "scripts")
+	app.scriptMgr = script.NewManager(eventBus, scriptDir, script.Host{
+		Send: app.SendMessage,
+		SelfNick: func(networkID int64) string {
+			nick, _ := app.GetCurrentNick(networkID)
+			return nick
+		},
+		ResolveNetwork: func(name string) (int64, bool) {
+			nets, err := app.GetNetworks()
+			if err != nil {
+				return 0, false
+			}
+			for _, n := range nets {
+				if n.Name == name {
+					return n.ID, true
+				}
+			}
+			return 0, false
+		},
+		LoadDisabled: func() map[string]bool {
+			d, _ := app.storage.DisabledScripts()
+			return d
+		},
+		PersistEnabled: func(id string, enabled bool) {
+			_ = app.storage.SetScriptEnabled(id, enabled)
+		},
+		Notify: func() {
+			app.emit("script-lifecycle", map[string]any{})
+		},
+	})
+
 	pluginMgr.SetBuiltinCommandChecker(func(k string) bool {
 		_, ok := app.commands.Lookup(k)
 		return ok
@@ -200,6 +233,13 @@ func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) 
 		}
 	}()
 
+	if err := a.scriptMgr.LoadAll(); err != nil {
+		logger.Log.Warn().Err(err).Msg("failed to load scripts")
+	}
+	if err := a.scriptMgr.Watch(); err != nil {
+		logger.Log.Warn().Err(err).Msg("failed to start script watcher")
+	}
+
 	logger.Log.Info().Msg("Plugin loading started in background, proceeding to auto-connect setup")
 
 	// Auto-connect networks
@@ -249,6 +289,11 @@ func (a *App) ServiceShutdown() error {
 		// Write disconnect messages before closing anything
 		logger.Log.Info().Msg("Starting disconnect message writing")
 		a.writeShutdownDisconnectMessages()
+
+		// Close script manager watcher
+		if a.scriptMgr != nil {
+			_ = a.scriptMgr.Close()
+		}
 
 		// Close plugin manager
 		if a.pluginManager != nil {

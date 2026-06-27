@@ -3,6 +3,7 @@ import { main, storage } from '../../wailsjs/go/models';
 import { GetNetworks, SaveNetwork, ConnectNetwork, DeleteNetwork, DisconnectNetwork, GetConnectionStatus, GetServers, ListPlugins, EnablePlugin, DisablePlugin, ReloadPlugin, GetBuildInfo, CheckForUpdates, GetLogConfig, SetLogConfig, GetDefaultLogPath, GetSTSPolicies, ClearSTSPolicy, RequestNotificationPermission } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import { PluginConfigForm } from './plugin-config-form';
+import { ScriptsPanel } from './scripts-panel';
 import {
   Select,
   SelectContent,
@@ -14,10 +15,10 @@ import { useThemeStore, ACCENTS, type ThemeMode } from '../stores/theme';
 import { useSettingsStore, type PrefixDisplayMode, type UpdateChannel } from '../stores/settings';
 import { usePreferencesStore } from '../stores/preferences';
 
-export type SettingsSection = 'networks' | 'plugins' | 'display' | 'notifications' | 'advanced' | 'about';
+export type SettingsSection = 'networks' | 'plugins' | 'scripts' | 'display' | 'notifications' | 'advanced' | 'about';
 
 export const isSettingsSection = (v: string): v is SettingsSection =>
-  v === 'networks' || v === 'plugins' || v === 'display' || v === 'notifications' || v === 'advanced' || v === 'about';
+  v === 'networks' || v === 'plugins' || v === 'scripts' || v === 'display' || v === 'notifications' || v === 'advanced' || v === 'about';
 
 interface SettingsPanelProps {
   /** Currently selected pane (controlled by the host window). */
@@ -1181,6 +1182,8 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
             )}
           </div>
         );
+      case 'scripts':
+        return <ScriptsPanel />;
       case 'display':
         return (
           <div className="mb-6">
@@ -1518,6 +1521,7 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
   const navItems: { id: SettingsSection; label: string }[] = [
     { id: 'networks', label: 'Networks' },
     { id: 'plugins', label: 'Plugins' },
+    { id: 'scripts', label: 'Scripts' },
     { id: 'display', label: 'Display' },
     { id: 'notifications', label: 'Notifications' },
     { id: 'advanced', label: 'Advanced' },

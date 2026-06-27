@@ -103,6 +103,11 @@ type PrivateMessageConversation struct {
 	UpdatedAt  sql.NullTime `json:"updated_at"`
 }
 
+type ScriptState struct {
+	ScriptID string `json:"script_id"`
+	Enabled  int64  `json:"enabled"`
+}
+
 type Server struct {
 	ID        int64     `json:"id"`
 	NetworkID int64     `json:"network_id"`

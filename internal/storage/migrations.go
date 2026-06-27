@@ -111,6 +111,11 @@ func Migrate(db *sqlx.DB) error {
 		return fmt.Errorf("monitored nicks migration failed: %w", err)
 	}
 
+	// Handle script state table migration (durable enabled/disabled flag per script)
+	if err := migrateScriptState(db); err != nil {
+		return fmt.Errorf("script state migration failed: %w", err)
+	}
+
 	return nil
 }
 
@@ -838,6 +843,24 @@ func migrateMonitoredNicks(db *sqlx.DB) error {
 func migrateSTSPolicies(db *sqlx.DB) error {
 	if _, err := db.Exec(createSTSPoliciesTable); err != nil {
 		return fmt.Errorf("failed to create sts_policies table: %w", err)
+	}
+	return nil
+}
+
+const createScriptStateTable = `
+CREATE TABLE IF NOT EXISTS script_state (
+    script_id TEXT PRIMARY KEY,
+    enabled   INTEGER NOT NULL DEFAULT 1
+);
+`
+
+// migrateScriptState creates the script_state table if it doesn't exist.
+// It stores the durable enabled/disabled flag for each cascade script; a missing
+// row means enabled (the DEFAULT 1 covers fresh rows), so only explicitly-disabled
+// scripts need a row.
+func migrateScriptState(db *sqlx.DB) error {
+	if _, err := db.Exec(createScriptStateTable); err != nil {
+		return fmt.Errorf("failed to create script_state table: %w", err)
 	}
 	return nil
 }

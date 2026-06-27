@@ -41,7 +41,36 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   DisablePlugin: vi.fn(),
   ReloadPlugin: vi.fn(),
   CheckForUpdates: vi.fn(),
+  GetSTSPolicies: vi.fn().mockResolvedValue([]),
+  ClearSTSPolicy: vi.fn(),
+  RequestNotificationPermission: vi.fn().mockResolvedValue(true),
 }))
+
+// Mock scripts-panel to avoid pulling Wails bindings + scripts store into this test.
+vi.mock('../scripts-panel', () => ({ ScriptsPanel: () => <button>Open scripts folder</button> }))
+
+describe('SettingsPanel Scripts pane', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    getNetworksMock.mockResolvedValue([])
+    listPluginsMock.mockResolvedValue([])
+    getConnectionStatusMock.mockResolvedValue({})
+    getServersMock.mockResolvedValue([])
+    getLogConfigMock.mockResolvedValue({ enabled: false, path: '/tmp/cascade.log', level: 'info' })
+    getDefaultLogPathMock.mockResolvedValue('/tmp/cascade.log')
+    getBuildInfoMock.mockResolvedValue({ version: 'v1.2.3', commit: 'abc1234', buildDate: '2026-06-15T12:00:00Z' })
+  })
+
+  it('renders the Scripts nav item', async () => {
+    render(<SettingsPanel section="networks" onSectionChange={() => {}} />)
+    expect(await screen.findByRole('button', { name: /^Scripts$/i })).toBeInTheDocument()
+  })
+
+  it('renders ScriptsPanel when section is scripts', async () => {
+    render(<SettingsPanel section="scripts" onSectionChange={() => {}} />)
+    expect(await screen.findByRole('button', { name: /open scripts folder/i })).toBeInTheDocument()
+  })
+})
 
 describe('SettingsPanel About pane', () => {
   beforeEach(() => {
