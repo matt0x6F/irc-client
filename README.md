@@ -152,9 +152,15 @@ See [docker/ergo/README.md](docker/ergo/README.md) for more details.
 
 ## Documentation
 
+- [Cascade Chat Docs](https://matt0x6f.github.io/irc-client/) - User & developer guides
 - [Technical Documentation](agents.md) - Architecture, patterns, and workflows
 - [Wails Documentation](https://wails.io/docs)
 - [irc-go Library](https://github.com/ergochat/irc-go)
+
+## Community
+
+Join us on IRC: [#cascade-irc on Libera.Chat](https://web.libera.chat/#cascade-irc)
+(`ircs://irc.libera.chat:6697/#cascade-irc`).
 
 ## License
 
