@@ -15,6 +15,10 @@ import (
 // package (avoids an import cycle; the string is the contract).
 const eventMessageReceived = "message.received"
 
+// cascadeSDKVersion is the cascade SDK module version the scaffolded scripts
+// go.mod requires. Bump this when the app ships against a newer cascade tag.
+const cascadeSDKVersion = "v1.0.0"
+
 // Sender sends a message to target on the given network (e.g. App.SendMessage).
 type Sender func(networkID int64, target, message string) error
 
@@ -51,12 +55,28 @@ func NewManager(bus *events.EventBus, dir string, sender Sender) *Manager {
 	return m
 }
 
+// scaffoldModule writes a go.mod at the scripts-dir root if one does not exist,
+// so an external editor's gopls resolves `import ".../cascade"`. It never
+// overwrites a user-edited go.mod. (Resolution requires the cascade/<ver> tag
+// to be published; pre-release, gopls in the scripts dir cannot fetch it.)
+func (m *Manager) scaffoldModule() error {
+	path := filepath.Join(m.dir, "go.mod")
+	if _, err := os.Stat(path); err == nil {
+		return nil // exists; respect user edits
+	}
+	content := "module cascade-scripts\n\ngo 1.21\n\nrequire github.com/matt0x6f/irc-client/cascade " + cascadeSDKVersion + "\n"
+	return os.WriteFile(path, []byte(content), 0o644)
+}
+
 // LoadAll ensures the scripts dir exists, then loads each immediate subdirectory
 // that contains .go files. Per-script load failures are recorded as errored
 // extensions, never aborting the whole scan.
 func (m *Manager) LoadAll() error {
 	if err := os.MkdirAll(m.dir, 0o755); err != nil {
 		return fmt.Errorf("scripts dir: %w", err)
+	}
+	if err := m.scaffoldModule(); err != nil {
+		return fmt.Errorf("scaffold scripts module: %w", err)
 	}
 	entries, err := os.ReadDir(m.dir)
 	if err != nil {

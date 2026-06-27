@@ -1,6 +1,9 @@
 package script
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -120,5 +123,36 @@ func TestManagerSkipsServerStatusUser(t *testing.T) {
 	defer fs.mu.Unlock()
 	if len(fs.sent) != 0 {
 		t.Fatalf("expected no replies for user=\"*\" status line; got %+v", fs.sent)
+	}
+}
+
+func TestScaffoldModuleWritesGoMod(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManager(events.NewEventBus(), dir, func(int64, string, string) error { return nil })
+	if err := m.LoadAll(); err != nil {
+		t.Fatalf("LoadAll: %v", err)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "go.mod"))
+	if err != nil {
+		t.Fatalf("go.mod not written: %v", err)
+	}
+	s := string(b)
+	if !strings.Contains(s, "module cascade-scripts") ||
+		!strings.Contains(s, "github.com/matt0x6f/irc-client/cascade "+cascadeSDKVersion) {
+		t.Fatalf("go.mod missing module/require:\n%s", s)
+	}
+}
+
+func TestScaffoldModuleDoesNotOverwrite(t *testing.T) {
+	dir := t.TempDir()
+	custom := "module custom\n"
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(custom), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(events.NewEventBus(), dir, func(int64, string, string) error { return nil })
+	_ = m.LoadAll()
+	b, _ := os.ReadFile(filepath.Join(dir, "go.mod"))
+	if string(b) != custom {
+		t.Fatalf("existing go.mod was overwritten: %s", b)
 	}
 }
