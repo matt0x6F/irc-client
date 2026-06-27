@@ -727,3 +727,51 @@ func TestSnapshotReturnsList(t *testing.T) {
 		t.Fatal("Snapshot returned empty slice; expected scripts from testdata")
 	}
 }
+
+func TestManagerNotifiesOnLifecycleTransitions(t *testing.T) {
+	dir := t.TempDir()
+	// A minimal valid script dir: <dir>/greeter/greeter.go exporting OnText.
+	scriptDir := filepath.Join(dir, "greeter")
+	if err := os.MkdirAll(scriptDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := "package main\n\nimport \"github.com/matt0x6f/irc-client/cascade\"\n\nfunc OnText(e cascade.TextEvent) {}\n"
+	if err := os.WriteFile(filepath.Join(scriptDir, "greeter.go"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var notifies int
+	bus := events.NewEventBus()
+	m := NewManager(bus, dir, Host{
+		Notify: func() { notifies++ },
+	})
+	if err := m.LoadAll(); err != nil {
+		t.Fatalf("LoadAll: %v", err)
+	}
+
+	id := extension.ID("greeter")
+	notifies = 0 // ignore any load-time notifies; measure explicit transitions
+
+	m.Disable(id)
+	if notifies == 0 {
+		t.Fatalf("Disable did not notify")
+	}
+	notifies = 0
+
+	m.Enable(id)
+	if notifies == 0 {
+		t.Fatalf("Enable did not notify")
+	}
+	notifies = 0
+
+	m.ReloadByID(id)
+	if notifies == 0 {
+		t.Fatalf("ReloadByID did not notify")
+	}
+	notifies = 0
+
+	m.disableScript(id, "test runaway")
+	if notifies == 0 {
+		t.Fatalf("disableScript (runaway) did not notify")
+	}
+}
