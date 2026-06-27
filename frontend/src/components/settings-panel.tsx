@@ -583,88 +583,63 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
           <div className="space-y-2">
             {networks.map((network) => {
               const isConnected = connectionStatus[network.id] || false;
-              const isEditing = editingNetwork?.id === network.id;
 
               return (
                 <div
                   key={network.id}
-                  className={`border border-border rounded-lg p-4 shadow-[var(--shadow-sm)] transition-all ${
-                    isEditing ? 'bg-primary/10 border-primary' : 'hover:shadow-[var(--shadow-md)]'
-                  }`}
+                  role="button"
+                  tabIndex={0}
+                  data-testid={`network-row-${network.id}`}
+                  onClick={() => handleEdit(network)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleEdit(network); } }}
+                  className="border border-border rounded-lg p-4 shadow-[var(--shadow-sm)] transition-all hover:shadow-[var(--shadow-md)] cursor-pointer flex items-center justify-between gap-4"
                   style={{ transition: 'var(--transition-base)' }}
                 >
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-2">
-                        <h4 className="font-semibold">{network.name}</h4>
-                        <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full ${
-                          isConnected
-                            ? 'bg-green-500/15 text-green-700 dark:text-green-400'
-                            : 'bg-muted text-muted-foreground'
-                        }`} title={isConnected ? 'Connected' : 'Disconnected'}>
-                          <span
-                            className="w-1.5 h-1.5 rounded-full"
-                            style={{ background: isConnected ? 'var(--presence-online)' : 'var(--presence-offline)' }}
-                          />
-                          {isConnected ? 'Connected' : 'Disconnected'}
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <h4 className="font-semibold truncate">{network.name}</h4>
+                      <span
+                        className="w-1.5 h-1.5 rounded-full shrink-0"
+                        title={isConnected ? 'Connected' : 'Disconnected'}
+                        style={{ background: isConnected ? 'var(--presence-online)' : 'var(--presence-offline)' }}
+                      />
+                    </div>
+                    <div className="text-sm text-muted-foreground flex flex-wrap items-center gap-2">
+                      {networkServers[network.id] && networkServers[network.id].length > 0 ? (
+                        <span className="truncate">
+                          {networkServers[network.id][0].address}:{networkServers[network.id][0].port}
+                          {networkServers[network.id][0].tls && ' (TLS)'}
                         </span>
-                      </div>
-                      <div className="text-sm text-muted-foreground space-y-1">
-                        {networkServers[network.id] && networkServers[network.id].length > 0 ? (
-                          <div className="space-y-1">
-                            {networkServers[network.id].map((srv, idx) => (
-                              <div key={idx} className="flex flex-wrap items-center gap-2">
-                                <span>{srv.address}:{srv.port} {srv.tls && '(TLS)'} {idx === 0 && '(Primary)'}</span>
-                                <StsIndicator policy={stsPolicies[srv.address]} onClear={() => handleClearSts(srv.address)} />
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span>{network.address}:{network.port} {network.tls && '(TLS)'}</span>
-                            <StsIndicator policy={stsPolicies[network.address]} onClear={() => handleClearSts(network.address)} />
-                          </div>
-                        )}
-                        <div>Nickname: {network.nickname}</div>
-                        {network.username && <div>Username: {network.username}</div>}
-                        {network.realname && <div>Realname: {network.realname}</div>}
-                      </div>
-                    </div>
-                    <div className="flex gap-2 ml-4">
-                      {isConnected ? (
-                        <button
-                          onClick={() => handleDisconnect(network.id)}
-                          className="px-3 py-1.5 text-xs border border-border rounded-lg hover:bg-destructive hover:text-destructive-foreground transition-all shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)]"
-                          style={{ transition: 'var(--transition-base)' }}
-                        >
-                          Disconnect
-                        </button>
                       ) : (
-                        <button
-                          onClick={() => handleConnect(network)}
-                          className="px-3 py-1.5 text-xs border border-border rounded-lg hover:bg-primary hover:text-primary-foreground transition-all shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)]"
-                          style={{ transition: 'var(--transition-base)' }}
-                          data-testid="network-connect-button"
-                        >
-                          Connect
-                        </button>
+                        <span className="truncate">{network.address}:{network.port} {network.tls && '(TLS)'}</span>
                       )}
-                      <button
-                        onClick={() => handleEdit(network)}
-                        className="px-3 py-1.5 text-xs border border-border rounded-lg hover:bg-accent transition-all shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)]"
-                        style={{ transition: 'var(--transition-base)' }}
-                      >
-                        Edit
-                      </button>
-                      <button
-                        onClick={() => handleDelete(network.id)}
-                        className="px-3 py-1.5 text-xs border border-border rounded-lg hover:bg-destructive hover:text-destructive-foreground transition-all shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)] disabled:opacity-50 disabled:cursor-not-allowed"
-                        style={{ transition: 'var(--transition-base)' }}
-                        disabled={isConnected || isEditing}
-                      >
-                        Delete
-                      </button>
+                      <StsIndicator
+                        policy={stsPolicies[networkServers[network.id]?.[0]?.address ?? network.address]}
+                        onClear={() => handleClearSts(networkServers[network.id]?.[0]?.address ?? network.address)}
+                      />
                     </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0" onClick={(e) => e.stopPropagation()}>
+                    {isConnected ? (
+                      <button
+                        onClick={() => handleDisconnect(network.id)}
+                        data-testid="network-disconnect-button"
+                        className="px-3 py-1.5 text-xs border border-border rounded-lg hover:bg-destructive hover:text-destructive-foreground transition-all shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)]"
+                        style={{ transition: 'var(--transition-base)' }}
+                      >
+                        Disconnect
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handleConnect(network)}
+                        data-testid="network-connect-button"
+                        className="px-3 py-1.5 text-xs border border-border rounded-lg hover:bg-primary hover:text-primary-foreground transition-all shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)]"
+                        style={{ transition: 'var(--transition-base)' }}
+                      >
+                        Connect
+                      </button>
+                    )}
+                    <span className="text-muted-foreground" aria-hidden="true">›</span>
                   </div>
                 </div>
               );

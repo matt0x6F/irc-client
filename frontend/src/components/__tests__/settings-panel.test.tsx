@@ -15,6 +15,7 @@ const {
   getServersMock,
   getLogConfigMock,
   getDefaultLogPathMock,
+  connectNetworkMock,
 } = vi.hoisted(() => ({
   getNetworksMock: vi.fn(),
   listPluginsMock: vi.fn(),
@@ -23,6 +24,7 @@ const {
   getServersMock: vi.fn(),
   getLogConfigMock: vi.fn(),
   getDefaultLogPathMock: vi.fn(),
+  connectNetworkMock: vi.fn(),
 }))
 
 vi.mock('../../../wailsjs/go/main/App', () => ({
@@ -35,7 +37,7 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   GetDefaultLogPath: getDefaultLogPathMock,
   SetLogConfig: vi.fn(),
   SaveNetwork: vi.fn(),
-  ConnectNetwork: vi.fn(),
+  ConnectNetwork: connectNetworkMock,
   DeleteNetwork: vi.fn(),
   DisconnectNetwork: vi.fn(),
   EnablePlugin: vi.fn(),
@@ -85,13 +87,14 @@ describe('SettingsPanel Networks master-detail', () => {
     vi.clearAllMocks()
     getNetworksMock.mockResolvedValue([network])
     listPluginsMock.mockResolvedValue([])
-    getConnectionStatusMock.mockResolvedValue({ 1: false })
+    getConnectionStatusMock.mockResolvedValue(false)
     getServersMock.mockResolvedValue([
       { id: 10, network_id: 1, address: 'irc.ergo.chat', port: 6697, tls: true, order: 0, created_at: '' },
     ])
     getLogConfigMock.mockResolvedValue({ enabled: false, path: '/tmp/c.log', level: 'info' })
     getDefaultLogPathMock.mockResolvedValue('/tmp/c.log')
     getBuildInfoMock.mockResolvedValue({ version: 'v1', commit: 'abc', buildDate: '2026-01-01T00:00:00Z' })
+    connectNetworkMock.mockResolvedValue(undefined)
   })
 
   it('shows the list and hides it once the editor opens', async () => {
@@ -105,6 +108,22 @@ describe('SettingsPanel Networks master-detail', () => {
     // The list view (and its Add button) is gone — not stacked behind the form.
     expect(screen.queryByTestId('add-network-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('network-list')).not.toBeInTheDocument()
+  })
+
+  it('opens the editor when a row is clicked', async () => {
+    render(<SettingsPanel section="networks" onSectionChange={() => {}} />)
+    const row = await screen.findByTestId('network-row-1')
+    fireEvent.click(row)
+    await waitFor(() => expect(screen.getByTestId('network-editor')).toBeInTheDocument())
+  })
+
+  it('connect button does not open the editor (stops propagation)', async () => {
+    render(<SettingsPanel section="networks" onSectionChange={() => {}} />)
+    const connect = await screen.findByTestId('network-connect-button')
+    fireEvent.click(connect)
+    // Still on the list — editor did not open.
+    await waitFor(() => expect(connectNetworkMock).toHaveBeenCalled())
+    expect(screen.queryByTestId('network-editor')).not.toBeInTheDocument()
   })
 })
 
