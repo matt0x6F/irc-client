@@ -306,17 +306,22 @@ func TestScaffoldModuleWritesGoMod(t *testing.T) {
 	}
 }
 
-func TestScaffoldModuleDoesNotOverwrite(t *testing.T) {
+// reconcile manages only the cascade pin: a user's own module name (and any
+// other edits) survive, while the cascade require is brought to the app's SDK.
+func TestReconcileModulePreservesUserModuleName(t *testing.T) {
 	dir := t.TempDir()
-	custom := "module custom\n"
+	custom := "module custom\n\ngo 1.21\n"
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(custom), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	m := NewManager(events.NewEventBus(), dir, testHost(func(int64, string, string) error { return nil }))
 	_ = m.LoadAll()
-	b, _ := os.ReadFile(filepath.Join(dir, "go.mod"))
-	if string(b) != custom {
-		t.Fatalf("existing go.mod was overwritten: %s", b)
+	s, _ := os.ReadFile(filepath.Join(dir, "go.mod"))
+	if !strings.Contains(string(s), "module custom") {
+		t.Fatalf("user module name not preserved:\n%s", s)
+	}
+	if !strings.Contains(string(s), cascadeModulePath+" "+cascadeSDKVersion) {
+		t.Fatalf("cascade pin not reconciled:\n%s", s)
 	}
 }
 
