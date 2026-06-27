@@ -149,6 +149,9 @@ func NewApp() (*App, error) {
 		PersistEnabled: func(id string, enabled bool) {
 			_ = app.storage.SetScriptEnabled(id, enabled)
 		},
+		Notify: func() {
+			app.emit("script-lifecycle", map[string]any{})
+		},
 	})
 
 	pluginMgr.SetBuiltinCommandChecker(func(k string) bool {

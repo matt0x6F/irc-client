@@ -40,6 +40,10 @@ type Host struct {
 	LoadDisabled func() map[string]bool
 	// PersistEnabled persists an enable/disable toggle. Nil-safe.
 	PersistEnabled func(id string, enabled bool)
+	// Notify is called after any change to the loaded-script set or a script's
+	// status (enable/disable/reload/runaway), so the frontend can refetch the
+	// inventory. Nil-safe.
+	Notify func()
 }
 
 // loaded is a loaded script plus a mutex serializing its dispatch (Yaegi
@@ -281,6 +285,7 @@ func (m *Manager) dispatch(id extension.ID, ev events.Event) (err error) {
 func (m *Manager) disableScript(id extension.ID, reason string) {
 	m.reg.DisableAsRunaway(id, reason)
 	logger.Log.Warn().Str("script", string(id)).Str("reason", reason).Msg("script auto-disabled by watchdog")
+	m.notify()
 }
 
 // msgFields extracts the common sender fields from a message.received event and
@@ -364,6 +369,7 @@ func (m *Manager) reload(dir string) {
 	id := extension.ID(filepath.Base(dir))
 	m.sched.stopTimers(id)
 	m.loadDir(dir)
+	m.notify()
 }
 
 // unload removes a script entirely (used when its directory is deleted).
@@ -375,6 +381,7 @@ func (m *Manager) unload(id extension.ID) {
 	delete(m.scripts, id)
 	m.mu.Unlock()
 	m.reg.Remove(id)
+	m.notify()
 }
 
 // List returns a snapshot of all registered scripts.
@@ -392,6 +399,7 @@ func (m *Manager) Disable(id extension.ID) {
 	if m.host.PersistEnabled != nil {
 		m.host.PersistEnabled(string(id), false)
 	}
+	m.notify()
 }
 
 // Enable re-enables a previously disabled or runaway script, clears its strike
@@ -420,6 +428,7 @@ func (m *Manager) Enable(id extension.ID) {
 	if m.host.PersistEnabled != nil {
 		m.host.PersistEnabled(string(id), true)
 	}
+	m.notify()
 }
 
 // ReloadByID reloads a script by its ID (directory name under m.dir).
@@ -460,6 +469,13 @@ func (m *Manager) NewScript(name string) (string, error) {
 
 // registry exposes the registry for tests.
 func (m *Manager) registry() *extension.Registry { return m.reg }
+
+// notify signals the host that the script inventory or a script's status changed.
+func (m *Manager) notify() {
+	if m.host.Notify != nil {
+		m.host.Notify()
+	}
+}
 
 // Watch begins watching the scripts dir (and each script subdir) and hot-reloads
 // on change. Safe to call once after LoadAll. Errors starting the watcher are
@@ -531,6 +547,7 @@ func (m *Manager) handleFSEvent(ev fsnotify.Event) {
 		if fi, err := os.Stat(ev.Name); err == nil && fi.IsDir() && filepath.Dir(ev.Name) == m.dir {
 			_ = m.watcher.Add(ev.Name)
 			m.loadDir(ev.Name)
+			m.notify()
 			return
 		}
 	}
