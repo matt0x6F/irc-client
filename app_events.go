@@ -42,6 +42,22 @@ func (a *App) OnEvent(event events.Event) {
 		return
 	}
 
+	// Authentication failed: the IRC client has already aborted the connection.
+	// Surface it to the frontend so the persistent header banner can offer
+	// Reconnect / Edit credentials.
+	if event.Type == irc.EventSASLFailed {
+		networkID, found := a.resolveNetworkID(event.Data)
+		if found {
+			reason, _ := event.Data["error"].(string)
+			a.emit("auth-failed", map[string]interface{}{
+				"networkId": networkID,
+				"reason":    reason,
+				"timestamp": event.Timestamp.Format(time.RFC3339Nano),
+			})
+		}
+		return
+	}
+
 	// Handle IRCv3 STS policy advertisements (plaintext→TLS upgrade or trusted persist)
 	if event.Type == irc.EventSTSPolicy {
 		a.handleSTSPolicy(event)
