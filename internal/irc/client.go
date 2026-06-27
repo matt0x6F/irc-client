@@ -430,7 +430,7 @@ func (c *IRCClient) handleWelcome(e ircmsg.Message) {
 			NetworkID:   c.networkID,
 			ChannelID:   nil,
 			User:        "*",
-			Message:     fmt.Sprintf("Connected as %q. Cascade will keep trying to reclaim %q automatically.", nick, preferred),
+			Message:     fmt.Sprintf("Connected as %q. Cascade will keep re-requesting %q and switch to it automatically once it becomes free. To reclaim it now from a stuck session, use /ns regain %s.", nick, preferred, preferred),
 			MessageType: "status",
 			Timestamp:   time.Now(),
 		})
