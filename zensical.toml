@@ -30,6 +30,7 @@ nav = [
   ] },
   { "Scripting" = [
     "scripting/index.md",
+    "scripting/quickstart.md",
   ] },
 ]
 
