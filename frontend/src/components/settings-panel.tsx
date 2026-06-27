@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { ArrowLeft, ChevronRight } from 'lucide-react';
 import { main, storage } from '../../wailsjs/go/models';
 import { GetNetworks, SaveNetwork, ConnectNetwork, DeleteNetwork, DisconnectNetwork, GetConnectionStatus, GetServers, ListPlugins, EnablePlugin, DisablePlugin, ReloadPlugin, GetBuildInfo, CheckForUpdates, GetLogConfig, SetLogConfig, GetDefaultLogPath, GetSTSPolicies, ClearSTSPolicy, RequestNotificationPermission } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
@@ -624,7 +625,7 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
       <div data-testid="network-list">
         {networks.length === 0 ? (
           <div className="text-center text-muted-foreground py-8">
-            No networks configured. Click "Add Network" to get started.
+            No networks configured. Click "Add network" to get started.
           </div>
         ) : (
           <div className="space-y-2">
@@ -686,7 +687,7 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
                         Connect
                       </button>
                     )}
-                    <span className="text-muted-foreground" aria-hidden="true">›</span>
+                    <span className="text-muted-foreground" aria-hidden="true"><ChevronRight className="w-4 h-4" /></span>
                   </div>
                 </div>
               );
@@ -710,7 +711,7 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
           className="p-1.5 -ml-1.5 rounded-lg hover:bg-accent transition-all"
           style={{ transition: 'var(--transition-base)' }}
         >
-          ‹
+          <ArrowLeft className="w-4 h-4" />
         </button>
         <h4 className="font-semibold text-lg truncate">
           {editingNetwork ? editingNetwork.name : 'New network'}
@@ -745,7 +746,7 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
                   <div className="mt-4">
                     <div className="flex items-center justify-between mb-2">
                       <div>
-                        <label className="block text-sm font-medium">Server Addresses</label>
+                        <label className="block text-sm font-medium">Server addresses</label>
                         <p className="text-xs text-muted-foreground mt-0.5">
                           Configure one or more server addresses. Each server can have its own TLS setting.
                         </p>
@@ -1022,7 +1023,7 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
                   {/* SASL Configuration Section */}
                   <div className="mt-4 p-4 border border-border rounded bg-muted/30">
                     <div className="flex items-center justify-between mb-3">
-                      <h5 className="font-semibold text-sm">SASL Authentication</h5>
+                      <h5 className="font-semibold text-sm">SASL authentication</h5>
                       <label className="flex items-center space-x-2">
                         <input
                           type="checkbox"
@@ -1036,7 +1037,7 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
                     {formData.sasl_enabled && (
                       <div className="space-y-3">
                         <div>
-                          <label className="block text-sm font-medium mb-1">SASL Mechanism</label>
+                          <label className="block text-sm font-medium mb-1">SASL mechanism</label>
                           <Select
                             value={formData.sasl_mechanism || ''}
                             onValueChange={(value) => setFormData(main.NetworkConfig.createFrom({ ...formData, sasl_mechanism: value || '' }))}
@@ -1056,7 +1057,7 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
                         {formData.sasl_mechanism && formData.sasl_mechanism !== 'EXTERNAL' && (
                           <>
                             <div>
-                              <label className="block text-sm font-medium mb-1">SASL Username</label>
+                              <label className="block text-sm font-medium mb-1">SASL username</label>
                               <input
                                 type="text"
                                 value={formData.sasl_username || ''}
@@ -1066,7 +1067,7 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
                               />
                             </div>
                             <div>
-                              <label className="block text-sm font-medium mb-1">SASL Password</label>
+                              <label className="block text-sm font-medium mb-1">SASL password</label>
                               <input
                                 type="password"
                                 value={formData.sasl_password || ''}
