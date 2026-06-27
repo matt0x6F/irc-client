@@ -322,7 +322,10 @@ func (m *Manager) buildTextEvent(ev events.Event) (cascade.TextEvent, bool) {
 	if !ok {
 		return cascade.TextEvent{}, false
 	}
-	return cascade.NewTextEvent(nick, channel, message, m.replyTo(networkID, channel, nick)), true
+	e := cascade.NewTextEvent(nick, channel, message, m.replyTo(networkID, channel, nick))
+	m.applyContext(&e.Self, &e.Account, &e.Network, &e.MsgID, &e.Time, ev, networkID)
+	e.Action, _ = ev.Data["isAction"].(bool)
+	return e, true
 }
 
 // buildNoticeEvent maps a message.received/notice event into a cascade.NoticeEvent.
@@ -331,7 +334,22 @@ func (m *Manager) buildNoticeEvent(ev events.Event) (cascade.NoticeEvent, bool) 
 	if !ok {
 		return cascade.NoticeEvent{}, false
 	}
-	return cascade.NewNoticeEvent(nick, channel, message, m.replyTo(networkID, channel, nick)), true
+	e := cascade.NewNoticeEvent(nick, channel, message, m.replyTo(networkID, channel, nick))
+	m.applyContext(&e.Self, &e.Account, &e.Network, &e.MsgID, &e.Time, ev, networkID)
+	return e, true
+}
+
+// applyContext fills the common context fields from a message.received event.
+func (m *Manager) applyContext(self, account, network, msgID *string, ts *cascade.Time, ev events.Event, networkID int64) {
+	if m.host.SelfNick != nil {
+		*self = m.host.SelfNick(networkID)
+	}
+	*account, _ = ev.Data["account"].(string)
+	*network, _ = ev.Data["networkName"].(string)
+	*msgID, _ = ev.Data["msgid"].(string)
+	if u, ok := ev.Data["messageUnix"].(int64); ok {
+		*ts = cascade.NewTime(u)
+	}
 }
 
 // buildJoinEvent maps a user.joined event into a cascade.JoinEvent.
