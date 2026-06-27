@@ -569,6 +569,23 @@ func (a *App) handleConnectionLost(networkID int64) {
 	// disabled and no "Reconnected" marker will ever follow.
 	a.openConnectionGap(networkID, network)
 
+	// An authentication failure rode the same EventConnectionLost path (the
+	// client aborted with QUIT). Retrying a credential failure just loops, so
+	// suppress auto-reconnect unless the user opted in.
+	a.mu.Lock()
+	client, hasClient := a.ircClients[networkID]
+	a.mu.Unlock()
+	if hasClient && client.AuthFailed() {
+		setting, _ := a.GetSetting("reconnect_on_auth_failure")
+		if authFailureBlocksReconnect(setting) {
+			logger.Log.Info().Int64("network_id", networkID).Msg("Auth failure: suppressing auto-reconnect (reconnect_on_auth_failure is off)")
+			a.mu.Lock()
+			delete(a.reconnectingNetworks, networkID)
+			a.mu.Unlock()
+			return
+		}
+	}
+
 	if !network.AutoConnect {
 		logger.Log.Debug().Int64("network_id", networkID).Str("network", network.Name).Msg("Auto-connect disabled, skipping reconnect")
 		a.mu.Lock()
@@ -578,6 +595,14 @@ func (a *App) handleConnectionLost(networkID int64) {
 	}
 
 	go a.reconnectWithBackoff(networkID, network.Name)
+}
+
+// authFailureBlocksReconnect reports whether a connection dropped by an
+// authentication failure should NOT be auto-reconnected. A credential failure
+// never recovers by retrying, so the default (unset/empty) blocks reconnect.
+// Users who want retries set reconnect_on_auth_failure to "true".
+func authFailureBlocksReconnect(reconnectSetting string) bool {
+	return reconnectSetting != "true"
 }
 
 // reconnectWithBackoff attempts to reconnect with exponential backoff
