@@ -30,6 +30,13 @@ const cascadeSDKVersion = "v1.0.0"
 // Sender sends a message to target on the given network (e.g. App.SendMessage).
 type Sender func(networkID int64, target, message string) error
 
+// Host bundles the capabilities the Manager needs from the application.
+type Host struct {
+	Send           Sender                          // App.SendMessage
+	SelfNick       func(networkID int64) string    // App.GetCurrentNick wrapper
+	ResolveNetwork func(name string) (int64, bool) // name → networkID (via App.GetNetworks)
+}
+
 // loaded is a loaded script plus a mutex serializing its dispatch (Yaegi
 // interpreters are not safe for concurrent Call).
 type loaded struct {
@@ -41,8 +48,7 @@ type loaded struct {
 // for the script runtime.
 type Manager struct {
 	dir      string
-	sender   Sender
-	selfNick func(networkID int64) string
+	host     Host
 	reg      *extension.Registry
 	router   *extension.Router
 	watchdog *watchdog
@@ -53,21 +59,36 @@ type Manager struct {
 }
 
 // NewManager builds a script manager and attaches its router to the bus.
-// selfNick returns the bot's current nick on the given network; it is used to
-// suppress delivery of the bot's own (possibly server-echoed) messages.
-func NewManager(bus *events.EventBus, dir string, sender Sender, selfNick func(networkID int64) string) *Manager {
+// host.SelfNick returns the bot's current nick on the given network; it is
+// used to suppress delivery of the bot's own (possibly server-echoed) messages.
+func NewManager(bus *events.EventBus, dir string, host Host) *Manager {
 	reg := extension.NewRegistry()
 	m := &Manager{
-		dir:      dir,
-		sender:   sender,
-		selfNick: selfNick,
-		reg:      reg,
-		router:   extension.NewRouter(reg),
-		scripts:  make(map[extension.ID]*loaded),
+		dir:     dir,
+		host:    host,
+		reg:     reg,
+		router:  extension.NewRouter(reg),
+		scripts: make(map[extension.ID]*loaded),
 	}
 	m.watchdog = newWatchdog(defaultDispatchDeadline, defaultMaxStrikes, m.disableScript)
 	m.router.Attach(bus)
 	return m
+}
+
+// makeClient builds a per-script *cascade.Client whose Network().Say resolves
+// the network name via host.ResolveNetwork and calls host.Send. If the network
+// is unknown the call is logged and dropped. The scheduler callbacks are no-ops
+// in this task; Task 4 replaces them with real scheduling.
+func (m *Manager) makeClient(id extension.ID) *cascade.Client {
+	say := func(networkName, target, message string) {
+		netID, ok := m.host.ResolveNetwork(networkName)
+		if !ok {
+			logger.Log.Warn().Str("script", string(id)).Str("network", networkName).Msg("script Say: unknown network")
+			return
+		}
+		_ = m.host.Send(netID, target, message)
+	}
+	return cascade.NewClient(say, func(string, func()) {}, func(string, func()) {})
 }
 
 // scaffoldModule writes a go.mod at the scripts-dir root if one does not exist,
@@ -136,6 +157,20 @@ func (m *Manager) loadDir(dir string) {
 		m.mu.Unlock()
 		m.reg.Register(ext, m, nil) // registered (visible) but no subscriptions
 		return
+	}
+
+	// Run Setup if the script exports it. A failure marks the script errored and
+	// skips event subscription (a Setup-panicking script must not handle events).
+	if s.HasSetup() {
+		if err := s.RunSetup(m.makeClient(id)); err != nil {
+			ext.Status = extension.StatusError
+			ext.Err = "Setup: " + err.Error()
+			m.mu.Lock()
+			delete(m.scripts, id)
+			m.mu.Unlock()
+			m.reg.Register(ext, m, nil) // registered+errored but no subscriptions
+			return
+		}
 	}
 
 	var evs []string
@@ -238,7 +273,7 @@ func (m *Manager) msgFields(ev events.Event) (nick, channel, message string, net
 	if nick == "" || nick == "*" {
 		return "", "", "", 0, false
 	}
-	if m.selfNick != nil && nick == m.selfNick(networkID) {
+	if m.host.SelfNick != nil && nick == m.host.SelfNick(networkID) {
 		return "", "", "", 0, false
 	}
 	return nick, channel, message, networkID, true
@@ -251,7 +286,7 @@ func (m *Manager) replyTo(networkID int64, channel, nick string) func(string) {
 	if !isChannel(channel) {
 		target = nick
 	}
-	return func(msg string) { _ = m.sender(networkID, target, msg) }
+	return func(msg string) { _ = m.host.Send(networkID, target, msg) }
 }
 
 // buildTextEvent maps a message.received event into a cascade.TextEvent with a
@@ -278,7 +313,7 @@ func (m *Manager) buildJoinEvent(ev events.Event) (cascade.JoinEvent, bool) {
 	nick, _ := ev.Data["user"].(string)
 	channel, _ := ev.Data["channel"].(string)
 	networkID, _ := ev.Data["networkId"].(int64)
-	if nick == "" || nick == "*" || (m.selfNick != nil && nick == m.selfNick(networkID)) {
+	if nick == "" || nick == "*" || (m.host.SelfNick != nil && nick == m.host.SelfNick(networkID)) {
 		return cascade.JoinEvent{}, false
 	}
 	return cascade.NewJoinEvent(nick, channel, m.replyTo(networkID, channel, nick)), true
@@ -290,7 +325,7 @@ func (m *Manager) buildPartEvent(ev events.Event) (cascade.PartEvent, bool) {
 	channel, _ := ev.Data["channel"].(string)
 	reason, _ := ev.Data["reason"].(string)
 	networkID, _ := ev.Data["networkId"].(int64)
-	if nick == "" || nick == "*" || (m.selfNick != nil && nick == m.selfNick(networkID)) {
+	if nick == "" || nick == "*" || (m.host.SelfNick != nil && nick == m.host.SelfNick(networkID)) {
 		return cascade.PartEvent{}, false
 	}
 	return cascade.NewPartEvent(nick, channel, reason, m.replyTo(networkID, channel, nick)), true
