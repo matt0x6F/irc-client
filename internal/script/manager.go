@@ -52,6 +52,7 @@ type Manager struct {
 	reg      *extension.Registry
 	router   *extension.Router
 	watchdog *watchdog
+	sched    *scheduler
 
 	mu      sync.RWMutex
 	scripts map[extension.ID]*loaded
@@ -69,6 +70,7 @@ func NewManager(bus *events.EventBus, dir string, host Host) *Manager {
 		reg:     reg,
 		router:  extension.NewRouter(reg),
 		scripts: make(map[extension.ID]*loaded),
+		sched:   newScheduler(),
 	}
 	m.watchdog = newWatchdog(defaultDispatchDeadline, defaultMaxStrikes, m.disableScript)
 	m.router.Attach(bus)
@@ -77,8 +79,9 @@ func NewManager(bus *events.EventBus, dir string, host Host) *Manager {
 
 // makeClient builds a per-script *cascade.Client whose Network().Say resolves
 // the network name via host.ResolveNetwork and calls host.Send. If the network
-// is unknown the call is logged and dropped. The scheduler callbacks are no-ops
-// in this task; Task 4 replaces them with real scheduling.
+// is unknown the call is logged and dropped. The scheduler closures are wired
+// to the per-script timer registry so ticks run through the watchdog +
+// per-script mutex and are cancelled on reload/unload.
 func (m *Manager) makeClient(id extension.ID) *cascade.Client {
 	say := func(networkName, target, message string) {
 		netID, ok := m.host.ResolveNetwork(networkName)
@@ -88,7 +91,7 @@ func (m *Manager) makeClient(id extension.ID) *cascade.Client {
 		}
 		_ = m.host.Send(netID, target, message)
 	}
-	return cascade.NewClient(say, func(string, func()) {}, func(string, func()) {})
+	return cascade.NewClient(say, m.scheduleEvery(id), m.scheduleAfter(id))
 }
 
 // scaffoldModule writes a go.mod at the scripts-dir root if one does not exist,
@@ -336,12 +339,20 @@ func isChannel(s string) bool {
 }
 
 // reload re-loads the script directory (used for hot reload + manual reload).
-// loadDir already replaces the registry entry and scripts map slot, so reload
-// is just a re-load by directory.
-func (m *Manager) reload(dir string) { m.loadDir(dir) }
+// Old timers are stopped BEFORE re-running Setup so that (a) there are no
+// duplicate ticks from the previous version and (b) the new Setup can register
+// fresh timers cleanly.
+func (m *Manager) reload(dir string) {
+	id := extension.ID(filepath.Base(dir))
+	m.sched.stopTimers(id)
+	m.loadDir(dir)
+}
 
 // unload removes a script entirely (used when its directory is deleted).
+// Timers are stopped first so in-flight ticks see an empty scripts map and
+// return early from runScriptFn.
 func (m *Manager) unload(id extension.ID) {
+	m.sched.stopTimers(id)
 	m.mu.Lock()
 	delete(m.scripts, id)
 	m.mu.Unlock()
