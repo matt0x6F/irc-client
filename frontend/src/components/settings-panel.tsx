@@ -1597,12 +1597,28 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
               </div>
               <div className="pt-3 border-t border-border space-y-1 text-sm">
                 <a
+                  href="https://matt0x6f.github.io/irc-client/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block text-primary underline hover:text-primary/80"
+                >
+                  Documentation
+                </a>
+                <a
                   href="https://github.com/matt0x6F/irc-client"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-primary underline hover:text-primary/80"
+                  className="block text-primary underline hover:text-primary/80"
                 >
                   View on GitHub
+                </a>
+                <a
+                  href="https://web.libera.chat/#cascade-irc"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block text-primary underline hover:text-primary/80"
+                >
+                  Community chat: #cascade-irc on Libera
                 </a>
                 <p className="text-xs text-muted-foreground">BSD 3-Clause License</p>
               </div>
