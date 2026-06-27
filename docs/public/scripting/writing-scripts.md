@@ -163,15 +163,7 @@ go 1.21
 require github.com/matt0x6f/irc-client/cascade v1.0.0
 ```
 
-This file exists so your editor and gopls give you real autocomplete and type-checking for the `cascade` package.
-
-**v1 caveat:** gopls can only resolve the `cascade` import once the `cascade/v1.0.0` module tag is published. Until then, add a local `replace` directive to your scripts-dir `go.mod` that points at a local Cascade checkout:
-
-```
-replace github.com/matt0x6f/irc-client/cascade => /path/to/irc-client/cascade
-```
-
-This affects only editor tooling — the running app interprets the script regardless of what the `go.mod` says.
+This file exists so your editor and gopls give you real autocomplete and type-checking for the `cascade` package. The `cascade` module is published, so gopls resolves the import directly — no extra setup needed. The `go.mod` powers editor tooling only; the running app interprets your script regardless of what it says.
 
 ---
 
