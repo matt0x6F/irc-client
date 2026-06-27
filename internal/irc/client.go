@@ -2840,52 +2840,35 @@ func (c *IRCClient) setupHandlers() {
 		})
 	})
 
-	c.conn.AddCallback("901", func(e ircmsg.Message) {
+	c.conn.AddCallback("901", func(e ircmsg.Message) { // RPL_LOGGEDOUT during auth = failure
 		if !c.saslEnabled {
 			return
 		}
-		c.mu.Lock()
-		c.saslInProgress = false
-		c.mu.Unlock()
-		c.storage.WriteMessage(storage.Message{
-			NetworkID:   c.networkID,
-			ChannelID:   nil,
-			User:        "*",
-			Message:     "SASL authentication failed",
-			MessageType: "status",
-			Timestamp:   time.Now(),
-		})
-		c.endCapNegotiation()
-		c.eventBus.Emit(events.Event{
-			Type:      EventSASLFailed,
-			Data:      map[string]interface{}{"network": c.network.Address, "error": "Authentication failed"},
-			Timestamp: time.Now(),
-			Source:    events.EventSourceIRC,
-		})
+		c.handleSASLFailure("logged out")
 	})
-
-	c.conn.AddCallback("904", func(e ircmsg.Message) {
+	c.conn.AddCallback("902", func(e ircmsg.Message) { // ERR_NICKLOCKED
 		if !c.saslEnabled {
 			return
 		}
-		c.mu.Lock()
-		c.saslInProgress = false
-		c.mu.Unlock()
-		c.storage.WriteMessage(storage.Message{
-			NetworkID:   c.networkID,
-			ChannelID:   nil,
-			User:        "*",
-			Message:     "SASL authentication failed",
-			MessageType: "status",
-			Timestamp:   time.Now(),
-		})
-		c.endCapNegotiation()
-		c.eventBus.Emit(events.Event{
-			Type:      EventSASLFailed,
-			Data:      map[string]interface{}{"network": c.network.Address, "error": "SASL authentication failed"},
-			Timestamp: time.Now(),
-			Source:    events.EventSourceIRC,
-		})
+		c.handleSASLFailure("account locked")
+	})
+	c.conn.AddCallback("904", func(e ircmsg.Message) { // ERR_SASLFAIL
+		if !c.saslEnabled {
+			return
+		}
+		c.handleSASLFailure("invalid credentials")
+	})
+	c.conn.AddCallback("905", func(e ircmsg.Message) { // ERR_SASLTOOLONG
+		if !c.saslEnabled {
+			return
+		}
+		c.handleSASLFailure("credentials too long")
+	})
+	c.conn.AddCallback("906", func(e ircmsg.Message) { // ERR_SASLABORTED
+		if !c.saslEnabled {
+			return
+		}
+		c.handleSASLFailure("authentication aborted")
 	})
 
 	// ERR_NICKNAMEINUSE (433) - nick collision handling
