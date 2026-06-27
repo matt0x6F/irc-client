@@ -10,13 +10,16 @@ import (
 func init() {
 	Symbols["github.com/matt0x6f/irc-client/cascade/cascade"] = map[string]reflect.Value{
 		// function, constant and variable definitions
+		"NewClient":      reflect.ValueOf(cascade.NewClient),
 		"NewJoinEvent":   reflect.ValueOf(cascade.NewJoinEvent),
 		"NewNoticeEvent": reflect.ValueOf(cascade.NewNoticeEvent),
 		"NewPartEvent":   reflect.ValueOf(cascade.NewPartEvent),
 		"NewTextEvent":   reflect.ValueOf(cascade.NewTextEvent),
 
 		// type definitions
+		"Client":      reflect.ValueOf((*cascade.Client)(nil)),
 		"JoinEvent":   reflect.ValueOf((*cascade.JoinEvent)(nil)),
+		"Network":     reflect.ValueOf((*cascade.Network)(nil)),
 		"NoticeEvent": reflect.ValueOf((*cascade.NoticeEvent)(nil)),
 		"PartEvent":   reflect.ValueOf((*cascade.PartEvent)(nil)),
 		"TextEvent":   reflect.ValueOf((*cascade.TextEvent)(nil)),
