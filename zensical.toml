@@ -35,6 +35,7 @@ nav = [
     "scripting/examples.md",
     "scripting/api-reference.md",
     "scripting/lifecycle-and-limits.md",
+    "scripting/managing-scripts.md",
   ] },
 ]
 
