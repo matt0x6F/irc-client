@@ -77,12 +77,19 @@ func (m *Manager) LoadAll() error {
 
 func (m *Manager) loadDir(dir string) {
 	id := extension.ID(filepath.Base(dir))
+	man := parseManifest(dir)
+	name := man.Name
+	if name == "" {
+		name = filepath.Base(dir)
+	}
 	ext := &extension.Extension{
-		ID:      id,
-		Name:    filepath.Base(dir),
-		Kind:    extension.KindScript,
-		Enabled: true,
-		Status:  extension.StatusLoaded,
+		ID:          id,
+		Name:        name,
+		Description: man.Description,
+		Kind:        extension.KindScript,
+		Enabled:     true,
+		Status:      extension.StatusLoaded,
+		Perms:       man.Permissions,
 	}
 
 	s, err := LoadPackage(dir)
