@@ -84,6 +84,26 @@ func (s *Script) DispatchJoin(e cascade.JoinEvent) { s.call("OnJoin", e) }
 // DispatchPart calls the script's OnPart handler, if present.
 func (s *Script) DispatchPart(e cascade.PartEvent) { s.call("OnPart", e) }
 
+// HasSetup reports whether the script exported a Setup function.
+func (s *Script) HasSetup() bool { return s.Has("Setup") }
+
+// RunSetup calls the script's Setup(c) function, if present, passing the
+// provided Client. Panics inside Setup are caught and returned as an error.
+// Returns nil if Setup is absent.
+func (s *Script) RunSetup(c *cascade.Client) (err error) {
+	fn, ok := s.handlers["Setup"]
+	if !ok {
+		return nil
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("Setup panic: %v", r)
+		}
+	}()
+	fn.Call([]reflect.Value{reflect.ValueOf(c)})
+	return nil
+}
+
 // mergePackageSource concatenates a package's files into one source string,
 // keeping a single `package` clause and de-duplicating import lines. Uses
 // go/parser + go/printer so it's robust to formatting.
