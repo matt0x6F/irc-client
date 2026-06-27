@@ -847,6 +847,17 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
         }
       }
 
+      // /list opens the Browse Channels modal rather than firing a raw LIST.
+      // RPL_LIST numerics only render in that modal — and the modal issues its
+      // own RequestChannelList when it opens (with cache + de-dupe handling) —
+      // so a typed /list must open the modal, not send a LIST whose results have
+      // no UI surface (the same reasoning as /whois above). Any args are dropped:
+      // the modal fetches a full list and offers its own client-side filter.
+      if (/^\/list(?:\s|$)/i.test(trimmedMessage)) {
+        useUIStore.getState().openChannelList(selectedNetwork);
+        return;
+      }
+
       // Handle /me command — prepend target. The action text is formatting
       // markup like any other message, so convert it to IRC codes.
       if (trimmedMessage.toLowerCase().startsWith('/me ') && selectedChannel !== 'status') {
