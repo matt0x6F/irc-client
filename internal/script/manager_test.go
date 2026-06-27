@@ -232,6 +232,23 @@ func TestWatchStartsAndCloses(t *testing.T) {
 	}
 }
 
+func TestManagerAutoDisablesRepeatPanicker(t *testing.T) {
+	fs := &fakeSender{}
+	bus := events.NewEventBus()
+	m := NewManager(bus, "testdata", fs.send, noSelf)
+	_ = m.LoadAll()
+
+	// defaultMaxStrikes consecutive panics must auto-disable the panicker.
+	for i := 0; i < defaultMaxStrikes; i++ {
+		bus.EmitSync(msgEvent(1, "#c", "bob", "anything", ""))
+	}
+
+	ext, ok := m.registry().Get(extension.ID("panicker"))
+	if !ok || ext.Enabled || ext.Status != extension.StatusRunaway {
+		t.Fatalf("panicker should be auto-disabled (runaway); got %+v ok=%v", ext, ok)
+	}
+}
+
 func TestManagerSkipsOwnMessages(t *testing.T) {
 	fs := &fakeSender{}
 	bus := events.NewEventBus()
