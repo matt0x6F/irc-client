@@ -74,18 +74,6 @@ The `// cascade:permissions` header is parsed and displayed in the Scripts panel
 
 ---
 
-## Editor tooling caveat
-
-Gopls (the Go language server used by most editors) can only resolve the `cascade` import once the `cascade/v1.0.0` module tag is published. Until that tag exists, add a local `replace` directive to your scripts-dir `go.mod`:
-
-```
-replace github.com/matt0x6f/irc-client/cascade => /path/to/irc-client/cascade
-```
-
-This is an editor-only workaround. The running Cascade app interprets your script regardless of what the `go.mod` says — the `replace` directive has no effect at runtime.
-
----
-
 ## When to use a plugin instead
 
 Scripts are designed for personal, single-user automation inside the Cascade sandbox. If you need any of the following, graduate to a [plugin](../developers/plugin-system.md):
