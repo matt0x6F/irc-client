@@ -49,3 +49,22 @@ func TestNoticeJoinPartEvents(t *testing.T) {
 		t.Fatalf("replies = %v", got)
 	}
 }
+
+func TestTime(t *testing.T) {
+	z := NewTime(0)
+	if !z.IsZero() {
+		t.Fatalf("NewTime(0).IsZero() = false; want true")
+	}
+	a := NewTime(1000)
+	b := NewTime(2000)
+	if !a.Before(b) || !b.After(a) {
+		t.Fatalf("ordering wrong: a=%d b=%d", a.Unix(), b.Unix())
+	}
+	if a.Unix() != 1000 {
+		t.Fatalf("Unix() = %d; want 1000", a.Unix())
+	}
+	// 1000s past the Unix epoch is 00:16:40 UTC; just assert HH:MM shape.
+	if len(b.Clock()) != 5 || b.Clock()[2] != ':' {
+		t.Fatalf("Clock() = %q; want HH:MM", b.Clock())
+	}
+}

@@ -1,6 +1,9 @@
 package cascade
 
-import "strings"
+import (
+	"strings"
+	"time"
+)
 
 // TextEvent is delivered to OnText handlers. The host constructs it via
 // NewTextEvent and wires Reply to a sink; the script only reads fields and replies.
@@ -107,3 +110,27 @@ func (e PartEvent) Reply(msg string) {
 		e.replyFn(msg)
 	}
 }
+
+// Time is a script-safe timestamp. Scripts can't import "time", so the cascade
+// package (compiled host code) owns formatting and comparison.
+type Time struct {
+	unix int64
+}
+
+// NewTime constructs a Time from Unix seconds. The host-side constructor.
+func NewTime(unix int64) Time { return Time{unix: unix} }
+
+// Unix returns the timestamp in Unix seconds.
+func (t Time) Unix() int64 { return t.unix }
+
+// IsZero reports whether the timestamp is unset (zero Unix seconds).
+func (t Time) IsZero() bool { return t.unix == 0 }
+
+// Before reports whether t is before o.
+func (t Time) Before(o Time) bool { return t.unix < o.unix }
+
+// After reports whether t is after o.
+func (t Time) After(o Time) bool { return t.unix > o.unix }
+
+// Clock returns the local-time "HH:MM" (24-hour) of the timestamp.
+func (t Time) Clock() string { return time.Unix(t.unix, 0).Format("15:04") }
