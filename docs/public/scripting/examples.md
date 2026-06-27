@@ -41,8 +41,8 @@ func OnText(e cascade.TextEvent) {
 	switch e.Arg(1) {
 	case "!ping":
 		e.Reply("pong")
-	case "!echo":
-		e.Reply(e.Message)
+	case "!hi":
+		e.Reply("hello, " + e.Nick + "!")
 	}
 }
 ```
@@ -90,4 +90,4 @@ func OnJoin(e cascade.JoinEvent) {
 ---
 
 !!! note "Customize for your setup"
-    Replace `Libera` with your own network name (as shown in the Networks settings) and `#ops` or `#team` with the channels you want to target.
+    Replace `Libera` with your own network name and `#ops` with the channel you want to target (both are shown in the Networks settings).
