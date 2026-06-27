@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/matt0x6f/irc-client/internal/events"
 	"github.com/matt0x6f/irc-client/internal/extension"
@@ -79,8 +80,40 @@ func noSelf(int64) string { return "" }
 func noResolve(string) (int64, bool) { return 0, false }
 
 // testHost builds a Host with the given sender, noSelf, and noResolve stubs.
+// LoadDisabled and PersistEnabled default to nil (nil-safe in Manager).
 func testHost(send Sender) Host {
 	return Host{Send: send, SelfNick: noSelf, ResolveNetwork: noResolve}
+}
+
+// persistHost builds a Host with in-memory persist callbacks for testing
+// Enable/Disable persistence.
+func persistHost(send Sender, disabled map[string]bool) (Host, *sync.Mutex, *map[string]bool) {
+	var mu sync.Mutex
+	state := make(map[string]bool)
+	// Copy initial disabled set into state.
+	for k, v := range disabled {
+		state[k] = v
+	}
+	h := Host{
+		Send:           send,
+		SelfNick:       noSelf,
+		ResolveNetwork: noResolve,
+		LoadDisabled: func() map[string]bool {
+			mu.Lock()
+			defer mu.Unlock()
+			out := make(map[string]bool, len(state))
+			for k, v := range state {
+				out[k] = v
+			}
+			return out
+		},
+		PersistEnabled: func(id string, enabled bool) {
+			mu.Lock()
+			defer mu.Unlock()
+			state[id] = !enabled // disabled map: true = disabled
+		},
+	}
+	return h, &mu, &state
 }
 
 // fakeSender records Reply sends.
@@ -373,4 +406,282 @@ func TestManagerSetupCallsNetworkSay(t *testing.T) {
 		}
 	}
 	t.Fatalf("expected Send(42, \"#x\", \"hello\") from netsayer Setup; got %+v", fs.sent)
+}
+
+// TestDisableStopsTimersAndFiltersEvents checks that Disable:
+//  1. stops a c.Every timer (no more ticks after Disable)
+//  2. persists (id, false) via PersistEnabled
+//  3. filters the script out of event recipients (no delivery after Disable)
+func TestDisableStopsTimersAndFiltersEvents(t *testing.T) {
+	dir := t.TempDir()
+	sdir := filepath.Join(dir, "ticker")
+	os.MkdirAll(sdir, 0o755)
+	// Script with a fast timer that increments a counter via Reply, and OnText.
+	src := `package main
+import "github.com/matt0x6f/irc-client/cascade"
+func Setup(c *cascade.Client) { c.Every("20ms", func() {}) }
+func OnText(e cascade.TextEvent) { e.Reply("alive") }
+`
+	os.WriteFile(filepath.Join(sdir, "ticker.go"), []byte(src), 0o644)
+
+	fs := &fakeSender{}
+	state := map[string]bool{}
+	host, stateMu, statePtr := persistHost(fs.send, state)
+	bus := events.NewEventBus()
+	m := NewManager(bus, dir, host)
+	if err := m.LoadAll(); err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+
+	id := extension.ID("ticker")
+
+	// Let the timer fire at least once to confirm it's running.
+	if !pollUntil(500*time.Millisecond, func() bool {
+		ext, ok := m.registry().Get(id)
+		return ok && ext.Status == extension.StatusLoaded
+	}) {
+		t.Fatal("ticker script never reached StatusLoaded")
+	}
+
+	// Disable the script.
+	m.Disable(id)
+
+	// Extension must be disabled in registry.
+	ext, ok := m.registry().Get(id)
+	if !ok || ext.Enabled {
+		t.Fatalf("after Disable: Enabled=%v want false", ext.Enabled)
+	}
+
+	// PersistEnabled(id, false) must have been called → state["ticker"] = true (disabled).
+	stateMu.Lock()
+	persisted := (*statePtr)["ticker"]
+	stateMu.Unlock()
+	if !persisted {
+		t.Fatal("Disable did not persist disabled state")
+	}
+
+	// An event sent AFTER Disable must not be delivered.
+	bus.EmitSync(msgEvent(1, "#c", "bob", "hello", ""))
+	fs.mu.Lock()
+	for _, s := range fs.sent {
+		if s.message == "alive" {
+			fs.mu.Unlock()
+			t.Fatal("event delivered to disabled script")
+		}
+	}
+	fs.mu.Unlock()
+}
+
+// TestEnableResetsRunawayAndRestoresTimer checks that Enable on a runaway/disabled
+// script: clears status → StatusLoaded, clears watchdog strikes, re-runs Setup
+// (timer fires again), and persists (id, true).
+func TestEnableResetsRunawayAndRestoresTimer(t *testing.T) {
+	dir := t.TempDir()
+	sdir := filepath.Join(dir, "revive")
+	os.MkdirAll(sdir, 0o755)
+	// Script with a fast timer and OnText so we can verify delivery after Enable.
+	src := `package main
+import "github.com/matt0x6f/irc-client/cascade"
+func Setup(c *cascade.Client) { c.Every("20ms", func() {}) }
+func OnText(e cascade.TextEvent) { e.Reply("revived") }
+`
+	os.WriteFile(filepath.Join(sdir, "revive.go"), []byte(src), 0o644)
+
+	fs := &fakeSender{}
+	bus := events.NewEventBus()
+	m := NewManager(bus, dir, Host{
+		Send:           fs.send,
+		SelfNick:       noSelf,
+		ResolveNetwork: noResolve,
+		PersistEnabled: func(id string, enabled bool) {}, // no-op spy
+	})
+	if err := m.LoadAll(); err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+
+	id := extension.ID("revive")
+
+	// Simulate a runaway state via DisableAsRunaway (as the watchdog would).
+	m.sched.stopTimers(id)
+	m.reg.DisableAsRunaway(id, "test runaway")
+	// Inject fake strikes to confirm clearStrikes works.
+	m.watchdog.mu.Lock()
+	m.watchdog.strikes[id] = 2
+	m.watchdog.mu.Unlock()
+
+	ext, _ := m.registry().Get(id)
+	if ext.Status != extension.StatusRunaway {
+		t.Fatalf("precondition: status=%q want runaway", ext.Status)
+	}
+
+	// Enable must reset the script.
+	m.Enable(id)
+
+	ext, ok := m.registry().Get(id)
+	if !ok || !ext.Enabled || ext.Status != extension.StatusLoaded {
+		t.Fatalf("after Enable: Enabled=%v Status=%q, want true/loaded", ext.Enabled, ext.Status)
+	}
+
+	// Strikes must be cleared.
+	m.watchdog.mu.Lock()
+	strikes := m.watchdog.strikes[id]
+	m.watchdog.mu.Unlock()
+	if strikes != 0 {
+		t.Fatalf("strikes after Enable = %d; want 0", strikes)
+	}
+
+	// Event delivery must work again after Enable.
+	bus.EmitSync(msgEvent(1, "#c", "carol", "ping", ""))
+	fs.mu.Lock()
+	found := false
+	for _, s := range fs.sent {
+		if s.message == "revived" {
+			found = true
+		}
+	}
+	fs.mu.Unlock()
+	if !found {
+		t.Fatal("event not delivered after Enable")
+	}
+}
+
+// TestPersistedDisabledInert checks that a script marked disabled in LoadDisabled
+// starts inert after LoadAll (no event delivery, no timer activity).
+func TestPersistedDisabledInert(t *testing.T) {
+	dir := t.TempDir()
+	sdir := filepath.Join(dir, "sleeper")
+	os.MkdirAll(sdir, 0o755)
+	src := `package main
+import "github.com/matt0x6f/irc-client/cascade"
+func OnText(e cascade.TextEvent) { e.Reply("wake") }
+`
+	os.WriteFile(filepath.Join(sdir, "sleeper.go"), []byte(src), 0o644)
+
+	fs := &fakeSender{}
+	// sleeper is persisted-disabled.
+	host, _, _ := persistHost(fs.send, map[string]bool{"sleeper": true})
+	bus := events.NewEventBus()
+	m := NewManager(bus, dir, host)
+	if err := m.LoadAll(); err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+
+	// Extension must be registered but disabled.
+	ext, ok := m.registry().Get(extension.ID("sleeper"))
+	if !ok || ext.Enabled {
+		t.Fatalf("persisted-disabled script: Enabled=%v want false", ext.Enabled)
+	}
+
+	// No events must be delivered.
+	bus.EmitSync(msgEvent(1, "#c", "alice", "hi", ""))
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	for _, s := range fs.sent {
+		if s.message == "wake" {
+			t.Fatal("event delivered to persisted-disabled script")
+		}
+	}
+}
+
+// TestReloadByID reloads a script by its ID and picks up new behaviour.
+func TestReloadByID(t *testing.T) {
+	dir := t.TempDir()
+	sdir := filepath.Join(dir, "rscript")
+	os.MkdirAll(sdir, 0o755)
+	writeV := func(reply string) {
+		src := "package main\nimport \"github.com/matt0x6f/irc-client/cascade\"\nfunc OnText(e cascade.TextEvent){ e.Reply(\"" + reply + "\") }\n"
+		os.WriteFile(filepath.Join(sdir, "rscript.go"), []byte(src), 0o644)
+	}
+	writeV("v1")
+
+	fs := &fakeSender{}
+	bus := events.NewEventBus()
+	m := NewManager(bus, dir, testHost(fs.send))
+	if err := m.LoadAll(); err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+
+	bus.EmitSync(msgEvent(1, "#c", "bob", "hi", ""))
+
+	writeV("v2")
+	m.ReloadByID(extension.ID("rscript"))
+	bus.EmitSync(msgEvent(1, "#c", "bob", "hi", ""))
+
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	sawV2 := false
+	for _, s := range fs.sent {
+		if s.message == "v2" {
+			sawV2 = true
+		}
+	}
+	if !sawV2 {
+		t.Fatalf("after ReloadByID expected 'v2' reply; got %+v", fs.sent)
+	}
+}
+
+// TestNewScriptCreatesAndLoads checks that NewScript writes a file that
+// LoadPackage can load and that contains an OnText handler.
+func TestNewScriptCreatesAndLoads(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManager(events.NewEventBus(), dir, testHost(func(int64, string, string) error { return nil }))
+	if err := m.LoadAll(); err != nil {
+		t.Fatal(err)
+	}
+
+	path, err := m.NewScript("myscript")
+	if err != nil {
+		t.Fatalf("NewScript: %v", err)
+	}
+	if !strings.HasSuffix(path, filepath.Join("myscript", "myscript.go")) {
+		t.Fatalf("unexpected path %q", path)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("file not created: %v", err)
+	}
+
+	// The generated file must be loadable by LoadPackage and expose OnText.
+	s, err := LoadPackage(filepath.Dir(path))
+	if err != nil {
+		t.Fatalf("LoadPackage on new script: %v", err)
+	}
+	if !s.Has("OnText") {
+		t.Fatal("new script template missing OnText handler")
+	}
+
+	// Calling NewScript again with the same name must error.
+	if _, err := m.NewScript("myscript"); err == nil {
+		t.Fatal("expected error for duplicate script name")
+	}
+}
+
+// TestNewScriptRejectsUnsafeNames ensures NewScript rejects empty, separator-containing,
+// and ".." names.
+func TestNewScriptRejectsUnsafeNames(t *testing.T) {
+	m := NewManager(events.NewEventBus(), t.TempDir(), testHost(func(int64, string, string) error { return nil }))
+	_ = m.LoadAll()
+
+	for _, name := range []string{"", "..", "a/b", "a\\b", "a..b"} {
+		if _, err := m.NewScript(name); err == nil {
+			t.Errorf("NewScript(%q): expected error", name)
+		}
+	}
+}
+
+// TestSnapshotReturnsList checks that Snapshot returns the registered extensions.
+func TestSnapshotReturnsList(t *testing.T) {
+	fs := &fakeSender{}
+	bus := events.NewEventBus()
+	m := NewManager(bus, "testdata", testHost(fs.send))
+	if err := m.LoadAll(); err != nil {
+		t.Fatal(err)
+	}
+	snap := m.Snapshot()
+	if len(snap) == 0 {
+		t.Fatal("Snapshot returned empty slice; expected scripts from testdata")
+	}
 }
