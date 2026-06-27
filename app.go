@@ -208,6 +208,9 @@ func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) 
 	if err := a.scriptMgr.LoadAll(); err != nil {
 		logger.Log.Warn().Err(err).Msg("failed to load scripts")
 	}
+	if err := a.scriptMgr.Watch(); err != nil {
+		logger.Log.Warn().Err(err).Msg("failed to start script watcher")
+	}
 
 	logger.Log.Info().Msg("Plugin loading started in background, proceeding to auto-connect setup")
 
@@ -258,6 +261,11 @@ func (a *App) ServiceShutdown() error {
 		// Write disconnect messages before closing anything
 		logger.Log.Info().Msg("Starting disconnect message writing")
 		a.writeShutdownDisconnectMessages()
+
+		// Close script manager watcher
+		if a.scriptMgr != nil {
+			_ = a.scriptMgr.Close()
+		}
 
 		// Close plugin manager
 		if a.pluginManager != nil {

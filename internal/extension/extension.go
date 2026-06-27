@@ -23,11 +23,12 @@ type ID string
 
 // Extension is the runtime-agnostic identity and status of a loaded extension.
 type Extension struct {
-	ID      ID
-	Name    string
-	Kind    Kind
-	Enabled bool
-	Status  Status
-	Perms   []string
-	Err     string // last load/dispatch error; "" if none
+	ID          ID
+	Name        string
+	Description string
+	Kind        Kind
+	Enabled     bool
+	Status      Status
+	Perms       []string
+	Err         string // last load/dispatch error; "" if none
 }

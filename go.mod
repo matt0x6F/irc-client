@@ -6,6 +6,7 @@ require github.com/matt0x6f/irc-client/cascade v1.0.0
 
 require (
 	github.com/ergochat/irc-go v0.4.0
+	github.com/fsnotify/fsnotify v1.10.1
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/mattn/go-sqlite3 v1.14.33
 	github.com/rs/zerolog v1.34.0

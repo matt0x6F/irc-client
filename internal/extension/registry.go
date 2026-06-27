@@ -88,6 +88,14 @@ func (r *Registry) SetStatus(id ID, status Status, errMsg string) {
 	}
 }
 
+// Remove deletes an extension from the registry. A subsequent recipients() will
+// not include it. No-op if absent.
+func (r *Registry) Remove(id ID) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.entries, id)
+}
+
 // recipients returns the enabled extensions subscribed to eventType.
 func (r *Registry) recipients(eventType string) []deliverable {
 	r.mu.RLock()

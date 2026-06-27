@@ -1,6 +1,9 @@
 package script
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -120,5 +123,108 @@ func TestManagerSkipsServerStatusUser(t *testing.T) {
 	defer fs.mu.Unlock()
 	if len(fs.sent) != 0 {
 		t.Fatalf("expected no replies for user=\"*\" status line; got %+v", fs.sent)
+	}
+}
+
+func TestManagerReloadPicksUpNewBehavior(t *testing.T) {
+	dir := t.TempDir()
+	sdir := filepath.Join(dir, "g")
+	if err := os.MkdirAll(sdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(reply string) {
+		src := "package main\nimport \"github.com/matt0x6f/irc-client/cascade\"\nfunc OnText(e cascade.TextEvent){ e.Reply(\"" + reply + "\") }\n"
+		if err := os.WriteFile(filepath.Join(sdir, "g.go"), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("first")
+
+	fs := &fakeSender{}
+	bus := events.NewEventBus()
+	m := NewManager(bus, dir, fs.send)
+	if err := m.LoadAll(); err != nil {
+		t.Fatal(err)
+	}
+	bus.EmitSync(msgEvent(1, "#c", "bob", "hi", ""))
+
+	write("second")
+	m.reload(sdir)
+	bus.EmitSync(msgEvent(1, "#c", "bob", "hi", ""))
+
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	var sawSecond bool
+	for _, s := range fs.sent {
+		if s.message == "second" {
+			sawSecond = true
+		}
+	}
+	if !sawSecond {
+		t.Fatalf("after reload expected a 'second' reply; got %+v", fs.sent)
+	}
+}
+
+func TestManagerUnloadStopsDelivery(t *testing.T) {
+	fs := &fakeSender{}
+	bus := events.NewEventBus()
+	m := NewManager(bus, "testdata", fs.send)
+	_ = m.LoadAll()
+	m.unload(extension.ID("greeter"))
+	if _, ok := m.registry().Get(extension.ID("greeter")); ok {
+		t.Fatalf("greeter should be gone after unload")
+	}
+	bus.EmitSync(msgEvent(1, "#c", "bob", "!hello", ""))
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	for _, s := range fs.sent {
+		if s.message == "Hi bob" {
+			t.Fatalf("greeter still delivered after unload")
+		}
+	}
+}
+
+func TestScaffoldModuleWritesGoMod(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManager(events.NewEventBus(), dir, func(int64, string, string) error { return nil })
+	if err := m.LoadAll(); err != nil {
+		t.Fatalf("LoadAll: %v", err)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "go.mod"))
+	if err != nil {
+		t.Fatalf("go.mod not written: %v", err)
+	}
+	s := string(b)
+	if !strings.Contains(s, "module cascade-scripts") ||
+		!strings.Contains(s, "github.com/matt0x6f/irc-client/cascade "+cascadeSDKVersion) {
+		t.Fatalf("go.mod missing module/require:\n%s", s)
+	}
+}
+
+func TestScaffoldModuleDoesNotOverwrite(t *testing.T) {
+	dir := t.TempDir()
+	custom := "module custom\n"
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(custom), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(events.NewEventBus(), dir, func(int64, string, string) error { return nil })
+	_ = m.LoadAll()
+	b, _ := os.ReadFile(filepath.Join(dir, "go.mod"))
+	if string(b) != custom {
+		t.Fatalf("existing go.mod was overwritten: %s", b)
+	}
+}
+
+func TestWatchStartsAndCloses(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManager(events.NewEventBus(), dir, func(int64, string, string) error { return nil })
+	if err := m.LoadAll(); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Watch(); err != nil {
+		t.Fatalf("Watch: %v", err)
+	}
+	if err := m.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
 	}
 }
