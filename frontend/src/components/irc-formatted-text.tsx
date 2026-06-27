@@ -1,4 +1,5 @@
 import React from 'react';
+import { useNetworkStore } from '../stores/network';
 
 interface IRCFormatState {
   bold: boolean;
@@ -163,66 +164,122 @@ function parseIRCFormatting(text: string): FormattedSegment[] {
 // The source is exported so other modules (e.g. irc-markup) can build their own
 // anchored matcher from the same pattern without sharing mutable lastIndex state.
 export const URL_REGEX_SOURCE = 'https?:\\/\\/[^\\s<>"{}|\\\\^`\\[\\]]+';
-const URL_REGEX = new RegExp(URL_REGEX_SOURCE, 'g');
 
-// Renders a text string, replacing URLs with clickable <a> tags.
-// Returns an array of React nodes (strings and <a> elements).
-function renderTextWithLinks(text: string, keyPrefix: string): React.ReactNode[] {
-  const nodes: React.ReactNode[] = [];
+// Channel references: '#' followed by chanstring chars (no space or comma).
+// '#' only — '&'/'+'/'!' are excluded to avoid prose false positives.
+const CHANNEL_REGEX_SOURCE = '#[^\\s,]+';
+
+// Single combined matcher: a URL OR a channel. URL is listed first so an
+// in-URL '#fragment' is consumed by the URL branch before the channel branch
+// can see it.
+const TOKEN_REGEX = new RegExp(`(${URL_REGEX_SOURCE})|(${CHANNEL_REGEX_SOURCE})`, 'g');
+
+export type TextToken =
+  | { type: 'text'; value: string }
+  | { type: 'url'; value: string; trailing: string }
+  | { type: 'channel'; value: string; trailing: string };
+
+// Splits raw text into text / url / channel tokens in one pass.
+export function tokenizeText(text: string): TextToken[] {
+  const tokens: TextToken[] = [];
   let lastIndex = 0;
   let match: RegExpExecArray | null;
+  TOKEN_REGEX.lastIndex = 0;
 
-  // Reset regex state
-  URL_REGEX.lastIndex = 0;
-
-  while ((match = URL_REGEX.exec(text)) !== null) {
-    // Add text before the URL
+  while ((match = TOKEN_REGEX.exec(text)) !== null) {
     if (match.index > lastIndex) {
-      nodes.push(text.slice(lastIndex, match.index));
+      tokens.push({ type: 'text', value: text.slice(lastIndex, match.index) });
     }
 
-    const url = match[0];
-    // Strip trailing punctuation that's likely not part of the URL
-    let cleanUrl = url;
-    const trailingPunct = /[),.:;!?]+$/;
-    const trailingMatch = cleanUrl.match(trailingPunct);
-    let suffix = '';
-    if (trailingMatch) {
-      const stripped = trailingMatch[0];
-      // Count open/close parens to handle URLs like https://en.wikipedia.org/wiki/Example_(disambiguation)
-      const openParens = (cleanUrl.match(/\(/g) || []).length;
-      const closeParens = (cleanUrl.match(/\)/g) || []).length;
-      if (stripped === ')' && openParens >= closeParens) {
-        // Parens are balanced, keep the URL as is
-      } else {
-        cleanUrl = cleanUrl.slice(0, cleanUrl.length - stripped.length);
-        suffix = stripped;
+    if (match[1]) {
+      // URL branch — preserve existing trailing-punctuation / paren handling.
+      const url = match[1];
+      let value = url;
+      let trailing = '';
+      const trailingMatch = value.match(/[),.:;!?]+$/);
+      if (trailingMatch) {
+        const stripped = trailingMatch[0];
+        const openParens = (value.match(/\(/g) || []).length;
+        const closeParens = (value.match(/\)/g) || []).length;
+        if (stripped === ')' && openParens >= closeParens) {
+          // balanced parens — keep as-is
+        } else {
+          value = value.slice(0, value.length - stripped.length);
+          trailing = stripped;
+        }
       }
+      tokens.push({ type: 'url', value, trailing });
+    } else {
+      // Channel branch — strip trailing punctuation into `trailing`.
+      const raw = match[2];
+      let value = raw;
+      let trailing = '';
+      const trailingMatch = value.match(/[.,!?;:)\]}>"'`]+$/);
+      if (trailingMatch) {
+        trailing = trailingMatch[0];
+        value = value.slice(0, value.length - trailing.length);
+      }
+      tokens.push({ type: 'channel', value, trailing });
     }
 
-    nodes.push(
-      <a
-        key={`${keyPrefix}-link-${match.index}`}
-        href={cleanUrl}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="text-primary underline hover:text-primary/80"
-      >
-        {cleanUrl}
-      </a>
-    );
-
-    if (suffix) {
-      nodes.push(suffix);
-    }
-
-    lastIndex = match.index + url.length;
+    lastIndex = match.index + match[0].length;
   }
 
-  // Add remaining text after the last URL
   if (lastIndex < text.length) {
-    nodes.push(text.slice(lastIndex));
+    tokens.push({ type: 'text', value: text.slice(lastIndex) });
   }
+
+  return tokens;
+}
+
+// Renders a text string into React nodes, turning URLs into <a> links and
+// #channel references into clickable buttons (only when networkId is provided).
+function renderTextWithLinks(
+  text: string,
+  keyPrefix: string,
+  networkId?: number
+): React.ReactNode[] {
+  const tokens = tokenizeText(text);
+  const nodes: React.ReactNode[] = [];
+
+  tokens.forEach((token, i) => {
+    if (token.type === 'url') {
+      nodes.push(
+        <a
+          key={`${keyPrefix}-link-${i}`}
+          href={token.value}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-primary underline hover:text-primary/80"
+        >
+          {token.value}
+        </a>
+      );
+      if (token.trailing) nodes.push(token.trailing);
+    } else if (token.type === 'channel') {
+      if (networkId !== undefined) {
+        const channel = token.value;
+        nodes.push(
+          <button
+            key={`${keyPrefix}-chan-${i}`}
+            type="button"
+            title={`Open ${channel}`}
+            className="text-primary underline hover:text-primary/80 cursor-pointer"
+            onClick={() => {
+              void useNetworkStore.getState().openOrJoinChannel(networkId, channel);
+            }}
+          >
+            {channel}
+          </button>
+        );
+      } else {
+        nodes.push(token.value);
+      }
+      if (token.trailing) nodes.push(token.trailing);
+    } else {
+      nodes.push(token.value);
+    }
+  });
 
   return nodes.length > 0 ? nodes : [text];
 }
@@ -230,9 +287,10 @@ function renderTextWithLinks(text: string, keyPrefix: string): React.ReactNode[]
 interface IRCFormattedTextProps {
   text: string;
   className?: string;
+  networkId?: number;
 }
 
-export function IRCFormattedText({ text, className = '' }: IRCFormattedTextProps) {
+export function IRCFormattedText({ text, className = '', networkId }: IRCFormattedTextProps) {
   const segments = parseIRCFormatting(text);
 
   if (segments.length === 0) {
@@ -279,7 +337,7 @@ export function IRCFormattedText({ text, className = '' }: IRCFormattedTextProps
 
         return (
           <span key={index} className={classes.join(' ')} style={style}>
-            {renderTextWithLinks(segment.text, `seg-${index}`)}
+            {renderTextWithLinks(segment.text, `seg-${index}`, networkId)}
           </span>
         );
       })}

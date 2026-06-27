@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest'
-import { render, screen } from '@testing-library/react'
-import { IRCFormattedText } from '../irc-formatted-text'
+import { describe, it, expect, vi } from 'vitest'
+import { render, screen, fireEvent } from '@testing-library/react'
+import { IRCFormattedText, tokenizeText } from '../irc-formatted-text'
+import { useNetworkStore } from '../../stores/network'
 
 describe('IRCFormattedText', () => {
   it('renders plain text without formatting', () => {
@@ -138,5 +139,95 @@ describe('IRCFormattedText', () => {
         backgroundColor: '#FF0000', // was fg (red)
       })
     })
+  })
+})
+
+describe('IRCFormattedText channel links', () => {
+  it('renders a #channel as a clickable button when networkId is set', () => {
+    render(<IRCFormattedText text="join #test please" networkId={1} />)
+    const btn = screen.getByRole('button', { name: '#test' })
+    expect(btn).toBeInTheDocument()
+  })
+
+  it('renders #channel as plain text when networkId is absent', () => {
+    render(<IRCFormattedText text="join #test please" />)
+    expect(screen.queryByRole('button', { name: '#test' })).toBeNull()
+    expect(screen.getByText(/#test/)).toBeInTheDocument()
+  })
+
+  it('clicking a channel calls openOrJoinChannel with the network and channel', () => {
+    const spy = vi
+      .spyOn(useNetworkStore.getState(), 'openOrJoinChannel')
+      .mockResolvedValue(undefined)
+    render(<IRCFormattedText text="see #test" networkId={7} />)
+    fireEvent.click(screen.getByRole('button', { name: '#test' }))
+    expect(spy).toHaveBeenCalledWith(7, '#test')
+    spy.mockRestore()
+  })
+})
+
+describe('tokenizeText', () => {
+  it('returns a single text token for plain text', () => {
+    expect(tokenizeText('hello world')).toEqual([
+      { type: 'text', value: 'hello world' },
+    ])
+  })
+
+  it('detects a #channel token', () => {
+    expect(tokenizeText('join #test now')).toEqual([
+      { type: 'text', value: 'join ' },
+      { type: 'channel', value: '#test', trailing: '' },
+      { type: 'text', value: ' now' },
+    ])
+  })
+
+  it('strips trailing punctuation from a channel into trailing', () => {
+    expect(tokenizeText('see #test.')).toEqual([
+      { type: 'text', value: 'see ' },
+      { type: 'channel', value: '#test', trailing: '.' },
+    ])
+  })
+
+  it('does not treat a bare # as a channel', () => {
+    expect(tokenizeText('a # b')).toEqual([{ type: 'text', value: 'a # b' }])
+  })
+
+  it('does not treat a #fragment inside a URL as a channel', () => {
+    const tokens = tokenizeText('go https://x.com/p#section ok')
+    expect(tokens.some((t) => t.type === 'channel')).toBe(false)
+    expect(tokens.find((t) => t.type === 'url')?.value).toBe('https://x.com/p#section')
+  })
+
+  it('detects both a url and a channel in one string', () => {
+    const tokens = tokenizeText('https://x.com and #chan')
+    expect(tokens.map((t) => t.type)).toEqual(['url', 'text', 'channel'])
+  })
+
+  it('strips trailing ] from a channel in square brackets', () => {
+    expect(tokenizeText('see [#test]')).toEqual([
+      { type: 'text', value: 'see [' },
+      { type: 'channel', value: '#test', trailing: ']' },
+    ])
+  })
+
+  it('strips trailing " from a channel in double quotes', () => {
+    expect(tokenizeText('say "#test"')).toEqual([
+      { type: 'text', value: 'say "' },
+      { type: 'channel', value: '#test', trailing: '"' },
+    ])
+  })
+
+  it('strips trailing > from a channel in angle brackets', () => {
+    expect(tokenizeText('go <#test>')).toEqual([
+      { type: 'text', value: 'go <' },
+      { type: 'channel', value: '#test', trailing: '>' },
+    ])
+  })
+
+  it('preserves uppercase in channel names', () => {
+    expect(tokenizeText('join #FooBar')).toEqual([
+      { type: 'text', value: 'join ' },
+      { type: 'channel', value: '#FooBar', trailing: '' },
+    ])
   })
 })

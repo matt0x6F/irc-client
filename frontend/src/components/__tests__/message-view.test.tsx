@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import { MessageView } from '../message-view'
 import { storage } from '../../../wailsjs/go/models'
+import { useNetworkStore } from '../../stores/network'
 
 // The view pulls nickname colors and several store slices on render. Stub both so
 // the test exercises only the marker-rendering branch, with no Wails round-trips.
@@ -24,11 +25,14 @@ const storeState = {
   loadOlderMessages: vi.fn(),
   loadNewerMessages: vi.fn(),
   loadingHistory: false,
+  openOrJoinChannel: vi.fn().mockResolvedValue(undefined),
 }
 
-vi.mock('../../stores/network', () => ({
-  useNetworkStore: (selector: (s: typeof storeState) => unknown) => selector(storeState),
-}))
+vi.mock('../../stores/network', () => {
+  const useNetworkStore = (sel: (s: typeof storeState) => unknown) => sel(storeState)
+  useNetworkStore.getState = () => storeState
+  return { useNetworkStore }
+})
 
 // The consolidate-join/quit preference now comes from the settings store. Stub it
 // (default off) so these marker tests don't pull in the real Wails bindings.
@@ -115,5 +119,27 @@ describe('MessageView bot badge', () => {
 
     expect(screen.queryByText('bot')).toBeNull()
     storeState.botNicks = {}
+  })
+})
+
+describe('MessageView invite-line channel links', () => {
+  it('invite-line channel click calls openOrJoinChannel', () => {
+    const spy = vi
+      .spyOn(useNetworkStore.getState(), 'openOrJoinChannel')
+      .mockResolvedValue(undefined)
+
+    // renderInviteText splits on /(\s[#&]\S+)/g — the channel must be preceded by a space.
+    const msg = makeMessage({
+      id: 10,
+      user: '*',
+      message: 'You have been invited to #welcome',
+      message_type: 'invite',
+    })
+
+    render(<MessageView messages={[msg]} networkId={3} selectedChannel="#chan" />)
+
+    fireEvent.click(screen.getByRole('button', { name: '#welcome' }))
+    expect(spy).toHaveBeenCalledWith(3, '#welcome')
+    spy.mockRestore()
   })
 })
