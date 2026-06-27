@@ -91,6 +91,22 @@ describe('ChannelListModal cache behavior', () => {
     // pre-fills the existing client-side filter, hiding non-matching rows.
     expect(await screen.findByText('#linux')).toBeInTheDocument()
     expect(screen.queryByText('#windows')).not.toBeInTheDocument()
-    expect(screen.getByPlaceholderText(/Filter by channel name/i)).toHaveValue('linux')
+    expect(screen.getByPlaceholderText(/Filter by name/i)).toHaveValue('linux')
+  })
+
+  it('honors a >N user-count filter from initialFilter', async () => {
+    getCachedMock.mockResolvedValue({
+      found: true,
+      fetchedAt: Date.now(),
+      channels: [
+        { channel: '#big', users: 80, topic: '', networkId: 1 },
+        { channel: '#small', users: 12, topic: '', networkId: 1 },
+      ],
+    })
+
+    render(<ChannelListModal networkId={1} initialFilter=">50" onClose={() => {}} />)
+
+    expect(await screen.findByText('#big')).toBeInTheDocument()
+    expect(screen.queryByText('#small')).not.toBeInTheDocument()
   })
 })
