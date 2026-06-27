@@ -25,7 +25,7 @@ const (
 
 // cascadeSDKVersion is the cascade SDK module version the scaffolded scripts
 // go.mod requires. Bump this when the app ships against a newer cascade tag.
-const cascadeSDKVersion = "v1.0.0"
+const cascadeSDKVersion = "v1.1.0"
 
 // Sender sends a message to target on the given network (e.g. App.SendMessage).
 type Sender func(networkID int64, target, message string) error

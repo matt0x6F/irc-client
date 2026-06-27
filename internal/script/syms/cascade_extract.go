@@ -15,6 +15,7 @@ func init() {
 		"NewNoticeEvent": reflect.ValueOf(cascade.NewNoticeEvent),
 		"NewPartEvent":   reflect.ValueOf(cascade.NewPartEvent),
 		"NewTextEvent":   reflect.ValueOf(cascade.NewTextEvent),
+		"NewTime":        reflect.ValueOf(cascade.NewTime),
 
 		// type definitions
 		"Client":      reflect.ValueOf((*cascade.Client)(nil)),
@@ -23,5 +24,6 @@ func init() {
 		"NoticeEvent": reflect.ValueOf((*cascade.NoticeEvent)(nil)),
 		"PartEvent":   reflect.ValueOf((*cascade.PartEvent)(nil)),
 		"TextEvent":   reflect.ValueOf((*cascade.TextEvent)(nil)),
+		"Time":        reflect.ValueOf((*cascade.Time)(nil)),
 	}
 }
