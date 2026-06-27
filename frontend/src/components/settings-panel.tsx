@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { main, storage } from '../../wailsjs/go/models';
 import { GetNetworks, SaveNetwork, ConnectNetwork, DeleteNetwork, DisconnectNetwork, GetConnectionStatus, GetServers, ListPlugins, EnablePlugin, DisablePlugin, ReloadPlugin, GetBuildInfo, CheckForUpdates, GetLogConfig, SetLogConfig, GetDefaultLogPath, GetSTSPolicies, ClearSTSPolicy, RequestNotificationPermission } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
@@ -14,6 +14,27 @@ import {
 import { useThemeStore, ACCENTS, type ThemeMode } from '../stores/theme';
 import { useSettingsStore, type PrefixDisplayMode, type UpdateChannel } from '../stores/settings';
 import { usePreferencesStore } from '../stores/preferences';
+
+function serializeNetworkForm(
+  fd: main.NetworkConfig,
+  servers: Array<{ address: string; port: number; tls: boolean }>,
+): string {
+  return JSON.stringify({
+    name: fd.name ?? '',
+    nickname: fd.nickname ?? '',
+    username: fd.username ?? '',
+    realname: fd.realname ?? '',
+    password: fd.password ?? '',
+    sasl_enabled: (fd as any).sasl_enabled ?? false,
+    sasl_mechanism: (fd as any).sasl_mechanism ?? '',
+    sasl_username: (fd as any).sasl_username ?? '',
+    sasl_password: (fd as any).sasl_password ?? '',
+    sasl_external_cert: (fd as any).sasl_external_cert ?? '',
+    auto_connect: (fd as any).auto_connect ?? false,
+    identify_as_bot: (fd as any).identify_as_bot ?? false,
+    servers: (servers ?? []).map((s) => ({ address: s.address ?? '', port: s.port ?? 6667, tls: s.tls ?? false })),
+  });
+}
 
 export type SettingsSection = 'networks' | 'plugins' | 'scripts' | 'display' | 'notifications' | 'advanced' | 'about';
 
@@ -140,6 +161,7 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
   const [connectionStatus, setConnectionStatus] = useState<Record<number, boolean>>({});
   const [showAddForm, setShowAddForm] = useState(false);
   const [networkServers, setNetworkServers] = useState<Record<number, storage.Server[]>>({});
+  const formSnapshotRef = useRef<string>('');
   // STS policies keyed by hostname, so each server row can show whether TLS is enforced.
   const [stsPolicies, setStsPolicies] = useState<Record<string, storage.STSPolicy>>({});
   const [buildInfo, setBuildInfo] = useState<main.BuildInfo | null>(null);
@@ -353,7 +375,7 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
     // Load servers for this network
     const servers = await GetServers(network.id);
     setNetworkServers(prev => ({ ...prev, [network.id]: servers || [] }));
-    setFormData(main.NetworkConfig.createFrom({
+    const built = main.NetworkConfig.createFrom({
       name: network.name,
       address: network.address,
       port: network.port,
@@ -370,13 +392,15 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
       sasl_external_cert: network.sasl_external_cert || '',
       auto_connect: network.auto_connect || false,
       identify_as_bot: network.identify_as_bot || false,
-    }));
+    });
+    setFormData(built);
+    formSnapshotRef.current = serializeNetworkForm(built, (servers || []) as any);
     setShowAddForm(false);
   };
 
   const handleAdd = () => {
     setEditingNetwork(null);
-    setFormData(main.NetworkConfig.createFrom({
+    const initial = main.NetworkConfig.createFrom({
       name: '',
       address: '',
       port: 6667,
@@ -386,7 +410,9 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
       username: '',
       realname: '',
       password: '',
-    }));
+    });
+    setFormData(initial);
+    formSnapshotRef.current = serializeNetworkForm(initial, initial.servers as any);
     setShowAddForm(true);
   };
 
@@ -404,6 +430,18 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
       realname: '',
       password: '',
     }));
+  };
+
+  // Servers being edited live in networkServers (existing network) or formData (new).
+  const currentEditorServers = (): Array<{ address: string; port: number; tls: boolean }> =>
+    (editingNetwork ? (networkServers[editingNetwork.id] ?? []) : (formData.servers ?? [])) as any;
+
+  const isNetworkFormDirty = (): boolean =>
+    serializeNetworkForm(formData, currentEditorServers()) !== formSnapshotRef.current;
+
+  const requestEditorExit = () => {
+    if (isNetworkFormDirty() && !confirm('Discard changes?')) return;
+    handleCancel();
   };
 
   const handleSave = async (e: React.FormEvent) => {
@@ -666,7 +704,7 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
       <div className="flex items-center gap-3 mb-5 pb-4 border-b border-border">
         <button
           type="button"
-          onClick={handleCancel}
+          onClick={requestEditorExit}
           data-testid="network-editor-back"
           aria-label="Back to networks"
           className="p-1.5 -ml-1.5 rounded-lg hover:bg-accent transition-all"
@@ -1082,7 +1120,7 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
         <div className="flex gap-3">
           <button
             type="button"
-            onClick={handleCancel}
+            onClick={requestEditorExit}
             className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-accent transition-all shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)]"
             style={{ transition: 'var(--transition-base)' }}
           >

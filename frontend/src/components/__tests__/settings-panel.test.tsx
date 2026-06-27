@@ -148,6 +148,30 @@ describe('SettingsPanel Networks master-detail', () => {
     await screen.findByTestId('network-editor')
     expect(screen.queryByTestId('network-delete-button')).not.toBeInTheDocument()
   })
+
+  it('prompts before discarding edits, and stays if cancelled', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    render(<SettingsPanel section="networks" onSectionChange={() => {}} />)
+    fireEvent.click(await screen.findByTestId('network-row-1'))
+    const nameInput = await screen.findByTestId('network-name-input')
+    fireEvent.change(nameInput, { target: { value: 'ErgoIRC edited' } })
+    fireEvent.click(screen.getByTestId('network-editor-back'))
+    expect(confirmSpy).toHaveBeenCalled()
+    // Declined → still in the editor.
+    expect(screen.getByTestId('network-editor')).toBeInTheDocument()
+    confirmSpy.mockRestore()
+  })
+
+  it('does not prompt when nothing changed', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(<SettingsPanel section="networks" onSectionChange={() => {}} />)
+    fireEvent.click(await screen.findByTestId('network-row-1'))
+    await screen.findByTestId('network-editor')
+    fireEvent.click(screen.getByTestId('network-editor-back'))
+    expect(confirmSpy).not.toHaveBeenCalled()
+    await waitFor(() => expect(screen.getByTestId('network-list')).toBeInTheDocument())
+    confirmSpy.mockRestore()
+  })
 })
 
 describe('SettingsPanel About pane', () => {
