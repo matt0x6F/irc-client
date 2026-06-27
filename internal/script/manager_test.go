@@ -11,6 +11,9 @@ import (
 	"github.com/matt0x6f/irc-client/internal/extension"
 )
 
+// noSelf is a selfNick stub that always returns "" (bot has no nick).
+func noSelf(int64) string { return "" }
+
 // fakeSender records Reply sends.
 type fakeSender struct {
 	mu   sync.Mutex
@@ -47,7 +50,7 @@ func msgEvent(networkID int64, channel, user, message, pmTarget string) events.E
 func TestManagerChannelMessageReplies(t *testing.T) {
 	fs := &fakeSender{}
 	bus := events.NewEventBus()
-	m := NewManager(bus, "testdata", fs.send) // loads each subdir of testdata as a script
+	m := NewManager(bus, "testdata", fs.send, noSelf) // loads each subdir of testdata as a script
 	if err := m.LoadAll(); err != nil {
 		t.Fatalf("LoadAll: %v", err)
 	}
@@ -71,7 +74,7 @@ func TestManagerChannelMessageReplies(t *testing.T) {
 func TestManagerDMRepliesToSender(t *testing.T) {
 	fs := &fakeSender{}
 	bus := events.NewEventBus()
-	m := NewManager(bus, "testdata", fs.send)
+	m := NewManager(bus, "testdata", fs.send, noSelf)
 	_ = m.LoadAll()
 
 	// DM: channel is our own nick (non-channel), so reply target must be the sender.
@@ -98,7 +101,7 @@ func TestManagerDMRepliesToSender(t *testing.T) {
 func TestManagerPanicIsRecoveredAndMarksError(t *testing.T) {
 	fs := &fakeSender{}
 	bus := events.NewEventBus()
-	m := NewManager(bus, "testdata", fs.send)
+	m := NewManager(bus, "testdata", fs.send, noSelf)
 	_ = m.LoadAll()
 
 	// The panicker fixture panics in OnText; this must not crash the test process.
@@ -113,7 +116,7 @@ func TestManagerPanicIsRecoveredAndMarksError(t *testing.T) {
 func TestManagerSkipsServerStatusUser(t *testing.T) {
 	fs := &fakeSender{}
 	bus := events.NewEventBus()
-	m := NewManager(bus, "testdata", fs.send)
+	m := NewManager(bus, "testdata", fs.send, noSelf)
 	_ = m.LoadAll()
 
 	// Server/status line: user is "*". No script should be invoked / no reply sent.
@@ -142,7 +145,7 @@ func TestManagerReloadPicksUpNewBehavior(t *testing.T) {
 
 	fs := &fakeSender{}
 	bus := events.NewEventBus()
-	m := NewManager(bus, dir, fs.send)
+	m := NewManager(bus, dir, fs.send, noSelf)
 	if err := m.LoadAll(); err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +171,7 @@ func TestManagerReloadPicksUpNewBehavior(t *testing.T) {
 func TestManagerUnloadStopsDelivery(t *testing.T) {
 	fs := &fakeSender{}
 	bus := events.NewEventBus()
-	m := NewManager(bus, "testdata", fs.send)
+	m := NewManager(bus, "testdata", fs.send, noSelf)
 	_ = m.LoadAll()
 	m.unload(extension.ID("greeter"))
 	if _, ok := m.registry().Get(extension.ID("greeter")); ok {
@@ -186,7 +189,7 @@ func TestManagerUnloadStopsDelivery(t *testing.T) {
 
 func TestScaffoldModuleWritesGoMod(t *testing.T) {
 	dir := t.TempDir()
-	m := NewManager(events.NewEventBus(), dir, func(int64, string, string) error { return nil })
+	m := NewManager(events.NewEventBus(), dir, func(int64, string, string) error { return nil }, noSelf)
 	if err := m.LoadAll(); err != nil {
 		t.Fatalf("LoadAll: %v", err)
 	}
@@ -207,7 +210,7 @@ func TestScaffoldModuleDoesNotOverwrite(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(custom), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	m := NewManager(events.NewEventBus(), dir, func(int64, string, string) error { return nil })
+	m := NewManager(events.NewEventBus(), dir, func(int64, string, string) error { return nil }, noSelf)
 	_ = m.LoadAll()
 	b, _ := os.ReadFile(filepath.Join(dir, "go.mod"))
 	if string(b) != custom {
@@ -217,7 +220,7 @@ func TestScaffoldModuleDoesNotOverwrite(t *testing.T) {
 
 func TestWatchStartsAndCloses(t *testing.T) {
 	dir := t.TempDir()
-	m := NewManager(events.NewEventBus(), dir, func(int64, string, string) error { return nil })
+	m := NewManager(events.NewEventBus(), dir, func(int64, string, string) error { return nil }, noSelf)
 	if err := m.LoadAll(); err != nil {
 		t.Fatal(err)
 	}
@@ -226,5 +229,27 @@ func TestWatchStartsAndCloses(t *testing.T) {
 	}
 	if err := m.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
+	}
+}
+
+func TestManagerSkipsOwnMessages(t *testing.T) {
+	fs := &fakeSender{}
+	bus := events.NewEventBus()
+	// selfNick says the bot is "mybot" on network 1.
+	m := NewManager(bus, "testdata", fs.send, func(networkID int64) string {
+		if networkID == 1 {
+			return "mybot"
+		}
+		return ""
+	})
+	_ = m.LoadAll()
+
+	// A message whose sender IS the bot (its own echo) must not be delivered.
+	bus.EmitSync(msgEvent(1, "#c", "mybot", "!hello", ""))
+
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	if len(fs.sent) != 0 {
+		t.Fatalf("expected no reply to the bot's own message; got %+v", fs.sent)
 	}
 }

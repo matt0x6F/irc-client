@@ -34,10 +34,11 @@ type loaded struct {
 // Manager discovers, loads, and dispatches scripts. It is the extension.Host
 // for the script runtime.
 type Manager struct {
-	dir    string
-	sender Sender
-	reg    *extension.Registry
-	router *extension.Router
+	dir      string
+	sender   Sender
+	selfNick func(networkID int64) string
+	reg      *extension.Registry
+	router   *extension.Router
 
 	mu      sync.RWMutex
 	scripts map[extension.ID]*loaded
@@ -45,14 +46,17 @@ type Manager struct {
 }
 
 // NewManager builds a script manager and attaches its router to the bus.
-func NewManager(bus *events.EventBus, dir string, sender Sender) *Manager {
+// selfNick returns the bot's current nick on the given network; it is used to
+// suppress delivery of the bot's own (possibly server-echoed) messages.
+func NewManager(bus *events.EventBus, dir string, sender Sender, selfNick func(networkID int64) string) *Manager {
 	reg := extension.NewRegistry()
 	m := &Manager{
-		dir:     dir,
-		sender:  sender,
-		reg:     reg,
-		router:  extension.NewRouter(reg),
-		scripts: make(map[extension.ID]*loaded),
+		dir:      dir,
+		sender:   sender,
+		selfNick: selfNick,
+		reg:      reg,
+		router:   extension.NewRouter(reg),
+		scripts:  make(map[extension.ID]*loaded),
 	}
 	m.router.Attach(bus)
 	return m
@@ -180,6 +184,9 @@ func (m *Manager) buildTextEvent(ev events.Event) (cascade.TextEvent, bool) {
 	// "*" is the server/status pseudo-user (not a real sender); never deliver it to scripts.
 	if nick == "" || nick == "*" {
 		return cascade.TextEvent{}, false
+	}
+	if m.selfNick != nil && nick == m.selfNick(networkID) {
+		return cascade.TextEvent{}, false // the bot's own (possibly echoed) message
 	}
 
 	target := channel
