@@ -613,6 +613,83 @@ export class PluginInfo {
 }
 
 /**
+ * ScriptInfo is the Wails-bound view of a loaded script.
+ */
+export class ScriptInfo {
+    /**
+     * Creates a new ScriptInfo instance.
+     * @param {Partial<ScriptInfo>} [$$source = {}] - The source object to create the ScriptInfo.
+     */
+    constructor($$source = {}) {
+        if (!("id" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["id"] = "";
+        }
+        if (!("name" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["name"] = "";
+        }
+        if (!("description" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["description"] = "";
+        }
+        if (!("status" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["status"] = "";
+        }
+        if (!("enabled" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["enabled"] = false;
+        }
+        if (!("error" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["error"] = "";
+        }
+        if (!("perms" in $$source)) {
+            /**
+             * @member
+             * @type {string[]}
+             */
+            this["perms"] = [];
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ScriptInfo instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {ScriptInfo}
+     */
+    static createFrom($$source = {}) {
+        const $$createField6_0 = $$createType8;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("perms" in $$parsedSource) {
+            $$parsedSource["perms"] = $$createField6_0($$parsedSource["perms"]);
+        }
+        return new ScriptInfo(/** @type {Partial<ScriptInfo>} */($$parsedSource));
+    }
+}
+
+/**
  * ServerCapabilitiesInfo represents server capabilities for frontend
  */
 export class ServerCapabilitiesInfo {

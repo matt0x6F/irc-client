@@ -142,6 +142,13 @@ func NewApp() (*App, error) {
 			}
 			return 0, false
 		},
+		LoadDisabled: func() map[string]bool {
+			d, _ := app.storage.DisabledScripts()
+			return d
+		},
+		PersistEnabled: func(id string, enabled bool) {
+			_ = app.storage.SetScriptEnabled(id, enabled)
+		},
 	})
 
 	pluginMgr.SetBuiltinCommandChecker(func(k string) bool {
