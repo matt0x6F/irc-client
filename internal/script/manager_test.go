@@ -416,17 +416,44 @@ func TestDisableStopsTimersAndFiltersEvents(t *testing.T) {
 	dir := t.TempDir()
 	sdir := filepath.Join(dir, "ticker")
 	os.MkdirAll(sdir, 0o755)
-	// Script with a fast timer that increments a counter via Reply, and OnText.
+	// Script whose timer sends observable messages via c.Network("n").Say so we
+	// can verify the timer both fires and stops after Disable.
 	src := `package main
 import "github.com/matt0x6f/irc-client/cascade"
-func Setup(c *cascade.Client) { c.Every("20ms", func() {}) }
+func Setup(c *cascade.Client) { c.Every("20ms", func() { c.Network("n").Say("#c", "tick") }) }
 func OnText(e cascade.TextEvent) { e.Reply("alive") }
 `
 	os.WriteFile(filepath.Join(sdir, "ticker.go"), []byte(src), 0o644)
 
 	fs := &fakeSender{}
-	state := map[string]bool{}
-	host, stateMu, statePtr := persistHost(fs.send, state)
+	// Build a host where ResolveNetwork("n") returns a valid ID so timer Say()
+	// calls are recorded by fakeSender.
+	var mu sync.Mutex
+	stateData := make(map[string]bool)
+	host := Host{
+		Send:     fs.send,
+		SelfNick: noSelf,
+		ResolveNetwork: func(name string) (int64, bool) {
+			if name == "n" {
+				return 1, true
+			}
+			return 0, false
+		},
+		LoadDisabled: func() map[string]bool {
+			mu.Lock()
+			defer mu.Unlock()
+			out := make(map[string]bool, len(stateData))
+			for k, v := range stateData {
+				out[k] = v
+			}
+			return out
+		},
+		PersistEnabled: func(id string, enabled bool) {
+			mu.Lock()
+			defer mu.Unlock()
+			stateData[id] = !enabled // disabled map: true = disabled
+		},
+	}
 	bus := events.NewEventBus()
 	m := NewManager(bus, dir, host)
 	if err := m.LoadAll(); err != nil {
@@ -436,16 +463,25 @@ func OnText(e cascade.TextEvent) { e.Reply("alive") }
 
 	id := extension.ID("ticker")
 
-	// Let the timer fire at least once to confirm it's running.
-	if !pollUntil(500*time.Millisecond, func() bool {
-		ext, ok := m.registry().Get(id)
-		return ok && ext.Status == extension.StatusLoaded
-	}) {
-		t.Fatal("ticker script never reached StatusLoaded")
+	// Poll until at least one "tick" arrives from the timer so we know it is live.
+	countTicks := func() int {
+		fs.mu.Lock()
+		defer fs.mu.Unlock()
+		n := 0
+		for _, s := range fs.sent {
+			if s.message == "tick" {
+				n++
+			}
+		}
+		return n
+	}
+	if !pollUntil(500*time.Millisecond, func() bool { return countTicks() >= 1 }) {
+		t.Fatal("ticker timer never fired before Disable")
 	}
 
-	// Disable the script.
+	// Disable the script and record how many ticks arrived up to this point.
 	m.Disable(id)
+	ticksAtDisable := countTicks()
 
 	// Extension must be disabled in registry.
 	ext, ok := m.registry().Get(id)
@@ -453,12 +489,18 @@ func OnText(e cascade.TextEvent) { e.Reply("alive") }
 		t.Fatalf("after Disable: Enabled=%v want false", ext.Enabled)
 	}
 
-	// PersistEnabled(id, false) must have been called → state["ticker"] = true (disabled).
-	stateMu.Lock()
-	persisted := (*statePtr)["ticker"]
-	stateMu.Unlock()
+	// PersistEnabled(id, false) must have been called → stateData["ticker"] = true.
+	mu.Lock()
+	persisted := stateData["ticker"]
+	mu.Unlock()
 	if !persisted {
 		t.Fatal("Disable did not persist disabled state")
+	}
+
+	// Wait a settle window and assert no new ticks arrived (timer stopped).
+	time.Sleep(100 * time.Millisecond)
+	if after := countTicks(); after != ticksAtDisable {
+		t.Fatalf("timer still firing after Disable: ticks before=%d after=%d", ticksAtDisable, after)
 	}
 
 	// An event sent AFTER Disable must not be delivered.
@@ -665,7 +707,7 @@ func TestNewScriptRejectsUnsafeNames(t *testing.T) {
 	m := NewManager(events.NewEventBus(), t.TempDir(), testHost(func(int64, string, string) error { return nil }))
 	_ = m.LoadAll()
 
-	for _, name := range []string{"", "..", "a/b", "a\\b", "a..b"} {
+	for _, name := range []string{"", ".", "..", "a/b", "a\\b", "a..b"} {
 		if _, err := m.NewScript(name); err == nil {
 			t.Errorf("NewScript(%q): expected error", name)
 		}

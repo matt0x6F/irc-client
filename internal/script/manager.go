@@ -401,8 +401,13 @@ func (m *Manager) Enable(id extension.ID) {
 	m.reg.SetStatus(id, extension.StatusLoaded, "") // clears runaway/error
 	m.watchdog.clearStrikes(id)
 
-	// Re-run Setup to restore timers that were stopped by Disable. Old timers
-	// are already gone (stopped by Disable), so this cannot duplicate them.
+	// Stop any existing timers before re-running Setup so that calling Enable
+	// on an already-running script does not register a second set of timers
+	// (which would double tick frequency). This mirrors how reload() clears
+	// timers before re-running Setup.
+	m.sched.stopTimers(id)
+
+	// Re-run Setup to restore timers.
 	m.mu.RLock()
 	l, ok := m.scripts[id]
 	m.mu.RUnlock()
@@ -429,8 +434,8 @@ func (m *Manager) NewScript(name string) (string, error) {
 	if name == "" {
 		return "", fmt.Errorf("script name must not be empty")
 	}
-	// Reject any path separator or ".." to enforce a single safe dir segment.
-	if strings.ContainsAny(name, `/\`) || name == ".." || strings.Contains(name, "..") {
+	// Reject any path separator, ".", or ".." to enforce a single safe dir segment.
+	if strings.ContainsAny(name, `/\`) || name == "." || name == ".." || strings.Contains(name, "..") {
 		return "", fmt.Errorf("script name %q is not a safe directory name", name)
 	}
 	scriptDir := filepath.Join(m.dir, name)
