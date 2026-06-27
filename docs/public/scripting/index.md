@@ -23,7 +23,7 @@ Because the type check happens at load time, errors surface immediately in the S
 
 ## The capability sandbox
 
-A script can call the `cascade` API and nothing else. There is no standard library available inside the interpreter — no `fmt`, no `strings`, no `os`, no network, no filesystem. The absence of those packages *is* the sandbox: a script can send messages through `cascade.Network.Say` and read what's in the event it receives, and that's the boundary.
+A script can call the `cascade` API and nothing else. There is no standard library available inside the interpreter — no `fmt`, no `strings`, no `os`, no network, no filesystem. The absence of those packages *is* the sandbox: a script can send messages by replying to an event (`e.Reply(...)`) or proactively via `client.Network("name").Say(...)`, and read what's in the event it receives, and that's the boundary.
 
 See [Lifecycle & limits](lifecycle-and-limits.md) for the full picture, including the watchdog that auto-disables misbehaving scripts.
 
