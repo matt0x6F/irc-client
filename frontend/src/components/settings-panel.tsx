@@ -105,6 +105,8 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
   const setTypingSend = useSettingsStore((s) => s.setTypingSend);
   const typingReceive = useSettingsStore((s) => s.typingReceive);
   const setTypingReceive = useSettingsStore((s) => s.setTypingReceive);
+  const reconnectOnAuthFailure = useSettingsStore((s) => s.reconnectOnAuthFailure);
+  const setReconnectOnAuthFailure = useSettingsStore((s) => s.setReconnectOnAuthFailure);
   const [notifyNotice, setNotifyNotice] = useState<string | null>(null);
 
   // Theme (appearance + accent)
@@ -1272,6 +1274,17 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
                 </div>
                 <p className="text-xs text-muted-foreground">
                   Display a "typing…" line above the message input when people in a channel or PM are composing.
+                </p>
+              </div>
+
+              {/* Auth failure reconnect */}
+              <div className="border border-border rounded-lg p-4 bg-card/50 shadow-[var(--shadow-sm)]">
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-sm font-medium">Automatically reconnect after a failed login</span>
+                  <Toggle checked={reconnectOnAuthFailure} onChange={setReconnectOnAuthFailure} />
+                </div>
+                <p className="text-xs text-muted-foreground mt-2">
+                  When off, Cascade stops and shows a banner instead of retrying — recommended, since a wrong password never fixes itself by retrying.
                 </p>
               </div>
 

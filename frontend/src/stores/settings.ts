@@ -14,6 +14,7 @@ const NOTIFY_CONNECTION_KEY = 'notifications.connectionLost';
 const NOTIFY_UNFOCUSED_KEY = 'notifications.onlyWhenUnfocused';
 const TYPING_SEND_KEY = 'typing.send';
 const TYPING_RECEIVE_KEY = 'typing.receive';
+const RECONNECT_ON_AUTH_FAILURE_KEY = 'reconnect_on_auth_failure';
 
 // How a user's channel-membership prefixes are shown in the nick list:
 // 'icon' shows a single icon for their highest role; 'text' shows the full
@@ -58,6 +59,11 @@ interface SettingsState {
   // inbound typing events.
   typingReceive: boolean;
   setTypingReceive: (value: boolean) => void;
+  // When off (the default), an auth failure stops reconnecting and shows a
+  // banner so the user can fix their credentials. When on, the normal
+  // reconnect loop retries — only useful in specific automated scenarios.
+  reconnectOnAuthFailure: boolean;
+  setReconnectOnAuthFailure: (value: boolean) => void;
 }
 
 /**
@@ -144,6 +150,13 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       console.error('Failed to persist typing.receive:', error),
     );
   },
+  reconnectOnAuthFailure: false, // default off — a wrong password never fixes itself
+  setReconnectOnAuthFailure: (value) => {
+    set({ reconnectOnAuthFailure: value });
+    SetSetting(RECONNECT_ON_AUTH_FAILURE_KEY, value ? 'true' : 'false').catch((error) =>
+      console.error('Failed to persist reconnect_on_auth_failure:', error),
+    );
+  },
 }));
 
 /**
@@ -163,6 +176,7 @@ export async function initSettings(): Promise<void> {
       nUnfocused,
       tSend,
       tReceive,
+      reconnectAuthFailure,
     ] = await Promise.all([
       GetSetting(CONSOLIDATE_JOIN_QUIT_KEY),
       GetSetting(PREFIX_DISPLAY_MODE_KEY),
@@ -174,6 +188,7 @@ export async function initSettings(): Promise<void> {
       GetSetting(NOTIFY_UNFOCUSED_KEY),
       GetSetting(TYPING_SEND_KEY),
       GetSetting(TYPING_RECEIVE_KEY),
+      GetSetting(RECONNECT_ON_AUTH_FAILURE_KEY),
     ]);
     useSettingsStore.setState({
       consolidateJoinQuit: consolidate === 'true',
@@ -189,6 +204,8 @@ export async function initSettings(): Promise<void> {
       notifyOnlyWhenUnfocused: nUnfocused !== 'false',
       typingSend: tSend !== 'false',
       typingReceive: tReceive !== 'false',
+      // Default OFF: treat only an explicit 'true' as on (safe default).
+      reconnectOnAuthFailure: reconnectAuthFailure === 'true',
     });
   } catch (error) {
     console.error('Failed to load settings:', error);
@@ -222,6 +239,8 @@ export async function initSettings(): Promise<void> {
       useSettingsStore.setState({ typingSend: payload.value !== 'false' });
     } else if (payload.key === TYPING_RECEIVE_KEY) {
       useSettingsStore.setState({ typingReceive: payload.value !== 'false' });
+    } else if (payload.key === RECONNECT_ON_AUTH_FAILURE_KEY) {
+      useSettingsStore.setState({ reconnectOnAuthFailure: payload.value === 'true' });
     }
   });
 }

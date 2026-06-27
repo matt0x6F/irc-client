@@ -1,6 +1,7 @@
 import { useEffect, useCallback, useRef } from 'react';
-import { SendCommand, OpenSettings } from '../wailsjs/go/main/App';
+import { SendCommand, OpenSettings, GetServers } from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime/runtime';
+import { main } from '../wailsjs/go/models';
 import { useNetworkStore } from './stores/network';
 import { useUIStore } from './stores/ui';
 import { eventMatchesPane } from './lib/pane-routing';
@@ -20,6 +21,7 @@ import { ChannelListModal } from './components/channel-list-modal';
 import { KeyboardShortcutsModal } from './components/keyboard-shortcuts-modal';
 import { HelpDialog } from './components/help-dialog';
 import { UpdateAvailableDialog } from './components/update-available-dialog';
+import { AuthBanner } from './components/AuthBanner';
 import { List, Settings } from 'lucide-react';
 
 function App() {
@@ -273,9 +275,22 @@ function App() {
       const at = data?.timestamp ? Date.parse(data.timestamp) : undefined;
       if (networkId !== undefined && typeof connected === 'boolean') {
         setConnectionStatus(networkId, connected, Number.isNaN(at) ? undefined : at);
+        // Dismiss any auth-failure banner once the network comes back up.
+        if (connected === true) {
+          useNetworkStore.getState().clearAuthFailed(Number(networkId));
+        }
       }
     });
-    return () => unsubscribe();
+    const unsubscribeAuth = EventsOn('auth-failed', (data: any) => {
+      const networkId = Number(data?.networkId);
+      if (!Number.isNaN(networkId)) {
+        useNetworkStore.getState().setAuthFailed(networkId, String(data?.reason ?? ''));
+      }
+    });
+    return () => {
+      unsubscribe();
+      unsubscribeAuth();
+    };
   }, []);
 
   // Current-nick events: track the server-assigned nick so the header reflects
@@ -513,6 +528,51 @@ function App() {
     } catch (error) {
       alert(`Failed to disconnect: ${error}`);
     }
+  };
+
+  // Reconnect from the auth-failure banner: rebuild a NetworkConfig from the
+  // stored network record (same approach as the server-tree context menu) and
+  // delegate to the shared connectNetwork action.
+  const handleAuthBannerReconnect = async (networkId: number) => {
+    const network = useNetworkStore.getState().networks.find((n) => n.id === networkId);
+    if (!network) return;
+    try {
+      const dbServers = await GetServers(networkId);
+      const configData: any = {
+        name: network.name,
+        nickname: network.nickname,
+        username: network.username,
+        realname: network.realname,
+        password: network.password,
+        sasl_enabled: network.sasl_enabled || false,
+        sasl_mechanism: network.sasl_mechanism || '',
+        sasl_username: network.sasl_username || '',
+        sasl_password: network.sasl_password || '',
+        sasl_external_cert: network.sasl_external_cert || '',
+      };
+      if (dbServers && dbServers.length > 0) {
+        configData.servers = dbServers.map((srv: any) => ({
+          address: srv.address,
+          port: srv.port,
+          tls: srv.tls,
+          order: srv.order,
+        }));
+      } else {
+        configData.address = network.address;
+        configData.port = network.port;
+        configData.tls = network.tls;
+      }
+      await connectNetwork(main.NetworkConfig.createFrom(configData));
+    } catch (error) {
+      alert(`Failed to reconnect: ${error}`);
+    }
+  };
+
+  // Open the standalone Settings window so the user can edit the network's
+  // credentials. The Settings window is the single source of truth for network
+  // config; we open it the same way the toolbar Settings button does.
+  const handleAuthBannerEditCredentials = (_networkId: number) => {
+    void OpenSettings();
   };
 
   const handleDelete = async (networkId: number) => {
@@ -844,6 +904,13 @@ function App() {
                 </button>
               </div>
             )}
+          {selectedNetwork !== null && (
+            <AuthBanner
+              networkId={selectedNetwork}
+              onReconnect={handleAuthBannerReconnect}
+              onEditCredentials={handleAuthBannerEditCredentials}
+            />
+          )}
         </div>
 
         {/* Content Area */}

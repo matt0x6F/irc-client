@@ -180,6 +180,20 @@ func TestCloseConnectionGapNoOpWithoutGap(t *testing.T) {
 	}
 }
 
+func TestAuthFailureBlocksReconnect(t *testing.T) {
+	// Default / unset => block reconnect.
+	if !authFailureBlocksReconnect("") {
+		t.Error("unset setting must block reconnect after auth failure")
+	}
+	if !authFailureBlocksReconnect("false") {
+		t.Error("false setting must block reconnect after auth failure")
+	}
+	// Opted in => allow reconnect.
+	if authFailureBlocksReconnect("true") {
+		t.Error("true setting must allow reconnect after auth failure")
+	}
+}
+
 // TestHandleConnectionLostOpensGap exercises the real entry point: a confirmed drop on
 // a network with auto-connect off marks the gap once (no reconnect goroutine spawned)
 // and stays idempotent across repeated connection.lost events.

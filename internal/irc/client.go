@@ -50,6 +50,7 @@ type IRCClient struct {
 	saslPassword          string
 	saslInProgress        bool
 	saslAuthenticated     bool
+	authFailed            bool // True when SASL was enabled but did not succeed this session (guarded by mu)
 	saslCapRequested      bool
 	saslCapAcknowledged   bool
 	scramState            *SCRAMState
@@ -429,7 +430,7 @@ func (c *IRCClient) handleWelcome(e ircmsg.Message) {
 			NetworkID:   c.networkID,
 			ChannelID:   nil,
 			User:        "*",
-			Message:     fmt.Sprintf("Connected as %q. Cascade will keep trying to reclaim %q automatically.", nick, preferred),
+			Message:     fmt.Sprintf("Connected as %q. Cascade will keep re-requesting %q and switch to it automatically once it becomes free. To reclaim it now from a stuck session, use /ns regain %s.", nick, preferred, preferred),
 			MessageType: "status",
 			Timestamp:   time.Now(),
 		})
@@ -1577,6 +1578,14 @@ func (c *IRCClient) setupHandlers() {
 	// the requested channel's buffer so it doesn't linger as a phantom membership.
 	c.conn.AddCallback("470", c.handleForwardedJoin)
 
+	// Standard JOIN-failure numerics: close the phantom channel and explain why,
+	// reusing the 470 forwarding pattern. Protocol-standard, no services logic.
+	c.conn.AddCallback("471", c.handleJoinError) // ERR_CHANNELISFULL
+	c.conn.AddCallback("473", c.handleJoinError) // ERR_INVITEONLYCHAN
+	c.conn.AddCallback("474", c.handleJoinError) // ERR_BANNEDFROMCHAN
+	c.conn.AddCallback("475", c.handleJoinError) // ERR_BADCHANNELKEY
+	c.conn.AddCallback("477", c.handleJoinError) // ERR_NEEDREGGEDNICK
+
 	// User quit
 	c.conn.AddCallback("QUIT", func(e ircmsg.Message) {
 		user := e.Nick()
@@ -2654,6 +2663,12 @@ func (c *IRCClient) setupHandlers() {
 				toRequest := capsToRequest(allCaps, c.enabledCaps, c.saslEnabled && !done)
 				c.mu.RUnlock()
 
+				// Required SASL not on offer: abort rather than register unauthenticated.
+				if c.saslEnabled && !done && !contains(allCaps, "sasl") {
+					c.handleCapLSMissingSASL(allCaps)
+					return
+				}
+
 				if len(toRequest) > 0 {
 					reqStr := strings.Join(toRequest, " ")
 					c.storage.WriteMessage(storage.Message{
@@ -2720,6 +2735,7 @@ func (c *IRCClient) setupHandlers() {
 			// post-registration CAP NEW request just means we don't get that cap.
 			c.mu.RLock()
 			negotiationDone := c.capNegotiationDone
+			saslRequired := c.saslEnabled
 			c.mu.RUnlock()
 			rejected := ""
 			if len(e.Params) >= 3 {
@@ -2738,7 +2754,13 @@ func (c *IRCClient) setupHandlers() {
 				Timestamp:   time.Now(),
 			})
 			if !negotiationDone {
-				c.endCapNegotiation()
+				// If the server refused the sasl cap and SASL is required, abort
+				// rather than register unauthenticated.
+				if saslRequired && contains(rejected, "sasl") {
+					c.handleSASLFailure("server refused SASL")
+				} else {
+					c.endCapNegotiation()
+				}
 			}
 		case "NEW":
 			if len(e.Params) >= 3 {
@@ -2814,77 +2836,48 @@ func (c *IRCClient) setupHandlers() {
 		c.handleAUTHENTICATE(e)
 	})
 
-	c.conn.AddCallback("900", func(e ircmsg.Message) {
+	c.conn.AddCallback("900", func(e ircmsg.Message) { // RPL_LOGGEDIN
 		if !c.saslEnabled {
 			return
 		}
-		c.mu.Lock()
-		c.saslAuthenticated = true
-		c.saslInProgress = false
-		c.mu.Unlock()
-		c.storage.WriteMessage(storage.Message{
-			NetworkID:   c.networkID,
-			ChannelID:   nil,
-			User:        "*",
-			Message:     "SASL authentication successful",
-			MessageType: "status",
-			Timestamp:   time.Now(),
-		})
-		c.endCapNegotiation()
-		c.eventBus.Emit(events.Event{
-			Type:      EventSASLSuccess,
-			Data:      map[string]interface{}{"network": c.network.Address},
-			Timestamp: time.Now(),
-			Source:    events.EventSourceIRC,
-		})
+		c.handleSASLSuccess()
+	})
+	c.conn.AddCallback("903", func(e ircmsg.Message) { // RPL_SASLSUCCESS
+		if !c.saslEnabled {
+			return
+		}
+		c.handleSASLSuccess()
 	})
 
-	c.conn.AddCallback("901", func(e ircmsg.Message) {
+	c.conn.AddCallback("901", func(e ircmsg.Message) { // RPL_LOGGEDOUT during auth = failure
 		if !c.saslEnabled {
 			return
 		}
-		c.mu.Lock()
-		c.saslInProgress = false
-		c.mu.Unlock()
-		c.storage.WriteMessage(storage.Message{
-			NetworkID:   c.networkID,
-			ChannelID:   nil,
-			User:        "*",
-			Message:     "SASL authentication failed",
-			MessageType: "status",
-			Timestamp:   time.Now(),
-		})
-		c.endCapNegotiation()
-		c.eventBus.Emit(events.Event{
-			Type:      EventSASLFailed,
-			Data:      map[string]interface{}{"network": c.network.Address, "error": "Authentication failed"},
-			Timestamp: time.Now(),
-			Source:    events.EventSourceIRC,
-		})
+		c.handleSASLFailure("logged out")
 	})
-
-	c.conn.AddCallback("904", func(e ircmsg.Message) {
+	c.conn.AddCallback("902", func(e ircmsg.Message) { // ERR_NICKLOCKED
 		if !c.saslEnabled {
 			return
 		}
-		c.mu.Lock()
-		c.saslInProgress = false
-		c.mu.Unlock()
-		c.storage.WriteMessage(storage.Message{
-			NetworkID:   c.networkID,
-			ChannelID:   nil,
-			User:        "*",
-			Message:     "SASL authentication failed",
-			MessageType: "status",
-			Timestamp:   time.Now(),
-		})
-		c.endCapNegotiation()
-		c.eventBus.Emit(events.Event{
-			Type:      EventSASLFailed,
-			Data:      map[string]interface{}{"network": c.network.Address, "error": "SASL authentication failed"},
-			Timestamp: time.Now(),
-			Source:    events.EventSourceIRC,
-		})
+		c.handleSASLFailure("account locked")
+	})
+	c.conn.AddCallback("904", func(e ircmsg.Message) { // ERR_SASLFAIL
+		if !c.saslEnabled {
+			return
+		}
+		c.handleSASLFailure("invalid credentials")
+	})
+	c.conn.AddCallback("905", func(e ircmsg.Message) { // ERR_SASLTOOLONG
+		if !c.saslEnabled {
+			return
+		}
+		c.handleSASLFailure("credentials too long")
+	})
+	c.conn.AddCallback("906", func(e ircmsg.Message) { // ERR_SASLABORTED
+		if !c.saslEnabled {
+			return
+		}
+		c.handleSASLFailure("authentication aborted")
 	})
 
 	// ERR_NICKNAMEINUSE (433) - nick collision handling
@@ -3744,8 +3737,15 @@ func capValue(capabilities, cap string) (value string, present bool) {
 // Setting capNegotiationDone lets the ACK handler tell a registration ACK (which
 // must be followed by CAP END) apart from a post-registration ACK triggered by a
 // CAP NEW request (which must NOT send CAP END again).
+// It is idempotent: if CAP negotiation is already done it returns without sending
+// a second CAP END. This matters because RPL_LOGGEDIN (900) and RPL_SASLSUCCESS
+// (903) commonly both arrive and both call handleSASLSuccess -> endCapNegotiation.
 func (c *IRCClient) endCapNegotiation() {
 	c.mu.Lock()
+	if c.capNegotiationDone {
+		c.mu.Unlock()
+		return
+	}
 	c.capNegotiationDone = true
 	c.mu.Unlock()
 	c.conn.SendRaw("CAP END")
@@ -3840,7 +3840,7 @@ func (c *IRCClient) handlePLAINAuth(response string) {
 		c.mu.Lock()
 		c.saslInProgress = false
 		c.mu.Unlock()
-		c.endCapNegotiation()
+		c.handleSASLFailure("PLAIN authentication aborted by server")
 	}
 }
 
@@ -3854,7 +3854,7 @@ func (c *IRCClient) handleEXTERNALAuth(response string) {
 		c.mu.Lock()
 		c.saslInProgress = false
 		c.mu.Unlock()
-		c.endCapNegotiation()
+		c.handleSASLFailure("EXTERNAL authentication aborted by server")
 	}
 }
 
