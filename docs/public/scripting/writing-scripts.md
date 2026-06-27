@@ -1,6 +1,6 @@
 # Writing scripts
 
-This page covers every concept you need to author scripts for Cascade: what a script is on disk, the manifest header, the five event handlers, how to read messages and reply to them, how to send messages proactively with timers, the sandbox rules, and how to get editor autocomplete working.
+This page covers every concept you need to author scripts for Cascade: what a script is on disk, the manifest header, the handler functions, how to read messages and reply to them, how to send messages proactively with timers, the sandbox rules, and how to get editor autocomplete working.
 
 ---
 
@@ -48,7 +48,7 @@ import "github.com/matt0x6f/irc-client/cascade"
 
 ## Handlers
 
-A script works by exporting functions with specific names and signatures. Cascade calls them when the corresponding event occurs. All five are optional — define only the ones your script needs.
+A script works by exporting functions with specific names and signatures. Cascade calls them when the corresponding event occurs. All are optional — define only the ones your script needs.
 
 | Handler | When it fires |
 |---|---|
@@ -81,7 +81,7 @@ Both `TextEvent` and `NoticeEvent` carry the same core fields and share two meth
 | `e.HasPrefix("!cmd")` | `true` if the message starts with `!cmd` (case-sensitive) |
 | `e.Arg(n)` | The nth whitespace-separated word of the message (1-based). Returns `""` if out of range. |
 
-Calling `e.HasPrefix(...)` or `e.Arg(...)` inside an `OnNotice` handler will produce a load-time error. If you need prefix matching in a notice handler, compare `e.Message` directly using string operations — for example `e.Message[:5] == "!cmd "` — since there is no `strings` package in the sandbox.
+Calling `e.HasPrefix(...)` or `e.Arg(...)` inside an `OnNotice` handler will produce a load-time error. If you need prefix matching in a notice handler, compare `e.Message` directly using string operations — for example `len(e.Message) >= 5 && e.Message[:5] == "!cmd "` — since there is no `strings` package in the sandbox. The length guard is important: a slice expression like `e.Message[:5]` panics if the message is shorter than 5 characters, which would strike the script toward `runaway`.
 
 `e.Arg(1)` is the first word of the message — typically the command name. Here is a complete script that uses it:
 

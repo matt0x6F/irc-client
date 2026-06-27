@@ -4,7 +4,7 @@ You'll have a working script in about five minutes. By the end you'll know how t
 
 ## 1. Open the Scripts panel
 
-In the Cascade menu bar, go to **Settings → Scripts**. This is your command centre for creating and monitoring scripts. If you need a full tour of the panel's controls, see [Managing scripts](managing-scripts.md).
+In the Cascade menu bar, go to **Settings → Scripts**. This is your command center for creating and monitoring scripts. If you need a full tour of the panel's controls, see [Managing scripts](managing-scripts.md).
 
 ## 2. Create a script
 
@@ -49,7 +49,7 @@ That's it — your first live, running script.
 
 ## If it didn't load
 
-If the status badge shows **Error** instead of **Loaded**, click the badge to expand the error message. A typo in a function signature or an unrecognised import is the most common cause — fix it, save again, and Cascade hot-reloads once more.
+If the status badge shows **Error** instead of **Loaded**, click the badge to expand the error message. A typo in a function signature or an unrecognized import is the most common cause — fix it, save again, and Cascade hot-reloads once more.
 
 For a detailed look at the load/reload/unload lifecycle and what the watchdog does when a script misbehaves, see [Lifecycle & limits](lifecycle-and-limits.md). For help reading error messages and managing individual scripts from the UI, see [Managing scripts](managing-scripts.md).
 

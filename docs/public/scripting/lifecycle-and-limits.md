@@ -45,7 +45,7 @@ To recover a `runaway` script: click **Enable** in the Scripts panel. That clear
 
 **What "fast" means in practice:**
 
-- Do not call `time.Sleep` or any blocking I/O (the sandbox prevents this, but keep it in mind as you design logic).
+- Do not attempt to call `time.Sleep` or any blocking I/O. There is no `time` package in the sandbox, so code that imports it will fail to load with an `error` status — it never reaches the point of being blocked at runtime.
 - Do not loop over unbounded input inside a handler. If you need to process a large data set, break it into smaller chunks driven by timers.
 - Return from handlers as soon as you have dispatched a reply; do not wait for confirmation.
 

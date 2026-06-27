@@ -17,7 +17,7 @@ When a script starts needing real isolation, arbitrary third-party dependencies,
 
 ## How it works
 
-A script is a **directory** of `package main` Go files placed inside the Cascade scripts folder. When Cascade starts (or when you save a file), it reads those files, type-checks them against the `cascade` SDK, and loads any exported handler functions it finds — `OnText`, `OnNotice`, `OnJoin`, `OnPart`. If the script also exports `Setup`, that runs once right after loading so you can register timers and proactive behaviour.
+A script is a **directory** of `package main` Go files placed inside the Cascade scripts folder. When Cascade starts (or when you save a file), it reads those files, type-checks them against the `cascade` SDK, and loads any exported handler functions it finds — `OnText`, `OnNotice`, `OnJoin`, `OnPart`. If the script also exports `Setup`, that runs once right after loading so you can register timers and proactive behavior.
 
 Because the type check happens at load time, errors surface immediately in the Scripts panel — not at 2am when someone says the wrong thing in a channel. Fix the error, save, and Cascade hot-reloads the script automatically.
 
