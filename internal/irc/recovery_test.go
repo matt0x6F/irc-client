@@ -205,6 +205,98 @@ func TestJoinError477ClosesChannelAndWritesStatus(t *testing.T) {
 	}
 }
 
+// assertSASLAbortBehavior is a shared helper that verifies any SASL abort path:
+// AuthFailed() must be true, the connection must emit QUIT, and CAP END must never
+// appear. The caller invokes the abort via triggerFn and this helper drains
+// sentLines with a deadline.
+func assertSASLAbortBehavior(t *testing.T, c *IRCClient, sentLines <-chan string, triggerFn func()) {
+	t.Helper()
+	triggerFn()
+
+	if !c.AuthFailed() {
+		t.Fatal("AuthFailed() must be true after SASL abort")
+	}
+
+	var sawQUIT, sawCapEnd bool
+	deadline := time.After(time.Second)
+	for !sawQUIT {
+		select {
+		case line := <-sentLines:
+			if strings.HasPrefix(line, "QUIT") {
+				sawQUIT = true
+			}
+			if strings.HasPrefix(line, "CAP END") {
+				sawCapEnd = true
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for QUIT after SASL abort")
+		}
+	}
+	if sawCapEnd {
+		t.Fatal("SASL abort must NOT send CAP END (that registers unauthenticated)")
+	}
+}
+
+// TestPLAINAuthServerAbortAbortsConnection verifies that when the server sends
+// AUTHENTICATE * during PLAIN auth, the client sets AuthFailed and sends QUIT
+// instead of CAP END.
+func TestPLAINAuthServerAbortAbortsConnection(t *testing.T) {
+	c := newAnnounceBotTestClient(t)
+	conn, sentLines := newConnectedPipe(t)
+	c.conn = conn
+	c.saslEnabled = true
+
+	assertSASLAbortBehavior(t, c, sentLines, func() {
+		c.handlePLAINAuth("*")
+	})
+}
+
+// TestEXTERNALAuthServerAbortAbortsConnection verifies that when the server sends
+// AUTHENTICATE * during EXTERNAL auth, the client sets AuthFailed and sends QUIT
+// instead of CAP END.
+func TestEXTERNALAuthServerAbortAbortsConnection(t *testing.T) {
+	c := newAnnounceBotTestClient(t)
+	conn, sentLines := newConnectedPipe(t)
+	c.conn = conn
+	c.saslEnabled = true
+
+	assertSASLAbortBehavior(t, c, sentLines, func() {
+		c.handleEXTERNALAuth("*")
+	})
+}
+
+// TestSCRAMServerAbortAbortsConnection verifies that when the server sends
+// AUTHENTICATE * during SCRAM auth (server-side abort), the client sets
+// AuthFailed and sends QUIT instead of CAP END.
+func TestSCRAMServerAbortAbortsConnection(t *testing.T) {
+	c := newAnnounceBotTestClient(t)
+	conn, sentLines := newConnectedPipe(t)
+	c.conn = conn
+	c.saslEnabled = true
+	c.saslMechanism = "SCRAM-SHA-256"
+
+	assertSASLAbortBehavior(t, c, sentLines, func() {
+		c.handleSCRAMAuth("*")
+	})
+}
+
+// TestAbortSASLClientSideErrorAbortsConnection verifies that a client-detected
+// SCRAM protocol error (e.g. invalid base64) routes through handleSASLFailure:
+// AuthFailed() must be set, QUIT must be sent, and CAP END must never appear.
+// abortSASL also sends AUTHENTICATE * as a protocol-level abort signal before
+// tearing down; we accept that in the sent lines.
+func TestAbortSASLClientSideErrorAbortsConnection(t *testing.T) {
+	c := newAnnounceBotTestClient(t)
+	conn, sentLines := newConnectedPipe(t)
+	c.conn = conn
+	c.saslEnabled = true
+	c.saslMechanism = "SCRAM-SHA-256"
+
+	assertSASLAbortBehavior(t, c, sentLines, func() {
+		c.abortSASL("decode error")
+	})
+}
+
 // TestJoinError474ClosesChannelAndWritesStatus verifies that ERR_BANNEDFROMCHAN
 // (474) also closes the phantom channel and writes an appropriate status line.
 func TestJoinError474ClosesChannelAndWritesStatus(t *testing.T) {

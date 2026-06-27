@@ -3840,7 +3840,7 @@ func (c *IRCClient) handlePLAINAuth(response string) {
 		c.mu.Lock()
 		c.saslInProgress = false
 		c.mu.Unlock()
-		c.endCapNegotiation()
+		c.handleSASLFailure("PLAIN authentication aborted by server")
 	}
 }
 
@@ -3854,7 +3854,7 @@ func (c *IRCClient) handleEXTERNALAuth(response string) {
 		c.mu.Lock()
 		c.saslInProgress = false
 		c.mu.Unlock()
-		c.endCapNegotiation()
+		c.handleSASLFailure("EXTERNAL authentication aborted by server")
 	}
 }
 

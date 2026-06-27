@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/matt0x6f/irc-client/internal/events"
-	"github.com/matt0x6f/irc-client/internal/storage"
 	"golang.org/x/crypto/pbkdf2"
 )
 
@@ -63,7 +62,7 @@ func (c *IRCClient) handleSCRAMAuth(response string) {
 		c.saslInProgress = false
 		c.scramState = nil
 		c.mu.Unlock()
-		c.endCapNegotiation()
+		c.handleSASLFailure("SCRAM authentication aborted by server")
 	} else {
 		// Server response: decode and process
 		decoded, err := base64.StdEncoding.DecodeString(response)
@@ -238,19 +237,8 @@ func (c *IRCClient) abortSASL(reason string) {
 	c.scramState = nil
 	c.mu.Unlock()
 
-	statusMsg := storage.Message{
-		NetworkID:   c.networkID,
-		ChannelID:   nil,
-		User:        "*",
-		Message:     fmt.Sprintf("SASL authentication aborted: %s", reason),
-		MessageType: "status",
-		Timestamp:   time.Now(),
-		RawLine:     "",
-	}
-	c.storage.WriteMessage(statusMsg)
-
 	c.conn.SendRaw("AUTHENTICATE *")
-	c.endCapNegotiation()
+	c.handleSASLFailure(reason)
 
 	c.eventBus.Emit(events.Event{
 		Type:      EventSASLAborted,
