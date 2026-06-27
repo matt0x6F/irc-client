@@ -800,6 +800,32 @@ func (a *App) SetChannelOpen(networkID int64, channelName string, isOpen bool) e
 	return nil
 }
 
+// CloseChannel hides a channel's buffer pane (is_open=false) WITHOUT leaving
+// the channel on the server. This is distinct from LeaveChannel, which sends a
+// real PART. It emits EventChannelsChanged so every window's server tree drops
+// the pane; SetChannelOpen alone only emits a pane-blur event.
+func (a *App) CloseChannel(networkID int64, channelName string) error {
+	if err := a.SetChannelOpen(networkID, channelName, false); err != nil {
+		return fmt.Errorf("close channel %q: %w", channelName, err)
+	}
+
+	network, err := a.storage.GetNetwork(networkID)
+	if err != nil {
+		return fmt.Errorf("close channel %q: network not found: %w", channelName, err)
+	}
+
+	a.eventBus.Emit(events.Event{
+		Type: irc.EventChannelsChanged,
+		Data: map[string]interface{}{
+			"network":   network.Address,
+			"networkId": networkID,
+		},
+		Timestamp: time.Now(),
+		Source:    events.EventSourceUI,
+	})
+	return nil
+}
+
 // ToggleChannelAutoJoin toggles the auto-join setting for a channel
 func (a *App) ToggleChannelAutoJoin(networkID int64, channelName string) error {
 	channel, err := a.storage.GetChannelByName(networkID, channelName)

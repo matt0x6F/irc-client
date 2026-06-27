@@ -94,6 +94,19 @@ export function ClearSTSPolicy(hostname) {
 }
 
 /**
+ * CloseChannel hides a channel's buffer pane (is_open=false) WITHOUT leaving
+ * the channel on the server. This is distinct from LeaveChannel, which sends a
+ * real PART. It emits EventChannelsChanged so every window's server tree drops
+ * the pane; SetChannelOpen alone only emits a pane-blur event.
+ * @param {number} networkID
+ * @param {string} channelName
+ * @returns {$CancellablePromise<void>}
+ */
+export function CloseChannel(networkID, channelName) {
+    return $Call.ByID(4004519506, networkID, channelName);
+}
+
+/**
  * ConnectNetwork connects to an IRC network (fresh connect, e.g. user-initiated
  * or startup auto-connect). Reconnect after an unexpected drop goes through
  * connectNetwork with reconnect=true so the client rejoins its whole session.
