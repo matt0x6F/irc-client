@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/matt0x6f/irc-client/cascade"
 	"github.com/matt0x6f/irc-client/internal/events"
 	"github.com/matt0x6f/irc-client/internal/extension"
@@ -39,6 +41,7 @@ type Manager struct {
 
 	mu      sync.RWMutex
 	scripts map[extension.ID]*loaded
+	watcher *fsnotify.Watcher
 }
 
 // NewManager builds a script manager and attaches its router to the bus.
@@ -209,3 +212,86 @@ func (m *Manager) List() []extension.Extension { return m.reg.List() }
 
 // registry exposes the registry for tests.
 func (m *Manager) registry() *extension.Registry { return m.reg }
+
+// Watch begins watching the scripts dir (and each script subdir) and hot-reloads
+// on change. Safe to call once after LoadAll. Errors starting the watcher are
+// returned; per-event errors are logged-and-continued by the run loop.
+func (m *Manager) Watch() error {
+	w, err := fsnotify.NewWatcher()
+	if err != nil {
+		return err
+	}
+	m.watcher = w
+	// Watch the root (for new/removed script dirs) and each existing script dir.
+	_ = w.Add(m.dir)
+	if entries, err := os.ReadDir(m.dir); err == nil {
+		for _, e := range entries {
+			if e.IsDir() {
+				_ = w.Add(filepath.Join(m.dir, e.Name()))
+			}
+		}
+	}
+	go m.runWatch()
+	return nil
+}
+
+// Close stops the watcher.
+func (m *Manager) Close() error {
+	if m.watcher != nil {
+		return m.watcher.Close()
+	}
+	return nil
+}
+
+func (m *Manager) runWatch() {
+	for {
+		select {
+		case ev, ok := <-m.watcher.Events:
+			if !ok {
+				return
+			}
+			m.handleFSEvent(ev)
+		case _, ok := <-m.watcher.Errors:
+			if !ok {
+				return
+			}
+		}
+	}
+}
+
+// scriptDirFor maps a changed path to the script directory it belongs to (an
+// immediate child of m.dir), or "" if the path is m.dir itself / unrelated.
+func (m *Manager) scriptDirFor(path string) string {
+	rel, err := filepath.Rel(m.dir, path)
+	if err != nil {
+		return ""
+	}
+	parts := strings.SplitN(filepath.ToSlash(rel), "/", 2)
+	if parts[0] == "" || parts[0] == "." || parts[0] == ".." {
+		return ""
+	}
+	return filepath.Join(m.dir, parts[0])
+}
+
+func (m *Manager) handleFSEvent(ev fsnotify.Event) {
+	// New directory under root: start watching it and load it.
+	if ev.Op&fsnotify.Create != 0 {
+		if fi, err := os.Stat(ev.Name); err == nil && fi.IsDir() && filepath.Dir(ev.Name) == m.dir {
+			_ = m.watcher.Add(ev.Name)
+			m.loadDir(ev.Name)
+			return
+		}
+	}
+	sub := m.scriptDirFor(ev.Name)
+	if sub == "" {
+		return
+	}
+	id := extension.ID(filepath.Base(sub))
+	if _, err := os.Stat(sub); os.IsNotExist(err) {
+		m.unload(id)
+		return
+	}
+	if goFiles, _ := filepath.Glob(filepath.Join(sub, "*.go")); len(goFiles) > 0 {
+		m.reload(sub)
+	}
+}

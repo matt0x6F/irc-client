@@ -214,3 +214,17 @@ func TestScaffoldModuleDoesNotOverwrite(t *testing.T) {
 		t.Fatalf("existing go.mod was overwritten: %s", b)
 	}
 }
+
+func TestWatchStartsAndCloses(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManager(events.NewEventBus(), dir, func(int64, string, string) error { return nil })
+	if err := m.LoadAll(); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Watch(); err != nil {
+		t.Fatalf("Watch: %v", err)
+	}
+	if err := m.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}

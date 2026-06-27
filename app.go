@@ -208,6 +208,9 @@ func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) 
 	if err := a.scriptMgr.LoadAll(); err != nil {
 		logger.Log.Warn().Err(err).Msg("failed to load scripts")
 	}
+	if err := a.scriptMgr.Watch(); err != nil {
+		logger.Log.Warn().Err(err).Msg("failed to start script watcher")
+	}
 
 	logger.Log.Info().Msg("Plugin loading started in background, proceeding to auto-connect setup")
 
