@@ -127,6 +127,7 @@ interface NetworkState {
   networks: storage.Network[];
   connectionStatus: Record<number, boolean>;
   connectionStatusAt: Record<number, number>; // last-applied event time (ms) per network
+  authState: Record<number, { reason: string } | undefined>;
   currentNick: Record<number, string>; // server-assigned nick per network; differs from the configured nick during a collision
   messages: storage.Message[];
   channelInfo: main.ChannelInfo | null;
@@ -208,6 +209,10 @@ interface NetworkState {
   setConnectionStatus: (networkId: number, connected: boolean, at?: number) => void;
   setCurrentNick: (networkId: number, nick: string) => void;
 
+  // Auth failure state
+  setAuthFailed: (networkId: number, reason: string) => void;
+  clearAuthFailed: (networkId: number) => void;
+
   // Bot mode
   loadNetworkBots: (networkId?: number) => Promise<void>;
   addBot: (networkId: number, nick: string) => void;
@@ -240,6 +245,7 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
   networks: [],
   connectionStatus: {},
   connectionStatusAt: {},
+  authState: {},
   currentNick: {},
   messages: [],
   channelInfo: null,
@@ -1011,6 +1017,15 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
     set((state) => ({
       currentNick: { ...state.currentNick, [networkId]: nick },
     })),
+
+  setAuthFailed: (networkId, reason) =>
+    set((state) => ({ authState: { ...state.authState, [networkId]: { reason } } })),
+  clearAuthFailed: (networkId) =>
+    set((state) => {
+      const next = { ...state.authState };
+      delete next[networkId];
+      return { authState: next };
+    }),
 
   // Hydrate the bot set for a network from the backend (e.g. on window open or
   // network select). Live additions arrive via the 'bot-event' event -> addBot.
