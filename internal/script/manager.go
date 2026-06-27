@@ -12,6 +12,7 @@ import (
 	"github.com/matt0x6f/irc-client/internal/events"
 	"github.com/matt0x6f/irc-client/internal/extension"
 	"github.com/matt0x6f/irc-client/internal/logger"
+	"golang.org/x/mod/modfile"
 )
 
 // eventMessageReceived mirrors irc.EventMessageReceived without importing the irc
@@ -26,6 +27,9 @@ const (
 // cascadeSDKVersion is the cascade SDK module version the scaffolded scripts
 // go.mod requires. Bump this when the app ships against a newer cascade tag.
 const cascadeSDKVersion = "v1.1.0"
+
+// cascadeModulePath is the import path of the cascade SDK module.
+const cascadeModulePath = "github.com/matt0x6f/irc-client/cascade"
 
 // Sender sends a message to target on the given network (e.g. App.SendMessage).
 type Sender func(networkID int64, target, message string) error
@@ -103,17 +107,46 @@ func (m *Manager) makeClient(id extension.ID) *cascade.Client {
 	return cascade.NewClient(say, m.scheduleEvery(id), m.scheduleAfter(id))
 }
 
-// scaffoldModule writes a go.mod at the scripts-dir root if one does not exist,
-// so an external editor's gopls resolves `import ".../cascade"`. It never
-// overwrites a user-edited go.mod. (Resolution requires the cascade/<ver> tag
-// to be published; pre-release, gopls in the scripts dir cannot fetch it.)
-func (m *Manager) scaffoldModule() error {
+// reconcileModule keeps the scripts-dir go.mod's cascade SDK pin in lockstep with
+// the app's own cascadeSDKVersion, so an external editor's gopls always resolves
+// `import ".../cascade"` to the same SDK the runtime actually injects. The app is
+// the source of truth: at runtime Yaegi binds the import to the compiled SDK
+// regardless of go.mod, so the pin is purely for the editor and must mirror the
+// app. When the client auto-updates to a newer SDK, the next launch rewrites the
+// pin here.
+//
+// If go.mod is absent it is scaffolded. If present, only the cascade require line
+// is rewritten (any user edits — a replace directive, extra requires — survive).
+// When the pin already matches, the file is left byte-for-byte untouched so a
+// steady-state launch does not churn its mtime.
+func (m *Manager) reconcileModule() error {
 	path := filepath.Join(m.dir, "go.mod")
-	if _, err := os.Stat(path); err == nil {
-		return nil // exists; respect user edits
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		content := "module cascade-scripts\n\ngo 1.21\n\nrequire " + cascadeModulePath + " " + cascadeSDKVersion + "\n"
+		return os.WriteFile(path, []byte(content), 0o644)
 	}
-	content := "module cascade-scripts\n\ngo 1.21\n\nrequire github.com/matt0x6f/irc-client/cascade " + cascadeSDKVersion + "\n"
-	return os.WriteFile(path, []byte(content), 0o644)
+	if err != nil {
+		return err
+	}
+
+	f, err := modfile.Parse(path, data, nil)
+	if err != nil {
+		return fmt.Errorf("parse go.mod: %w", err)
+	}
+	for _, r := range f.Require {
+		if r.Mod.Path == cascadeModulePath && r.Mod.Version == cascadeSDKVersion {
+			return nil // already pinned to the app's SDK; leave the file untouched
+		}
+	}
+	if err := f.AddRequire(cascadeModulePath, cascadeSDKVersion); err != nil {
+		return fmt.Errorf("pin cascade require: %w", err)
+	}
+	out, err := f.Format()
+	if err != nil {
+		return fmt.Errorf("format go.mod: %w", err)
+	}
+	return os.WriteFile(path, out, 0o644)
 }
 
 // LoadAll ensures the scripts dir exists, then loads each immediate subdirectory
@@ -123,8 +156,8 @@ func (m *Manager) LoadAll() error {
 	if err := os.MkdirAll(m.dir, 0o755); err != nil {
 		return fmt.Errorf("scripts dir: %w", err)
 	}
-	if err := m.scaffoldModule(); err != nil {
-		return fmt.Errorf("scaffold scripts module: %w", err)
+	if err := m.reconcileModule(); err != nil {
+		return fmt.Errorf("reconcile scripts module: %w", err)
 	}
 	// Load the persisted-disabled set once; nil-safe.
 	disabled := map[string]bool{}
