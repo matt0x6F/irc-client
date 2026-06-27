@@ -1117,6 +1117,186 @@ func (c *IRCClient) AllUserMeta() map[string]UserMeta {
 	return out
 }
 
+// accountFor returns the logged-in account for nick from the live roster, or ""
+// if unknown / not logged in.
+func (c *IRCClient) accountFor(nick string) string {
+	c.userMetaMu.Lock()
+	defer c.userMetaMu.Unlock()
+	if m, ok := c.userMeta[strings.ToLower(nick)]; ok && m != nil {
+		return m.Account
+	}
+	return ""
+}
+
+// handlePrivmsg is the PRIVMSG callback. It is extracted from setupHandlers so
+// tests can drive the real production path without a live connection.
+func (c *IRCClient) handlePrivmsg(e ircmsg.Message) {
+	channel := e.Params[0]
+	message := e.Params[1]
+	user := e.Nick()
+
+	// IRCv3 bot mode: servers tag messages from bots with a valueless `bot`
+	// tag. Recognize the sender as a bot (covers plain PRIVMSG and CTCP ACTION).
+	c.maybeMarkBotFromTag(e)
+	// account-tag: learn the sender's account from the `@account` tag.
+	c.maybeApplyAccountTag(e)
+
+	// Check if this is a CTCP message (wrapped in \001)
+	if len(message) >= 2 && message[0] == '\001' && message[len(message)-1] == '\001' {
+		ctcpMessage := message[1 : len(message)-1] // Remove \001 delimiters
+		parts := strings.Fields(ctcpMessage)
+		if len(parts) > 0 {
+			ctcpCommand := strings.ToUpper(parts[0])
+			ctcpArgs := ""
+			if len(parts) > 1 {
+				ctcpArgs = strings.Join(parts[1:], " ")
+			}
+
+			// Handle CTCP requests
+			if ctcpCommand == "ACTION" {
+				// CTCP ACTION - already handled, but store as action type
+				// Determine if it's a channel or private message
+				var channelID *int64
+				var pmTarget string
+				if len(channel) > 0 && (channel[0] == '#' || channel[0] == '&') {
+					ch, err := c.storage.GetChannelByName(c.networkID, channel)
+					if err == nil {
+						channelID = &ch.ID
+					}
+				} else {
+					// Private message - create or get PM conversation keyed by the peer
+					pmTarget = c.pmPeer(user, channel)
+					_, err := c.storage.GetOrCreatePMConversation(c.networkID, pmTarget, c.network.Nickname)
+					if err != nil {
+						logger.Log.Error().Err(err).Str("user", user).Str("pmTarget", pmTarget).Msg("Failed to create/get PM conversation")
+					}
+				}
+
+				rawLine, _ := e.Line()
+				msg := storage.Message{
+					NetworkID:   c.networkID,
+					ChannelID:   channelID,
+					User:        user,
+					Message:     fmt.Sprintf("* %s %s", user, ctcpArgs),
+					MessageType: "action",
+					Timestamp:   c.getMessageTime(e),
+					RawLine:     rawLine,
+					PMTarget:    pmTarget,
+					MsgID:       c.getMsgID(e),
+				}
+				c.storage.WriteMessageSync(msg)
+				c.eventBus.Emit(events.Event{
+					Type: EventMessageReceived,
+					Data: map[string]interface{}{
+						"network":     c.network.Address,
+						"networkId":   c.networkID,
+						"networkName": c.network.Name,
+						"channel":     channel,
+						"user":        user,
+						"message":     ctcpArgs,
+						"account":     c.accountFor(user),
+						"msgid":       c.getMsgID(e),
+						"messageUnix": c.getMessageTime(e).Unix(),
+						"isAction":    true,
+					},
+					Timestamp: time.Now(),
+					Source:    events.EventSourceIRC,
+				})
+			} else {
+				// Other CTCP requests - send response
+				c.handleCTCPRequest(user, ctcpCommand, ctcpArgs)
+				// Don't store CTCP requests as regular messages
+				return
+			}
+		}
+		return
+	}
+
+	// Regular PRIVMSG (not CTCP)
+	// Handle echo-message: when the cap is enabled, the server echoes back our
+	// sent messages as the canonical copy. We store them here and skip storage
+	// in SendMessage. When echo-message is NOT enabled, drop self-to-self echoes.
+	if c.isMe(user) {
+		if !c.isEchoMessage(e) {
+			// echo-message not enabled; this is a legacy self-echo - skip it
+			if c.isMe(channel) {
+				return
+			}
+		}
+		// With echo-message enabled, fall through to store the server echo
+	}
+
+	// Determine if it's a channel or private message
+	var channelID *int64
+	var pmTarget string
+	if len(channel) > 0 && (channel[0] == '#' || channel[0] == '&') {
+		// Channel message - look up channel ID
+		ch, err := c.storage.GetChannelByName(c.networkID, channel)
+		if err == nil {
+			channelID = &ch.ID
+		} else {
+			// Channel not found in database - might be a channel we haven't joined yet
+			// Store with nil channel_id for now
+			logger.Log.Debug().Err(err).Str("channel", channel).Msg("Channel not found in database")
+		}
+	} else {
+		// Private message - create or get PM conversation keyed by the peer
+		pmTarget = c.pmPeer(user, channel)
+		_, err := c.storage.GetOrCreatePMConversation(c.networkID, pmTarget, c.network.Nickname)
+		if err != nil {
+			logger.Log.Error().Err(err).Str("user", user).Str("pmTarget", pmTarget).Msg("Failed to create/get PM conversation")
+		}
+	}
+
+	rawLine, _ := e.Line()
+
+	msg := storage.Message{
+		NetworkID:   c.networkID,
+		ChannelID:   channelID,
+		User:        user,
+		Message:     message,
+		MessageType: "privmsg",
+		Timestamp:   c.getMessageTime(e),
+		RawLine:     rawLine,
+		PMTarget:    pmTarget,
+		MsgID:       c.getMsgID(e),
+	}
+
+	// Store message (use sync write so it appears immediately)
+	if err := c.storage.WriteMessageSync(msg); err != nil {
+		c.eventBus.Emit(events.Event{
+			Type:      EventError,
+			Data:      map[string]interface{}{"error": err.Error()},
+			Timestamp: time.Now(),
+			Source:    events.EventSourceIRC,
+		})
+	}
+
+	// Emit event. pmTarget carries the conversation peer for DMs (empty for
+	// channel messages) so the frontend can route the event to the open
+	// "pm:<peer>" pane — the raw `channel` is our own nick for inbound DMs and
+	// never matches that pane on its own.
+	c.eventBus.Emit(events.Event{
+		Type: EventMessageReceived,
+		Data: map[string]interface{}{
+			"network":     c.network.Address,
+			"networkId":   c.networkID,
+			"networkName": c.network.Name,
+			"channel":     channel,
+			"user":        user,
+			"message":     message,
+			"account":     c.accountFor(user),
+			"msgid":       c.getMsgID(e),
+			"messageUnix": c.getMessageTime(e).Unix(),
+			"isAction":    false,
+			"pmTarget":    pmTarget,
+			"messageType": msg.MessageType,
+		},
+		Timestamp: time.Now(),
+		Source:    events.EventSourceIRC,
+	})
+}
+
 // setupHandlers sets up IRC event handlers
 func (c *IRCClient) setupHandlers() {
 	// Connection established
@@ -1271,150 +1451,7 @@ func (c *IRCClient) setupHandlers() {
 	})
 
 	// PRIVMSG received
-	c.conn.AddCallback("PRIVMSG", func(e ircmsg.Message) {
-		channel := e.Params[0]
-		message := e.Params[1]
-		user := e.Nick()
-
-		// IRCv3 bot mode: servers tag messages from bots with a valueless `bot`
-		// tag. Recognize the sender as a bot (covers plain PRIVMSG and CTCP ACTION).
-		c.maybeMarkBotFromTag(e)
-		// account-tag: learn the sender's account from the `@account` tag.
-		c.maybeApplyAccountTag(e)
-
-		// Check if this is a CTCP message (wrapped in \001)
-		if len(message) >= 2 && message[0] == '\001' && message[len(message)-1] == '\001' {
-			ctcpMessage := message[1 : len(message)-1] // Remove \001 delimiters
-			parts := strings.Fields(ctcpMessage)
-			if len(parts) > 0 {
-				ctcpCommand := strings.ToUpper(parts[0])
-				ctcpArgs := ""
-				if len(parts) > 1 {
-					ctcpArgs = strings.Join(parts[1:], " ")
-				}
-
-				// Handle CTCP requests
-				if ctcpCommand == "ACTION" {
-					// CTCP ACTION - already handled, but store as action type
-					// Determine if it's a channel or private message
-					var channelID *int64
-					var pmTarget string
-					if len(channel) > 0 && (channel[0] == '#' || channel[0] == '&') {
-						ch, err := c.storage.GetChannelByName(c.networkID, channel)
-						if err == nil {
-							channelID = &ch.ID
-						}
-					} else {
-						// Private message - create or get PM conversation keyed by the peer
-						pmTarget = c.pmPeer(user, channel)
-						_, err := c.storage.GetOrCreatePMConversation(c.networkID, pmTarget, c.network.Nickname)
-						if err != nil {
-							logger.Log.Error().Err(err).Str("user", user).Str("pmTarget", pmTarget).Msg("Failed to create/get PM conversation")
-						}
-					}
-
-					rawLine, _ := e.Line()
-					msg := storage.Message{
-						NetworkID:   c.networkID,
-						ChannelID:   channelID,
-						User:        user,
-						Message:     fmt.Sprintf("* %s %s", user, ctcpArgs),
-						MessageType: "action",
-						Timestamp:   c.getMessageTime(e),
-						RawLine:     rawLine,
-						PMTarget:    pmTarget,
-						MsgID:       c.getMsgID(e),
-					}
-					c.storage.WriteMessageSync(msg)
-				} else {
-					// Other CTCP requests - send response
-					c.handleCTCPRequest(user, ctcpCommand, ctcpArgs)
-					// Don't store CTCP requests as regular messages
-					return
-				}
-			}
-			return
-		}
-
-		// Regular PRIVMSG (not CTCP)
-		// Handle echo-message: when the cap is enabled, the server echoes back our
-		// sent messages as the canonical copy. We store them here and skip storage
-		// in SendMessage. When echo-message is NOT enabled, drop self-to-self echoes.
-		if c.isMe(user) {
-			if !c.isEchoMessage(e) {
-				// echo-message not enabled; this is a legacy self-echo - skip it
-				if c.isMe(channel) {
-					return
-				}
-			}
-			// With echo-message enabled, fall through to store the server echo
-		}
-
-		// Determine if it's a channel or private message
-		var channelID *int64
-		var pmTarget string
-		if len(channel) > 0 && (channel[0] == '#' || channel[0] == '&') {
-			// Channel message - look up channel ID
-			ch, err := c.storage.GetChannelByName(c.networkID, channel)
-			if err == nil {
-				channelID = &ch.ID
-			} else {
-				// Channel not found in database - might be a channel we haven't joined yet
-				// Store with nil channel_id for now
-				logger.Log.Debug().Err(err).Str("channel", channel).Msg("Channel not found in database")
-			}
-		} else {
-			// Private message - create or get PM conversation keyed by the peer
-			pmTarget = c.pmPeer(user, channel)
-			_, err := c.storage.GetOrCreatePMConversation(c.networkID, pmTarget, c.network.Nickname)
-			if err != nil {
-				logger.Log.Error().Err(err).Str("user", user).Str("pmTarget", pmTarget).Msg("Failed to create/get PM conversation")
-			}
-		}
-
-		rawLine, _ := e.Line()
-
-		msg := storage.Message{
-			NetworkID:   c.networkID,
-			ChannelID:   channelID,
-			User:        user,
-			Message:     message,
-			MessageType: "privmsg",
-			Timestamp:   c.getMessageTime(e),
-			RawLine:     rawLine,
-			PMTarget:    pmTarget,
-			MsgID:       c.getMsgID(e),
-		}
-
-		// Store message (use sync write so it appears immediately)
-		if err := c.storage.WriteMessageSync(msg); err != nil {
-			c.eventBus.Emit(events.Event{
-				Type:      EventError,
-				Data:      map[string]interface{}{"error": err.Error()},
-				Timestamp: time.Now(),
-				Source:    events.EventSourceIRC,
-			})
-		}
-
-		// Emit event. pmTarget carries the conversation peer for DMs (empty for
-		// channel messages) so the frontend can route the event to the open
-		// "pm:<peer>" pane — the raw `channel` is our own nick for inbound DMs and
-		// never matches that pane on its own.
-		c.eventBus.Emit(events.Event{
-			Type: EventMessageReceived,
-			Data: map[string]interface{}{
-				"network":     c.network.Address,
-				"networkId":   c.networkID,
-				"channel":     channel,
-				"user":        user,
-				"message":     message,
-				"pmTarget":    pmTarget,
-				"messageType": msg.MessageType,
-			},
-			Timestamp: time.Now(),
-			Source:    events.EventSourceIRC,
-		})
-	})
+	c.conn.AddCallback("PRIVMSG", c.handlePrivmsg)
 
 	// User joined channel
 	c.conn.AddCallback("JOIN", func(e ircmsg.Message) {
@@ -4652,6 +4689,10 @@ func (c *IRCClient) handleNotice(e ircmsg.Message) {
 				"user":        user,
 				"message":     notice,
 				"messageType": "notice",
+				"networkName": c.network.Name,
+				"account":     c.accountFor(user),
+				"msgid":       c.getMsgID(e),
+				"messageUnix": c.getMessageTime(e).Unix(),
 			},
 			Timestamp: time.Now(),
 			Source:    events.EventSourceIRC,
@@ -4706,6 +4747,10 @@ func (c *IRCClient) handleNotice(e ircmsg.Message) {
 					"user":        user,
 					"message":     notice,
 					"messageType": "notice",
+					"networkName": c.network.Name,
+					"account":     c.accountFor(user),
+					"msgid":       c.getMsgID(e),
+					"messageUnix": c.getMessageTime(e).Unix(),
 				},
 				Timestamp: time.Now(),
 				Source:    events.EventSourceIRC,
