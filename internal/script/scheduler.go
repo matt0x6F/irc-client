@@ -59,6 +59,23 @@ func (s *scheduler) stopTimers(id extension.ID) {
 	}
 }
 
+// stopAll cancels every script's timers. Used on Manager shutdown.
+func (s *scheduler) stopAll() {
+	s.mu.Lock()
+	// Collect all stop funcs under lock, then call them outside it (mirrors stopTimers).
+	var stops []func()
+	for id, entries := range s.timers {
+		for _, e := range entries {
+			stops = append(stops, e.stop)
+		}
+		delete(s.timers, id)
+	}
+	s.mu.Unlock()
+	for _, stop := range stops {
+		stop()
+	}
+}
+
 // runScriptFn looks up the loaded script for id, takes its per-script mutex,
 // recovers any panic, and calls fn. This mirrors the serialisation that
 // dispatch() applies to event handlers, ensuring timer ticks and event
@@ -156,6 +173,10 @@ func (m *Manager) scheduleAfter(id extension.ID) func(delay string, fn func()) {
 				return
 			}
 			mu.Unlock()
+			// Deliberate: we release mu before watchdog.run so a concurrent stopTimers
+			// never blocks on an in-flight tick. A stop racing in after this check lets
+			// one fn run, which is safe — runScriptFn re-validates the script is still
+			// loaded under m.mu and no-ops otherwise. (Same benign window as Every.)
 			_ = m.watchdog.run(id, func() error { return m.runScriptFn(id, fn) })
 		})
 

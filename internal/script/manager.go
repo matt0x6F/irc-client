@@ -390,8 +390,9 @@ func (m *Manager) Watch() error {
 	return nil
 }
 
-// Close stops the watcher.
+// Close stops the watcher and all script timers.
 func (m *Manager) Close() error {
+	m.sched.stopAll()
 	if m.watcher != nil {
 		return m.watcher.Close()
 	}
