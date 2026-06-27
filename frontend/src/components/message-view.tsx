@@ -662,6 +662,7 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
                   ) : (
                     <IRCFormattedText
                       text={msg.message}
+                      networkId={networkId ?? undefined}
                       className={`text-sm flex-1 ${
                         isStatus || isCommand ? 'text-muted-foreground italic' : ''
                       }`}

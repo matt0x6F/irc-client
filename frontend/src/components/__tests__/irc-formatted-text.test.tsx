@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { describe, it, expect, vi } from 'vitest'
+import { render, screen, fireEvent } from '@testing-library/react'
 import { IRCFormattedText, tokenizeText } from '../irc-formatted-text'
+import { useNetworkStore } from '../../stores/network'
 
 describe('IRCFormattedText', () => {
   it('renders plain text without formatting', () => {
@@ -138,6 +139,30 @@ describe('IRCFormattedText', () => {
         backgroundColor: '#FF0000', // was fg (red)
       })
     })
+  })
+})
+
+describe('IRCFormattedText channel links', () => {
+  it('renders a #channel as a clickable button when networkId is set', () => {
+    render(<IRCFormattedText text="join #test please" networkId={1} />)
+    const btn = screen.getByRole('button', { name: '#test' })
+    expect(btn).toBeInTheDocument()
+  })
+
+  it('renders #channel as plain text when networkId is absent', () => {
+    render(<IRCFormattedText text="join #test please" />)
+    expect(screen.queryByRole('button', { name: '#test' })).toBeNull()
+    expect(screen.getByText(/#test/)).toBeInTheDocument()
+  })
+
+  it('clicking a channel calls openOrJoinChannel with the network and channel', () => {
+    const spy = vi
+      .spyOn(useNetworkStore.getState(), 'openOrJoinChannel')
+      .mockResolvedValue(undefined)
+    render(<IRCFormattedText text="see #test" networkId={7} />)
+    fireEvent.click(screen.getByRole('button', { name: '#test' }))
+    expect(spy).toHaveBeenCalledWith(7, '#test')
+    spy.mockRestore()
   })
 })
 
