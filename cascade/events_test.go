@@ -102,3 +102,14 @@ func TestTextEventFieldsAreSettable(t *testing.T) {
 		t.Fatalf("exported fields did not round-trip: %+v", e)
 	}
 }
+
+func TestNoticeEventContext(t *testing.T) {
+	e := NewNoticeEvent("serv", "#chan", "ping matt0x6f", func(string) {})
+	e.Self, e.Account, e.Network, e.MsgID, e.Time = "matt0x6f", "a", "Libera", "id", NewTime(7)
+	if !e.IsHighlight() {
+		t.Fatalf("expected highlight")
+	}
+	if e.Account != "a" || e.Network != "Libera" || e.MsgID != "id" || e.Time.Unix() != 7 {
+		t.Fatalf("fields did not round-trip: %+v", e)
+	}
+}

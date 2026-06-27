@@ -94,6 +94,13 @@ type NoticeEvent struct {
 	Channel string
 	Message string
 
+	// Context added by the host (zero values when unavailable).
+	Self    string // the bot's own nick on this network
+	Account string // sender's logged-in account; "" if not logged in
+	Network string // configured network name this message arrived on
+	MsgID   string // IRCv3 msgid; "" if the server sent none
+	Time    Time   // message timestamp (server-time aware)
+
 	replyFn func(string)
 }
 
@@ -112,6 +119,15 @@ func (e NoticeEvent) Reply(msg string) {
 	if e.replyFn != nil {
 		e.replyFn(msg)
 	}
+}
+
+// IsHighlight reports whether the bot's own nick (Self) appears in Message as a
+// whole word, case-insensitive. Returns false when Self is empty.
+func (e NoticeEvent) IsHighlight() bool {
+	if e.Self == "" {
+		return false
+	}
+	return containsWord(strings.ToLower(e.Message), strings.ToLower(e.Self))
 }
 
 // JoinEvent is delivered to OnJoin handlers when a user joins a channel.
