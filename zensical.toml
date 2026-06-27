@@ -32,6 +32,7 @@ nav = [
     "scripting/index.md",
     "scripting/quickstart.md",
     "scripting/writing-scripts.md",
+    "scripting/examples.md",
   ] },
 ]
 
