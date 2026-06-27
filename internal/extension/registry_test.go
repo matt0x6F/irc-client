@@ -92,3 +92,17 @@ func TestRegistryRegisterReplacesEntry(t *testing.T) {
 		t.Fatalf("after replace, recipients(b) = %v; want [x]", rc)
 	}
 }
+
+func TestRegistryDisableAsRunaway(t *testing.T) {
+	r := NewRegistry()
+	r.Register(&Extension{ID: "x", Enabled: true, Status: StatusLoaded}, nopHost{}, []string{"a"})
+	r.DisableAsRunaway("x", "looped")
+	got, _ := r.Get("x")
+	if got.Enabled || got.Status != StatusRunaway || got.Err != "looped" {
+		t.Fatalf("after DisableAsRunaway: enabled=%v status=%v err=%q; want false/runaway/looped", got.Enabled, got.Status, got.Err)
+	}
+	if rc := r.recipients("a"); len(rc) != 0 {
+		t.Fatalf("a runaway-disabled extension must not be a recipient; got %v", rc)
+	}
+	r.DisableAsRunaway("nope", "x") // no-op, must not panic
+}

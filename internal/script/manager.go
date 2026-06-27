@@ -11,6 +11,7 @@ import (
 	"github.com/matt0x6f/irc-client/cascade"
 	"github.com/matt0x6f/irc-client/internal/events"
 	"github.com/matt0x6f/irc-client/internal/extension"
+	"github.com/matt0x6f/irc-client/internal/logger"
 )
 
 // eventMessageReceived mirrors irc.EventMessageReceived without importing the irc
@@ -34,10 +35,12 @@ type loaded struct {
 // Manager discovers, loads, and dispatches scripts. It is the extension.Host
 // for the script runtime.
 type Manager struct {
-	dir    string
-	sender Sender
-	reg    *extension.Registry
-	router *extension.Router
+	dir      string
+	sender   Sender
+	selfNick func(networkID int64) string
+	reg      *extension.Registry
+	router   *extension.Router
+	watchdog *watchdog
 
 	mu      sync.RWMutex
 	scripts map[extension.ID]*loaded
@@ -45,15 +48,19 @@ type Manager struct {
 }
 
 // NewManager builds a script manager and attaches its router to the bus.
-func NewManager(bus *events.EventBus, dir string, sender Sender) *Manager {
+// selfNick returns the bot's current nick on the given network; it is used to
+// suppress delivery of the bot's own (possibly server-echoed) messages.
+func NewManager(bus *events.EventBus, dir string, sender Sender, selfNick func(networkID int64) string) *Manager {
 	reg := extension.NewRegistry()
 	m := &Manager{
-		dir:     dir,
-		sender:  sender,
-		reg:     reg,
-		router:  extension.NewRouter(reg),
-		scripts: make(map[extension.ID]*loaded),
+		dir:      dir,
+		sender:   sender,
+		selfNick: selfNick,
+		reg:      reg,
+		router:   extension.NewRouter(reg),
+		scripts:  make(map[extension.ID]*loaded),
 	}
+	m.watchdog = newWatchdog(defaultDispatchDeadline, defaultMaxStrikes, m.disableScript)
 	m.router.Attach(bus)
 	return m
 }
@@ -140,10 +147,24 @@ func (m *Manager) loadDir(dir string) {
 // Kind implements extension.Host.
 func (m *Manager) Kind() extension.Kind { return extension.KindScript }
 
-// Deliver implements extension.Host: translate the event and dispatch to the
-// script, serialized per script and with panic recovery so a buggy script can
-// never crash the host.
-func (m *Manager) Deliver(id extension.ID, ev events.Event) (err error) {
+// Deliver implements extension.Host. The watchdog bounds each dispatch and
+// auto-disables a script that hangs or repeatedly fails.
+func (m *Manager) Deliver(id extension.ID, ev events.Event) error {
+	err := m.watchdog.run(id, func() error { return m.dispatch(id, ev) })
+	// If the script was just disabled (StatusRunaway), suppress the error so the
+	// Router does not overwrite the runaway status with a transient StatusError.
+	if err != nil {
+		if ext, ok := m.reg.Get(id); ok && ext.Status == extension.StatusRunaway {
+			return nil
+		}
+	}
+	return err
+}
+
+// dispatch translates the event and runs the script's handler, serialized per
+// script. A handler panic is recovered (so the per-script mutex unlocks) and
+// returned as an error for the watchdog to count.
+func (m *Manager) dispatch(id extension.ID, ev events.Event) (err error) {
 	m.mu.RLock()
 	l, ok := m.scripts[id]
 	m.mu.RUnlock()
@@ -170,6 +191,12 @@ func (m *Manager) Deliver(id extension.ID, ev events.Event) (err error) {
 	return nil
 }
 
+// disableScript is the watchdog's disable callback: stop delivery and record why.
+func (m *Manager) disableScript(id extension.ID, reason string) {
+	m.reg.DisableAsRunaway(id, reason)
+	logger.Log.Warn().Str("script", string(id)).Str("reason", reason).Msg("script auto-disabled by watchdog")
+}
+
 // buildTextEvent maps a message.received event into a cascade.TextEvent with a
 // Reply closure routed to the right network + target.
 func (m *Manager) buildTextEvent(ev events.Event) (cascade.TextEvent, bool) {
@@ -180,6 +207,9 @@ func (m *Manager) buildTextEvent(ev events.Event) (cascade.TextEvent, bool) {
 	// "*" is the server/status pseudo-user (not a real sender); never deliver it to scripts.
 	if nick == "" || nick == "*" {
 		return cascade.TextEvent{}, false
+	}
+	if m.selfNick != nil && nick == m.selfNick(networkID) {
+		return cascade.TextEvent{}, false // the bot's own (possibly echoed) message
 	}
 
 	target := channel

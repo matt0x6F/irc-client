@@ -124,7 +124,10 @@ func NewApp() (*App, error) {
 	}
 
 	scriptDir := filepath.Join(baseDir, "scripts")
-	app.scriptMgr = script.NewManager(eventBus, scriptDir, app.SendMessage)
+	app.scriptMgr = script.NewManager(eventBus, scriptDir, app.SendMessage, func(networkID int64) string {
+		nick, _ := app.GetCurrentNick(networkID)
+		return nick
+	})
 
 	pluginMgr.SetBuiltinCommandChecker(func(k string) bool {
 		_, ok := app.commands.Lookup(k)
