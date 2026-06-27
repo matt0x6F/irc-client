@@ -165,6 +165,73 @@ function parseIRCFormatting(text: string): FormattedSegment[] {
 export const URL_REGEX_SOURCE = 'https?:\\/\\/[^\\s<>"{}|\\\\^`\\[\\]]+';
 const URL_REGEX = new RegExp(URL_REGEX_SOURCE, 'g');
 
+// Channel references: '#' followed by chanstring chars (no space or comma).
+// '#' only — '&'/'+'/'!' are excluded to avoid prose false positives.
+const CHANNEL_REGEX_SOURCE = '#[^\\s,]+';
+
+// Single combined matcher: a URL OR a channel. URL is listed first so an
+// in-URL '#fragment' is consumed by the URL branch before the channel branch
+// can see it.
+const TOKEN_REGEX = new RegExp(`(${URL_REGEX_SOURCE})|(${CHANNEL_REGEX_SOURCE})`, 'g');
+
+export type TextToken =
+  | { type: 'text'; value: string }
+  | { type: 'url'; value: string; trailing: string }
+  | { type: 'channel'; value: string; trailing: string };
+
+// Splits raw text into text / url / channel tokens in one pass.
+export function tokenizeText(text: string): TextToken[] {
+  const tokens: TextToken[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  TOKEN_REGEX.lastIndex = 0;
+
+  while ((match = TOKEN_REGEX.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      tokens.push({ type: 'text', value: text.slice(lastIndex, match.index) });
+    }
+
+    if (match[1]) {
+      // URL branch — preserve existing trailing-punctuation / paren handling.
+      const url = match[1];
+      let value = url;
+      let trailing = '';
+      const trailingMatch = value.match(/[),.:;!?]+$/);
+      if (trailingMatch) {
+        const stripped = trailingMatch[0];
+        const openParens = (value.match(/\(/g) || []).length;
+        const closeParens = (value.match(/\)/g) || []).length;
+        if (stripped === ')' && openParens >= closeParens) {
+          // balanced parens — keep as-is
+        } else {
+          value = value.slice(0, value.length - stripped.length);
+          trailing = stripped;
+        }
+      }
+      tokens.push({ type: 'url', value, trailing });
+    } else {
+      // Channel branch — strip trailing punctuation into `trailing`.
+      const raw = match[2];
+      let value = raw;
+      let trailing = '';
+      const trailingMatch = value.match(/[.,!?;:)]+$/);
+      if (trailingMatch) {
+        trailing = trailingMatch[0];
+        value = value.slice(0, value.length - trailing.length);
+      }
+      tokens.push({ type: 'channel', value, trailing });
+    }
+
+    lastIndex = match.index + match[0].length;
+  }
+
+  if (lastIndex < text.length) {
+    tokens.push({ type: 'text', value: text.slice(lastIndex) });
+  }
+
+  return tokens;
+}
+
 // Renders a text string, replacing URLs with clickable <a> tags.
 // Returns an array of React nodes (strings and <a> elements).
 function renderTextWithLinks(text: string, keyPrefix: string): React.ReactNode[] {

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { IRCFormattedText } from '../irc-formatted-text'
+import { IRCFormattedText, tokenizeText } from '../irc-formatted-text'
 
 describe('IRCFormattedText', () => {
   it('renders plain text without formatting', () => {
@@ -138,5 +138,43 @@ describe('IRCFormattedText', () => {
         backgroundColor: '#FF0000', // was fg (red)
       })
     })
+  })
+})
+
+describe('tokenizeText', () => {
+  it('returns a single text token for plain text', () => {
+    expect(tokenizeText('hello world')).toEqual([
+      { type: 'text', value: 'hello world' },
+    ])
+  })
+
+  it('detects a #channel token', () => {
+    expect(tokenizeText('join #test now')).toEqual([
+      { type: 'text', value: 'join ' },
+      { type: 'channel', value: '#test', trailing: '' },
+      { type: 'text', value: ' now' },
+    ])
+  })
+
+  it('strips trailing punctuation from a channel into trailing', () => {
+    expect(tokenizeText('see #test.')).toEqual([
+      { type: 'text', value: 'see ' },
+      { type: 'channel', value: '#test', trailing: '.' },
+    ])
+  })
+
+  it('does not treat a bare # as a channel', () => {
+    expect(tokenizeText('a # b')).toEqual([{ type: 'text', value: 'a # b' }])
+  })
+
+  it('does not treat a #fragment inside a URL as a channel', () => {
+    const tokens = tokenizeText('go https://x.com/p#section ok')
+    expect(tokens.some((t) => t.type === 'channel')).toBe(false)
+    expect(tokens.find((t) => t.type === 'url')?.value).toBe('https://x.com/p#section')
+  })
+
+  it('detects both a url and a channel in one string', () => {
+    const tokens = tokenizeText('https://x.com and #chan')
+    expect(tokens.map((t) => t.type)).toEqual(['url', 'text', 'channel'])
   })
 })
