@@ -262,6 +262,11 @@ func (a *App) ServiceShutdown() error {
 		logger.Log.Info().Msg("Starting disconnect message writing")
 		a.writeShutdownDisconnectMessages()
 
+		// Close script manager watcher
+		if a.scriptMgr != nil {
+			_ = a.scriptMgr.Close()
+		}
+
 		// Close plugin manager
 		if a.pluginManager != nil {
 			pluginDone := make(chan struct{})

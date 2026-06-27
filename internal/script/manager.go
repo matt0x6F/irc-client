@@ -217,6 +217,9 @@ func (m *Manager) registry() *extension.Registry { return m.reg }
 // on change. Safe to call once after LoadAll. Errors starting the watcher are
 // returned; per-event errors are logged-and-continued by the run loop.
 func (m *Manager) Watch() error {
+	if m.watcher != nil {
+		return nil // already watching
+	}
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		return err
