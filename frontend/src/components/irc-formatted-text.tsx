@@ -214,7 +214,7 @@ export function tokenizeText(text: string): TextToken[] {
       const raw = match[2];
       let value = raw;
       let trailing = '';
-      const trailingMatch = value.match(/[.,!?;:)]+$/);
+      const trailingMatch = value.match(/[.,!?;:)\]}>"'`]+$/);
       if (trailingMatch) {
         trailing = trailingMatch[0];
         value = value.slice(0, value.length - trailing.length);

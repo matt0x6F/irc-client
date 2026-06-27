@@ -202,4 +202,32 @@ describe('tokenizeText', () => {
     const tokens = tokenizeText('https://x.com and #chan')
     expect(tokens.map((t) => t.type)).toEqual(['url', 'text', 'channel'])
   })
+
+  it('strips trailing ] from a channel in square brackets', () => {
+    expect(tokenizeText('see [#test]')).toEqual([
+      { type: 'text', value: 'see [' },
+      { type: 'channel', value: '#test', trailing: ']' },
+    ])
+  })
+
+  it('strips trailing " from a channel in double quotes', () => {
+    expect(tokenizeText('say "#test"')).toEqual([
+      { type: 'text', value: 'say "' },
+      { type: 'channel', value: '#test', trailing: '"' },
+    ])
+  })
+
+  it('strips trailing > from a channel in angle brackets', () => {
+    expect(tokenizeText('go <#test>')).toEqual([
+      { type: 'text', value: 'go <' },
+      { type: 'channel', value: '#test', trailing: '>' },
+    ])
+  })
+
+  it('preserves uppercase in channel names', () => {
+    expect(tokenizeText('join #FooBar')).toEqual([
+      { type: 'text', value: 'join ' },
+      { type: 'channel', value: '#FooBar', trailing: '' },
+    ])
+  })
 })
