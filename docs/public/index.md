@@ -17,3 +17,4 @@ SQLite-backed message store, and full IRCv3 capability handling.
 - [IRCv3 support](developers/ircv3-support.md)
 - [IRCv3 roadmap](developers/ircv3-roadmap.md)
 - [Releases & update channels](developers/releases.md)
+- [Scripting](scripting/index.md) — Automate Cascade with in-process, statically-typed Go scripts.

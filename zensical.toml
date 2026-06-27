@@ -28,6 +28,9 @@ nav = [
     "developers/ircv3-support.md",
     "developers/releases.md",
   ] },
+  { "Scripting" = [
+    "scripting/index.md",
+  ] },
 ]
 
 # Zensical ships its own modern default theme. Set variant = "classic" to fall
