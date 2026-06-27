@@ -146,7 +146,7 @@ test.describe('IRCv3 documentation screenshots', () => {
       await settings.getByPlaceholder('SASL username').fill('cascade-user');
       await settings.getByPlaceholder('SASL password').fill('••••••••••');
 
-      const saslHeading = settings.getByText('SASL Authentication');
+      const saslHeading = settings.getByText('SASL authentication');
       await saslHeading.scrollIntoViewIfNeeded();
       // The chosen mechanism shows in the trigger's value span (unique, unlike the
       // bare text which also matches the hidden native <option>).
