@@ -50,6 +50,7 @@ type IRCClient struct {
 	saslPassword          string
 	saslInProgress        bool
 	saslAuthenticated     bool
+	authFailed            bool // True when SASL was enabled but did not succeed this session (guarded by mu)
 	saslCapRequested      bool
 	saslCapAcknowledged   bool
 	scramState            *SCRAMState
