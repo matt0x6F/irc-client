@@ -469,9 +469,9 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
     }
   };
 
-  const handleDelete = async (networkId: number) => {
+  const handleDelete = async (networkId: number): Promise<boolean> => {
     if (!confirm(`Are you sure you want to delete this network? This will also delete all associated channels and messages.`)) {
-      return;
+      return false;
     }
     try {
       // Disconnect if connected
@@ -480,10 +480,19 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
       }
       await DeleteNetwork(networkId);
       await loadNetworks();
-      await loadConnectionStatus();    } catch (error) {
+      await loadConnectionStatus();
+      return true;
+    } catch (error) {
       console.error('Failed to delete server:', error);
       alert(`Failed to delete server: ${error}`);
+      return false;
     }
+  };
+
+  const handleDeleteFromEditor = async () => {
+    if (!editingNetwork) return;
+    const deleted = await handleDelete(editingNetwork.id);
+    if (deleted) handleCancel();
   };
 
   const handleConnect = async (network: storage.Network) => {
@@ -650,12 +659,34 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
     </>
   );
 
-  const renderNetworkEditor = () => (
+  const renderNetworkEditor = () => {
+    const isConnected = editingNetwork ? (connectionStatus[editingNetwork.id] || false) : false;
+    return (
     <div data-testid="network-editor" className="p-5 border border-border rounded-lg bg-card/50 shadow-[var(--shadow-sm)]">
-      <h4 className="font-semibold mb-4 text-lg">
-        {editingNetwork ? 'Edit Network' : 'Add Network'}
-      </h4>
-      <form onSubmit={handleSave} className="space-y-4">
+      <div className="flex items-center gap-3 mb-5 pb-4 border-b border-border">
+        <button
+          type="button"
+          onClick={handleCancel}
+          data-testid="network-editor-back"
+          aria-label="Back to networks"
+          className="p-1.5 -ml-1.5 rounded-lg hover:bg-accent transition-all"
+          style={{ transition: 'var(--transition-base)' }}
+        >
+          ‹
+        </button>
+        <h4 className="font-semibold text-lg truncate">
+          {editingNetwork ? editingNetwork.name : 'New network'}
+        </h4>
+        {editingNetwork && (
+          <span className={`ml-auto inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full ${
+            isConnected ? 'bg-green-500/15 text-green-700 dark:text-green-400' : 'bg-muted text-muted-foreground'
+          }`}>
+            <span className="w-1.5 h-1.5 rounded-full" style={{ background: isConnected ? 'var(--presence-online)' : 'var(--presence-offline)' }} />
+            {isConnected ? 'Connected' : 'Disconnected'}
+          </span>
+        )}
+      </div>
+      <form id="network-form" onSubmit={handleSave} className="space-y-4">
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-sm font-medium mb-1.5">Name</label>
@@ -1034,29 +1065,46 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
                     )}
                   </div>
 
-                  <div className="flex gap-3 justify-end mt-6">
-                    <button
-                      type="button"
-                      onClick={handleCancel}
-                      className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-accent transition-all shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)]"
-                      style={{ transition: 'var(--transition-base)' }}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="submit"
-                      data-testid="save-network-button"
-                      className="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-all shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)] font-medium"
-                      style={{ transition: 'var(--transition-base)' }}
-                    >
-                      {editingNetwork ? 'Update' : 'Add'} Network
-                    </button>
-                  </div>
                 </form>
+
+      <div className="flex items-center justify-between gap-3 mt-6 pt-4 border-t border-border">
+        {editingNetwork ? (
+          <button
+            type="button"
+            onClick={handleDeleteFromEditor}
+            data-testid="network-delete-button"
+            className="px-3 py-2 text-sm text-destructive border border-border rounded-lg hover:bg-destructive hover:text-destructive-foreground transition-all shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)]"
+            style={{ transition: 'var(--transition-base)' }}
+          >
+            Delete
+          </button>
+        ) : <span />}
+        <div className="flex gap-3">
+          <button
+            type="button"
+            onClick={handleCancel}
+            className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-accent transition-all shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)]"
+            style={{ transition: 'var(--transition-base)' }}
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            form="network-form"
+            data-testid="save-network-button"
+            className="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-all shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)] font-medium"
+            style={{ transition: 'var(--transition-base)' }}
+          >
+            {editingNetwork ? 'Save' : 'Add network'}
+          </button>
+        </div>
+      </div>
     </div>
   );
+  };
 
   const renderContent = () => {
+
     switch (section) {
       case 'networks': {
         const inEditor = showAddForm || editingNetwork !== null;

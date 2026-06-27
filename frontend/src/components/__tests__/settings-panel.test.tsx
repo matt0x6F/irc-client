@@ -125,6 +125,29 @@ describe('SettingsPanel Networks master-detail', () => {
     await waitFor(() => expect(connectNetworkMock).toHaveBeenCalled())
     expect(screen.queryByTestId('network-editor')).not.toBeInTheDocument()
   })
+
+  it('editor header shows the network name and a live connected badge', async () => {
+    getConnectionStatusMock.mockResolvedValue(true)
+    render(<SettingsPanel section="networks" onSectionChange={() => {}} />)
+    fireEvent.click(await screen.findByTestId('network-row-1'))
+    const editor = await screen.findByTestId('network-editor')
+    expect(editor).toHaveTextContent('ErgoIRC')
+    expect(editor).toHaveTextContent(/connected/i)
+  })
+
+  it('back button returns to the list', async () => {
+    render(<SettingsPanel section="networks" onSectionChange={() => {}} />)
+    fireEvent.click(await screen.findByTestId('network-row-1'))
+    fireEvent.click(await screen.findByTestId('network-editor-back'))
+    await waitFor(() => expect(screen.getByTestId('network-list')).toBeInTheDocument())
+  })
+
+  it('Delete shows only when editing an existing network, not when adding', async () => {
+    render(<SettingsPanel section="networks" onSectionChange={() => {}} />)
+    fireEvent.click(await screen.findByTestId('add-network-button'))
+    await screen.findByTestId('network-editor')
+    expect(screen.queryByTestId('network-delete-button')).not.toBeInTheDocument()
+  })
 })
 
 describe('SettingsPanel About pane', () => {
