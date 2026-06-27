@@ -33,6 +33,7 @@ nav = [
     "scripting/quickstart.md",
     "scripting/writing-scripts.md",
     "scripting/examples.md",
+    "scripting/api-reference.md",
   ] },
 ]
 
