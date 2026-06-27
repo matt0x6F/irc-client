@@ -11,7 +11,11 @@ func TestClientNetworkSayAndTimers(t *testing.T) {
 	var everies, afters []string
 
 	c := NewClient(
-		func(net, target, msg string) { mu.Lock(); sends = append(sends, [3]string{net, target, msg}); mu.Unlock() },
+		func(net, target, msg string) {
+			mu.Lock()
+			sends = append(sends, [3]string{net, target, msg})
+			mu.Unlock()
+		},
 		func(interval string, fn func()) { everies = append(everies, interval); fn() },
 		func(delay string, fn func()) { afters = append(afters, delay); fn() },
 	)
