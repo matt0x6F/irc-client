@@ -27,6 +27,35 @@ func (c *IRCClient) setAuthFailed(v bool) {
 	c.mu.Unlock()
 }
 
+// handleSASLSuccess records a successful authentication, clears any prior
+// auth-failure marker, and completes CAP negotiation. Triggered by both
+// RPL_LOGGEDIN (900) and RPL_SASLSUCCESS (903). It is safe to call more than
+// once: endCapNegotiation is idempotent, and the flag assignments are harmless
+// when repeated.
+func (c *IRCClient) handleSASLSuccess() {
+	c.mu.Lock()
+	c.saslAuthenticated = true
+	c.saslInProgress = false
+	c.authFailed = false
+	c.mu.Unlock()
+
+	c.storage.WriteMessage(storage.Message{
+		NetworkID:   c.networkID,
+		ChannelID:   nil,
+		User:        "*",
+		Message:     "SASL authentication successful",
+		MessageType: "status",
+		Timestamp:   time.Now(),
+	})
+	c.endCapNegotiation()
+	c.eventBus.Emit(events.Event{
+		Type:      EventSASLSuccess,
+		Data:      map[string]interface{}{"network": c.network.Address, "networkId": c.networkID},
+		Timestamp: time.Now(),
+		Source:    events.EventSourceIRC,
+	})
+}
+
 // handleSASLFailure records an authentication failure and aborts the
 // connection. It deliberately does NOT call endCapNegotiation: completing CAP
 // negotiation would register the user as an unauthenticated guest, which is the

@@ -2828,29 +2828,17 @@ func (c *IRCClient) setupHandlers() {
 		c.handleAUTHENTICATE(e)
 	})
 
-	c.conn.AddCallback("900", func(e ircmsg.Message) {
+	c.conn.AddCallback("900", func(e ircmsg.Message) { // RPL_LOGGEDIN
 		if !c.saslEnabled {
 			return
 		}
-		c.mu.Lock()
-		c.saslAuthenticated = true
-		c.saslInProgress = false
-		c.mu.Unlock()
-		c.storage.WriteMessage(storage.Message{
-			NetworkID:   c.networkID,
-			ChannelID:   nil,
-			User:        "*",
-			Message:     "SASL authentication successful",
-			MessageType: "status",
-			Timestamp:   time.Now(),
-		})
-		c.endCapNegotiation()
-		c.eventBus.Emit(events.Event{
-			Type:      EventSASLSuccess,
-			Data:      map[string]interface{}{"network": c.network.Address},
-			Timestamp: time.Now(),
-			Source:    events.EventSourceIRC,
-		})
+		c.handleSASLSuccess()
+	})
+	c.conn.AddCallback("903", func(e ircmsg.Message) { // RPL_SASLSUCCESS
+		if !c.saslEnabled {
+			return
+		}
+		c.handleSASLSuccess()
 	})
 
 	c.conn.AddCallback("901", func(e ircmsg.Message) { // RPL_LOGGEDOUT during auth = failure
@@ -3741,8 +3729,15 @@ func capValue(capabilities, cap string) (value string, present bool) {
 // Setting capNegotiationDone lets the ACK handler tell a registration ACK (which
 // must be followed by CAP END) apart from a post-registration ACK triggered by a
 // CAP NEW request (which must NOT send CAP END again).
+// It is idempotent: if CAP negotiation is already done it returns without sending
+// a second CAP END. This matters because RPL_LOGGEDIN (900) and RPL_SASLSUCCESS
+// (903) commonly both arrive and both call handleSASLSuccess -> endCapNegotiation.
 func (c *IRCClient) endCapNegotiation() {
 	c.mu.Lock()
+	if c.capNegotiationDone {
+		c.mu.Unlock()
+		return
+	}
 	c.capNegotiationDone = true
 	c.mu.Unlock()
 	c.conn.SendRaw("CAP END")
