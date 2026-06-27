@@ -12,6 +12,14 @@ type TextEvent struct {
 	Channel string // "#chan" for a channel message; the bot's own nick for a DM
 	Message string
 
+	// Context added by the host (zero values when unavailable).
+	Self    string // the bot's own nick on this network
+	Account string // sender's logged-in account; "" if not logged in
+	Network string // configured network name this message arrived on
+	MsgID   string // IRCv3 msgid; "" if the server sent none
+	Time    Time   // message timestamp (server-time aware)
+	Action  bool   // true if this was a CTCP ACTION (/me)
+
 	replyFn func(string)
 }
 
@@ -42,6 +50,42 @@ func (e TextEvent) Reply(msg string) {
 	if e.replyFn != nil {
 		e.replyFn(msg)
 	}
+}
+
+// IsHighlight reports whether the bot's own nick (Self) appears in Message as a
+// whole word, case-insensitive. Returns false when Self is empty.
+func (e TextEvent) IsHighlight() bool {
+	if e.Self == "" {
+		return false
+	}
+	return containsWord(strings.ToLower(e.Message), strings.ToLower(e.Self))
+}
+
+// containsWord reports whether word appears in s bounded by non-alphanumerics
+// (or string ends). Both args must already be lowercased.
+func containsWord(s, word string) bool {
+	if word == "" {
+		return false
+	}
+	from := 0
+	for {
+		i := strings.Index(s[from:], word)
+		if i < 0 {
+			return false
+		}
+		i += from
+		leftOK := i == 0 || !isWordByte(s[i-1])
+		end := i + len(word)
+		rightOK := end == len(s) || !isWordByte(s[end])
+		if leftOK && rightOK {
+			return true
+		}
+		from = i + 1
+	}
+}
+
+func isWordByte(b byte) bool {
+	return b == '_' || (b >= 'a' && b <= 'z') || (b >= '0' && b <= '9')
 }
 
 // NoticeEvent is delivered to OnNotice handlers (an inbound NOTICE).

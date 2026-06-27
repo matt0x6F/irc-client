@@ -68,3 +68,37 @@ func TestTime(t *testing.T) {
 		t.Fatalf("Clock() = %q; want HH:MM", b.Clock())
 	}
 }
+
+func TestTextEventIsHighlight(t *testing.T) {
+	mk := func(self, msg string) TextEvent {
+		e := NewTextEvent("bob", "#chan", msg, func(string) {})
+		e.Self = self
+		return e
+	}
+	cases := []struct {
+		self, msg string
+		want      bool
+	}{
+		{"matt0x6f", "matt0x6f hello", true},
+		{"matt0x6f", "hey MATT0X6F", true},      // case-insensitive
+		{"matt0x6f", "yo matt0x6f, sup", true},  // trailing punctuation = boundary
+		{"matt0x6f", "matt0x6f_0 left", false},  // word-boundary: not a substring hit
+		{"matt0x6f", "robotmatt0x6fish", false}, // embedded, not a word
+		{"", "matt0x6f hello", false},           // no Self set
+	}
+	for _, c := range cases {
+		if got := mk(c.self, c.msg).IsHighlight(); got != c.want {
+			t.Fatalf("IsHighlight(self=%q msg=%q) = %v; want %v", c.self, c.msg, got, c.want)
+		}
+	}
+}
+
+func TestTextEventFieldsAreSettable(t *testing.T) {
+	e := NewTextEvent("bob", "#chan", "hi", func(string) {})
+	e.Self, e.Account, e.Network, e.MsgID = "me", "bob_acct", "Libera", "abc123"
+	e.Time, e.Action = NewTime(42), true
+	if e.Self != "me" || e.Account != "bob_acct" || e.Network != "Libera" ||
+		e.MsgID != "abc123" || e.Time.Unix() != 42 || !e.Action {
+		t.Fatalf("exported fields did not round-trip: %+v", e)
+	}
+}
