@@ -65,6 +65,41 @@ func TestActionEmitsMessageReceived(t *testing.T) {
 	}
 }
 
+func TestNoticeEmitsContextFields(t *testing.T) {
+	c := newPrivmsgTestClient(t)
+	// Prime the roster so accountFor("chanserv") returns "cs_acct".
+	c.applyUserMeta("chanserv", func(m *UserMeta) { m.Account = "cs_acct" })
+
+	got := make(chan events.Event, 4)
+	c.eventBus.Subscribe(EventMessageReceived, capturingSub{got: got})
+
+	// PM-path NOTICE (chanserv!s@h prefix + target == our nick) so it emits.
+	line := "@msgid=n1 :chanserv!s@h NOTICE matt0x6f :hello there"
+	msg, err := ircmsg.ParseLine(line)
+	if err != nil {
+		t.Fatalf("ParseLine: %v", err)
+	}
+	c.handleNotice(msg)
+
+	select {
+	case ev := <-got:
+		if ev.Data["account"] != "cs_acct" {
+			t.Fatalf("account = %v; want cs_acct", ev.Data["account"])
+		}
+		if ev.Data["networkName"] != "Libera" {
+			t.Fatalf("networkName = %v; want Libera", ev.Data["networkName"])
+		}
+		if ev.Data["msgid"] != "n1" {
+			t.Fatalf("msgid = %v; want n1", ev.Data["msgid"])
+		}
+		if _, ok := ev.Data["messageUnix"].(int64); !ok {
+			t.Fatalf("messageUnix missing or not int64: %T", ev.Data["messageUnix"])
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no message.received event emitted for notice")
+	}
+}
+
 func TestPrivmsgEmitsContextFields(t *testing.T) {
 	c := newPrivmsgTestClient(t)
 	// Roster knows alittlefang's account.
