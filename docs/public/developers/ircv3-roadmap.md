@@ -19,7 +19,7 @@ These are part of the **ratified** IRCv3 spec, so they count toward baseline com
 | Capability | Priority | Status | Where to start |
 |------------|:--------:|:------:|----------------|
 | Bot mode `+B` | — | ✅ | Done — `BOT=` token → `BotModeChar`; WHO `B` flag → `markBot`; `identify_as_bot` setting → `MODE +<letter>` at connect; self-echo via `markSelfBotFromUserMode`. |
-| `+typing` (client-only tag) | High | ⛔ | New tag emit/parse; UI typing indicator |
+| `+typing` (client-only tag) | — | ✅ | Done (#78) — `handleTypingTag` parses inbound `+typing`; `SendTyping` emits it; transient per-conversation state drives the typing indicator in channels + PMs, with independent send/receive toggles. See the [support matrix](ircv3-support.md#capability-status-matrix). |
 | `+reply` / `+channel-context` | Medium | ⛔ | Pairs with stored `@msgid`; threaded-reply UI |
 | `extended-monitor` | — | ✅ | Done (#77) — ratified, not draft; away/account/host/realname for monitored nicks. See the [support matrix](ircv3-support.md#capability-status-matrix). |
 | `account-extban` | — | ✅ | Done (#77) — `EXTBAN` `$a`/`$a:account` masks in the mode editor. |
@@ -35,10 +35,11 @@ These are part of the **ratified** IRCv3 spec, so they count toward baseline com
       warning if unsupported); and Cascade's own `+B` MODE echo calls `markSelfBotFromUserMode`
       → `markBot`. The ratified set is now fully complete. See
       [Bot mode](ircv3-support.md#bot-mode).
-- [ ] **`+typing`** — Ratified client-only tag for real-time typing indicators. Emit `@+typing`
-      on the local input path and parse inbound tags into a transient per-conversation state
-      (same lifetime model as the session roster — never persisted). High UX visibility and the
-      tag-parsing substrate (`message-tags`) already exists.
+- [x] **`+typing`** — Done (#78). Ratified client-only tag for real-time typing indicators.
+      `SendTyping` emits `@+typing` (active/paused/done) on the local input path; `handleTypingTag`
+      parses inbound tags into transient per-conversation state (same lifetime model as the session
+      roster — never persisted, self-echo dropped). Works in channels + PMs with independent
+      send/receive toggles. See [Typing indicators](ircv3-support.md#typing-indicators-typing-client-tag).
 - [ ] **`+reply` / `+channel-context`** — Ratified client-only tags for threaded replies /
       quoting. Cascade already stores `@msgid` per message (used for history dedup), which is the
       anchor a reply points at — so the backend groundwork is partly there; the work is mostly
@@ -72,8 +73,8 @@ with Cascade's multi-platform story. Sequenced by value.
 ## Suggested sequencing
 
 1. ~~**Bot mode `+B`**~~ — Done. The ratified set is now **fully complete**.
-2. **`+typing`** + **`draft/read-marker`** — the two features that most reinforce Cascade's
-   multi-platform identity (live conversations; sessions stay in sync).
+2. ~~**`+typing`**~~ (done in #78) + **`draft/read-marker`** — the two features that most reinforce
+   Cascade's multi-platform identity (live conversations; sessions stay in sync).
 3. **`draft/message-redaction`** + **`draft/multiline`** — modern messaging table-stakes that
    Ergo/Soju already speak.
 4. ~~Mop up the cheap ratified items (`no-implicit-names`, `UTF8ONLY`).~~ Done in #77, along with
