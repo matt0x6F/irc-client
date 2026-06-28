@@ -8,11 +8,20 @@ Modern multi-platform IRC client built with Wails (Go backend + React frontend).
 
 ```bash
 task dev              # Dev server with hot reload
+task dev:mcp          # Dev + built-in Wails MCP server (LLM drives the live native app)
 task build            # Build for current platform
 task check            # Run all checks (fmt, lint, test, type-check)
 task test             # Go tests
 task sqlc-generate    # Regenerate SQLC code after schema/query changes
 ```
+
+> **Driving the live app (`task dev:mcp`):** sets `WAILS_MCP=1` so Wails compiles
+> in its experimental MCP server (loopback `:9099`). Connect with
+> `claude mcp add --transport http cascade-dev http://127.0.0.1:9099/mcp`, then an
+> agent can inspect the DOM, call bound Go methods, await events, and simulate
+> input against the **real native window** — the gap the server-mode Playwright
+> e2e suite can't reach. Playwright stays the deterministic CI regression gate;
+> this is a local dev/verification loop. The `mcp` tag is never in production builds.
 
 ## Architecture
 
