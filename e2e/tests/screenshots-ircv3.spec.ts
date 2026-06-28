@@ -292,6 +292,8 @@ test.describe('IRCv3 documentation screenshots', () => {
       const msgList = page.getByTestId('message-list');
       await expect(msgList.getByText(unique)).toBeVisible({ timeout: 15_000 });
       await expect(msgList.locator('.channel-context-pill')).toBeVisible({ timeout: 10_000 });
+      // Wait for the "Loading older messages…" spinner to clear before shooting.
+      await expect(msgList.locator('[data-testid="history-loading"]')).toBeHidden({ timeout: 5_000 });
 
       await shoot(msgList, 'channel-context-pill.png');
     } finally {
@@ -350,6 +352,8 @@ test.describe('IRCv3 documentation screenshots', () => {
         ).toBeVisible({ timeout: 10_000 });
       }
 
+      // Wait for the "Loading older messages…" spinner to clear before shooting.
+      await expect(msgList.locator('[data-testid="history-loading"]')).toBeHidden({ timeout: 5_000 });
       await shoot(msgList, 'reply-quote.png');
     } finally {
       peer.close();
