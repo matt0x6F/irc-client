@@ -102,6 +102,15 @@ func fetchBounded(ctx context.Context, c *http.Client, rawURL, wantType string, 
 }
 
 func fetchImage(ctx context.Context, c *http.Client, imgURL string) (string, error) {
+	// Explicit http(s) scheme allowlist: reject file://, ftp://, data:, and other dangerous schemes.
+	u, err := url.Parse(imgURL)
+	if err != nil {
+		return "", fmt.Errorf("unfurl: bad image url: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", fmt.Errorf("%w: image scheme %q", ErrBlocked, u.Scheme)
+	}
+
 	// fetchBounded enforces status==200 and server Content-Type prefix "image/".
 	body, _, err := fetchBounded(ctx, c, imgURL, "image/", maxImgBytes)
 	if err != nil {

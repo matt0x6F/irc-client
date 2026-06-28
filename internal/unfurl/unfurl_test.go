@@ -88,3 +88,31 @@ func TestFetchWithNonImagePayloadFallsBackToTextOnly(t *testing.T) {
 		t.Errorf("expected empty ImageDataURI (text-only preview), got %q", p.ImageDataURI)
 	}
 }
+
+// TestFetchImageRejectsNonHTTPScheme verifies that dangerous og:image schemes
+// (file://, ftp://, data:, etc.) are explicitly rejected at the fetchImage level,
+// yielding a text-only preview. This is defense-in-depth: even if an attacker-
+// controlled og:image contains a dangerous scheme, fetchImage rejects it.
+func TestFetchImageRejectsNonHTTPScheme(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/page", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(`<head>
+			<meta property="og:title" content="Page Title">
+			<meta property="og:description" content="Page Description">
+			<meta property="og:image" content="file:///etc/passwd"></head>`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	p, err := fetchWith(context.Background(), srv.URL+"/page", permissiveGuard)
+	if err != nil {
+		t.Fatalf("fetchWith: unexpected error: %v", err)
+	}
+	if p.Title != "Page Title" || p.Description != "Page Description" {
+		t.Errorf("got title=%q desc=%q", p.Title, p.Description)
+	}
+	if p.ImageDataURI != "" {
+		t.Errorf("expected empty ImageDataURI (blocked scheme), got %q", p.ImageDataURI)
+	}
+}
