@@ -1103,6 +1103,36 @@ func (a *App) findNetworkIDByAddress(address string) (int64, bool) {
 	return 0, false
 }
 
+// findNetworksByAddress returns the IDs of every saved network whose primary
+// address or any configured server address equals host. Unlike
+// findNetworkIDByAddress (which returns the first match), this surfaces all
+// matches so a deep link to a host with multiple saved identities can be
+// disambiguated.
+func (a *App) findNetworksByAddress(host string) []int64 {
+	networks, err := a.storage.GetNetworks()
+	if err != nil {
+		return nil
+	}
+	var ids []int64
+	for _, n := range networks {
+		if n.Address == host {
+			ids = append(ids, n.ID)
+			continue
+		}
+		servers, err := a.storage.GetServers(n.ID)
+		if err != nil {
+			continue
+		}
+		for _, srv := range servers {
+			if srv.Address == host {
+				ids = append(ids, n.ID)
+				break
+			}
+		}
+	}
+	return ids
+}
+
 // resolveNetworkID extracts network ID from event data, trying direct ID first, then address lookup
 func (a *App) resolveNetworkID(data map[string]interface{}) (int64, bool) {
 	// First try to get networkId directly from event data
