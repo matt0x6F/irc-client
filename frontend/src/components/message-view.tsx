@@ -4,6 +4,9 @@ import { IRCFormattedText } from './irc-formatted-text';
 import { useNicknameColors } from '../hooks/useNicknameColors';
 import { useNetworkStore } from '../stores/network';
 import { useSettingsStore } from '../stores/settings';
+import { SendCommand } from '../../wailsjs/go/main/App';
+import { CornerUpLeft } from 'lucide-react';
+import { buildMsgidIndex, resolveParent, quoteSnippet } from '../lib/reply';
 
 interface MessageViewProps {
   messages: storage.Message[];
@@ -249,6 +252,30 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
         return <span key={i}>{part}</span>;
       }),
     [networkId]
+  );
+
+  // Build a msgid→message index once per render for fast parent lookup.
+  const msgidIndex = useMemo(() => buildMsgidIndex(messages), [messages]);
+
+  // Reply jump: scroll to a message row by msgid and flash it briefly.
+  // Cross-buffer resolution is deferred to Task 3.4.
+  const scrollToMsgid = useCallback((msgid: string) => {
+    const el = scrollContainerRef.current?.querySelector<HTMLElement>(`[data-msgid="${CSS.escape(msgid)}"]`);
+    if (!el) {
+      // TODO(3.4): message not in current buffer — will be handled in Task 3.4 (cross-buffer jump)
+      return;
+    }
+    el.scrollIntoView({ block: 'center' });
+    el.classList.add('msg-flash');
+    setTimeout(() => el.classList.remove('msg-flash'), 1200);
+  }, []);
+
+  const jumpToReplyMsgid = useCallback(
+    (replyMsgid: string) => {
+      if (!replyMsgid) return;
+      scrollToMsgid(replyMsgid);
+    },
+    [scrollToMsgid],
   );
 
   const pinnedMessages = useNetworkStore((s) => s.pinnedMessages);
@@ -549,7 +576,8 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
                 else messageRefs.current.delete(msg.id);
               }}
               data-testid="message-item"
-              className={`group flex items-baseline space-x-3 py-1 px-2 rounded transition-colors ${
+              data-msgid={msg.msgid || undefined}
+              className={`group flex flex-col py-1 px-2 rounded transition-colors ${
                 hasMention
                   ? 'cc-mention border-l-2'
                   : isError
@@ -563,6 +591,28 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
                   : ''
               } hover:bg-muted/30`}
             >
+              {msg.reply_msgid && (() => {
+                const parent = resolveParent(msg.reply_msgid, msgidIndex);
+                return (
+                  <button
+                    type="button"
+                    className="reply-quote flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground self-start mb-0.5"
+                    onClick={() => jumpToReplyMsgid(msg.reply_msgid)}
+                  >
+                    <CornerUpLeft className="h-3 w-3 shrink-0" />
+                    {parent ? (
+                      <span className="truncate max-w-xs">
+                        <span className="font-medium">{parent.user}</span>
+                        {': '}
+                        {quoteSnippet(parent)}
+                      </span>
+                    ) : (
+                      <span className="italic">replying to an earlier message</span>
+                    )}
+                  </button>
+                );
+              })()}
+              <div className="flex items-baseline space-x-3">
               {isError || isWarning ? (
                 <>
                   <span className={`text-sm font-semibold flex-shrink-0 ${isError ? 'text-destructive' : 'text-amber-500'}`}>⚠</span>
@@ -699,6 +749,7 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
                   </svg>
                 </button>
               )}
+              </div>
             </div>
           );
         })

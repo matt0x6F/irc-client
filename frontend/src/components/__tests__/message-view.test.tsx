@@ -53,6 +53,8 @@ const makeMessage = (overrides: Partial<storage.Message>) =>
     raw_line: '',
     pm_target: '',
     msgid: '',
+    reply_msgid: '',
+    channel_context: '',
     ...overrides,
   })
 
@@ -97,6 +99,42 @@ describe('MessageView mention highlight', () => {
 
     storeState.networks = []
     storeState.currentNick = {}
+  })
+})
+
+describe('MessageView reply quote strip', () => {
+  it('renders parent nick and snippet when parent is in the loaded set', () => {
+    const parent = makeMessage({ id: 1, msgid: 'p1', user: 'bob', message: 'original text here' })
+    const reply = makeMessage({ id: 2, msgid: 'c1', reply_msgid: 'p1', user: 'amy', message: 'reply text' })
+
+    render(<MessageView messages={[parent, reply]} networkId={1} selectedChannel="#chan" />)
+
+    // The quote strip button contains the parent nick; find it there (the parent row
+    // also shows "bob" in a nick span, so we look inside the .reply-quote button)
+    const quoteBtn = document.querySelector('.reply-quote')
+    expect(quoteBtn).not.toBeNull()
+    expect(quoteBtn!.textContent).toMatch(/bob/)
+    expect(quoteBtn!.textContent).toMatch(/original text here/)
+  })
+
+  it('renders muted fallback when parent is not in the loaded set', () => {
+    const reply = makeMessage({ id: 2, msgid: 'c1', reply_msgid: 'missing-parent', user: 'amy', message: 'reply text' })
+
+    render(<MessageView messages={[reply]} networkId={1} selectedChannel="#chan" />)
+
+    expect(screen.getByText(/replying to an earlier message/i)).toBeInTheDocument()
+  })
+
+  it('exposes data-msgid on each message row', () => {
+    const msg1 = makeMessage({ id: 1, msgid: 'abc123', user: 'alice', message: 'hello' })
+    const msg2 = makeMessage({ id: 2, msgid: 'def456', user: 'bob', message: 'world' })
+
+    render(<MessageView messages={[msg1, msg2]} networkId={1} selectedChannel="#chan" />)
+
+    const rows = screen.getAllByTestId('message-item')
+    const dataMsgids = rows.map((r) => r.getAttribute('data-msgid')).filter(Boolean)
+    expect(dataMsgids).toContain('abc123')
+    expect(dataMsgids).toContain('def456')
   })
 })
 
