@@ -45,6 +45,7 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
   // Subscribing here makes the message view update live when the toggle changes
   // in Settings (the store writes through to the backend settings table).
   const consolidateEnabled = useSettingsStore((s) => s.consolidateJoinQuit);
+  const unfurlsEnabled = useSettingsStore((s) => s.unfurlsEnabled);
 
   // Consolidate messages if enabled
   const processedMessages = useMemo(() => {
@@ -665,6 +666,7 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
                       className={`text-sm flex-1 ${
                         isStatus || isCommand ? 'text-muted-foreground italic' : ''
                       }`}
+                      enableUnfurls={unfurlsEnabled}
                     />
                   )}
                 </>

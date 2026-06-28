@@ -1,4 +1,5 @@
 import React from 'react';
+import { LinkPreviewCard, PreviewChip } from './link-preview-card';
 import { useNetworkStore } from '../stores/network';
 
 interface IRCFormatState {
@@ -234,10 +235,12 @@ export function tokenizeText(text: string): TextToken[] {
 
 // Renders a text string into React nodes, turning URLs into <a> links and
 // #channel references into clickable buttons (only when networkId is provided).
+// When onPreview is provided, an inline PreviewChip is emitted after each link.
 function renderTextWithLinks(
   text: string,
   keyPrefix: string,
-  networkId?: number
+  networkId?: number,
+  onPreview?: (url: string) => void
 ): React.ReactNode[] {
   const tokens = tokenizeText(text);
   const nodes: React.ReactNode[] = [];
@@ -255,6 +258,12 @@ function renderTextWithLinks(
           {token.value}
         </a>
       );
+      if (onPreview) {
+        const u = token.value;
+        nodes.push(
+          <PreviewChip key={`${keyPrefix}-chip-${i}`} onClick={() => onPreview(u)} />
+        );
+      }
       if (token.trailing) nodes.push(token.trailing);
     } else if (token.type === 'channel') {
       if (networkId !== undefined) {
@@ -287,61 +296,99 @@ function renderTextWithLinks(
 interface IRCFormattedTextProps {
   text: string;
   className?: string;
+  /** When set, #channel references become clickable (switch to / join the channel). */
   networkId?: number;
+  /** When true, each link gets an inline Preview chip that expands a card below the message. */
+  enableUnfurls?: boolean;
 }
 
-export function IRCFormattedText({ text, className = '', networkId }: IRCFormattedTextProps) {
+export function IRCFormattedText({
+  text,
+  className = '',
+  networkId,
+  enableUnfurls,
+}: IRCFormattedTextProps) {
+  const [expanded, setExpanded] = React.useState<string[]>([]);
   const segments = parseIRCFormatting(text);
 
+  // Shared helper that builds the formatted segment nodes. networkId is threaded
+  // through so #channel references stay clickable in both render paths; onPreview
+  // is only passed in the unfurl path.
+  function renderSegments(onPreview?: (url: string) => void) {
+    return segments.map((segment, index) => {
+      const style: React.CSSProperties = {};
+      const classes: string[] = [];
+
+      if (segment.format.bold) {
+        classes.push('font-bold');
+      }
+      if (segment.format.italic) {
+        classes.push('italic');
+      }
+      if (segment.format.underline) {
+        classes.push('underline');
+      }
+
+      if (segment.format.fgColor !== null) {
+        style.color = IRC_COLORS[segment.format.fgColor] || IRC_COLORS[0];
+      }
+      if (segment.format.bgColor !== null) {
+        style.backgroundColor = IRC_COLORS[segment.format.bgColor] || IRC_COLORS[1];
+      }
+
+      // Reverse video swaps foreground and background
+      if (segment.format.reverse) {
+        if (segment.format.fgColor !== null && segment.format.bgColor !== null) {
+          const temp = style.color;
+          style.color = style.backgroundColor;
+          style.backgroundColor = temp;
+        } else if (segment.format.fgColor !== null) {
+          style.backgroundColor = style.color;
+          style.color = IRC_COLORS[1]; // Default to black background
+        } else if (segment.format.bgColor !== null) {
+          style.color = style.backgroundColor;
+          style.backgroundColor = IRC_COLORS[0]; // Default to white background
+        }
+      }
+
+      return (
+        <span key={index} className={classes.join(' ')} style={style}>
+          {renderTextWithLinks(segment.text, `seg-${index}`, networkId, onPreview)}
+        </span>
+      );
+    });
+  }
+
+  // ── Path A: enableUnfurls is falsy (default) ──────────────────────────────
+  // Return the EXISTING span structure unchanged so existing tests, type checks,
+  // and message-preview.tsx are unaffected. #channel links still work via networkId.
+  if (!enableUnfurls) {
+    if (segments.length === 0) {
+      return <span className={className}>{text}</span>;
+    }
+    return <span className={className}>{renderSegments()}</span>;
+  }
+
+  // ── Path B: enableUnfurls is truthy ───────────────────────────────────────
+  // Wrap in a flex-col div so card <div>s can appear below the text <span>
+  // without invalid block-in-inline nesting.
+  const onPreview = (url: string) =>
+    setExpanded((prev) => (prev.includes(url) ? prev : [...prev, url]));
+
   if (segments.length === 0) {
-    return <span className={className}>{text}</span>;
+    return (
+      <div className={`${className} flex flex-col gap-1`}>
+        <span>{text}</span>
+      </div>
+    );
   }
 
   return (
-    <span className={className}>
-      {segments.map((segment, index) => {
-        const style: React.CSSProperties = {};
-        const classes: string[] = [];
-
-        if (segment.format.bold) {
-          classes.push('font-bold');
-        }
-        if (segment.format.italic) {
-          classes.push('italic');
-        }
-        if (segment.format.underline) {
-          classes.push('underline');
-        }
-
-        if (segment.format.fgColor !== null) {
-          style.color = IRC_COLORS[segment.format.fgColor] || IRC_COLORS[0];
-        }
-        if (segment.format.bgColor !== null) {
-          style.backgroundColor = IRC_COLORS[segment.format.bgColor] || IRC_COLORS[1];
-        }
-
-        // Reverse video swaps foreground and background
-        if (segment.format.reverse) {
-          if (segment.format.fgColor !== null && segment.format.bgColor !== null) {
-            const temp = style.color;
-            style.color = style.backgroundColor;
-            style.backgroundColor = temp;
-          } else if (segment.format.fgColor !== null) {
-            style.backgroundColor = style.color;
-            style.color = IRC_COLORS[1]; // Default to black background
-          } else if (segment.format.bgColor !== null) {
-            style.color = style.backgroundColor;
-            style.backgroundColor = IRC_COLORS[0]; // Default to white background
-          }
-        }
-
-        return (
-          <span key={index} className={classes.join(' ')} style={style}>
-            {renderTextWithLinks(segment.text, `seg-${index}`, networkId)}
-          </span>
-        );
-      })}
-    </span>
+    <div className={`${className} flex flex-col gap-1`}>
+      <span>{renderSegments(onPreview)}</span>
+      {expanded.map((url) => (
+        <LinkPreviewCard key={url} url={url} />
+      ))}
+    </div>
   );
 }
-

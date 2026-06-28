@@ -31,6 +31,7 @@ type Querier interface {
 	GetJoinedChannels(ctx context.Context, arg GetJoinedChannelsParams) ([]Channel, error)
 	GetLastOpenChannel(ctx context.Context) (GetLastOpenChannelRow, error)
 	GetLastOpenPM(ctx context.Context) (GetLastOpenPMRow, error)
+	GetLinkPreview(ctx context.Context, url string) (LinkPreview, error)
 	GetMessageByMsgID(ctx context.Context, arg GetMessageByMsgIDParams) (Message, error)
 	GetMessagesAfterWithChannel(ctx context.Context, arg GetMessagesAfterWithChannelParams) ([]Message, error)
 	GetMessagesAfterWithoutChannel(ctx context.Context, arg GetMessagesAfterWithoutChannelParams) ([]Message, error)
@@ -63,6 +64,7 @@ type Querier interface {
 	GetSetting(ctx context.Context, key string) (string, error)
 	ListDisabledScripts(ctx context.Context) ([]string, error)
 	PinMessage(ctx context.Context, arg PinMessageParams) error
+	PruneLinkPreviewsToLimit(ctx context.Context, offset int64) error
 	RemoveChannelUser(ctx context.Context, arg RemoveChannelUserParams) error
 	RemoveMonitoredNick(ctx context.Context, arg RemoveMonitoredNickParams) error
 	SetPluginConfig(ctx context.Context, arg SetPluginConfigParams) error
@@ -79,6 +81,7 @@ type Querier interface {
 	UpdateNetworkAutoConnect(ctx context.Context, arg UpdateNetworkAutoConnectParams) error
 	UpdatePMConversationIsOpen(ctx context.Context, arg UpdatePMConversationIsOpenParams) error
 	UpdateServer(ctx context.Context, arg UpdateServerParams) error
+	UpsertLinkPreview(ctx context.Context, arg UpsertLinkPreviewParams) error
 	UpsertSTSPolicy(ctx context.Context, arg UpsertSTSPolicyParams) error
 	UpsertScriptEnabled(ctx context.Context, arg UpsertScriptEnabledParams) error
 }

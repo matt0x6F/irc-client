@@ -121,6 +121,11 @@ func Migrate(db *sqlx.DB) error {
 		return fmt.Errorf("script state migration failed: %w", err)
 	}
 
+	// Handle link previews table migration (persistent cache for click-to-load URL unfurls)
+	if err := migrateLinkPreviews(db); err != nil {
+		return fmt.Errorf("link previews migration failed: %w", err)
+	}
+
 	return nil
 }
 
@@ -889,6 +894,29 @@ CREATE TABLE IF NOT EXISTS script_state (
 func migrateScriptState(db *sqlx.DB) error {
 	if _, err := db.Exec(createScriptStateTable); err != nil {
 		return fmt.Errorf("failed to create script_state table: %w", err)
+	}
+	return nil
+}
+
+const createLinkPreviewsTable = `
+CREATE TABLE IF NOT EXISTS link_previews (
+    url          TEXT PRIMARY KEY,
+    status       TEXT NOT NULL,
+    title        TEXT NOT NULL DEFAULT '',
+    description  TEXT NOT NULL DEFAULT '',
+    site_name    TEXT NOT NULL DEFAULT '',
+    image_data   TEXT NOT NULL DEFAULT '',
+    fetched_at   INTEGER NOT NULL
+);
+`
+
+// migrateLinkPreviews creates the link_previews table if it doesn't exist.
+// It is the persistent cache for click-to-load URL preview cards. Rows are
+// pruned by age (TTL-aware reads treat stale rows as absent) and by count
+// (PruneLinkPreviews keeps only the N most-recently-fetched rows).
+func migrateLinkPreviews(db *sqlx.DB) error {
+	if _, err := db.Exec(createLinkPreviewsTable); err != nil {
+		return fmt.Errorf("failed to create link_previews table: %w", err)
 	}
 	return nil
 }

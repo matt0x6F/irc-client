@@ -101,6 +101,17 @@ type PrivateMessageConversation struct {
 	UpdatedAt  *time.Time `db:"updated_at" json:"updated_at"`
 }
 
+// CachedPreview is a stored link-preview row. FetchedAt is unix seconds.
+type CachedPreview struct {
+	URL          string
+	Status       string
+	Title        string
+	Description  string
+	SiteName     string
+	ImageDataURI string
+	FetchedAt    int64
+}
+
 // PluginConfig represents user configuration for a plugin
 type PluginConfig struct {
 	Name         string                 `db:"name" json:"name"`

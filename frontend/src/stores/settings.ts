@@ -15,6 +15,7 @@ const NOTIFY_UNFOCUSED_KEY = 'notifications.onlyWhenUnfocused';
 const TYPING_SEND_KEY = 'typing.send';
 const TYPING_RECEIVE_KEY = 'typing.receive';
 const RECONNECT_ON_AUTH_FAILURE_KEY = 'reconnect_on_auth_failure';
+const UNFURLS_ENABLED_KEY = 'unfurls.enabled';
 
 // How a user's channel-membership prefixes are shown in the nick list:
 // 'icon' shows a single icon for their highest role; 'text' shows the full
@@ -64,6 +65,11 @@ interface SettingsState {
   // reconnect loop retries — only useful in specific automated scenarios.
   reconnectOnAuthFailure: boolean;
   setReconnectOnAuthFailure: (value: boolean) => void;
+  // Show a "Preview" button beside links. Nothing is fetched until clicked —
+  // the preview is loaded by the app (not the page), so a link can't see
+  // your IP unless you choose to preview it. Off by default.
+  unfurlsEnabled: boolean;
+  setUnfurlsEnabled: (value: boolean) => void;
 }
 
 /**
@@ -157,6 +163,13 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       console.error('Failed to persist reconnect_on_auth_failure:', error),
     );
   },
+  unfurlsEnabled: false, // sensible default until initSettings() hydrates
+  setUnfurlsEnabled: (value) => {
+    set({ unfurlsEnabled: value });
+    SetSetting(UNFURLS_ENABLED_KEY, value ? 'true' : 'false').catch((error) => {
+      console.error('Failed to persist unfurls.enabled:', error);
+    });
+  },
 }));
 
 /**
@@ -177,6 +190,7 @@ export async function initSettings(): Promise<void> {
       tSend,
       tReceive,
       reconnectAuthFailure,
+      unfurls,
     ] = await Promise.all([
       GetSetting(CONSOLIDATE_JOIN_QUIT_KEY),
       GetSetting(PREFIX_DISPLAY_MODE_KEY),
@@ -189,6 +203,7 @@ export async function initSettings(): Promise<void> {
       GetSetting(TYPING_SEND_KEY),
       GetSetting(TYPING_RECEIVE_KEY),
       GetSetting(RECONNECT_ON_AUTH_FAILURE_KEY),
+      GetSetting(UNFURLS_ENABLED_KEY),
     ]);
     useSettingsStore.setState({
       consolidateJoinQuit: consolidate === 'true',
@@ -206,6 +221,7 @@ export async function initSettings(): Promise<void> {
       typingReceive: tReceive !== 'false',
       // Default OFF: treat only an explicit 'true' as on (safe default).
       reconnectOnAuthFailure: reconnectAuthFailure === 'true',
+      unfurlsEnabled: unfurls === 'true',
     });
   } catch (error) {
     console.error('Failed to load settings:', error);
@@ -241,6 +257,8 @@ export async function initSettings(): Promise<void> {
       useSettingsStore.setState({ typingReceive: payload.value !== 'false' });
     } else if (payload.key === RECONNECT_ON_AUTH_FAILURE_KEY) {
       useSettingsStore.setState({ reconnectOnAuthFailure: payload.value === 'true' });
+    } else if (payload.key === UNFURLS_ENABLED_KEY) {
+      useSettingsStore.setState({ unfurlsEnabled: payload.value === 'true' });
     }
   });
 }

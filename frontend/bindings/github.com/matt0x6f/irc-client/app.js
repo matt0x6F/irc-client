@@ -22,6 +22,9 @@ import * as irc$0 from "./internal/irc/models.js";
 import * as storage$0 from "./internal/storage/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
+import * as unfurl$0 from "./internal/unfurl/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
 import * as application$0 from "../../wailsapp/wails/v3/pkg/application/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -995,6 +998,22 @@ export function ToggleNetworkAutoConnect(networkID) {
 }
 
 /**
+ * UnfurlURL returns a preview card for rawURL. It is the single network egress
+ * point for the feature: the webview never fetches preview content itself. A
+ * cache hit performs no network I/O. Failures are reported via Status
+ * ("blocked" for SSRF/scheme rejections, "error" otherwise) rather than a Go
+ * error, so the frontend can render a quiet inline state; a Go error is returned
+ * only for unexpected internal (cache) failures.
+ * @param {string} rawURL
+ * @returns {$CancellablePromise<unfurl$0.LinkPreview | null>}
+ */
+export function UnfurlURL(rawURL) {
+    return $Call.ByID(2006376526, rawURL).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType38($result);
+    }));
+}
+
+/**
  * UnpinMessage removes a pin
  * @param {number} messageID
  * @returns {$CancellablePromise<void>}
@@ -1041,3 +1060,5 @@ const $$createType33 = $models.ScriptInfo.createFrom;
 const $$createType34 = $Create.Array($$createType33);
 const $$createType35 = storage$0.SearchResult.createFrom;
 const $$createType36 = $Create.Array($$createType35);
+const $$createType37 = unfurl$0.LinkPreview.createFrom;
+const $$createType38 = $Create.Nullable($$createType37);
