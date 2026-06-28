@@ -510,6 +510,102 @@ export class NetworkConfig {
 }
 
 /**
+ * NetworkPrefill carries deep-link data for a network Cascade doesn't have saved
+ * yet, so the settings window can open the Add Network form prefilled.
+ */
+export class NetworkPrefill {
+    /**
+     * Creates a new NetworkPrefill instance.
+     * @param {Partial<NetworkPrefill>} [$$source = {}] - The source object to create the NetworkPrefill.
+     */
+    constructor($$source = {}) {
+        if (!("host" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["host"] = "";
+        }
+        if (!("port" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["port"] = 0;
+        }
+        if (!("tls" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["tls"] = false;
+        }
+        if (!("channel" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["channel"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new NetworkPrefill instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {NetworkPrefill}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new NetworkPrefill(/** @type {Partial<NetworkPrefill>} */($$parsedSource));
+    }
+}
+
+/**
+ * PendingDeepLink is a deep-link action emitted before the webview was ready,
+ * buffered so the frontend can drain it on mount.
+ */
+export class PendingDeepLink {
+    /**
+     * Creates a new PendingDeepLink instance.
+     * @param {Partial<PendingDeepLink>} [$$source = {}] - The source object to create the PendingDeepLink.
+     */
+    constructor($$source = {}) {
+        if (!("event" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["event"] = "";
+        }
+        if (!("data" in $$source)) {
+            /**
+             * @member
+             * @type {{ [_ in string]?: any }}
+             */
+            this["data"] = {};
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new PendingDeepLink instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {PendingDeepLink}
+     */
+    static createFrom($$source = {}) {
+        const $$createField1_0 = $$createType6;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("data" in $$parsedSource) {
+            $$parsedSource["data"] = $$createField1_0($$parsedSource["data"]);
+        }
+        return new PendingDeepLink(/** @type {Partial<PendingDeepLink>} */($$parsedSource));
+    }
+}
+
+/**
  * PluginInfo represents plugin information for the frontend
  */
 export class PluginInfo {

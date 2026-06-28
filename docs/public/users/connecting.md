@@ -72,3 +72,47 @@ for you. There's no separate "alternate nick" list to configure:
 !!! note
     Nickname fallback is automatic and owned by the IRC layer. You configure a
     single preferred nickname; Cascade does the rest.
+
+## Opening irc:// links
+
+Cascade registers as the handler for `irc://` and `ircs://` URIs. Clicking one
+in a browser or another app launches Cascade (or focuses the running window if
+it's already open), then acts on the link.
+
+What happens next depends on what Cascade knows about that server:
+
+**Network already saved.** If you have exactly one network configured for that
+server, Cascade connects to it (if not already connected) and joins the
+channel or opens the private message from the link.
+
+**Multiple networks for the same server.** Cascade shows a small picker so you
+can choose which identity to use, then proceeds the same way.
+
+**Unknown server.** Cascade opens **Settings → Networks → Add network**,
+prefilled with the server address, port, and TLS setting from the link. Fill in
+your nickname and click **Connect** when you're ready. Nothing connects
+automatically. The channel from the link is not prefilled; join it after you
+connect.
+
+### URL format
+
+Both schemes are supported:
+
+```
+irc://host[:port]/#channel[?key=channelkey]
+ircs://host[:port]/#channel
+```
+
+`ircs://` sets TLS. Default ports are `6667` for `irc://` and `6697` for
+`ircs://`. You can pass multiple comma-separated targets:
+
+```
+irc://irc.libera.chat/#general,#cascade
+```
+
+To open a private message instead of a channel, use `nick,isnick` as the
+target:
+
+```
+irc://irc.libera.chat/alice,isnick
+```

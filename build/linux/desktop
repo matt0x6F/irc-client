@@ -10,4 +10,4 @@ Icon=cascade
 Categories=Utility;
 StartupWMClass=cascade
 
- 
+MimeType=x-scheme-handler/irc;x-scheme-handler/ircs; 

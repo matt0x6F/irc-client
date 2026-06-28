@@ -47,6 +47,7 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   GetSTSPolicies: vi.fn().mockResolvedValue([]),
   ClearSTSPolicy: vi.fn(),
   RequestNotificationPermission: vi.fn().mockResolvedValue(true),
+  GetPendingNetworkPrefill: vi.fn().mockResolvedValue(null),
 }))
 
 // Mock scripts-panel to avoid pulling Wails bindings + scripts store into this test.

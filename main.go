@@ -44,6 +44,16 @@ func main() {
 		Assets: application.AssetOptions{
 			Handler: application.BundledAssetFileServer(assets),
 		},
+		SingleInstance: &application.SingleInstanceOptions{
+			UniqueID: "com.mattouille.cascade",
+			OnSecondInstanceLaunch: func(data application.SecondInstanceData) {
+				for _, arg := range data.Args {
+					if isDeepLinkArg(arg) {
+						ircApp.handleDeepLink(arg)
+					}
+				}
+			},
+		},
 	})
 
 	// Opt out of macOS automatic window tabbing so the framework's updater

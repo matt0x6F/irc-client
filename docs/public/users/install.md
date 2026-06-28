@@ -83,3 +83,16 @@ To produce a distributable package instead of a bare binary:
 !!! tip "Hot-reload dev build"
     To run Cascade from source with live reload while hacking on it, use
     `task dev` (or `wails3 dev`).
+
+## irc:// and ircs:// link handling
+
+Cascade registers itself as the system handler for `irc://` and `ircs://` URIs
+so that clicking IRC links in a browser or another app opens Cascade directly.
+Registration happens automatically at install/first-run time, per platform:
+
+- **macOS:** declared in the app bundle's `Info.plist`; no manual step needed.
+- **Windows:** written to the registry by the NSIS installer.
+- **Linux:** provided by the `.desktop` file installed alongside the binary.
+
+See [Opening irc:// links](connecting.md#opening-irc-links) for what Cascade
+does after it receives the link.

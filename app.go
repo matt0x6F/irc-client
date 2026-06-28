@@ -50,7 +50,11 @@ type App struct {
 	startupCtx            context.Context
 	startupCancel         context.CancelFunc
 	startupWg             sync.WaitGroup
-	shutdownOnce          sync.Once // Ensure shutdown only runs once
+	shutdownOnce          sync.Once                      // Ensure shutdown only runs once
+	emitFn                func(name string, data ...any) // test seam; nil in production
+	pendingNetworkPrefill *NetworkPrefill                // deep-link Add Network prefill; consumed by the settings window
+	frontendReady         bool                           // set once the webview drains pending deep links
+	pendingDeepLink       *PendingDeepLink               // cold-start deep link buffered until the webview is ready
 }
 
 // stsTarget is a pending plaintext→TLS upgrade: a host advertised STS over an
@@ -188,7 +192,12 @@ func NewApp() (*App, error) {
 // emit forwards an event to the frontend. It is a no-op until the Wails
 // application reference is wired up in ServiceStartup, which centralises the
 // readiness guard that v2 spread across every runtime.EventsEmit call site.
+// In tests, emitFn can be set to capture events without a running Wails app.
 func (a *App) emit(name string, data ...any) {
+	if a.emitFn != nil {
+		a.emitFn(name, data...)
+		return
+	}
 	if a.app == nil {
 		return
 	}
@@ -221,6 +230,17 @@ func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) 
 		logger.Log.Info().Msg("System woke; forcing reconnect of auto-connect networks")
 		a.reconnectAllOnWake()
 	})
+
+	// Deep links: macOS delivers irc:///ircs:// URLs as an application event,
+	// routed to the already-running instance by the OS. The handler runs on a
+	// background goroutine, so it only parses + emits (no native calls).
+	a.app.Event.OnApplicationEvent(wailsevents.Common.ApplicationLaunchedWithUrl,
+		func(e *application.ApplicationEvent) {
+			a.handleDeepLink(e.Context().URL())
+		})
+
+	// Cold-start protocol launch on Windows/Linux passes the URL via os.Args.
+	a.processStartupArgs(os.Args)
 
 	// Load plugins in background so it doesn't block auto-connect
 	go func() {

@@ -74,6 +74,14 @@ fileAssociations:
 #    role: Editor
 #    mimeType: image/jpeg  # (optional)
 
+# Custom URL scheme handlers. Regenerate build assets after changing:
+#   wails3 task common:update:build-assets
+protocols:
+  - scheme: irc
+    description: IRC URL
+  - scheme: ircs
+    description: IRC over TLS URL
+
 # Other data
 other:
   - name: My Other Data

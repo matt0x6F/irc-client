@@ -6,6 +6,7 @@ import { useNetworkStore } from './stores/network';
 import { useUIStore } from './stores/ui';
 import { eventMatchesPane } from './lib/pane-routing';
 import { initCommands } from './stores/commands';
+import { initDeepLinks } from './stores/deeplink';
 import { useNotificationRouting } from './hooks/useNotificationRouting';
 import { useTypingRouting } from './hooks/useTypingRouting';
 import { ServerTree } from './components/server-tree';
@@ -22,6 +23,7 @@ import { KeyboardShortcutsModal } from './components/keyboard-shortcuts-modal';
 import { HelpDialog } from './components/help-dialog';
 import { UpdateAvailableDialog } from './components/update-available-dialog';
 import { AuthBanner } from './components/AuthBanner';
+import { DeepLinkDisambiguation } from './components/deeplink-disambiguation';
 import { List, Settings } from 'lucide-react';
 
 function App() {
@@ -237,6 +239,13 @@ function App() {
       clearInterval(interval);
       unsubscribe();
     };
+  }, []);
+
+  // Deep-link event router (main window only — App.tsx is never rendered in the
+  // settings window; main.tsx routes ?view=settings directly to SettingsPanel).
+  useEffect(() => {
+    const off = initDeepLinks();
+    return off;
   }, []);
 
   // Restore last pane on initial load
@@ -1093,6 +1102,7 @@ function App() {
 
       <HelpDialog />
       <UpdateAvailableDialog />
+      <DeepLinkDisambiguation />
     </div>
   );
 }
