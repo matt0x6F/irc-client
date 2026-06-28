@@ -51,6 +51,7 @@ type App struct {
 	startupCancel         context.CancelFunc
 	startupWg             sync.WaitGroup
 	shutdownOnce          sync.Once // Ensure shutdown only runs once
+	emitFn                func(name string, data ...any) // test seam; nil in production
 }
 
 // stsTarget is a pending plaintext→TLS upgrade: a host advertised STS over an
@@ -188,7 +189,12 @@ func NewApp() (*App, error) {
 // emit forwards an event to the frontend. It is a no-op until the Wails
 // application reference is wired up in ServiceStartup, which centralises the
 // readiness guard that v2 spread across every runtime.EventsEmit call site.
+// In tests, emitFn can be set to capture events without a running Wails app.
 func (a *App) emit(name string, data ...any) {
+	if a.emitFn != nil {
+		a.emitFn(name, data...)
+		return
+	}
 	if a.app == nil {
 		return
 	}

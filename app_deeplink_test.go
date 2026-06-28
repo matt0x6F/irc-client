@@ -43,6 +43,71 @@ func makeNetwork(t *testing.T, s *storage.Storage, name, address string) *storag
 	return net
 }
 
+// captureEmits redirects a.emit into a recorder. Returns a *emitRecorder whose
+// last(name) returns the most recent payload map for that event, or nil.
+type emitRecorder struct{ events []struct{ name string; data map[string]any } }
+
+func (r *emitRecorder) last(name string) map[string]any {
+	for i := len(r.events) - 1; i >= 0; i-- {
+		if r.events[i].name == name {
+			return r.events[i].data
+		}
+	}
+	return nil
+}
+
+func captureEmits(a *App) *emitRecorder {
+	r := &emitRecorder{}
+	a.emitFn = func(name string, data ...any) {
+		var m map[string]any
+		if len(data) == 1 {
+			m, _ = data[0].(map[string]any)
+		}
+		r.events = append(r.events, struct{ name string; data map[string]any }{name, m})
+	}
+	return r
+}
+
+func TestHandleDeepLink_UnknownHostEmitsAddNetwork(t *testing.T) {
+	a, _ := newDeepLinkTestApp(t)
+	rec := captureEmits(a)
+
+	a.handleDeepLink("irc://unknown.example/#chan")
+
+	ev := rec.last("deeplink:add-network")
+	if ev == nil {
+		t.Fatal("expected deeplink:add-network emit")
+	}
+	if ev["host"] != "unknown.example" || ev["channel"] != "#chan" {
+		t.Fatalf("bad payload: %+v", ev)
+	}
+}
+
+func TestHandleDeepLink_SingleMatchEmitsJoin(t *testing.T) {
+	a, s := newDeepLinkTestApp(t)
+	makeNetwork(t, s, "X", "irc.x.net")
+	rec := captureEmits(a)
+
+	a.handleDeepLink("irc://irc.x.net/#chan")
+
+	if rec.last("deeplink:join") == nil {
+		t.Fatal("expected deeplink:join emit")
+	}
+}
+
+func TestHandleDeepLink_MultiMatchEmitsDisambiguate(t *testing.T) {
+	a, s := newDeepLinkTestApp(t)
+	makeNetwork(t, s, "A", "irc.x.net")
+	makeNetwork(t, s, "B", "irc.x.net")
+	rec := captureEmits(a)
+
+	a.handleDeepLink("irc://irc.x.net/#chan")
+
+	if rec.last("deeplink:disambiguate") == nil {
+		t.Fatal("expected deeplink:disambiguate emit")
+	}
+}
+
 func TestFindNetworksByAddress_MultipleMatches(t *testing.T) {
 	a, s := newDeepLinkTestApp(t)
 	makeNetwork(t, s, "Libera work", "irc.libera.chat")
