@@ -20,7 +20,10 @@ DELETE FROM channel_users
 WHERE channel_id IN (SELECT id FROM channels WHERE network_id = ?);
 
 -- name: UpdateChannelUserNickname :exec
-UPDATE channel_users 
+-- OR REPLACE so a rename that collides with an existing holder of the new nick
+-- (e.g. a just-freed ghost still listed in a shared channel during a REGAIN)
+-- replaces that stale row per channel instead of aborting the whole statement.
+UPDATE OR REPLACE channel_users
 SET nickname = ?, updated_at = CURRENT_TIMESTAMP
-WHERE LOWER(nickname) = LOWER(?) 
+WHERE LOWER(nickname) = LOWER(?)
 AND channel_id IN (SELECT id FROM channels WHERE network_id = ?);

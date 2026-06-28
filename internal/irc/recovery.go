@@ -88,6 +88,23 @@ func (c *IRCClient) handleSASLFailure(reason string) {
 	c.abortAuth()
 }
 
+// handleLoggedOut processes RPL_LOGGEDOUT (901). The numeric is overloaded: during
+// the SASL handshake it means authentication failed and we must abort rather than
+// register unauthenticated; after registration it is a benign account-state change.
+// Services emit a post-registration 901 as a normal event — notably Libera during a
+// NickServ REGAIN, as it re-binds the session's account — and treating that as a
+// failure tears down a healthy connection, forcing a reconnect that wipes every
+// channel roster. So only abort while SASL is actually in progress.
+func (c *IRCClient) handleLoggedOut() {
+	c.mu.RLock()
+	authing := c.saslEnabled && c.saslInProgress
+	c.mu.RUnlock()
+	if !authing {
+		return
+	}
+	c.handleSASLFailure("logged out")
+}
+
 // handleCapLSMissingSASL aborts when SASL is required but the server's CAP LS
 // did not advertise it. Without this the handshake would proceed and register
 // the user unauthenticated. allCaps is the space-separated CAP LS token list.

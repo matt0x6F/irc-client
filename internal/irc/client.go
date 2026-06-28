@@ -2892,13 +2892,8 @@ func (c *IRCClient) setupHandlers() {
 		c.handleSASLSuccess()
 	})
 
-	c.conn.AddCallback("901", func(e ircmsg.Message) { // RPL_LOGGEDOUT during auth = failure
-		if !c.saslEnabled {
-			return
-		}
-		c.handleSASLFailure("logged out")
-	})
-	c.conn.AddCallback("902", func(e ircmsg.Message) { // ERR_NICKLOCKED
+	c.conn.AddCallback("901", func(e ircmsg.Message) { c.handleLoggedOut() }) // RPL_LOGGEDOUT
+	c.conn.AddCallback("902", func(e ircmsg.Message) {                        // ERR_NICKLOCKED
 		if !c.saslEnabled {
 			return
 		}

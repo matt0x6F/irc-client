@@ -111,9 +111,9 @@ func (q *Queries) RemoveChannelUser(ctx context.Context, arg RemoveChannelUserPa
 }
 
 const updateChannelUserNickname = `-- name: UpdateChannelUserNickname :exec
-UPDATE channel_users 
+UPDATE OR REPLACE channel_users
 SET nickname = ?, updated_at = CURRENT_TIMESTAMP
-WHERE LOWER(nickname) = LOWER(?) 
+WHERE LOWER(nickname) = LOWER(?)
 AND channel_id IN (SELECT id FROM channels WHERE network_id = ?)
 `
 
@@ -123,6 +123,9 @@ type UpdateChannelUserNicknameParams struct {
 	NetworkID int64  `json:"network_id"`
 }
 
+// OR REPLACE so a rename that collides with an existing holder of the new nick
+// (e.g. a just-freed ghost still listed in a shared channel during a REGAIN)
+// replaces that stale row per channel instead of aborting the whole statement.
 func (q *Queries) UpdateChannelUserNickname(ctx context.Context, arg UpdateChannelUserNicknameParams) error {
 	_, err := q.db.ExecContext(ctx, updateChannelUserNickname, arg.Nickname, arg.LOWER, arg.NetworkID)
 	return err
