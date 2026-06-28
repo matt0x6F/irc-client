@@ -23,6 +23,7 @@ import { KeyboardShortcutsModal } from './components/keyboard-shortcuts-modal';
 import { HelpDialog } from './components/help-dialog';
 import { UpdateAvailableDialog } from './components/update-available-dialog';
 import { AuthBanner } from './components/AuthBanner';
+import { DeepLinkDisambiguation } from './components/deeplink-disambiguation';
 import { List, Settings } from 'lucide-react';
 
 function App() {
@@ -1101,6 +1102,7 @@ function App() {
 
       <HelpDialog />
       <UpdateAvailableDialog />
+      <DeepLinkDisambiguation />
     </div>
   );
 }
