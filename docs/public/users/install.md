@@ -1,11 +1,10 @@
 # Install & first run
 
-!!! info "Prebuilt downloads are macOS-only for now"
-    Official release builds on the
-    [Releases page](https://github.com/matt0x6F/irc-client/releases) currently
-    cover macOS only. Windows and Linux are fully supported by the codebase, but
-    aren't auto-published yet, so build them from source (below). Native
-    installers for those platforms are planned.
+Prebuilt downloads are published for macOS, Windows, and Linux on the
+[Releases page](https://github.com/matt0x6F/irc-client/releases). Windows and
+Linux ship both Intel/AMD (`amd64`) and ARM (`arm64`) builds. Stable releases are
+cut from tags; the newest pre-release tracks `main`, and the in-app updater can
+follow either channel.
 
 === "macOS"
 
@@ -24,18 +23,27 @@
 
 === "Windows"
 
-    No prebuilt installer is published yet — build from source (see below).
-    On Windows the build produces a native executable and can be packaged into
-    an NSIS installer.
+    Download `cascade-<arch>-installer.exe` for your architecture (`amd64` for
+    most PCs, `arm64` for ARM machines like Surface Pro X) and run it. It's an
+    NSIS installer that drops Cascade into your Start menu.
+
+    The build isn't code-signed, so SmartScreen may warn on first run — click
+    **More info** → **Run anyway** to continue.
 
 === "Linux"
 
-    No prebuilt package is published yet, so build from source (see below). The
-    Linux build can be packaged as an AppImage, `.deb`, or `.rpm`.
+    Three packages are published per architecture (`amd64` and `arm64`); pick the
+    one that matches your distro:
+
+    - **AppImage** — `chmod +x` it and run directly, no install needed.
+    - **`.deb`** — `sudo apt install ./Cascade-*.deb` (Debian/Ubuntu).
+    - **`.rpm`** — `sudo dnf install ./Cascade-*.rpm` (Fedora/RHEL/openSUSE).
 
 ## Building from source
 
-This is the current path for Windows and Linux, and works on macOS too.
+Prebuilt downloads above are the easy path; build from source if you want to
+hack on Cascade or target a platform we don't publish. Works on macOS, Windows,
+and Linux.
 
 **Prerequisites**
 
