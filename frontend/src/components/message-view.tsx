@@ -5,7 +5,7 @@ import { useNicknameColors } from '../hooks/useNicknameColors';
 import { useNetworkStore } from '../stores/network';
 import { useSettingsStore } from '../stores/settings';
 import { SendCommand } from '../../wailsjs/go/main/App';
-import { CornerUpLeft } from 'lucide-react';
+import { CornerUpLeft, Hash } from 'lucide-react';
 import { buildMsgidIndex, resolveParent, quoteSnippet } from '../lib/reply';
 
 interface MessageViewProps {
@@ -297,6 +297,7 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
   const pinMessage = useNetworkStore((s) => s.pinMessage);
   const unpinMessage = useNetworkStore((s) => s.unpinMessage);
   const setReplyTarget = useNetworkStore((s) => s.setReplyTarget);
+  const selectPane = useNetworkStore((s) => s.selectPane);
   const viewMode = useNetworkStore((s) => s.viewMode);
   const anchoredMessageId = useNetworkStore((s) => s.anchoredMessageId);
   const clearAnchorFlash = useNetworkStore((s) => s.clearAnchorFlash);
@@ -663,6 +664,17 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
                     >
                       bot
                     </span>
+                  )}
+                  {!msg.channel_id && msg.channel_context && networkId !== null && (
+                    <button
+                      type="button"
+                      className="channel-context-pill inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground hover:text-foreground flex-shrink-0"
+                      onClick={() => void selectPane(networkId, msg.channel_context)}
+                      title={`This message is about ${msg.channel_context}`}
+                    >
+                      <Hash className="h-3 w-3" />
+                      {msg.channel_context.replace(/^#/, '')}
+                    </button>
                   )}
                   {isInvite ? (
                     <span className="text-sm flex-1 text-muted-foreground italic">

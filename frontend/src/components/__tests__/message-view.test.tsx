@@ -26,6 +26,11 @@ const storeState = {
   loadNewerMessages: vi.fn(),
   loadingHistory: false,
   openOrJoinChannel: vi.fn().mockResolvedValue(undefined),
+  selectPane: vi.fn(),
+  setReplyTarget: vi.fn(),
+  pendingScrollMsgid: null as string | null,
+  clearPendingScrollMsgid: vi.fn(),
+  openParentMessage: vi.fn(),
 }
 
 vi.mock('../../stores/network', () => {
@@ -179,5 +184,46 @@ describe('MessageView invite-line channel links', () => {
     fireEvent.click(screen.getByRole('button', { name: '#welcome' }))
     expect(spy).toHaveBeenCalledWith(3, '#welcome')
     spy.mockRestore()
+  })
+})
+
+describe('MessageView channel-context pill', () => {
+  it('renders an in-#channel pill on a PM with channel_context', () => {
+    const pm = makeMessage({
+      id: 10,
+      channel_id: null,
+      user: 'bob',
+      message: 'see chan',
+      message_type: 'privmsg',
+      pm_target: 'bob',
+      channel_context: '#dev',
+      msgid: 'pm1',
+      reply_msgid: '',
+    })
+
+    render(<MessageView messages={[pm]} networkId={1} selectedChannel="pm:bob" />)
+
+    // The pill strips the leading '#' and renders the channel name next to the Hash icon
+    expect(screen.getByText('dev')).toBeInTheDocument()
+    // The pill button itself should be present
+    expect(document.querySelector('.channel-context-pill')).not.toBeNull()
+  })
+
+  it('does not render the pill on a channel message even if channel_context is set', () => {
+    const chan = makeMessage({
+      id: 11,
+      channel_id: 5,
+      user: 'alice',
+      message: 'hello',
+      message_type: 'privmsg',
+      channel_context: '#dev',
+      msgid: 'ch1',
+      reply_msgid: '',
+    })
+
+    render(<MessageView messages={[chan]} networkId={1} selectedChannel="#general" />)
+
+    // No pill should render for a channel message
+    expect(document.querySelector('.channel-context-pill')).toBeNull()
   })
 })

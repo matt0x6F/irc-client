@@ -38,6 +38,14 @@ export function InputArea({ onSendMessage, placeholder = 'Type a message...', ne
   const replyTarget = useNetworkStore((s) => s.replyTarget);
   const clearReplyTarget = useNetworkStore((s) => s.clearReplyTarget);
 
+  // Sticky channel-context indicator: shown in PM panes when a channel-context is
+  // set (e.g. after "Message privately re: #channel"). Uses the pane key
+  // ('pm:<nick>') to look up the stored context.
+  const channelContextByPane = useNetworkStore((s) => s.channelContextByPane);
+  const clearChannelContext = useNetworkStore((s) => s.clearChannelContext);
+  const isPMPane = channelName?.startsWith('pm:') ?? false;
+  const channelContext = isPMPane && channelName ? (channelContextByPane.get(channelName) ?? null) : null;
+
   // IRCv3 +typing: send our own typing state, and surface peers' typing as a line
   // above the input. `channelName` is already the normalized conversation key
   // ('#chan' or 'pm:<nick>'); the sender strips the pm: prefix for the wire.
@@ -362,6 +370,25 @@ export function InputArea({ onSendMessage, placeholder = 'Type a message...', ne
             className="flex-shrink-0 hover:text-foreground transition-colors"
             aria-label="Cancel reply"
             title="Cancel reply (Esc)"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+      {channelContext && channelName && (
+        <div
+          className="mb-2 flex items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-1.5 text-xs text-muted-foreground"
+          data-testid="channel-context-strip"
+        >
+          <span className="flex-1 truncate">
+            in <span className="font-medium text-foreground">{channelContext}</span>
+          </span>
+          <button
+            type="button"
+            onClick={() => clearChannelContext(channelName)}
+            className="flex-shrink-0 hover:text-foreground transition-colors"
+            aria-label="Clear channel context"
+            title="Clear channel context"
           >
             ✕
           </button>

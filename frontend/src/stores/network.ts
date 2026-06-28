@@ -171,6 +171,12 @@ interface NetworkState {
   // per-message Reply affordance; cleared on send or Escape.
   replyTarget: { msgid: string; nick: string; snippet: string } | null;
 
+  // Sticky per-PM channel-context: maps a PM pane key ('pm:<nick>') to a channel
+  // name ('#dev') that will be threaded as channel-context on the next send.
+  // Set by the "Message privately (re: #channel)" member-list trigger; shown as a
+  // dismissable indicator in the compose area; NOT cleared on send (sticky).
+  channelContextByPane: Map<string, string>;
+
   // Cross-buffer jump: when a reply parent is in another buffer, openParentMessage
   // switches to that buffer and parks the msgid here so the message-view effect
   // can scroll once the messages load.
@@ -217,6 +223,10 @@ interface NetworkState {
   // Reply state actions
   setReplyTarget: (target: { msgid: string; nick: string; snippet: string }) => void;
   clearReplyTarget: () => void;
+
+  // Channel-context actions
+  setChannelContext: (pane: string, channel: string) => void;
+  clearChannelContext: (pane: string) => void;
 
   // Cross-buffer jump actions
   openParentMessage: (networkId: number, msgid: string) => Promise<void>;
@@ -283,6 +293,7 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
   loadingHistory: false,
   reachedStart: false,
   replyTarget: null,
+  channelContextByPane: new Map(),
   pendingScrollMsgid: null,
   selectedNetwork: null,
   selectedChannel: null,
@@ -960,8 +971,9 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
     // Private messages
     if (selectedChannel.startsWith('pm:')) {
       const user = selectedChannel.substring(3);
+      const ctx = get().channelContextByPane.get(selectedChannel) ?? '';
       try {
-        await SendMessageWithContext(selectedNetwork, user, wire, get().replyTarget?.msgid ?? '', '');
+        await SendMessageWithContext(selectedNetwork, user, wire, get().replyTarget?.msgid ?? '', ctx);
         set({ replyTarget: null });
         setTimeout(() => loadMessages(), 100);
       } catch (error) {
@@ -1010,6 +1022,20 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
   setReplyTarget: (target) => set({ replyTarget: target }),
 
   clearReplyTarget: () => set({ replyTarget: null }),
+
+  setChannelContext: (pane, channel) =>
+    set((state) => {
+      const next = new Map(state.channelContextByPane);
+      next.set(pane, channel);
+      return { channelContextByPane: next };
+    }),
+
+  clearChannelContext: (pane) =>
+    set((state) => {
+      const next = new Map(state.channelContextByPane);
+      next.delete(pane);
+      return { channelContextByPane: next };
+    }),
 
   clearPendingScrollMsgid: () => set({ pendingScrollMsgid: null }),
 
