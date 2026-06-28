@@ -36,6 +36,8 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
   // Right-sidebar tab: the channel member list, or the network's MONITOR buddies.
   const [sidebarView, setSidebarView] = useState<'users' | 'monitor'>('users');
   const addMonitorNick = useNetworkStore((s) => s.addMonitorNick);
+  const selectPane = useNetworkStore((s) => s.selectPane);
+  const setChannelContext = useNetworkStore((s) => s.setChannelContext);
   const contextMenuRef = useRef<HTMLDivElement>(null);
   // Use refs to avoid stale closures in event listener
   const networkIdRef = useRef<number | null>(networkId);
@@ -750,6 +752,23 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
             >
               Monitor this user
             </button>
+            {channelName && (
+              <button
+                className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
+                style={{ transition: 'var(--transition-base)' }}
+                onClick={() => {
+                  if (contextMenu.user && networkId !== null && channelName) {
+                    const pane = `pm:${contextMenu.user.nickname}`;
+                    void selectPane(networkId, pane).then(() => {
+                      setChannelContext(pane, channelName);
+                    });
+                    setContextMenu(null);
+                  }
+                }}
+              >
+                Message privately (re: {channelName})
+              </button>
+            )}
             <div className="border-t border-border my-1" />
             <div className="px-4 py-1 text-xs font-semibold text-muted-foreground uppercase">
               CTCP
