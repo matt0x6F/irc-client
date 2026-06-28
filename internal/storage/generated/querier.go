@@ -31,6 +31,7 @@ type Querier interface {
 	GetJoinedChannels(ctx context.Context, arg GetJoinedChannelsParams) ([]Channel, error)
 	GetLastOpenChannel(ctx context.Context) (GetLastOpenChannelRow, error)
 	GetLastOpenPM(ctx context.Context) (GetLastOpenPMRow, error)
+	GetMessageByMsgID(ctx context.Context, arg GetMessageByMsgIDParams) (Message, error)
 	GetMessagesAfterWithChannel(ctx context.Context, arg GetMessagesAfterWithChannelParams) ([]Message, error)
 	GetMessagesAfterWithoutChannel(ctx context.Context, arg GetMessagesAfterWithoutChannelParams) ([]Message, error)
 	GetMessagesBeforeTimePM(ctx context.Context, arg GetMessagesBeforeTimePMParams) ([]Message, error)

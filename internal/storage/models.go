@@ -79,7 +79,9 @@ type Message struct {
 	Timestamp   time.Time `db:"timestamp" json:"timestamp"`
 	RawLine     string    `db:"raw_line" json:"raw_line"`   // Original IRC line
 	PMTarget    string    `db:"pm_target" json:"pm_target"` // Conversation peer for PMs ("" for channel/status/server rows)
-	MsgID       string    `db:"msgid" json:"msgid"`         // IRCv3 message id ("" for legacy/local rows); dedup key for CHATHISTORY
+	MsgID          string    `db:"msgid" json:"msgid"`                   // IRCv3 message id ("" for legacy/local rows); dedup key for CHATHISTORY
+	ReplyMsgID     string    `db:"reply_msgid" json:"reply_msgid"`       // IRCv3 +draft/reply: msgid of the parent message ("" if not a reply)
+	ChannelContext string    `db:"channel_context" json:"channel_context"` // IRCv3 +draft/channel-context: channel a PM is about ("" otherwise)
 }
 
 // PinnedMessage represents a message that has been pinned, with pin metadata

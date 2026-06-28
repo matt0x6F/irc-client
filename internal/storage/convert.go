@@ -191,9 +191,11 @@ func convertMessageFromDB(m db.Message) Message {
 		Message:     m.Message,
 		MessageType: m.MessageType,
 		Timestamp:   m.Timestamp,
-		RawLine:     convertNullString(m.RawLine),
-		PMTarget:    convertNullString(m.PmTarget),
-		MsgID:       convertNullString(m.Msgid),
+		RawLine:        convertNullString(m.RawLine),
+		PMTarget:       convertNullString(m.PmTarget),
+		MsgID:          convertNullString(m.Msgid),
+		ReplyMsgID:     convertNullString(m.ReplyMsgid),
+		ChannelContext: convertNullString(m.ChannelContext),
 	}
 	if m.ChannelID.Valid {
 		result.ChannelID = &m.ChannelID.Int64
@@ -213,9 +215,11 @@ func convertMessageToDBCreateParams(m Message) db.CreateMessageParams {
 		Message:     m.Message,
 		MessageType: m.MessageType,
 		Timestamp:   m.Timestamp.UTC(), // keep the TIMESTAMP text column in one UTC format (see normalizeForStore)
-		RawLine:     convertToNullString(m.RawLine),
-		PmTarget:    convertToNullString(m.PMTarget),
-		Msgid:       convertToNullString(m.MsgID),
+		RawLine:        convertToNullString(m.RawLine),
+		PmTarget:       convertToNullString(m.PMTarget),
+		Msgid:          convertToNullString(m.MsgID),
+		ReplyMsgid:     convertToNullString(m.ReplyMsgID),
+		ChannelContext: convertToNullString(m.ChannelContext),
 	}
 }
 

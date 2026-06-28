@@ -1327,3 +1327,33 @@ func TestNetwork_IdentifyAsBot_UpdateRoundTrips(t *testing.T) {
 		t.Fatalf("IdentifyAsBot did not persist through update: got false, want true")
 	}
 }
+
+// ---------- IRCv3 reply/channel-context tags ----------
+
+func TestMessageReplyContextRoundTrip(t *testing.T) {
+	s := newTestStorage(t)
+	net := makeNetwork("ReplyNet")
+	if err := s.CreateNetwork(net); err != nil {
+		t.Fatalf("CreateNetwork: %v", err)
+	}
+	if err := s.WriteMessageSync(Message{
+		NetworkID:      net.ID,
+		User:           "alice",
+		Message:        "hi back",
+		MessageType:    "privmsg",
+		Timestamp:      time.Now().UTC(),
+		PMTarget:       "alice",
+		MsgID:          "msg-2",
+		ReplyMsgID:     "msg-1",
+		ChannelContext: "#dev",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetMessageByMsgID(net.ID, "msg-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ReplyMsgID != "msg-1" || got.ChannelContext != "#dev" {
+		t.Fatalf("round-trip lost tags: reply=%q ctx=%q", got.ReplyMsgID, got.ChannelContext)
+	}
+}
