@@ -250,6 +250,22 @@ export class Message {
              */
             this["msgid"] = "";
         }
+        if (!("reply_msgid" in $$source)) {
+            /**
+             * IRCv3 +draft/reply: msgid of the parent message ("" if not a reply)
+             * @member
+             * @type {string}
+             */
+            this["reply_msgid"] = "";
+        }
+        if (!("channel_context" in $$source)) {
+            /**
+             * IRCv3 +draft/channel-context: channel a PM is about ("" otherwise)
+             * @member
+             * @type {string}
+             */
+            this["channel_context"] = "";
+        }
 
         Object.assign(this, $$source);
     }
@@ -503,6 +519,22 @@ export class PinnedMessage {
              */
             this["msgid"] = "";
         }
+        if (!("reply_msgid" in $$source)) {
+            /**
+             * IRCv3 +draft/reply: msgid of the parent message ("" if not a reply)
+             * @member
+             * @type {string}
+             */
+            this["reply_msgid"] = "";
+        }
+        if (!("channel_context" in $$source)) {
+            /**
+             * IRCv3 +draft/channel-context: channel a PM is about ("" otherwise)
+             * @member
+             * @type {string}
+             */
+            this["channel_context"] = "";
+        }
         if (!("pinned_by" in $$source)) {
             /**
              * @member
@@ -662,6 +694,22 @@ export class SearchResult {
              * @type {string}
              */
             this["msgid"] = "";
+        }
+        if (!("reply_msgid" in $$source)) {
+            /**
+             * IRCv3 +draft/reply: msgid of the parent message ("" if not a reply)
+             * @member
+             * @type {string}
+             */
+            this["reply_msgid"] = "";
+        }
+        if (!("channel_context" in $$source)) {
+            /**
+             * IRCv3 +draft/channel-context: channel a PM is about ("" otherwise)
+             * @member
+             * @type {string}
+             */
+            this["channel_context"] = "";
         }
         if (!("channel_name" in $$source)) {
             /**

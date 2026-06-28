@@ -205,4 +205,18 @@ describe('SettingsPanel About pane', () => {
     const link = await screen.findByRole('link', { name: /view on github/i })
     expect(link).toHaveAttribute('href', 'https://github.com/matt0x6F/irc-client')
   })
+
+  it('links to the documentation site', async () => {
+    render(<SettingsPanel section="about" onSectionChange={() => {}} />)
+
+    const link = await screen.findByRole('link', { name: /documentation/i })
+    expect(link).toHaveAttribute('href', 'https://matt0x6f.github.io/irc-client/')
+  })
+
+  it('links to the Libera community channel', async () => {
+    render(<SettingsPanel section="about" onSectionChange={() => {}} />)
+
+    const link = await screen.findByRole('link', { name: /#cascade-irc on libera/i })
+    expect(link).toHaveAttribute('href', 'https://web.libera.chat/#cascade-irc')
+  })
 })

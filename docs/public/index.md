@@ -18,3 +18,8 @@ SQLite-backed message store, and full IRCv3 capability handling.
 - [IRCv3 roadmap](developers/ircv3-roadmap.md)
 - [Releases & update channels](developers/releases.md)
 - [Scripting](scripting/index.md) — Automate Cascade with in-process, statically-typed Go scripts.
+
+## Community
+
+Join us on IRC: [#cascade-irc on Libera.Chat](https://web.libera.chat/#cascade-irc)
+(`ircs://irc.libera.chat:6697/#cascade-irc`).

@@ -313,6 +313,19 @@ export function GetLogConfig() {
 }
 
 /**
+ * GetMessageByMsgID resolves a message by its IRCv3 msgid so the frontend can
+ * render a +draft/reply parent preview and jump to it (possibly cross-buffer).
+ * @param {number} networkID
+ * @param {string} msgid
+ * @returns {$CancellablePromise<storage$0.Message>}
+ */
+export function GetMessageByMsgID(networkID, msgid) {
+    return $Call.ByID(1122817005, networkID, msgid).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType11($result);
+    }));
+}
+
+/**
  * GetMessages retrieves messages for a network and channel
  * @param {number} networkID
  * @param {number | null} channelID

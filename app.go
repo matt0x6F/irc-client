@@ -437,6 +437,15 @@ func (a *App) GetMessagesAround(networkID int64, channelID *int64, targetID int6
 	return a.storage.GetMessagesAround(networkID, channelID, targetID, window)
 }
 
+// GetMessageByMsgID resolves a message by its IRCv3 msgid so the frontend can
+// render a +draft/reply parent preview and jump to it (possibly cross-buffer).
+func (a *App) GetMessageByMsgID(networkID int64, msgid string) (storage.Message, error) {
+	if msgid == "" {
+		return storage.Message{}, fmt.Errorf("empty msgid")
+	}
+	return a.storage.GetMessageByMsgID(networkID, msgid)
+}
+
 // GetSetting returns a persisted UI/app preference by key. A missing key
 // returns an empty string (not an error) so the frontend can apply its default.
 // Used for preferences like theme mode and accent that can't live in the

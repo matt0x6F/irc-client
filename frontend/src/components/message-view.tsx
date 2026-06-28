@@ -4,7 +4,6 @@ import { IRCFormattedText } from './irc-formatted-text';
 import { useNicknameColors } from '../hooks/useNicknameColors';
 import { useNetworkStore } from '../stores/network';
 import { useSettingsStore } from '../stores/settings';
-import { SendCommand } from '../../wailsjs/go/main/App';
 
 interface MessageViewProps {
   messages: storage.Message[];
@@ -240,7 +239,7 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
                 className="text-primary underline underline-offset-2 hover:opacity-80 cursor-pointer"
                 title={`Join ${channel}`}
                 onClick={() => {
-                  void SendCommand(networkId, `/join ${channel}`);
+                  void useNetworkStore.getState().openOrJoinChannel(networkId, channel);
                 }}
               >
                 {channel}
@@ -663,6 +662,7 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
                   ) : (
                     <IRCFormattedText
                       text={msg.message}
+                      networkId={networkId ?? undefined}
                       className={`text-sm flex-1 ${
                         isStatus || isCommand ? 'text-muted-foreground italic' : ''
                       }`}

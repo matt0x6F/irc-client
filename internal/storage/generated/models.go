@@ -42,16 +42,18 @@ type LinkPreview struct {
 }
 
 type Message struct {
-	ID          int64          `json:"id"`
-	NetworkID   int64          `json:"network_id"`
-	ChannelID   sql.NullInt64  `json:"channel_id"`
-	User        string         `json:"user"`
-	Message     string         `json:"message"`
-	MessageType string         `json:"message_type"`
-	Timestamp   time.Time      `json:"timestamp"`
-	RawLine     sql.NullString `json:"raw_line"`
-	PmTarget    sql.NullString `json:"pm_target"`
-	Msgid       sql.NullString `json:"msgid"`
+	ID             int64          `json:"id"`
+	NetworkID      int64          `json:"network_id"`
+	ChannelID      sql.NullInt64  `json:"channel_id"`
+	User           string         `json:"user"`
+	Message        string         `json:"message"`
+	MessageType    string         `json:"message_type"`
+	Timestamp      time.Time      `json:"timestamp"`
+	RawLine        sql.NullString `json:"raw_line"`
+	PmTarget       sql.NullString `json:"pm_target"`
+	Msgid          sql.NullString `json:"msgid"`
+	ReplyMsgid     sql.NullString `json:"reply_msgid"`
+	ChannelContext sql.NullString `json:"channel_context"`
 }
 
 type MessagesFt struct {

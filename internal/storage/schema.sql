@@ -69,6 +69,8 @@ CREATE TABLE IF NOT EXISTS messages (
     raw_line TEXT,
     pm_target TEXT, -- conversation peer for private messages (NULL for channel/status/server rows)
     msgid TEXT, -- IRCv3 message id (NULL for legacy/local rows); used to dedup CHATHISTORY replays
+    reply_msgid TEXT, -- IRCv3 +draft/reply: msgid of the parent message (NULL if not a reply)
+    channel_context TEXT, -- IRCv3 +draft/channel-context: channel a private message is about (NULL otherwise)
     FOREIGN KEY (network_id) REFERENCES networks(id) ON DELETE CASCADE,
     FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE
 );

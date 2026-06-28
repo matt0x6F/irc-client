@@ -1174,15 +1174,17 @@ func (c *IRCClient) handlePrivmsg(e ircmsg.Message) {
 
 				rawLine, _ := e.Line()
 				msg := storage.Message{
-					NetworkID:   c.networkID,
-					ChannelID:   channelID,
-					User:        user,
-					Message:     fmt.Sprintf("* %s %s", user, ctcpArgs),
-					MessageType: "action",
-					Timestamp:   c.getMessageTime(e),
-					RawLine:     rawLine,
-					PMTarget:    pmTarget,
-					MsgID:       c.getMsgID(e),
+					NetworkID:      c.networkID,
+					ChannelID:      channelID,
+					User:           user,
+					Message:        fmt.Sprintf("* %s %s", user, ctcpArgs),
+					MessageType:    "action",
+					Timestamp:      c.getMessageTime(e),
+					RawLine:        rawLine,
+					PMTarget:       pmTarget,
+					MsgID:          c.getMsgID(e),
+					ReplyMsgID:     c.getReplyTag(e),
+					ChannelContext: c.getChannelContext(e),
 				}
 				c.storage.WriteMessageSync(msg)
 				c.eventBus.Emit(events.Event{
@@ -1251,15 +1253,17 @@ func (c *IRCClient) handlePrivmsg(e ircmsg.Message) {
 	rawLine, _ := e.Line()
 
 	msg := storage.Message{
-		NetworkID:   c.networkID,
-		ChannelID:   channelID,
-		User:        user,
-		Message:     message,
-		MessageType: "privmsg",
-		Timestamp:   c.getMessageTime(e),
-		RawLine:     rawLine,
-		PMTarget:    pmTarget,
-		MsgID:       c.getMsgID(e),
+		NetworkID:      c.networkID,
+		ChannelID:      channelID,
+		User:           user,
+		Message:        message,
+		MessageType:    "privmsg",
+		Timestamp:      c.getMessageTime(e),
+		RawLine:        rawLine,
+		PMTarget:       pmTarget,
+		MsgID:          c.getMsgID(e),
+		ReplyMsgID:     c.getReplyTag(e),
+		ChannelContext: c.getChannelContext(e),
 	}
 
 	// Store message (use sync write so it appears immediately)
@@ -1279,18 +1283,20 @@ func (c *IRCClient) handlePrivmsg(e ircmsg.Message) {
 	c.eventBus.Emit(events.Event{
 		Type: EventMessageReceived,
 		Data: map[string]interface{}{
-			"network":     c.network.Address,
-			"networkId":   c.networkID,
-			"networkName": c.network.Name,
-			"channel":     channel,
-			"user":        user,
-			"message":     message,
-			"account":     c.accountFor(user),
-			"msgid":       c.getMsgID(e),
-			"messageUnix": c.getMessageTime(e).Unix(),
-			"isAction":    false,
-			"pmTarget":    pmTarget,
-			"messageType": msg.MessageType,
+			"network":        c.network.Address,
+			"networkId":      c.networkID,
+			"networkName":    c.network.Name,
+			"channel":        channel,
+			"user":           user,
+			"message":        message,
+			"account":        c.accountFor(user),
+			"msgid":          c.getMsgID(e),
+			"messageUnix":    c.getMessageTime(e).Unix(),
+			"isAction":       false,
+			"pmTarget":       pmTarget,
+			"messageType":    msg.MessageType,
+			"replyMsgid":     c.getReplyTag(e),
+			"channelContext": c.getChannelContext(e),
 		},
 		Timestamp: time.Now(),
 		Source:    events.EventSourceIRC,
@@ -4672,13 +4678,16 @@ func (c *IRCClient) handleNotice(e ircmsg.Message) {
 			logger.Log.Debug().Err(err).Str("channel", target).Msg("Channel not found for notice")
 		}
 		c.storage.WriteMessageSync(storage.Message{
-			NetworkID:   c.networkID,
-			ChannelID:   channelID,
-			User:        user,
-			Message:     notice,
-			MessageType: "notice",
-			Timestamp:   c.getMessageTime(e),
-			RawLine:     rawLine,
+			NetworkID:      c.networkID,
+			ChannelID:      channelID,
+			User:           user,
+			Message:        notice,
+			MessageType:    "notice",
+			Timestamp:      c.getMessageTime(e),
+			RawLine:        rawLine,
+			MsgID:          c.getMsgID(e),
+			ReplyMsgID:     c.getReplyTag(e),
+			ChannelContext: c.getChannelContext(e),
 		})
 		c.eventBus.Emit(events.Event{
 			Type: EventMessageReceived,
@@ -4718,15 +4727,17 @@ func (c *IRCClient) handleNotice(e ircmsg.Message) {
 		}
 
 		msg := storage.Message{
-			NetworkID:   c.networkID,
-			ChannelID:   nil, // PM rows and status rows both have a nil channel
-			User:        user,
-			Message:     notice,
-			MessageType: "notice",
-			Timestamp:   c.getMessageTime(e),
-			RawLine:     rawLine,
-			PMTarget:    pmTarget, // "" keeps it in Status; non-empty routes to a query pane
-			MsgID:       c.getMsgID(e),
+			NetworkID:      c.networkID,
+			ChannelID:      nil, // PM rows and status rows both have a nil channel
+			User:           user,
+			Message:        notice,
+			MessageType:    "notice",
+			Timestamp:      c.getMessageTime(e),
+			RawLine:        rawLine,
+			PMTarget:       pmTarget, // "" keeps it in Status; non-empty routes to a query pane
+			MsgID:          c.getMsgID(e),
+			ReplyMsgID:     c.getReplyTag(e),
+			ChannelContext: c.getChannelContext(e),
 		}
 
 		if pmTarget == "" {

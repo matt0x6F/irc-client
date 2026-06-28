@@ -183,8 +183,8 @@ func (s *Storage) flushBuffer() {
 			// rows stay out of the partial unique index (so they never collide). The
 			// ON CONFLICT clause makes the live path idempotent against the msgid dedup
 			// index — e.g. an echo and a CHATHISTORY replay of the same line.
-			query := `INSERT INTO messages (network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, msgid)
-			          VALUES (:network_id, :channel_id, :user, :message, :message_type, :timestamp, :raw_line, NULLIF(:pm_target, ''), NULLIF(:msgid, ''))
+			query := `INSERT INTO messages (network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, msgid, reply_msgid, channel_context)
+			          VALUES (:network_id, :channel_id, :user, :message, :message_type, :timestamp, :raw_line, NULLIF(:pm_target, ''), NULLIF(:msgid, ''), NULLIF(:reply_msgid, ''), NULLIF(:channel_context, ''))
 			          ON CONFLICT(network_id, msgid) WHERE msgid IS NOT NULL DO NOTHING`
 
 			_, err := s.db.NamedExec(query, messages)
@@ -316,8 +316,8 @@ func (s *Storage) WriteHistoryMessages(msgs []Message) (int, error) {
 	// Same NULLIF + ON CONFLICT semantics as flushBuffer: msgid-less rows are
 	// exempt from the dedup index; rows whose msgid already exists are skipped
 	// (and excluded from RowsAffected, so the returned count is new rows only).
-	query := `INSERT INTO messages (network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, msgid)
-	          VALUES (:network_id, :channel_id, :user, :message, :message_type, :timestamp, :raw_line, NULLIF(:pm_target, ''), NULLIF(:msgid, ''))
+	query := `INSERT INTO messages (network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, msgid, reply_msgid, channel_context)
+	          VALUES (:network_id, :channel_id, :user, :message, :message_type, :timestamp, :raw_line, NULLIF(:pm_target, ''), NULLIF(:msgid, ''), NULLIF(:reply_msgid, ''), NULLIF(:channel_context, ''))
 	          ON CONFLICT(network_id, msgid) WHERE msgid IS NOT NULL DO NOTHING`
 
 	normalized := make([]Message, len(msgs))
@@ -374,6 +374,19 @@ func (s *Storage) GetMessages(networkID int64, channelID *int64, limit int) ([]M
 	}
 
 	return messages, nil
+}
+
+// GetMessageByMsgID returns the message with the given IRCv3 msgid on the
+// network, used to resolve a +draft/reply parent for the quote preview / jump.
+func (s *Storage) GetMessageByMsgID(networkID int64, msgid string) (Message, error) {
+	row, err := s.queries.GetMessageByMsgID(context.Background(), db.GetMessageByMsgIDParams{
+		NetworkID: networkID,
+		Msgid:     convertToNullString(msgid),
+	})
+	if err != nil {
+		return Message{}, fmt.Errorf("get message by msgid: %w", err)
+	}
+	return convertMessageFromDB(row), nil
 }
 
 // PinMessage pins a message (idempotent — re-pinning is a no-op)

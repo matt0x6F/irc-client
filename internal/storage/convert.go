@@ -185,15 +185,17 @@ func convertChannelUserFromDB(cu db.ChannelUser) ChannelUser {
 
 func convertMessageFromDB(m db.Message) Message {
 	result := Message{
-		ID:          m.ID,
-		NetworkID:   m.NetworkID,
-		User:        m.User,
-		Message:     m.Message,
-		MessageType: m.MessageType,
-		Timestamp:   m.Timestamp,
-		RawLine:     convertNullString(m.RawLine),
-		PMTarget:    convertNullString(m.PmTarget),
-		MsgID:       convertNullString(m.Msgid),
+		ID:             m.ID,
+		NetworkID:      m.NetworkID,
+		User:           m.User,
+		Message:        m.Message,
+		MessageType:    m.MessageType,
+		Timestamp:      m.Timestamp,
+		RawLine:        convertNullString(m.RawLine),
+		PMTarget:       convertNullString(m.PmTarget),
+		MsgID:          convertNullString(m.Msgid),
+		ReplyMsgID:     convertNullString(m.ReplyMsgid),
+		ChannelContext: convertNullString(m.ChannelContext),
 	}
 	if m.ChannelID.Valid {
 		result.ChannelID = &m.ChannelID.Int64
@@ -207,15 +209,17 @@ func convertMessageToDBCreateParams(m Message) db.CreateMessageParams {
 		channelID = sql.NullInt64{Int64: *m.ChannelID, Valid: true}
 	}
 	return db.CreateMessageParams{
-		NetworkID:   m.NetworkID,
-		ChannelID:   channelID,
-		User:        m.User,
-		Message:     m.Message,
-		MessageType: m.MessageType,
-		Timestamp:   m.Timestamp.UTC(), // keep the TIMESTAMP text column in one UTC format (see normalizeForStore)
-		RawLine:     convertToNullString(m.RawLine),
-		PmTarget:    convertToNullString(m.PMTarget),
-		Msgid:       convertToNullString(m.MsgID),
+		NetworkID:      m.NetworkID,
+		ChannelID:      channelID,
+		User:           m.User,
+		Message:        m.Message,
+		MessageType:    m.MessageType,
+		Timestamp:      m.Timestamp.UTC(), // keep the TIMESTAMP text column in one UTC format (see normalizeForStore)
+		RawLine:        convertToNullString(m.RawLine),
+		PmTarget:       convertToNullString(m.PMTarget),
+		Msgid:          convertToNullString(m.MsgID),
+		ReplyMsgid:     convertToNullString(m.ReplyMsgID),
+		ChannelContext: convertToNullString(m.ChannelContext),
 	}
 }
 
