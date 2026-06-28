@@ -9,6 +9,23 @@ const (
 	tagChannelContext      = "+channel-context"
 )
 
+// buildSendTags builds the client-only tag map for an outbound PRIVMSG. Emits
+// the +draft/ forms (widest client support today). Returns nil when no tags
+// apply so callers can fall back to the untagged send path.
+func buildSendTags(replyMsgID, channelContext string) map[string]string {
+	if replyMsgID == "" && channelContext == "" {
+		return nil
+	}
+	tags := make(map[string]string, 2)
+	if replyMsgID != "" {
+		tags[tagReplyDraft] = replyMsgID
+	}
+	if channelContext != "" {
+		tags[tagChannelContextDraft] = channelContext
+	}
+	return tags
+}
+
 // firstTag returns the value of the first present tag among names.
 func firstTag(e ircmsg.Message, names ...string) string {
 	for _, n := range names {
