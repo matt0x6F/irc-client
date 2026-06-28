@@ -193,9 +193,14 @@ describe('SettingsPanel About pane', () => {
   it('renders version, commit, and build date from GetBuildInfo', async () => {
     render(<SettingsPanel section="about" onSectionChange={() => {}} />)
 
-    expect(await screen.findByTestId('about-version')).toHaveTextContent('v1.2.3')
-    expect(screen.getByTestId('about-commit')).toHaveTextContent('abc1234')
-    expect(screen.getByTestId('about-build-date')).toHaveTextContent('2026-06-15T12:00:00Z')
+    // GetBuildInfo resolves asynchronously: the testids render immediately with a
+    // '—' fallback and only populate once the promise settles. Wait on the content,
+    // not just the element, so a slow runner can't observe the pre-fill state.
+    await waitFor(() => expect(screen.getByTestId('about-version')).toHaveTextContent('v1.2.3'))
+    await waitFor(() => expect(screen.getByTestId('about-commit')).toHaveTextContent('abc1234'))
+    await waitFor(() =>
+      expect(screen.getByTestId('about-build-date')).toHaveTextContent('2026-06-15T12:00:00Z'),
+    )
     expect(getBuildInfoMock).toHaveBeenCalledOnce()
   })
 
