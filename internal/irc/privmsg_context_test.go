@@ -136,3 +136,74 @@ func TestPrivmsgEmitsContextFields(t *testing.T) {
 		t.Fatal("no message.received event emitted")
 	}
 }
+
+// TestInboundReplyTagPersisted dispatches a PRIVMSG carrying +draft/reply and
+// asserts the stored row carries the parent msgid in ReplyMsgID.
+func TestInboundReplyTagPersisted(t *testing.T) {
+	c := newPrivmsgTestClient(t)
+
+	line := "@msgid=child-1;+draft/reply=parent-1 :alittlefang!u@h PRIVMSG #chan :replying to parent"
+	msg, err := ircmsg.ParseLine(line)
+	if err != nil {
+		t.Fatalf("ParseLine: %v", err)
+	}
+	c.handlePrivmsg(msg)
+
+	got, err := c.storage.GetMessageByMsgID(c.networkID, "child-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ReplyMsgID != "parent-1" {
+		t.Fatalf("reply tag not persisted: %q", got.ReplyMsgID)
+	}
+}
+
+// TestInboundChannelContextPersisted dispatches a PM PRIVMSG with
+// +draft/channel-context and asserts the stored row carries the channel name.
+func TestInboundChannelContextPersisted(t *testing.T) {
+	c := newPrivmsgTestClient(t)
+
+	// PM to our nick carrying a channel-context tag.
+	line := "@msgid=pm-1;+draft/channel-context=#dev :alittlefang!u@h PRIVMSG matt0x6f :this is about #dev"
+	msg, err := ircmsg.ParseLine(line)
+	if err != nil {
+		t.Fatalf("ParseLine: %v", err)
+	}
+	c.handlePrivmsg(msg)
+
+	got, err := c.storage.GetMessageByMsgID(c.networkID, "pm-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ChannelContext != "#dev" {
+		t.Fatalf("channel-context tag not persisted: %q", got.ChannelContext)
+	}
+}
+
+// TestInboundReplyTagEmitted asserts the event Data map includes replyMsgid and
+// channelContext keys after a tagged PRIVMSG.
+func TestInboundReplyTagEmitted(t *testing.T) {
+	c := newPrivmsgTestClient(t)
+
+	got := make(chan events.Event, 1)
+	c.eventBus.Subscribe(EventMessageReceived, capturingSub{got: got})
+
+	line := "@msgid=child-2;+draft/reply=parent-2 :alittlefang!u@h PRIVMSG #chan :another reply"
+	msg, err := ircmsg.ParseLine(line)
+	if err != nil {
+		t.Fatalf("ParseLine: %v", err)
+	}
+	c.handlePrivmsg(msg)
+
+	select {
+	case ev := <-got:
+		if ev.Data["replyMsgid"] != "parent-2" {
+			t.Fatalf("replyMsgid in event = %v; want parent-2", ev.Data["replyMsgid"])
+		}
+		if ev.Data["channelContext"] != "" {
+			t.Fatalf("channelContext in event = %v; want empty", ev.Data["channelContext"])
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no message.received event emitted")
+	}
+}

@@ -90,6 +90,11 @@ func Migrate(db *sqlx.DB) error {
 		return fmt.Errorf("msgid migration failed: %w", err)
 	}
 
+	// Handle IRCv3 reply/context column migration (adds reply_msgid + channel_context)
+	if err := migrateReplyAndContext(db); err != nil {
+		return fmt.Errorf("reply/context migration failed: %w", err)
+	}
+
 	// Normalize legacy mixed-timezone message timestamps to a single UTC text format
 	// so the lexicographic scrollback cursor (GetMessagesBeforeTime) works.
 	if err := migrateNormalizeMessageTimestamps(db); err != nil {
@@ -187,6 +192,29 @@ func migrateMsgID(db *sqlx.DB) error {
 		return fmt.Errorf("failed to create msgid unique index: %w", err)
 	}
 
+	return nil
+}
+
+// migrateReplyAndContext adds the nullable reply_msgid and channel_context
+// columns (IRCv3 +draft/reply and +draft/channel-context client tags) to an
+// existing messages table. New databases get them from schema.sql; this only
+// patches DBs created before the columns existed.
+func migrateReplyAndContext(db *sqlx.DB) error {
+	for _, col := range []string{"reply_msgid", "channel_context"} {
+		var count int
+		if err := db.Get(&count,
+			"SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name=?", col); err != nil {
+			return fmt.Errorf("failed to check for %s column: %w", col, err)
+		}
+		if count == 0 {
+			if _, err := db.Exec("ALTER TABLE messages ADD COLUMN " + col + " TEXT"); err != nil {
+				// Tolerate a concurrent/duplicate add.
+				if !strings.Contains(err.Error(), "duplicate column name") {
+					return fmt.Errorf("failed to add %s column: %w", col, err)
+				}
+			}
+		}
+	}
 	return nil
 }
 
