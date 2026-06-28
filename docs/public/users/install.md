@@ -3,8 +3,8 @@
 !!! info "Prebuilt downloads are macOS-only for now"
     Official release builds on the
     [Releases page](https://github.com/matt0x6F/irc-client/releases) currently
-    cover **macOS**. Windows and Linux are fully supported by the codebase but
-    aren't auto-published yet — build them from source (below). Native
+    cover macOS only. Windows and Linux are fully supported by the codebase, but
+    aren't auto-published yet, so build them from source (below). Native
     installers for those platforms are planned.
 
 === "macOS"
@@ -14,8 +14,8 @@
     universal binary that runs natively on both Apple Silicon and Intel Macs.
 
     1. Open the DMG and drag **Cascade** to your Applications folder.
-    2. The build is **not code-signed**, so the first launch needs one extra
-       step to get past Gatekeeper:
+    2. The build isn't code-signed, so the first launch needs one extra step to
+       get past Gatekeeper:
         - **Right-click** `Cascade.app` → **Open** → **Open** in the dialog, or
         - run `xattr -dr com.apple.quarantine /Applications/Cascade.app` in
           Terminal.
@@ -30,8 +30,8 @@
 
 === "Linux"
 
-    No prebuilt package is published yet — build from source (see below). The
-    Linux build can be packaged as an **AppImage**, **`.deb`**, or **`.rpm`**.
+    No prebuilt package is published yet, so build from source (see below). The
+    Linux build can be packaged as an AppImage, `.deb`, or `.rpm`.
 
 ## Building from source
 

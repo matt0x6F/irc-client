@@ -1,6 +1,6 @@
 # Managing scripts
 
-The Scripts panel is your control center for every script Cascade knows about. Open it from **Settings → Scripts**.
+The Scripts panel lists every script Cascade knows about and lets you manage each one. Open it from **Settings → Scripts**.
 
 ---
 
@@ -13,8 +13,8 @@ The panel lists every script Cascade has discovered in your scripts folder. Each
 - **Name** — the display name from the `// cascade:name` manifest header, or the folder name if none is declared.
 - **Status badge** — one of **Loaded**, **Disabled**, **Runaway**, or **Error**. See [Lifecycle & limits](lifecycle-and-limits.md) for what each status means.
 - **Description** — the free-text summary from `// cascade:description`, if any.
-- **Permission chips** — any permissions listed in `// cascade:permissions`, displayed as small labels next to the description. (In v1 these are informational only — see [Lifecycle & limits](lifecycle-and-limits.md#permissions-v1).)
-- **Inline error** — if the script's status is **Error**, the error message is shown directly in the row so you do not have to go anywhere else to diagnose it.
+- **Permission chips** — any permissions listed in `// cascade:permissions`, displayed as small labels next to the description. (In v1 these are informational only. See [Lifecycle & limits](lifecycle-and-limits.md#permissions-v1).)
+- **Inline error** — if the script's status is **Error**, the error message appears directly in the row so you can diagnose it without going anywhere else.
 
 ---
 
@@ -51,9 +51,9 @@ Opens your system file manager at the scripts directory (`~/.cascade-chat/script
 
 ## Live status
 
-The Scripts panel subscribes to script lifecycle events in real time. You do not need to refresh it: the moment a script's status changes — whether because you saved a file, clicked a button, or the watchdog auto-disabled a misbehaving script — the panel updates the relevant row immediately.
+The Scripts panel subscribes to script lifecycle events in real time. You do not need to refresh it. The moment a script's status changes, the panel updates the relevant row, whether the change came from saving a file, clicking a button, or the watchdog auto-disabling a misbehaving script.
 
-This means you can keep the Scripts panel open in the background while you edit a script in your editor. Every save that triggers a hot-reload, or every watchdog action, appears in the panel without any manual intervention.
+So you can keep the Scripts panel open in the background while you edit a script in your editor. Every save that triggers a hot-reload, and every watchdog action, appears in the panel without any manual intervention.
 
 ---
 
@@ -69,6 +69,6 @@ There is no in-app editor for scripts. This is intentional: your scripts folder 
 
 Cascade detects the file change and hot-reloads the script automatically. The panel shows the updated status within a second or two.
 
-If the script fails to load after a save — for example, because of a typo or a forbidden import — the row's status badge switches to **Error** and the error message appears inline. Fix the issue and save again; Cascade will reload once more.
+If the script fails to load after a save, for example because of a typo or a forbidden import, the row's status badge switches to **Error** and the error message appears inline. Fix the issue and save again, and Cascade reloads once more.
 
 For a step-by-step walkthrough of writing your first script, see [Quickstart](quickstart.md). For a full guide to handlers, the manifest header, and the sandbox rules, see [Writing scripts](writing-scripts.md).

@@ -4,7 +4,7 @@ You'll have a working script in about five minutes. By the end you'll know how t
 
 ## 1. Open the Scripts panel
 
-In the Cascade menu bar, go to **Settings → Scripts**. This is your command center for creating and monitoring scripts. If you need a full tour of the panel's controls, see [Managing scripts](managing-scripts.md).
+In the Cascade menu bar, go to **Settings → Scripts**. This is where you create and monitor scripts. For a full tour of the panel's controls, see [Managing scripts](managing-scripts.md).
 
 ## 2. Create a script
 
@@ -31,11 +31,11 @@ func OnText(e cascade.TextEvent) {
 }
 ```
 
-The comment header declares the script's display name and description; the `OnText` handler fires whenever a message arrives in any channel you're watching.
+The comment header declares the script's display name and description. The `OnText` handler fires whenever a message arrives in any channel you're watching.
 
 ## 4. Save — Cascade hot-reloads automatically
 
-Save the file. Cascade detects the change and reloads the script immediately — no restart required. Within a second or two the Scripts panel shows the script's status badge as **Loaded**.
+Save the file. Cascade detects the change and reloads the script immediately, with no restart required. Within a second or two the Scripts panel shows the script's status badge as **Loaded**.
 
 ## 5. Try it
 
@@ -45,11 +45,11 @@ In any channel where you're present, type `!hi`. You should see Cascade reply wi
 hello, <yournick>!
 ```
 
-That's it — your first live, running script.
+That's your first live, running script.
 
 ## If it didn't load
 
-If the status badge shows **Error** instead of **Loaded**, click the badge to expand the error message. A typo in a function signature or an unrecognized import is the most common cause — fix it, save again, and Cascade hot-reloads once more.
+If the status badge shows **Error** instead of **Loaded**, click the badge to expand the error message. A typo in a function signature or an unrecognized import is the most common cause. Fix it, save again, and Cascade hot-reloads once more.
 
 For a detailed look at the load/reload/unload lifecycle and what the watchdog does when a script misbehaves, see [Lifecycle & limits](lifecycle-and-limits.md). For help reading error messages and managing individual scripts from the UI, see [Managing scripts](managing-scripts.md).
 

@@ -1,6 +1,6 @@
 # Using plugins
 
-Plugins extend Cascade with extra commands and features — for example, coloring
+Plugins extend Cascade with extra commands and features, such as coloring
 nicknames or reacting to events. They're small standalone programs that Cascade
 discovers automatically; there's no app store or manual "add" step.
 
@@ -14,7 +14,7 @@ Cascade discovers plugins from two places:
 
 !!! note "Naming"
     Plugins are identified by the `cascade-` prefix. A program called
-    `cascade-nickname-colors` shows up as the *nickname-colors* plugin.
+    `cascade-nickname-colors` shows up as the nickname-colors plugin.
 
 New plugins are discovered when Cascade starts. You can also re-scan without
 restarting from the Plugins settings (see below).
@@ -37,14 +37,14 @@ A status badge next to each plugin shows whether it's currently **Enabled** or
 
 Once enabled, a plugin can:
 
-- **Add commands** — these appear in the [`/help`](commands.md) dialog under a
-  **Plugin** category and are run like any other slash command.
-- **Decorate the UI** — for example, supplying colors or labels for nicknames.
-- **React to events** — connecting, messages, joins, and so on, handled in the
+- **Add commands** that appear in the [`/help`](commands.md) dialog under a
+  **Plugin** category and run like any other slash command.
+- **Decorate the UI**, for example by supplying colors or labels for nicknames.
+- **React to events** such as connecting, messages, and joins, handled in the
   background.
 
 !!! tip "Enable/disable is global"
-    A plugin is on or off for the whole app — there's no per-channel or
+    A plugin is on or off for the whole app. There's no per-channel or
     per-network toggle.
 
 ## Writing your own

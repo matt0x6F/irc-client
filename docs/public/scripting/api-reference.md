@@ -1,6 +1,6 @@
 # API Reference
 
-Everything a script can use lives in the `cascade` package. This is the complete surface.
+Everything a script can use lives in the `cascade` package. This page covers the complete surface.
 
 ---
 

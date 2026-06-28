@@ -1,6 +1,6 @@
 # Plugin System
 
-The Cascade Chat plugin system enables extensibility through external processes that communicate via JSON-RPC 2.0. Plugins can subscribe to events, provide UI metadata, and interact with the IRC client.
+The Cascade Chat plugin system lets you extend the client with external processes that communicate over JSON-RPC 2.0. Plugins subscribe to events, provide UI metadata, and interact with the IRC client.
 
 ## Overview
 
@@ -13,25 +13,12 @@ Plugins are standalone executables that:
 
 ## Architecture
 
-```
-┌─────────────────┐
-│  Cascade Chat   │
-│                 │
-│  ┌───────────┐  │
-│  │EventBus   │  │
-│  └─────┬─────┘  │
-│        │        │
-│  ┌─────▼─────┐  │
-│  │  Plugin   │  │
-│  │  Manager  │  │
-│  └─────┬─────┘  │
-└────────┼────────┘
-         │ IPC (stdin/stdout)
-         │ JSON-RPC 2.0
-┌────────▼────────┐
-│  Plugin Process │
-│  (executable)   │
-└─────────────────┘
+```mermaid
+flowchart TB
+    subgraph host["Cascade Chat (host process)"]
+        bus([EventBus]) --> pm[Plugin Manager]
+    end
+    pm -->|"IPC · stdin/stdout<br/>JSON-RPC 2.0"| proc["Plugin Process<br/><small>separate executable</small>"]
 ```
 
 ## Plugin Discovery
@@ -56,6 +43,32 @@ Plugins are discovered from two locations:
 ## Plugin Protocol
 
 Plugins communicate using JSON-RPC 2.0 over stdin/stdout. Each message is a single JSON object on one line (newline-delimited).
+
+The exchange over a plugin's lifetime looks like this — requests (solid) expect a response, notifications (dashed) do not:
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant C as Cascade (host)
+    participant P as Plugin process
+
+    Note over C,P: Startup
+    C->>P: initialize (request)
+    P-->>C: result: name, events, commands, metadata_types
+
+    Note over C,P: Running
+    C--)P: event — message.received, user.joined, …
+    P--)C: ui_metadata.set — colors, badges
+
+    U->>C: /remind 5m check the oven
+    C->>P: command.invoke (request)
+    P-->>C: result {} (or JSON-RPC error)
+    P--)C: action — send_message
+    C--)U: message delivered to channel
+
+    Note over C,P: Unload
+    C->>P: terminate process
+```
 
 ### JSON-RPC Messages
 
@@ -237,7 +250,7 @@ When a user runs a plugin command, Cascade sends a `command.invoke` request to t
 - `networkId` (int64): ID of the network the command was sent from.
 - `channel` (string): Channel or query window where the command was typed.
 
-The plugin must send a standard JSON-RPC result to signal success. To report a failure, return a JSON-RPC error object — the error message will be surfaced to the user.
+The plugin must send a standard JSON-RPC result to signal success. To report a failure, return a JSON-RPC error object. The error message is surfaced to the user.
 
 ```json
 {
@@ -285,7 +298,7 @@ Plugin sends this to set UI metadata (colors, badges, etc.).
 
 #### `action` (Notification)
 
-Plugins send `action` notifications to ask Cascade to perform side-effects on their behalf — for example, sending an IRC message.
+Plugins send `action` notifications to ask Cascade to perform side-effects on their behalf, such as sending an IRC message.
 
 ```json
 {
@@ -311,7 +324,7 @@ Plugins send `action` notifications to ask Cascade to perform side-effects on th
 - `target` (string): Channel or nickname to send the message to.
 - `message` (string): Text to send.
 
-**Queue and overflow:** Actions are delivered through a bounded in-memory queue (capacity 100). If the queue is full when an action arrives — for example because the app is busy processing a burst of actions — the action is dropped and a warning is logged. Plugins should not rely on delivery guarantees during high load.
+**Queue and overflow:** Actions are delivered through a bounded in-memory queue (capacity 100). If the queue is full when an action arrives, for example because the app is processing a burst of actions, the action is dropped and a warning is logged. Plugins should not rely on delivery guarantees during high load.
 
 ## Plugin Lifecycle
 
@@ -323,7 +336,7 @@ Plugins send `action` notifications to ask Cascade to perform side-effects on th
 
 ### `plugin-lifecycle` frontend event
 
-Whenever a plugin is loaded or unloaded, Cascade emits a `plugin-lifecycle` event to the frontend. This is an informational signal — the frontend uses it to refetch the current command list (e.g. to update autocomplete). No action is required from the plugin itself.
+Whenever a plugin is loaded or unloaded, Cascade emits a `plugin-lifecycle` event to the frontend. The frontend uses it to refetch the current command list (e.g. to update autocomplete). No action is required from the plugin itself.
 
 ### Loading a Plugin
 
