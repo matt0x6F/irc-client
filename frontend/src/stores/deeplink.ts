@@ -15,7 +15,7 @@ async function waitForConnection(networkId: number, timeoutMs = 20000): Promise<
     if (await GetConnectionStatus(networkId)) return true;
     await new Promise((r) => setTimeout(r, 300));
   }
-  return await GetConnectionStatus(networkId);
+  return false;
 }
 
 // applyDeepLinkTargets connects the network if needed, waits for registration,
@@ -24,7 +24,11 @@ export async function applyDeepLinkTargets(networkId: number, targets: Target[])
   try {
     if (!(await GetConnectionStatus(networkId))) {
       await ConnectSavedNetwork(networkId);
-      await waitForConnection(networkId);
+      const ready = await waitForConnection(networkId);
+      if (!ready) {
+        console.error(`deeplink: network ${networkId} did not connect in time; skipping join`);
+        return;
+      }
     }
     const net = useNetworkStore.getState();
     for (const t of targets) {
