@@ -37,6 +37,7 @@ import {
   RemoveMonitor,
   GetNetworkUserMeta,
   PrintLocalLines,
+  SendMessageWithContext,
 } from '../../wailsjs/go/main/App';
 import { useCommandsStore, lookupCommand } from './commands';
 import { usePreferencesStore } from './preferences';
@@ -164,6 +165,10 @@ interface NetworkState {
   loadingHistory: boolean; // a server history fetch is in flight (drives the top spinner)
   reachedStart: boolean; // the server reported no more history for the current buffer
 
+  // Reply composer: the message the user is replying to (if any). Set by the
+  // per-message Reply affordance; cleared on send or Escape.
+  replyTarget: { msgid: string; nick: string; snippet: string } | null;
+
   // Selection
   selectedNetwork: number | null;
   selectedChannel: string | null;
@@ -201,6 +206,10 @@ interface NetworkState {
 
   // Message actions
   sendMessage: (message: string) => Promise<void>;
+
+  // Reply state actions
+  setReplyTarget: (target: { msgid: string; nick: string; snippet: string }) => void;
+  clearReplyTarget: () => void;
 
   // Activity tracking
   markActivity: (key: string) => void;
@@ -262,6 +271,7 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
   newSinceAnchor: 0,
   loadingHistory: false,
   reachedStart: false,
+  replyTarget: null,
   selectedNetwork: null,
   selectedChannel: null,
 
@@ -939,7 +949,8 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
     if (selectedChannel.startsWith('pm:')) {
       const user = selectedChannel.substring(3);
       try {
-        await SendMessage(selectedNetwork, user, wire);
+        await SendMessageWithContext(selectedNetwork, user, wire, get().replyTarget?.msgid ?? '', '');
+        set({ replyTarget: null });
         setTimeout(() => loadMessages(), 100);
       } catch (error) {
         console.error('Failed to send private message:', error);
@@ -961,6 +972,7 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
           message_type: 'privmsg',
           timestamp: new Date().toISOString(),
           raw_line: '',
+          reply_msgid: get().replyTarget?.msgid ?? '',
         });
         set((state) => ({ messages: sortByTimestamp([...state.messages, optimisticMessage]) }));
       } catch {
@@ -973,7 +985,8 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
         await SendCommand(selectedNetwork, message);
         await loadMessages();
       } else {
-        await SendMessage(selectedNetwork, selectedChannel, wire);
+        await SendMessageWithContext(selectedNetwork, selectedChannel, wire, get().replyTarget?.msgid ?? '', '');
+        set({ replyTarget: null });
         setTimeout(() => loadMessages(), 100);
       }
     } catch (error) {
@@ -981,6 +994,10 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
       await loadMessages();
     }
   },
+
+  setReplyTarget: (target) => set({ replyTarget: target }),
+
+  clearReplyTarget: () => set({ replyTarget: null }),
 
   markActivity: (key) =>
     set((state) => {

@@ -281,6 +281,7 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
   const pinnedMessages = useNetworkStore((s) => s.pinnedMessages);
   const pinMessage = useNetworkStore((s) => s.pinMessage);
   const unpinMessage = useNetworkStore((s) => s.unpinMessage);
+  const setReplyTarget = useNetworkStore((s) => s.setReplyTarget);
   const viewMode = useNetworkStore((s) => s.viewMode);
   const anchoredMessageId = useNetworkStore((s) => s.anchoredMessageId);
   const clearAnchorFlash = useNetworkStore((s) => s.clearAnchorFlash);
@@ -718,6 +719,19 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
                     />
                   )}
                 </>
+              )}
+              {isRegularMessage && msg.msgid && (
+                <button
+                  onClick={() =>
+                    setReplyTarget({ msgid: msg.msgid, nick: msg.user, snippet: quoteSnippet(msg, 60) })
+                  }
+                  data-testid="reply-button"
+                  className="self-start flex-shrink-0 p-0.5 rounded transition-opacity cursor-pointer hover:text-foreground opacity-0 group-hover:opacity-100 focus:opacity-100 text-muted-foreground"
+                  title="Reply to this message"
+                  aria-label="Reply to this message"
+                >
+                  <CornerUpLeft width="14" height="14" />
+                </button>
               )}
               {isRegularMessage && msg.id < OPTIMISTIC_ID_THRESHOLD && (
                 <button

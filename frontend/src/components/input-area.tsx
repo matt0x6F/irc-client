@@ -8,6 +8,7 @@ import { useCommandsStore, filterCommands, lookupCommand } from '../stores/comma
 import { parseCommandLine } from '../lib/command-line';
 import { useTypingStore, typingNicksFor, formatTypingLabel } from '../stores/typing';
 import { useTypingSender } from '../hooks/useTypingSender';
+import { useNetworkStore } from '../stores/network';
 
 interface InputAreaProps {
   onSendMessage: (message: string) => Promise<void>;
@@ -32,6 +33,10 @@ export function InputArea({ onSendMessage, placeholder = 'Type a message...', ne
   const commands = useCommandsStore((s) => s.commands);
   const [cmdSelIndex, setCmdSelIndex] = useState(0);
   const [cmdPopupDismissed, setCmdPopupDismissed] = useState(false);
+
+  // Reply composer state: when set, show a pending-reply strip above the input.
+  const replyTarget = useNetworkStore((s) => s.replyTarget);
+  const clearReplyTarget = useNetworkStore((s) => s.clearReplyTarget);
 
   // IRCv3 +typing: send our own typing state, and surface peers' typing as a line
   // above the input. `channelName` is already the normalized conversation key
@@ -342,6 +347,26 @@ export function InputArea({ onSendMessage, placeholder = 'Type a message...', ne
         networkId={networkId}
         channelName={channelName}
       />
+      {replyTarget && (
+        <div
+          className="mb-2 flex items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-1.5 text-xs text-muted-foreground"
+          data-testid="reply-strip"
+        >
+          <span className="flex-1 truncate">
+            Replying to <span className="font-medium text-foreground">{replyTarget.nick}</span>
+            {replyTarget.snippet ? <span>: {replyTarget.snippet}</span> : null}
+          </span>
+          <button
+            type="button"
+            onClick={clearReplyTarget}
+            className="flex-shrink-0 hover:text-foreground transition-colors"
+            aria-label="Cancel reply"
+            title="Cancel reply (Esc)"
+          >
+            ✕
+          </button>
+        </div>
+      )}
       {typingLabel && (
         <div
           className="mb-1 px-2 text-xs italic text-muted-foreground"
@@ -357,7 +382,13 @@ export function InputArea({ onSendMessage, placeholder = 'Type a message...', ne
           type="text"
           value={message}
           onChange={(e) => { setMessage(e.target.value); typingSender.onChange(e.target.value); }}
-          onKeyDown={(e) => { if (handleCommandKeys(e)) return; handleFormattingShortcut(e); handleHistoryNavigation(e); performTabCompletion(e); }}
+          onKeyDown={(e) => {
+            if (handleCommandKeys(e)) return;
+            if (e.key === 'Escape' && replyTarget) { e.preventDefault(); clearReplyTarget(); return; }
+            handleFormattingShortcut(e);
+            handleHistoryNavigation(e);
+            performTabCompletion(e);
+          }}
           placeholder={placeholder}
           className="flex-1 px-4 py-2.5 border border-border rounded-full bg-background text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all shadow-[var(--shadow-sm)] focus:shadow-[var(--shadow-md)]"
           style={{ transition: 'var(--transition-base)' }}
