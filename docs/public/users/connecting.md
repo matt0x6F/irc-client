@@ -10,7 +10,7 @@ Open **Settings → Networks → Add network** and fill in:
 | Field | Required | Notes |
 |---|---|---|
 | **Name** | Yes | A label for the network (e.g. *Libera.Chat*). |
-| **Server address** | Yes | Hostname or IP. You can add **multiple servers** and reorder them with the up/down arrows — they're tried in order. |
+| **Server address** | Yes | Hostname or IP. You can add multiple servers and reorder them with the up/down arrows; they're tried in order. |
 | **Port** | Yes | Defaults to `6667`. Use `6697` for TLS on most networks. |
 | **TLS** | — | A per-server toggle. Enable it for encrypted connections. |
 | **Nickname** | Yes | Your primary nick. |
@@ -40,29 +40,29 @@ and pick a **mechanism**:
 
 === "SCRAM-SHA-256 / SCRAM-SHA-512"
 
-    Username + password, but the password is never sent over the wire — a
+    Username + password, but the password is never sent over the wire. A
     challenge-response handshake proves you know it. Prefer these over PLAIN
     when the network supports them.
 
 === "EXTERNAL"
 
-    Certificate-based (CertFP). No password — you authenticate with a **client
-    certificate**. Provide the certificate path (optional field) and make sure
-    the connection uses TLS.
+    Certificate-based (CertFP). You authenticate with a **client
+    certificate** instead of a password. Provide the certificate path (optional
+    field) and make sure the connection uses TLS.
 
-All four mechanisms — PLAIN, EXTERNAL, SCRAM-SHA-256, and SCRAM-SHA-512 — are
-supported by the underlying IRC client.
+The underlying IRC client supports all four mechanisms: PLAIN, EXTERNAL,
+SCRAM-SHA-256, and SCRAM-SHA-512.
 
 ## Nicknames and collisions
 
 If your chosen nickname is already in use when you connect, Cascade handles it
-for you — there's no separate "alternate nick" list to configure:
+for you. There's no separate "alternate nick" list to configure:
 
 - While connecting, it automatically tries variations of your nick so the
   connection still succeeds. You'll see a one-time notice such as
   *"Nick `yournick` is in use — trying alternatives…"*.
-- Once connected under a different nick, Cascade keeps **reclaiming your
-  preferred nick in the background** and tells you so:
+- Once connected under a different nick, Cascade keeps trying to reclaim your
+  preferred nick in the background and tells you so:
   *"Connected as `yournick_`. Cascade will keep trying to reclaim `yournick`
   automatically."* When the preferred nick frees up, it switches you back.
 - If you run [`/nick`](commands.md) yourself and it fails, Cascade surfaces the

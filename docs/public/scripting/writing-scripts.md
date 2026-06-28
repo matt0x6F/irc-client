@@ -1,12 +1,12 @@
 # Writing scripts
 
-This page covers every concept you need to author scripts for Cascade: what a script is on disk, the manifest header, the handler functions, how to read messages and reply to them, how to send messages proactively with timers, the sandbox rules, and how to get editor autocomplete working.
+This page covers everything you need to author scripts for Cascade: what a script is on disk, the manifest header, the handler functions, how to read and reply to messages, how to send messages on a timer, the sandbox rules, and how to get editor autocomplete working.
 
 ---
 
 ## A script is a directory
 
-A script is a **folder** inside the Cascade scripts directory. The folder name is the script's ID — what Cascade uses to track, enable, and reload it. Inside that folder you place one or more `.go` source files, all declaring `package main`.
+A script is a folder inside the Cascade scripts directory. The folder name is the script's ID, which Cascade uses to track, enable, and reload it. Inside that folder you place one or more `.go` source files, all declaring `package main`.
 
 ```
 ~/.cascade-chat/scripts/
@@ -42,13 +42,13 @@ import "github.com/matt0x6f/irc-client/cascade"
 ```
 
 !!! note "Permissions in v1"
-    Permissions are parsed and displayed in the Scripts panel, but they are **not enforced in v1**. Declare them now for forward-compatibility — enforcement will be added in a future release.
+    Permissions are parsed and displayed in the Scripts panel, but they are not enforced in v1. Declare them now for forward-compatibility; enforcement will be added in a future release.
 
 ---
 
 ## Handlers
 
-A script works by exporting functions with specific names and signatures. Cascade calls them when the corresponding event occurs. All are optional — define only the ones your script needs.
+A script works by exporting functions with specific names and signatures. Cascade calls them when the corresponding event occurs. All are optional, so define only the ones your script needs.
 
 | Handler | When it fires |
 |---|---|
@@ -58,7 +58,7 @@ A script works by exporting functions with specific names and signatures. Cascad
 | `func OnJoin(e cascade.JoinEvent)` | Someone joined a channel you are in. |
 | `func OnPart(e cascade.PartEvent)` | Someone left a channel you are in. |
 
-Cascade **never** delivers your own messages back to you — `OnText` and `OnNotice` only fire for messages from other users.
+Cascade never delivers your own messages back to you. `OnText` and `OnNotice` only fire for messages from other users.
 
 ---
 
@@ -74,16 +74,16 @@ Both `TextEvent` and `NoticeEvent` carry the same core fields and share two meth
 | `e.IsDM()` | `true` if the message was sent directly to you, not a channel |
 | `e.Reply(text)` | Send `text` back to the channel, or to the sender if it's a DM |
 
-`TextEvent` also provides two convenience helpers that `NoticeEvent` does **not** have:
+`TextEvent` also provides two convenience helpers that `NoticeEvent` does not have:
 
 | Method | What it gives you |
 |---|---|
 | `e.HasPrefix("!cmd")` | `true` if the message starts with `!cmd` (case-sensitive) |
 | `e.Arg(n)` | The nth whitespace-separated word of the message (1-based). Returns `""` if out of range. |
 
-Calling `e.HasPrefix(...)` or `e.Arg(...)` inside an `OnNotice` handler will produce a load-time error. If you need prefix matching in a notice handler, compare `e.Message` directly using string operations — for example `len(e.Message) >= 5 && e.Message[:5] == "!cmd "` — since there is no `strings` package in the sandbox. The length guard is important: a slice expression like `e.Message[:5]` panics if the message is shorter than 5 characters, which would strike the script toward `runaway`.
+Calling `e.HasPrefix(...)` or `e.Arg(...)` inside an `OnNotice` handler produces a load-time error. There is no `strings` package in the sandbox, so if you need prefix matching in a notice handler, compare `e.Message` directly with string operations, for example `len(e.Message) >= 5 && e.Message[:5] == "!cmd "`. The length guard matters: a slice expression like `e.Message[:5]` panics if the message is shorter than 5 characters, which strikes the script toward `runaway`.
 
-`e.Arg(1)` is the first word of the message — typically the command name. Here is a complete script that uses it:
+`e.Arg(1)` is the first word of the message, typically the command name. Here is a complete script that uses it:
 
 ```go
 package main
@@ -101,7 +101,7 @@ func OnText(e cascade.TextEvent) {
 
 ---
 
-## Acting on your own — `Setup`, timers, and `Say`
+## Acting on your own: `Setup`, timers, and `Say`
 
 `Setup` receives a `*cascade.Client` that you can use to schedule work and send messages independently of incoming events.
 
@@ -140,12 +140,12 @@ func Setup(c *cascade.Client) {
 
 ---
 
-## The sandbox — what you can and can't import
+## The sandbox: what you can and can't import
 
 !!! warning "No standard library"
-    The script sandbox exposes **only** `github.com/matt0x6f/irc-client/cascade`. There is no standard library inside the interpreter — not `fmt`, not `strings`, not `os`, nothing. Importing any other package causes the script to fail to load and its status badge shows **Error**.
+    The script sandbox exposes only `github.com/matt0x6f/irc-client/cascade`. There is no standard library inside the interpreter: no `fmt`, no `strings`, no `os`. Importing any other package causes the script to fail to load, and its status badge shows **Error**.
 
-Inside that constraint you have everything the `cascade` package provides (event helpers, `Reply`, `Say`, timers) plus Go built-ins: string concatenation with `+`, `len`, `append`, `switch`, `range`, maps, and slices. Those are enough for most personal automation.
+Inside that constraint you have everything the `cascade` package provides (event helpers, `Reply`, `Say`, timers) plus Go built-ins: string concatenation with `+`, `len`, `append`, `switch`, `range`, maps, and slices. That is enough for most personal automation.
 
 If your script genuinely needs a third-party library, external process access, or network I/O beyond the IRC connection, the right tool is a [plugin](../developers/plugin-system.md) instead. See [Lifecycle & limits](lifecycle-and-limits.md) for the full sandbox rules and watchdog behavior.
 
@@ -163,7 +163,7 @@ go 1.21
 require github.com/matt0x6f/irc-client/cascade v1.0.0
 ```
 
-This file exists so your editor and gopls give you real autocomplete and type-checking for the `cascade` package. The `cascade` module is published, so gopls resolves the import directly — no extra setup needed. The `go.mod` powers editor tooling only; the running app interprets your script regardless of what it says.
+This file exists so your editor and gopls give you real autocomplete and type-checking for the `cascade` package. The `cascade` module is published, so gopls resolves the import directly, with no extra setup needed. The `go.mod` powers editor tooling only; the running app interprets your script regardless of what it says.
 
 ---
 

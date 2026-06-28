@@ -1,36 +1,43 @@
 # Events System
 
-The Cascade Chat events system provides a centralized, event-driven architecture for communication between components. All IRC activities, system events, and UI interactions flow through the EventBus.
+The Cascade Chat events system is a centralized, event-driven layer for communication between components. All IRC activities, system events, and UI interactions flow through the EventBus.
 
 ## Overview
 
-The events system uses a publisher-subscriber pattern where:
-- **Publishers** emit events to the EventBus
-- **Subscribers** register interest in specific event types
-- **EventBus** routes events to all relevant subscribers asynchronously
+The events system uses a publisher-subscriber pattern:
+- **Publishers** emit events to the EventBus.
+- **Subscribers** register interest in specific event types.
+- The **EventBus** routes events to all relevant subscribers asynchronously.
 
 ## Architecture
 
-```
-┌─────────────┐
-│ IRC Client  │───┐
-└─────────────┘   │
-                  │
-┌─────────────┐   │    ┌──────────────┐
-│   System    │───┼───▶│  EventBus    │
-└─────────────┘   │    └──────┬───────┘
-                  │           │
-┌─────────────┐   │           │
-│     UI      │───┘           │
-└─────────────┘               │
-                              ▼
-                    ┌──────────────────┐
-                    │   Subscribers    │
-                    ├──────────────────┤
-                    │ Plugin Manager   │
-                    │ Storage (future) │
-                    │ Frontend (future)│
-                    └──────────────────┘
+```mermaid
+flowchart LR
+    irc[IRC Client]
+    sys[System]
+    ui[UI]
+
+    irc --> bus
+    sys --> bus
+    ui --> bus
+
+    bus([EventBus])
+
+    bus --> pm[Plugin Manager]
+    bus --> storage["Storage<br/><small>future</small>"]
+    bus --> frontend["Frontend<br/><small>future</small>"]
+
+    subgraph Publishers
+        irc
+        sys
+        ui
+    end
+
+    subgraph Subscribers
+        pm
+        storage
+        frontend
+    end
 ```
 
 ## Event Structure
@@ -239,9 +246,9 @@ eventBus.EmitSync(event)
 
 1. **Event Naming**: Use dot-separated hierarchical names (e.g., `user.joined`, `channel.mode`)
 2. **Event Data**: Include all relevant context (networkId, channel, etc.)
-3. **Async Processing**: Events are delivered asynchronously - don't block in `OnEvent`
+3. **Async Processing**: Events are delivered asynchronously, so don't block in `OnEvent`
 4. **Error Handling**: Handle errors gracefully in subscribers
-5. **Wildcard Subscriptions**: Use sparingly - prefer specific event types for performance
+5. **Wildcard Subscriptions**: Use sparingly; prefer specific event types for performance
 
 ## Thread Safety
 

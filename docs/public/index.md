@@ -1,7 +1,7 @@
 # Cascade Chat
 
-A modern, multi-platform IRC client built with Wails — plugin support, a fast
-SQLite-backed message store, and full IRCv3 capability handling.
+A modern, multi-platform IRC client built with Wails. It supports plugins, keeps
+a fast SQLite-backed message store, and handles the full IRCv3 capability set.
 
 ## Get started
 

@@ -7,16 +7,16 @@ isn't a command is sent as a normal message to the current channel or query.
 
 `/help` is handled entirely inside Cascade — it never touches the server.
 
-- **`/help`** — opens a searchable dialog listing every command, grouped by
+- `/help` opens a searchable dialog listing every command, grouped by
   category (Client, Server, CTCP, and any commands added by plugins). You can
   switch this to print the list straight into the current buffer in
   **Settings**.
-- **`/help <command>`** — prints usage for a single command, by name or alias.
+- `/help <command>` prints usage for a single command, by name or alias.
   For example, `/help join` shows `/join #channel [key] — Join a channel`.
 
 ## Autocomplete
 
-**Command completion** — start typing `/` and a popup appears below the input
+**Command completion.** Start typing `/` and a popup appears below the input
 listing matching commands with their usage and category:
 
 - **↑ / ↓** to move through the suggestions
@@ -26,10 +26,10 @@ listing matching commands with their usage and category:
 Once you type a space after the command, the popup is replaced by a one-line
 usage hint reminding you of the arguments.
 
-**Nickname completion** — in a channel, type the start of someone's nick and
+**Nickname completion.** In a channel, type the start of someone's nick and
 press **Tab**. Cascade completes it in place (adding a trailing `:` in
-channels), and pressing **Tab** again cycles through other matches. There's no
-popup for nick completion — it's pure inline text.
+channels), and pressing **Tab** again cycles through other matches. Nick
+completion has no popup; it's pure inline text.
 
 ## Command reference
 
