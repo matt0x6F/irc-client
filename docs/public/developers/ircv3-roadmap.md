@@ -20,7 +20,7 @@ These are part of the **ratified** IRCv3 spec, so they count toward baseline com
 |------------|:--------:|:------:|----------------|
 | Bot mode `+B` | — | ✅ | Done — `BOT=` token → `BotModeChar`; WHO `B` flag → `markBot`; `identify_as_bot` setting → `MODE +<letter>` at connect; self-echo via `markSelfBotFromUserMode`. |
 | `+typing` (client-only tag) | — | ✅ | Done (#78) — `handleTypingTag` parses inbound `+typing`; `SendTyping` emits it; transient per-conversation state drives the typing indicator in channels + PMs, with independent send/receive toggles. See the [support matrix](ircv3-support.md#capability-status-matrix). |
-| `+reply` / `+channel-context` | Medium | ⛔ | Pairs with stored `@msgid`; threaded-reply UI |
+| `+reply` / `+channel-context` | — | ✅ | Done — inbound reply quote + jump; "in #channel" pill + sticky per-PM context. |
 | `extended-monitor` | — | ✅ | Done (#77) — ratified, not draft; away/account/host/realname for monitored nicks. See the [support matrix](ircv3-support.md#capability-status-matrix). |
 | `account-extban` | — | ✅ | Done (#77) — `EXTBAN` `$a`/`$a:account` masks in the mode editor. |
 | `no-implicit-names` | — | ✅ | Done (#77) — explicit `NAMES` on self-join when the cap is enabled. |
@@ -40,10 +40,12 @@ These are part of the **ratified** IRCv3 spec, so they count toward baseline com
       parses inbound tags into transient per-conversation state (same lifetime model as the session
       roster — never persisted, self-echo dropped). Works in channels + PMs with independent
       send/receive toggles. See [Typing indicators](ircv3-support.md#typing-indicators-typing-client-tag).
-- [ ] **`+reply` / `+channel-context`** — Ratified client-only tags for threaded replies /
-      quoting. Cascade already stores `@msgid` per message (used for history dedup), which is the
-      anchor a reply points at — so the backend groundwork is partly there; the work is mostly
-      emit + a reply-rendering UI.
+- [x] **`+reply` / `+channel-context`** — Done. Inbound reply quotes rendered with quoted text
+      and jump-to-original (cross-buffer); "in #channel" pill on PM messages; sticky per-PM
+      channel context; "Message privately (re: #channel)" trigger from nick list. Accepts both
+      `+draft/` prefixed and bare tag forms; emits `+draft/` forms. See
+      [Reply quotes](ircv3-support.md#reply-quotes-draftreply-client-tag) and
+      [Channel context](ircv3-support.md#channel-context-draftchannel-context-client-tag).
 - [x] **`no-implicit-names`** — Done (#77). Note the correction to the original plan: WHOX seeds
       *attributes*, not membership prefixes, so we can't just "rely on WHOX" — when the cap is
       enabled we send an explicit `NAMES <channel>` on self-join (`namesOnSelfJoin`) and the
@@ -79,7 +81,7 @@ with Cascade's multi-platform story. Sequenced by value.
    Ergo/Soju already speak.
 4. ~~Mop up the cheap ratified items (`no-implicit-names`, `UTF8ONLY`).~~ Done in #77, along with
    `extended-monitor` and `account-extban`.
-5. UX polish (`+reply`, `+react`) and the larger `draft/metadata-2` later.
+5. ~~UX polish (`+reply`, `+react`)~~ — `+reply` and `+channel-context` are done; `+draft/react` and the larger `draft/metadata-2` are still future.
 
 ## When you implement a cap
 

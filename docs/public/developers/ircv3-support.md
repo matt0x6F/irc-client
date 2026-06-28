@@ -37,6 +37,12 @@ Because of its IRCv3 support, Cascade gives you:
 - **Typing indicators** — see when people in a channel or PM are composing a message, and
   (optionally) let them see when you are (`+typing` client tag). Both directions are
   independently toggleable in Settings.
+- **Reply quotes** — replies to specific messages render a quote block with the original
+  author and text, plus a jump arrow that scrolls to the original — even across buffers
+  (`+draft/reply` client tag).
+- **Channel context in PMs** — private messages originating from a channel carry an "in
+  #channel" pill; clicking it opens the channel, and replies in the PM thread automatically
+  carry the same channel context (`+draft/channel-context` client tag).
 
 ## Capability status matrix
 
@@ -74,6 +80,8 @@ Legend: ✅ Supported · ◐ Partial · ⛔ Not yet
 | `UTF8ONLY` | ✅ | n/a (ISUPPORT) | Server accepts only UTF-8; we already emit UTF-8 exclusively, so the token is recorded and honored by default |
 | `account-extban` | ✅ | n/a (ISUPPORT `EXTBAN`) | `$a` / `$a:account` ban masks rendered with a semantic label in the mode editor |
 | `+typing` (client tag) | ✅ | n/a (via `message-tags`) | Typing indicators in channels + PMs; send/receive independently toggleable |
+| `+draft/reply` (client tag) | ✅ | n/a (via `message-tags`) | Inbound reply quotes rendered with quoted text + jump-to-original; emits `+draft/reply` on send |
+| `+draft/channel-context` (client tag) | ✅ | n/a (via `message-tags`) | "in #channel" pill on PM messages; sticky per-PM context; triggers "message privately (re: #channel)" flow |
 | `WHOX` (`354`) | ✅ | n/a (ISUPPORT) | Extended WHO on join bulk-seeds the roster |
 | `draft/message-redaction` | ⛔ | No | No REDACT handling (draft, out of scope) |
 
@@ -509,6 +517,34 @@ Typing notifications**) gate it independently — *Send typing notifications* (d
 *Show others' typing* (default on) — so you can keep seeing others while staying invisible
 yourself, or quiet a busy channel's indicators.
 
+### Reply quotes (`+draft/reply` client tag)
+
+The [`+draft/reply` client tag](https://ircv3.net/specs/client-tags/reply) carries a `@+draft/reply=<msgid>` reference on a `PRIVMSG`, identifying which earlier message the sender is replying to. It needs no dedicated capability: it rides on `message-tags` (already negotiated), and also benefits from `echo-message` so that a sent reply is reconciled with the server's copy and the `@msgid` is authoritative.
+
+**Inbound.** `handleReplyTag` (`internal/irc/client.go`) reads the `+draft/reply` tag (falling back to the bare `reply` form for compatibility) off an inbound `PRIVMSG`. The tag value is the `@msgid` of the parent message, which Cascade already stores in SQLite for history deduplication. The storage layer resolves that msgid to the stored parent message and the backend emits `EventMessageReceived` with the `ReplyToMsgID` and resolved `ReplyToText` fields set. No separate table or schema change is needed: the existing `messages` table and `GetMessageByMsgID` query supply the parent text.
+
+**Outbound.** When you click Reply on a message, the frontend passes the target msgid to `App.SendReply` (`app_commands.go`), which calls `IRCClient.SendReply` and emits `PRIVMSG` with `conn.SendWithTags({"+draft/reply": msgid}, "PRIVMSG", target, text)`.
+
+Cascade accepts both the `+draft/reply` and bare `reply` tag forms inbound (the draft prefix was dropped in the ratified spec but some servers and clients still emit the prefixed form). Outbound it always emits `+draft/reply`.
+
+**In the client:** a replied-to message renders a quote block above the reply body — the replier's nick, a snippet of the original text, and a jump arrow. Clicking the jump arrow scrolls to the original message if it is in the same buffer, or opens the source buffer and scrolls there for cross-buffer replies (e.g. a channel message replied to from a PM). Coverage: `internal/irc/reply_test.go`, `frontend/src/lib/reply.test.ts`.
+
+![A channel message showing a reply quote with the original author's nick, a text snippet, and a jump arrow](images/ircv3/reply-quote.png)
+
+### Channel context (`+draft/channel-context` client tag)
+
+The [`+draft/channel-context` client tag](https://ircv3.net/specs/client-tags/channel-context) carries a `@+draft/channel-context=#channel` reference on a `PRIVMSG`, indicating that a private message is contextually related to a specific channel. Like `+draft/reply`, it needs no dedicated capability — it rides on `message-tags`.
+
+**Inbound.** `handleChannelContextTag` (`internal/irc/client.go`) reads the `+draft/channel-context` tag off an inbound `PRIVMSG` in a PM conversation. The tag value is a channel name. The backend emits `EventMessageReceived` with the `ChannelContext` field set. The tag is stored alongside the message so that the channel context remains visible in scrollback.
+
+**Outbound.** When you initiate a private message by clicking "Message privately (re: #channel)" — a flow available from a channel's nick list or from a channel-context pill — the frontend passes the channel name to `App.SendPrivateMessage` (`app_commands.go`) with a context argument. Cascade emits `PRIVMSG` with `conn.SendWithTags({"+draft/channel-context": channel}, "PRIVMSG", nick, text)`. The context is **sticky** per PM conversation: once a channel context is established (either received inbound or sent outbound), subsequent messages in that PM automatically carry the same `+draft/channel-context` tag until the context is cleared or changed.
+
+Cascade accepts both the `+draft/channel-context` and bare `channel-context` tag forms inbound. Outbound it always emits the `+draft/` form.
+
+**In the client:** a PM message with a channel context renders a "in #channel" pill alongside the message. Clicking the pill opens or focuses that channel's buffer. A "Message privately (re: #channel)" entry in the channel nick-list context menu opens a PM with the channel context pre-set, so the first and subsequent messages in that thread all carry the tag. Coverage: `internal/irc/channel_context_test.go`, `frontend/src/lib/channel-context.test.ts`.
+
+![A private message showing an "in #channel" pill linking the conversation to its originating channel](images/ircv3/channel-context-pill.png)
+
 ### Strict Transport Security (STS)
 
 [STS](https://ircv3.net/specs/extensions/sts) lets a server tell the client to always use
@@ -604,8 +640,11 @@ ratified compliance and belonging to the future modern-chat product rather than 
 
 - `draft/message-redaction` (handle REDACT/DELETE) — needs message-mutation handling.
 - `draft/multiline`, `draft/metadata-2`, `draft/read-marker`, `draft/chathistory` targets, and the
-  remaining client-only UX tags (`draft/react`, `draft/reply`). The `+typing` client tag is now
-  supported — see [Typing indicators](#typing-indicators-typing-client-tag).
+  remaining client-only UX tag (`draft/react`). The `+typing`, `+draft/reply`, and
+  `+draft/channel-context` client tags are now supported — see
+  [Typing indicators](#typing-indicators-typing-client-tag),
+  [Reply quotes](#reply-quotes-draftreply-client-tag), and
+  [Channel context](#channel-context-draftchannel-context-client-tag).
 
 `WebSocket` and `WebIRC` are ratified but server/transport-side (gateway concerns), not
 client-negotiated capabilities, so they are intentionally absent.
