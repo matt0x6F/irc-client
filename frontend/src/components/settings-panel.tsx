@@ -256,19 +256,23 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
   // joins the channel after connecting.
   useEffect(() => {
     const applyPrefill = async () => {
-      const p = await GetPendingNetworkPrefill();
-      if (!p || !p.host) return;
-      setEditingNetwork(null);
-      setFormData(main.NetworkConfig.createFrom({
-        name: p.host,
-        servers: [{ address: p.host, port: p.port, tls: p.tls, order: 0 }],
-        nickname: '',
-        username: '',
-        realname: '',
-        password: '',
-      }));
-      setShowAddForm(true);
-      onSectionChange('networks');
+      try {
+        const p = await GetPendingNetworkPrefill();
+        if (!p || !p.host) return;
+        setEditingNetwork(null);
+        setFormData(main.NetworkConfig.createFrom({
+          name: p.host,
+          servers: [{ address: p.host, port: p.port, tls: p.tls, order: 0 }],
+          nickname: '',
+          username: '',
+          realname: '',
+          password: '',
+        }));
+        setShowAddForm(true);
+        onSectionChange('networks');
+      } catch (error) {
+        console.error('Failed to load pending network prefill:', error);
+      }
     };
     // Cold-open: fetch once on mount in case a prefill was stored before this window opened.
     void applyPrefill();
