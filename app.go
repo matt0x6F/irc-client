@@ -499,6 +499,9 @@ func (a *App) UnfurlURL(rawURL string) (*unfurl.LinkPreview, error) {
 
 	preview.Status = "ok"
 	preview.FetchedAt = now.Format(time.RFC3339)
+	// Cache is keyed by the requested URL so subsequent lookups (which use rawURL) cache-hit.
+	// Post-redirect URL is not needed by the frontend.
+	preview.URL = rawURL
 	if err := a.storage.UpsertLinkPreview(previewToCached(preview, now.Unix())); err == nil {
 		_ = a.storage.PruneLinkPreviews(linkPreviewMaxRows)
 	}
