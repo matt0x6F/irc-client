@@ -50,7 +50,7 @@ type App struct {
 	startupCtx            context.Context
 	startupCancel         context.CancelFunc
 	startupWg             sync.WaitGroup
-	shutdownOnce          sync.Once // Ensure shutdown only runs once
+	shutdownOnce          sync.Once                      // Ensure shutdown only runs once
 	emitFn                func(name string, data ...any) // test seam; nil in production
 	pendingNetworkPrefill *NetworkPrefill                // deep-link Add Network prefill; consumed by the settings window
 }
