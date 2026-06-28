@@ -4123,6 +4123,18 @@ func (c *IRCClient) handleTypingTag(e ircmsg.Message) {
 
 // SendMessage sends a message to a channel or user
 func (c *IRCClient) SendMessage(target, message string) error {
+	return c.sendMessage(target, message, "", "")
+}
+
+// SendMessageWithTags sends a message with optional IRCv3 client tags.
+// replyMsgID populates +draft/reply; channelContext populates
+// +draft/channel-context. Either may be empty.
+func (c *IRCClient) SendMessageWithTags(target, message, replyMsgID, channelContext string) error {
+	return c.sendMessage(target, message, replyMsgID, channelContext)
+}
+
+// sendMessage is the shared core for SendMessage and SendMessageWithTags.
+func (c *IRCClient) sendMessage(target, message, replyMsgID, channelContext string) error {
 	c.mu.RLock()
 	if !c.connected {
 		c.mu.RUnlock()
@@ -4133,8 +4145,14 @@ func (c *IRCClient) SendMessage(target, message string) error {
 	// Wait for rate limiter before sending
 	c.rateLimiter.Wait()
 
-	if err := c.conn.Privmsg(target, message); err != nil {
-		return fmt.Errorf("failed to send message: %w", err)
+	if tags := buildSendTags(replyMsgID, channelContext); tags != nil {
+		if err := c.conn.SendWithTags(tags, "PRIVMSG", target, message); err != nil {
+			return fmt.Errorf("failed to send message: %w", err)
+		}
+	} else {
+		if err := c.conn.Privmsg(target, message); err != nil {
+			return fmt.Errorf("failed to send message: %w", err)
+		}
 	}
 
 	// Determine if it's a channel or private message. For a PM the peer is the
@@ -4169,14 +4187,16 @@ func (c *IRCClient) SendMessage(target, message string) error {
 
 	if !hasEcho {
 		msg := storage.Message{
-			NetworkID:   c.networkID,
-			ChannelID:   channelID,
-			User:        c.network.Nickname,
-			Message:     message,
-			MessageType: "privmsg",
-			Timestamp:   time.Now(),
-			RawLine:     fmt.Sprintf("PRIVMSG %s :%s", target, message),
-			PMTarget:    pmTarget,
+			NetworkID:      c.networkID,
+			ChannelID:      channelID,
+			User:           c.network.Nickname,
+			Message:        message,
+			MessageType:    "privmsg",
+			Timestamp:      time.Now(),
+			RawLine:        fmt.Sprintf("PRIVMSG %s :%s", target, message),
+			PMTarget:       pmTarget,
+			ReplyMsgID:     replyMsgID,
+			ChannelContext: channelContext,
 		}
 		if err := c.storage.WriteMessageSync(msg); err != nil {
 			return fmt.Errorf("failed to store message: %w", err)

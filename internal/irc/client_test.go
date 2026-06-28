@@ -238,3 +238,16 @@ func TestLivenessConstantOrdering(t *testing.T) {
 		t.Fatalf("KeepAlive (%v) must be >= Timeout (%v)", constants.ConnectionKeepAlive, constants.ConnectionReadTimeout)
 	}
 }
+
+func TestBuildSendTags(t *testing.T) {
+	got := buildSendTags("parent-1", "#dev")
+	if got["+draft/reply"] != "parent-1" {
+		t.Fatalf("reply tag missing: %v", got)
+	}
+	if got["+draft/channel-context"] != "#dev" {
+		t.Fatalf("context tag missing: %v", got)
+	}
+	if len(buildSendTags("", "")) != 0 {
+		t.Fatal("empty inputs must yield no tags (nil/empty map)")
+	}
+}

@@ -881,6 +881,21 @@ export function SendMessage(networkID, target, message) {
 }
 
 /**
+ * SendMessageWithContext sends a PRIVMSG carrying optional IRCv3 client tags:
+ * replyMsgID -> +draft/reply, channelContext -> +draft/channel-context. Empty
+ * strings omit the corresponding tag.
+ * @param {number} networkID
+ * @param {string} target
+ * @param {string} message
+ * @param {string} replyMsgID
+ * @param {string} channelContext
+ * @returns {$CancellablePromise<void>}
+ */
+export function SendMessageWithContext(networkID, target, message, replyMsgID, channelContext) {
+    return $Call.ByID(242389933, networkID, target, message, replyMsgID, channelContext);
+}
+
+/**
  * SendTyping emits an IRCv3 +typing client tag (active/paused/done) for target.
  * Best-effort: a disconnected network or a server without message-tags yields no
  * error so the frontend's typing state machine can fire freely.

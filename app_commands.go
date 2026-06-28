@@ -9,15 +9,20 @@ import (
 
 // SendMessage sends a message to a channel or user
 func (a *App) SendMessage(networkID int64, target, message string) error {
+	return a.SendMessageWithContext(networkID, target, message, "", "")
+}
+
+// SendMessageWithContext sends a PRIVMSG carrying optional IRCv3 client tags:
+// replyMsgID -> +draft/reply, channelContext -> +draft/channel-context. Empty
+// strings omit the corresponding tag.
+func (a *App) SendMessageWithContext(networkID int64, target, message, replyMsgID, channelContext string) error {
 	a.mu.RLock()
 	client, exists := a.ircClients[networkID]
 	a.mu.RUnlock()
-
 	if !exists {
 		return fmt.Errorf("network not connected")
 	}
-
-	return client.SendMessage(target, message)
+	return client.SendMessageWithTags(target, message, replyMsgID, channelContext)
 }
 
 // SendTyping emits an IRCv3 +typing client tag (active/paused/done) for target.
