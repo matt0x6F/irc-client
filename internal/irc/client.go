@@ -521,6 +521,86 @@ func (c *IRCClient) handlePart(e ircmsg.Message) {
 	}
 }
 
+// handleQuit processes an inbound QUIT: the user left the network entirely, so it
+// drops their live roster metadata and removes them from every channel they were
+// in, writing a quit line to each. Nick matching is case-insensitive (IRC nick
+// equality folds case per the server's CASEMAPPING), so a QUIT whose source nick
+// differs in case from the stored roster entry still clears it rather than
+// leaving a ghost behind.
+func (c *IRCClient) handleQuit(e ircmsg.Message) {
+	user := e.Nick()
+	reason := ""
+	if len(e.Params) > 0 {
+		reason = e.Params[0]
+	}
+
+	// The user left the network entirely, so drop their live roster
+	// attributes (away/account/host). PART/KICK deliberately don't do this.
+	c.removeUserMeta(user)
+
+	// Remove user from all channels they were in
+	channels, err := c.storage.GetChannels(c.networkID)
+	if err == nil {
+		for _, ch := range channels {
+			// Check if user is in this channel
+			users, err := c.storage.GetChannelUsers(ch.ID)
+			if err == nil {
+				for _, u := range users {
+					if strings.EqualFold(u.Nickname, user) {
+						// User is in this channel, remove them
+						if err := c.storage.RemoveChannelUser(ch.ID, user); err != nil {
+							logger.Log.Error().Err(err).Str("user", user).Str("channel", ch.Name).Msg("Failed to remove user from channel user list")
+						} else {
+							logger.Log.Debug().Str("user", user).Str("channel", ch.Name).Msg("Removed user from channel user list")
+							// Verify the write is committed by reading it back (forces WAL sync)
+							// This ensures the user is immediately removed when the frontend queries
+							_, _ = c.storage.GetChannelUsers(ch.ID)
+						}
+
+						// Store quit message in the channel
+						rawLine, _ := e.Line()
+						quitMsg := storage.Message{
+							NetworkID: c.networkID,
+							ChannelID: &ch.ID,
+							User:      user,
+							Message: fmt.Sprintf("%s quit%s", user, func() string {
+								if reason != "" {
+									return fmt.Sprintf(" (%s)", reason)
+								}
+								return ""
+							}()),
+							MessageType: "quit",
+							Timestamp:   time.Now(),
+							RawLine:     rawLine,
+						}
+						if err := c.storage.WriteMessageSync(quitMsg); err != nil {
+							// During shutdown, storage may be closed - this is expected
+							if err.Error() == "storage is closed" {
+								logger.Log.Debug().Msg("Skipping quit message storage (storage closed during shutdown)")
+							} else {
+								logger.Log.Error().Err(err).Msg("Failed to store quit message")
+							}
+						}
+						break
+					}
+				}
+			}
+		}
+	}
+
+	c.eventBus.Emit(events.Event{
+		Type: EventUserQuit,
+		Data: map[string]interface{}{
+			"network":   c.network.Address,
+			"networkId": c.networkID,
+			"user":      user,
+			"reason":    reason,
+		},
+		Timestamp: time.Now(),
+		Source:    events.EventSourceIRC,
+	})
+}
+
 // handleForwardedJoin processes ERR_LINKCHANNEL (470): the server redirected a
 // JOIN from one channel to another (Libera's +f channel forwarding, e.g. when we
 // are banned or quieted on the requested channel). The requested channel was
@@ -1630,79 +1710,7 @@ func (c *IRCClient) setupHandlers() {
 	c.conn.AddCallback("477", c.handleJoinError) // ERR_NEEDREGGEDNICK
 
 	// User quit
-	c.conn.AddCallback("QUIT", func(e ircmsg.Message) {
-		user := e.Nick()
-		reason := ""
-		if len(e.Params) > 0 {
-			reason = e.Params[0]
-		}
-
-		// The user left the network entirely, so drop their live roster
-		// attributes (away/account/host). PART/KICK deliberately don't do this.
-		c.removeUserMeta(user)
-
-		// Remove user from all channels they were in
-		channels, err := c.storage.GetChannels(c.networkID)
-		if err == nil {
-			for _, ch := range channels {
-				// Check if user is in this channel
-				users, err := c.storage.GetChannelUsers(ch.ID)
-				if err == nil {
-					for _, u := range users {
-						if u.Nickname == user {
-							// User is in this channel, remove them
-							if err := c.storage.RemoveChannelUser(ch.ID, user); err != nil {
-								logger.Log.Error().Err(err).Str("user", user).Str("channel", ch.Name).Msg("Failed to remove user from channel user list")
-							} else {
-								logger.Log.Debug().Str("user", user).Str("channel", ch.Name).Msg("Removed user from channel user list")
-								// Verify the write is committed by reading it back (forces WAL sync)
-								// This ensures the user is immediately removed when the frontend queries
-								_, _ = c.storage.GetChannelUsers(ch.ID)
-							}
-
-							// Store quit message in the channel
-							rawLine, _ := e.Line()
-							quitMsg := storage.Message{
-								NetworkID: c.networkID,
-								ChannelID: &ch.ID,
-								User:      user,
-								Message: fmt.Sprintf("%s quit%s", user, func() string {
-									if reason != "" {
-										return fmt.Sprintf(" (%s)", reason)
-									}
-									return ""
-								}()),
-								MessageType: "quit",
-								Timestamp:   time.Now(),
-								RawLine:     rawLine,
-							}
-							if err := c.storage.WriteMessageSync(quitMsg); err != nil {
-								// During shutdown, storage may be closed - this is expected
-								if err.Error() == "storage is closed" {
-									logger.Log.Debug().Msg("Skipping quit message storage (storage closed during shutdown)")
-								} else {
-									logger.Log.Error().Err(err).Msg("Failed to store quit message")
-								}
-							}
-							break
-						}
-					}
-				}
-			}
-		}
-
-		c.eventBus.Emit(events.Event{
-			Type: EventUserQuit,
-			Data: map[string]interface{}{
-				"network":   c.network.Address,
-				"networkId": c.networkID,
-				"user":      user,
-				"reason":    reason,
-			},
-			Timestamp: time.Now(),
-			Source:    events.EventSourceIRC,
-		})
-	})
+	c.conn.AddCallback("QUIT", c.handleQuit)
 
 	// User kicked from channel
 	c.conn.AddCallback("KICK", func(e ircmsg.Message) {
