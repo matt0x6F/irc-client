@@ -76,6 +76,9 @@ type Querier interface {
 	UpdateChannelIsOpen(ctx context.Context, arg UpdateChannelIsOpenParams) error
 	UpdateChannelModes(ctx context.Context, arg UpdateChannelModesParams) error
 	UpdateChannelTopic(ctx context.Context, arg UpdateChannelTopicParams) error
+	// OR REPLACE so a rename that collides with an existing holder of the new nick
+	// (e.g. a just-freed ghost still listed in a shared channel during a REGAIN)
+	// replaces that stale row per channel instead of aborting the whole statement.
 	UpdateChannelUserNickname(ctx context.Context, arg UpdateChannelUserNicknameParams) error
 	UpdateNetwork(ctx context.Context, arg UpdateNetworkParams) error
 	UpdateNetworkAutoConnect(ctx context.Context, arg UpdateNetworkAutoConnectParams) error
