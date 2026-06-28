@@ -45,7 +45,12 @@ func makeNetwork(t *testing.T, s *storage.Storage, name, address string) *storag
 
 // captureEmits redirects a.emit into a recorder. Returns a *emitRecorder whose
 // last(name) returns the most recent payload map for that event, or nil.
-type emitRecorder struct{ events []struct{ name string; data map[string]any } }
+type emitRecorder struct {
+	events []struct {
+		name string
+		data map[string]any
+	}
+}
 
 func (r *emitRecorder) last(name string) map[string]any {
 	for i := len(r.events) - 1; i >= 0; i-- {
@@ -63,7 +68,10 @@ func captureEmits(a *App) *emitRecorder {
 		if len(data) == 1 {
 			m, _ = data[0].(map[string]any)
 		}
-		r.events = append(r.events, struct{ name string; data map[string]any }{name, m})
+		r.events = append(r.events, struct {
+			name string
+			data map[string]any
+		}{name, m})
 	}
 	return r
 }
