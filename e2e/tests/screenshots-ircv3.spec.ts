@@ -268,4 +268,91 @@ test.describe('IRCv3 documentation screenshots', () => {
   // type and accepting "+b $a:…", which isn't guaranteed across server builds. The
   // semantic-label rendering is covered by unit tests (frontend/src/lib/extban.test.ts)
   // and documented in prose in docs/public/developers/ircv3-support.md.
+
+  test('+draft/channel-context pill in a PM view', async ({ page, runtime }) => {
+    const peer = new IrcPeer('localhost', runtime.ergoPort, 'ctxscreenbot');
+    await peer.connect(30_000, ['message-tags']);
+    try {
+      await page.goto(runtime.bridgeUrl);
+      await addNetworkAndConnect(page, runtime);
+      await selectNetwork(page);
+
+      // Send a PM with channel-context so the pill renders.
+      const unique = `ctx-shot-${Date.now()}`;
+      peer.sendRaw(`@+draft/channel-context=#screenshots PRIVMSG e2euser :${unique}`);
+
+      // Open the PM pane.
+      await page
+        .getByTestId('server-tree')
+        .getByText('ctxscreenbot', { exact: true })
+        .waitFor({ state: 'visible', timeout: 15_000 });
+      await page.getByTestId('server-tree').getByText('ctxscreenbot', { exact: true }).click();
+
+      // Wait for the message and the pill.
+      const msgList = page.getByTestId('message-list');
+      await expect(msgList.getByText(unique)).toBeVisible({ timeout: 15_000 });
+      await expect(msgList.locator('.channel-context-pill')).toBeVisible({ timeout: 10_000 });
+
+      await shoot(msgList, 'channel-context-pill.png');
+    } finally {
+      peer.close();
+    }
+  });
+
+  test('+draft/reply quote in a channel view', async ({ page, runtime }) => {
+    await page.goto(runtime.bridgeUrl);
+    await addNetworkAndConnect(page, runtime);
+    await selectNetwork(page);
+    await joinChannel(page, '#cc-reply');
+
+    const peer = new IrcPeer('localhost', runtime.ergoPort, 'replyscreen');
+    await peer.connect(30_000, ['message-tags', 'echo-message']);
+    peer.join('#cc-reply');
+    await peer.waitForJoin('#cc-reply');
+    try {
+      // Send a parent message; capture the server-assigned msgid from echo-message.
+      const parentText = `parent-shot-${Date.now()}`;
+      const echoPromise = peer.captureLine(
+        new RegExp(`PRIVMSG #cc-reply :${parentText.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&')}`),
+        10_000,
+      ).catch(() => null);
+
+      peer.say('#cc-reply', parentText);
+
+      const msgList = page.getByTestId('message-list');
+      await expect(msgList.getByText(parentText)).toBeVisible({ timeout: 15_000 });
+
+      let msgid: string | null = null;
+      const echoLine = await echoPromise;
+      if (echoLine) {
+        const m = echoLine.match(/(?:^|[;@])msgid=([^;\s]+)/);
+        if (m) msgid = m[1];
+      }
+      if (!msgid) {
+        const parentRow = msgList.locator('[data-testid="message-item"]').filter({ hasText: parentText });
+        msgid = await parentRow.getAttribute('data-msgid').catch(() => null);
+      }
+
+      if (msgid) {
+        const replyText = `reply-shot-${Date.now()}`;
+        peer.sendRaw(`@+draft/reply=${msgid} PRIVMSG #cc-reply :${replyText}`);
+        await expect(msgList.getByText(replyText)).toBeVisible({ timeout: 15_000 });
+        await expect(
+          msgList.locator('[data-testid="message-item"]').filter({ hasText: replyText }).locator('.reply-quote'),
+        ).toBeVisible({ timeout: 10_000 });
+      } else {
+        // Fallback: render unresolved-reply path for the screenshot.
+        const replyText = `reply-shot-fallback-${Date.now()}`;
+        peer.sendRaw(`@+draft/reply=nonexistent-${Date.now()} PRIVMSG #cc-reply :${replyText}`);
+        await expect(msgList.getByText(replyText)).toBeVisible({ timeout: 15_000 });
+        await expect(
+          msgList.locator('[data-testid="message-item"]').filter({ hasText: replyText }).locator('.reply-quote'),
+        ).toBeVisible({ timeout: 10_000 });
+      }
+
+      await shoot(msgList, 'reply-quote.png');
+    } finally {
+      peer.close();
+    }
+  });
 });
