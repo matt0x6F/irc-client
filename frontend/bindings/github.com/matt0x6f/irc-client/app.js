@@ -96,8 +96,8 @@ export function ClearSTSPolicy(hostname) {
 /**
  * CloseChannel hides a channel's buffer pane (is_open=false) WITHOUT leaving
  * the channel on the server. This is distinct from LeaveChannel, which sends a
- * real PART. It emits EventChannelsChanged so every window's server tree drops
- * the pane; SetChannelOpen alone only emits a pane-blur event.
+ * real PART when you are joined. It emits EventChannelsChanged so every window's
+ * server tree drops the pane; SetChannelOpen alone only emits a pane-blur event.
  * @param {number} networkID
  * @param {string} channelName
  * @returns {$CancellablePromise<void>}
@@ -306,6 +306,19 @@ export function GetLastOpenPane() {
 export function GetLogConfig() {
     return $Call.ByID(3565499149).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType10($result);
+    }));
+}
+
+/**
+ * GetMessageByMsgID resolves a message by its IRCv3 msgid so the frontend can
+ * render a +draft/reply parent preview and jump to it (possibly cross-buffer).
+ * @param {number} networkID
+ * @param {string} msgid
+ * @returns {$CancellablePromise<storage$0.Message>}
+ */
+export function GetMessageByMsgID(networkID, msgid) {
+    return $Call.ByID(1122817005, networkID, msgid).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType11($result);
     }));
 }
 
@@ -604,7 +617,12 @@ export function Greet(name) {
 }
 
 /**
- * LeaveChannel leaves an IRC channel
+ * LeaveChannel leaves an IRC channel by sending a PART when joined and
+ * connected. It is overloaded: on the not-joined / no-client / lookup-error
+ * paths it instead just hides the buffer pane (SetChannelOpen false) and emits
+ * EventChannelsChanged. The UI only offers "Leave Channel" when joined (see
+ * server-tree.tsx), so in practice this always takes the PART path; callers
+ * that want a pure buffer-hide should use CloseChannel instead.
  * @param {number} networkID
  * @param {string} channelName
  * @returns {$CancellablePromise<void>}
