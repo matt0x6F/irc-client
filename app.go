@@ -228,6 +228,17 @@ func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) 
 		a.reconnectAllOnWake()
 	})
 
+	// Deep links: macOS delivers irc:///ircs:// URLs as an application event,
+	// routed to the already-running instance by the OS. The handler runs on a
+	// background goroutine, so it only parses + emits (no native calls).
+	a.app.Event.OnApplicationEvent(wailsevents.Common.ApplicationLaunchedWithUrl,
+		func(e *application.ApplicationEvent) {
+			a.handleDeepLink(e.Context().URL())
+		})
+
+	// Cold-start protocol launch on Windows/Linux passes the URL via os.Args.
+	a.processStartupArgs(os.Args)
+
 	// Load plugins in background so it doesn't block auto-connect
 	go func() {
 		if err := a.pluginManager.DiscoverAndLoad(); err != nil {

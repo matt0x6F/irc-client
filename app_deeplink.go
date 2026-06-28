@@ -1,9 +1,27 @@
 package main
 
 import (
+	"strings"
+
 	"github.com/matt0x6f/irc-client/internal/ircurl"
 	"github.com/matt0x6f/irc-client/internal/logger"
 )
+
+// isDeepLinkArg reports whether a CLI arg looks like one of our schemes.
+func isDeepLinkArg(arg string) bool {
+	return strings.HasPrefix(arg, "irc://") || strings.HasPrefix(arg, "ircs://")
+}
+
+// processStartupArgs scans os.Args for a deep link passed at cold start
+// (Windows/Linux protocol launch). macOS delivers cold-start URLs via the
+// ApplicationLaunchedWithUrl event instead, so this is a no-op there.
+func (a *App) processStartupArgs(args []string) {
+	for _, arg := range args {
+		if isDeepLinkArg(arg) {
+			a.handleDeepLink(arg)
+		}
+	}
+}
 
 // NetworkMatch is a saved network that matches a deep link's host.
 type NetworkMatch struct {

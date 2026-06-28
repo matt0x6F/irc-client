@@ -108,6 +108,15 @@ func TestHandleDeepLink_MultiMatchEmitsDisambiguate(t *testing.T) {
 	}
 }
 
+func TestProcessStartupArgs_PicksUpDeepLink(t *testing.T) {
+	a, _ := newDeepLinkTestApp(t)
+	rec := captureEmits(a)
+	a.processStartupArgs([]string{"/path/to/cascade", "irc://unknown.example/#x"})
+	if rec.last("deeplink:add-network") == nil {
+		t.Fatal("expected deep link to be handled from args")
+	}
+}
+
 func TestFindNetworksByAddress_MultipleMatches(t *testing.T) {
 	a, s := newDeepLinkTestApp(t)
 	makeNetwork(t, s, "Libera work", "irc.libera.chat")
