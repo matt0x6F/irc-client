@@ -54,10 +54,11 @@ test('+draft/channel-context tag renders a #channel pill in the PM view', async 
     const msgList = page.getByTestId('message-list');
     await expect(msgList.getByText(unique)).toBeVisible({ timeout: 15_000 });
 
-    // The channel-context pill must appear alongside the message, showing #test.
-    // It renders as a button with class "channel-context-pill" containing the channel name.
+    // The channel-context pill must appear alongside the message, showing the channel
+    // name. It renders as a button with class "channel-context-pill" + a Hash icon, and
+    // the text strips the leading '#' (the icon already conveys it), so it reads "test".
     await expect(msgList.locator('.channel-context-pill')).toBeVisible({ timeout: 10_000 });
-    await expect(msgList.locator('.channel-context-pill')).toContainText('#test');
+    await expect(msgList.locator('.channel-context-pill')).toContainText('test');
   } finally {
     peer.close();
   }
