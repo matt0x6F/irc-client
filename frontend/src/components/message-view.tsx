@@ -4,6 +4,9 @@ import { IRCFormattedText } from './irc-formatted-text';
 import { useNicknameColors } from '../hooks/useNicknameColors';
 import { useNetworkStore } from '../stores/network';
 import { useSettingsStore } from '../stores/settings';
+import { SendCommand } from '../../wailsjs/go/main/App';
+import { CornerUpLeft, Hash } from 'lucide-react';
+import { buildMsgidIndex, resolveParent, quoteSnippet } from '../lib/reply';
 
 interface MessageViewProps {
   messages: storage.Message[];
@@ -252,9 +255,50 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
     [networkId]
   );
 
+  // Build a msgid→message index once per render for fast parent lookup.
+  const msgidIndex = useMemo(() => buildMsgidIndex(messages), [messages]);
+
+  // Reply jump: scroll to a message row by msgid and flash it briefly.
+  // Returns true if the element was found and scrolled, false otherwise.
+  const scrollToMsgid = useCallback((msgid: string): boolean => {
+    const el = scrollContainerRef.current?.querySelector<HTMLElement>(`[data-msgid="${CSS.escape(msgid)}"]`);
+    if (!el) return false;
+    el.scrollIntoView({ block: 'center' });
+    el.classList.add('msg-flash');
+    setTimeout(() => el.classList.remove('msg-flash'), 1200);
+    return true;
+  }, []);
+
+  const pendingScrollMsgid = useNetworkStore((s) => s.pendingScrollMsgid);
+  const clearPendingScrollMsgid = useNetworkStore((s) => s.clearPendingScrollMsgid);
+  const openParentMessage = useNetworkStore((s) => s.openParentMessage);
+
+  // Consume pendingScrollMsgid: once the new buffer's messages load and the row
+  // appears in the DOM, scroll to it and clear the pending id. Runs on every
+  // messages update (after selectPane loads the new buffer).
+  useEffect(() => {
+    if (!pendingScrollMsgid) return;
+    if (scrollToMsgid(pendingScrollMsgid)) {
+      clearPendingScrollMsgid();
+    }
+  }, [pendingScrollMsgid, messages, scrollToMsgid, clearPendingScrollMsgid]);
+
+  const jumpToReplyMsgid = useCallback(
+    (replyMsgid: string) => {
+      if (!replyMsgid) return;
+      if (scrollToMsgid(replyMsgid)) return;
+      // Parent not in the current buffer — switch to the buffer that contains it.
+      if (networkId === null) return;
+      void openParentMessage(networkId, replyMsgid);
+    },
+    [scrollToMsgid, openParentMessage, networkId],
+  );
+
   const pinnedMessages = useNetworkStore((s) => s.pinnedMessages);
   const pinMessage = useNetworkStore((s) => s.pinMessage);
   const unpinMessage = useNetworkStore((s) => s.unpinMessage);
+  const setReplyTarget = useNetworkStore((s) => s.setReplyTarget);
+  const selectPane = useNetworkStore((s) => s.selectPane);
   const viewMode = useNetworkStore((s) => s.viewMode);
   const anchoredMessageId = useNetworkStore((s) => s.anchoredMessageId);
   const clearAnchorFlash = useNetworkStore((s) => s.clearAnchorFlash);
@@ -550,7 +594,8 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
                 else messageRefs.current.delete(msg.id);
               }}
               data-testid="message-item"
-              className={`group flex items-baseline space-x-3 py-1 px-2 rounded transition-colors ${
+              data-msgid={msg.msgid || undefined}
+              className={`group flex flex-col py-1 px-2 rounded transition-colors ${
                 hasMention
                   ? 'cc-mention border-l-2'
                   : isError
@@ -564,6 +609,28 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
                   : ''
               } hover:bg-muted/30`}
             >
+              {msg.reply_msgid && (() => {
+                const parent = resolveParent(msg.reply_msgid, msgidIndex);
+                return (
+                  <button
+                    type="button"
+                    className="reply-quote flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground self-start mb-0.5"
+                    onClick={() => jumpToReplyMsgid(msg.reply_msgid)}
+                  >
+                    <CornerUpLeft className="h-3 w-3 shrink-0" />
+                    {parent ? (
+                      <span className="truncate max-w-xs">
+                        <span className="font-medium">{parent.user}</span>
+                        {': '}
+                        {quoteSnippet(parent)}
+                      </span>
+                    ) : (
+                      <span className="italic">replying to an earlier message</span>
+                    )}
+                  </button>
+                );
+              })()}
+              <div className="flex items-baseline space-x-3">
               {isError || isWarning ? (
                 <>
                   <span className={`text-sm font-semibold flex-shrink-0 ${isError ? 'text-destructive' : 'text-amber-500'}`}>⚠</span>
@@ -598,6 +665,17 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
                     >
                       bot
                     </span>
+                  )}
+                  {!msg.channel_id && msg.channel_context && networkId !== null && (
+                    <button
+                      type="button"
+                      className="channel-context-pill inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground hover:text-foreground flex-shrink-0"
+                      onClick={() => void selectPane(networkId, msg.channel_context)}
+                      title={`This message is about ${msg.channel_context}`}
+                    >
+                      <Hash className="h-3 w-3" />
+                      {msg.channel_context.replace(/^#/, '')}
+                    </button>
                   )}
                   {isInvite ? (
                     <span className="text-sm flex-1 text-muted-foreground italic">
@@ -671,6 +749,19 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
                   )}
                 </>
               )}
+              {isRegularMessage && msg.msgid && (
+                <button
+                  onClick={() =>
+                    setReplyTarget({ msgid: msg.msgid, nick: msg.user, snippet: quoteSnippet(msg, 60) })
+                  }
+                  data-testid="reply-button"
+                  className="self-start flex-shrink-0 p-0.5 rounded transition-opacity cursor-pointer hover:text-foreground opacity-0 group-hover:opacity-100 focus:opacity-100 text-muted-foreground"
+                  title="Reply to this message"
+                  aria-label="Reply to this message"
+                >
+                  <CornerUpLeft width="14" height="14" />
+                </button>
+              )}
               {isRegularMessage && msg.id < OPTIMISTIC_ID_THRESHOLD && (
                 <button
                   onClick={() =>
@@ -701,6 +792,7 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
                   </svg>
                 </button>
               )}
+              </div>
             </div>
           );
         })

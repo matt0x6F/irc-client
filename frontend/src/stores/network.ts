@@ -37,6 +37,9 @@ import {
   RemoveMonitor,
   GetNetworkUserMeta,
   PrintLocalLines,
+  SendMessageWithContext,
+  GetMessageByMsgID,
+  GetChannels,
 } from '../../wailsjs/go/main/App';
 import { useCommandsStore, lookupCommand } from './commands';
 import { usePreferencesStore } from './preferences';
@@ -164,6 +167,21 @@ interface NetworkState {
   loadingHistory: boolean; // a server history fetch is in flight (drives the top spinner)
   reachedStart: boolean; // the server reported no more history for the current buffer
 
+  // Reply composer: the message the user is replying to (if any). Set by the
+  // per-message Reply affordance; cleared on send or Escape.
+  replyTarget: { msgid: string; nick: string; snippet: string } | null;
+
+  // Sticky per-PM channel-context: maps a PM pane key ('pm:<nick>') to a channel
+  // name ('#dev') that will be threaded as channel-context on the next send.
+  // Set by the "Message privately (re: #channel)" member-list trigger; shown as a
+  // dismissable indicator in the compose area; NOT cleared on send (sticky).
+  channelContextByPane: Map<string, string>;
+
+  // Cross-buffer jump: when a reply parent is in another buffer, openParentMessage
+  // switches to that buffer and parks the msgid here so the message-view effect
+  // can scroll once the messages load.
+  pendingScrollMsgid: string | null;
+
   // Selection
   selectedNetwork: number | null;
   selectedChannel: string | null;
@@ -201,6 +219,18 @@ interface NetworkState {
 
   // Message actions
   sendMessage: (message: string) => Promise<void>;
+
+  // Reply state actions
+  setReplyTarget: (target: { msgid: string; nick: string; snippet: string }) => void;
+  clearReplyTarget: () => void;
+
+  // Channel-context actions
+  setChannelContext: (pane: string, channel: string) => void;
+  clearChannelContext: (pane: string) => void;
+
+  // Cross-buffer jump actions
+  openParentMessage: (networkId: number, msgid: string) => Promise<void>;
+  clearPendingScrollMsgid: () => void;
 
   // Activity tracking
   markActivity: (key: string) => void;
@@ -262,6 +292,9 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
   newSinceAnchor: 0,
   loadingHistory: false,
   reachedStart: false,
+  replyTarget: null,
+  channelContextByPane: new Map(),
+  pendingScrollMsgid: null,
   selectedNetwork: null,
   selectedChannel: null,
 
@@ -938,8 +971,10 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
     // Private messages
     if (selectedChannel.startsWith('pm:')) {
       const user = selectedChannel.substring(3);
+      const ctx = get().channelContextByPane.get(selectedChannel) ?? '';
       try {
-        await SendMessage(selectedNetwork, user, wire);
+        await SendMessageWithContext(selectedNetwork, user, wire, get().replyTarget?.msgid ?? '', ctx);
+        set({ replyTarget: null });
         setTimeout(() => loadMessages(), 100);
       } catch (error) {
         console.error('Failed to send private message:', error);
@@ -961,6 +996,7 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
           message_type: 'privmsg',
           timestamp: new Date().toISOString(),
           raw_line: '',
+          reply_msgid: get().replyTarget?.msgid ?? '',
         });
         set((state) => ({ messages: sortByTimestamp([...state.messages, optimisticMessage]) }));
       } catch {
@@ -973,12 +1009,54 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
         await SendCommand(selectedNetwork, message);
         await loadMessages();
       } else {
-        await SendMessage(selectedNetwork, selectedChannel, wire);
+        await SendMessageWithContext(selectedNetwork, selectedChannel, wire, get().replyTarget?.msgid ?? '', '');
+        set({ replyTarget: null });
         setTimeout(() => loadMessages(), 100);
       }
     } catch (error) {
       console.error('Failed to send message:', error);
       await loadMessages();
+    }
+  },
+
+  setReplyTarget: (target) => set({ replyTarget: target }),
+
+  clearReplyTarget: () => set({ replyTarget: null }),
+
+  setChannelContext: (pane, channel) =>
+    set((state) => {
+      const next = new Map(state.channelContextByPane);
+      next.set(pane, channel);
+      return { channelContextByPane: next };
+    }),
+
+  clearChannelContext: (pane) =>
+    set((state) => {
+      const next = new Map(state.channelContextByPane);
+      next.delete(pane);
+      return { channelContextByPane: next };
+    }),
+
+  clearPendingScrollMsgid: () => set({ pendingScrollMsgid: null }),
+
+  openParentMessage: async (networkId, msgid) => {
+    try {
+      const parent = await GetMessageByMsgID(networkId, msgid);
+      let pane: string;
+      if (parent.channel_id != null) {
+        const channels = await GetChannels(networkId);
+        const ch = (channels as Array<{ id: number; name: string }>).find(
+          (c) => c.id === parent.channel_id
+        );
+        if (!ch) return; // parent's channel not known locally; give up quietly
+        pane = ch.name;
+      } else {
+        pane = `pm:${parent.pm_target}`;
+      }
+      await get().selectPane(networkId, pane);
+      set({ pendingScrollMsgid: msgid });
+    } catch (e) {
+      console.error('openParentMessage failed', e);
     }
   },
 

@@ -309,6 +309,16 @@ button, a, input, select, textarea {
     animation: pin-flash 1.6s ease-out;
 }
 
+/* Highlight flash when jumping to a reply parent (same-buffer scroll) */
+@keyframes msg-flash {
+    0% { background-color: rgba(99, 102, 241, 0.25); }
+    100% { background-color: transparent; }
+}
+
+.msg-flash {
+    animation: msg-flash 1.2s ease-out;
+}
+
 /* Settings master-detail view transition: slide the incoming view in.
    Forward = entering a detail (editor) view; back = returning to the list. */
 @keyframes cc-view-in-forward {
