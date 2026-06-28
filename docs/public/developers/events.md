@@ -264,3 +264,89 @@ The EventBus is fully thread-safe:
 - Event metrics and monitoring
 - Priority-based event delivery
 - Event batching for high-frequency events
+
+---
+
+## Frontend events
+
+The Go EventBus described above is internal to the backend process. A separate
+set of events travels the other direction: from the Go backend to the React
+webview via Wails' `Events.Emit` API. The frontend listens with
+`Events.On(name, handler)`.
+
+These are distinct from the Go bus events. They carry serialized JSON payloads
+rather than `events.Event` structs, and they are consumed by the UI layer, not
+by Go subscribers.
+
+### Deep-link events
+
+Emitted when Cascade handles an `irc://` or `ircs://` URI (see
+[Opening irc:// links](../users/connecting.md#opening-irc-links)).
+
+#### `deeplink:join`
+
+The link matched exactly one saved network. The frontend should connect (if not
+already connected) and join or open each target.
+
+```json
+{
+  "networkId": 42,
+  "targets": [
+    { "name": "#cascade", "isNick": false, "key": "" },
+    { "name": "alice",    "isNick": true,  "key": "" }
+  ]
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `networkId` | `number` | ID of the saved network to use. |
+| `targets` | `Target[]` | One entry per channel or nick from the URI. |
+| `targets[].name` | `string` | Channel name (with `#`) or nickname. |
+| `targets[].isNick` | `boolean` | `true` when the target is a nick (opens a PM). |
+| `targets[].key` | `string` | Channel key (`?key=…` query param), or empty. |
+
+#### `deeplink:add-network`
+
+The server in the link has no saved network. The frontend should open the Add
+Network form prefilled with these values.
+
+```json
+{
+  "host": "irc.libera.chat",
+  "port": 6697,
+  "tls":  true,
+  "channel": "#cascade"
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `host` | `string` | Server hostname from the URI. |
+| `port` | `number` | Port, or the scheme default (`6667` / `6697`). |
+| `tls` | `boolean` | `true` when the scheme is `ircs://`. |
+| `channel` | `string` | First channel from the URI, for display only. Not auto-joined. |
+
+#### `deeplink:disambiguate`
+
+The server matches more than one saved network. The frontend should present a
+picker; once the user chooses, proceed as with `deeplink:join`.
+
+```json
+{
+  "candidates": [
+    { "networkId": 1, "name": "Libera (work)"    },
+    { "networkId": 7, "name": "Libera (personal)" }
+  ],
+  "targets": [
+    { "name": "#cascade", "isNick": false, "key": "" }
+  ]
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `candidates` | `Candidate[]` | Networks that match the server in the URI. |
+| `candidates[].networkId` | `number` | Saved network ID. |
+| `candidates[].name` | `string` | Display name of the network. |
+| `targets` | `Target[]` | Same shape as `deeplink:join`; pass through after the user picks. |
