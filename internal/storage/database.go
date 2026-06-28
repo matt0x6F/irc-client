@@ -1264,6 +1264,55 @@ func (s *Storage) SetSetting(key, value string) error {
 	return nil
 }
 
+// GetLinkPreview returns a cached preview if present and not older than
+// ttlSeconds relative to nowUnix. A stale row reports (nil, false, nil) and is
+// left in place (overwritten on the next fetch, swept by PruneLinkPreviews).
+func (s *Storage) GetLinkPreview(url string, nowUnix, ttlSeconds int64) (*CachedPreview, bool, error) {
+	row, err := s.queries.GetLinkPreview(context.Background(), url)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("failed to get link preview %q: %w", url, err)
+	}
+	if nowUnix-row.FetchedAt > ttlSeconds {
+		return nil, false, nil
+	}
+	return &CachedPreview{
+		URL:          row.Url,
+		Status:       row.Status,
+		Title:        row.Title,
+		Description:  row.Description,
+		SiteName:     row.SiteName,
+		ImageDataURI: row.ImageData,
+		FetchedAt:    row.FetchedAt,
+	}, true, nil
+}
+
+// UpsertLinkPreview stores or refreshes a preview row.
+func (s *Storage) UpsertLinkPreview(p CachedPreview) error {
+	if err := s.queries.UpsertLinkPreview(context.Background(), db.UpsertLinkPreviewParams{
+		Url:         p.URL,
+		Status:      p.Status,
+		Title:       p.Title,
+		Description: p.Description,
+		SiteName:    p.SiteName,
+		ImageData:   p.ImageDataURI,
+		FetchedAt:   p.FetchedAt,
+	}); err != nil {
+		return fmt.Errorf("failed to upsert link preview %q: %w", p.URL, err)
+	}
+	return nil
+}
+
+// PruneLinkPreviews keeps only the maxRows most-recently-fetched rows.
+func (s *Storage) PruneLinkPreviews(maxRows int) error {
+	if err := s.queries.PruneLinkPreviewsToLimit(context.Background(), int64(maxRows)); err != nil {
+		return fmt.Errorf("failed to prune link previews: %w", err)
+	}
+	return nil
+}
+
 // UpsertSTSPolicy stores (or refreshes) an STS policy for a host. expiresAt is a
 // unix timestamp in seconds. Called only after a policy is advertised over TLS.
 func (s *Storage) UpsertSTSPolicy(hostname string, port int, expiresAt int64) error {

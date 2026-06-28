@@ -31,6 +31,16 @@ type ChannelUser struct {
 	UpdatedAt time.Time      `json:"updated_at"`
 }
 
+type LinkPreview struct {
+	Url         string `json:"url"`
+	Status      string `json:"status"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	SiteName    string `json:"site_name"`
+	ImageData   string `json:"image_data"`
+	FetchedAt   int64  `json:"fetched_at"`
+}
+
 type Message struct {
 	ID          int64          `json:"id"`
 	NetworkID   int64          `json:"network_id"`

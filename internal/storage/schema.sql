@@ -114,6 +114,20 @@ CREATE TABLE IF NOT EXISTS settings (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Cache of click-to-load link previews. Keyed by the requested URL; image_data
+-- holds a self-contained data URI (never a remote src). status is "ok" or
+-- "blocked". fetched_at is unix seconds so reads can apply a TTL with a plain
+-- numeric comparison. Rows are pruned by age (TTL) and by count (size cap).
+CREATE TABLE IF NOT EXISTS link_previews (
+    url          TEXT PRIMARY KEY,
+    status       TEXT NOT NULL,
+    title        TEXT NOT NULL DEFAULT '',
+    description  TEXT NOT NULL DEFAULT '',
+    site_name    TEXT NOT NULL DEFAULT '',
+    image_data   TEXT NOT NULL DEFAULT '',
+    fetched_at   INTEGER NOT NULL
+);
+
 -- IRCv3 STS (Strict Transport Security) policies. Keyed by hostname (UA-wide, per
 -- spec) and independent of any network row, so a policy learned on one network
 -- entry protects every connection to that host. expires_at is stored as unix
