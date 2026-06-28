@@ -752,7 +752,7 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
             >
               Monitor this user
             </button>
-            {channelName && (
+            {channelName && !isSelf(contextMenu.user) && (
               <button
                 className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
                 style={{ transition: 'var(--transition-base)' }}

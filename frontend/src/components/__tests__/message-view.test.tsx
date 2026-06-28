@@ -203,7 +203,10 @@ describe('MessageView channel-context pill', () => {
 
     render(<MessageView messages={[pm]} networkId={1} selectedChannel="pm:bob" />)
 
-    expect(screen.getByText('#dev')).toBeInTheDocument()
+    // The pill strips the leading '#' and renders the channel name next to the Hash icon
+    expect(screen.getByText('dev')).toBeInTheDocument()
+    // The pill button itself should be present
+    expect(document.querySelector('.channel-context-pill')).not.toBeNull()
   })
 
   it('does not render the pill on a channel message even if channel_context is set', () => {
@@ -220,6 +223,7 @@ describe('MessageView channel-context pill', () => {
 
     render(<MessageView messages={[chan]} networkId={1} selectedChannel="#general" />)
 
-    expect(screen.queryByText('#dev')).toBeNull()
+    // No pill should render for a channel message
+    expect(document.querySelector('.channel-context-pill')).toBeNull()
   })
 })

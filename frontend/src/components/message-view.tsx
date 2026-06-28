@@ -673,7 +673,7 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
                       title={`This message is about ${msg.channel_context}`}
                     >
                       <Hash className="h-3 w-3" />
-                      {msg.channel_context}
+                      {msg.channel_context.replace(/^#/, '')}
                     </button>
                   )}
                   {isInvite ? (
