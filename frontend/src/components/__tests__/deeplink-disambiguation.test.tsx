@@ -1,16 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 
-const openOrJoinChannel = vi.fn();
-const openQuery = vi.fn();
+const { applyDeepLinkTargets } = vi.hoisted(() => ({
+  applyDeepLinkTargets: vi.fn(() => Promise.resolve()),
+}));
+
 const setDeepLinkDisambiguation = vi.fn();
 let disambig: unknown = {
   candidates: [{ networkId: 1, name: 'Libera work' }, { networkId: 2, name: 'Libera personal' }],
   targets: [{ name: '#c', isNick: false, key: '' }],
 };
 
-vi.mock('../../stores/network', () => ({
-  useNetworkStore: (sel: (s: unknown) => unknown) => sel({ openOrJoinChannel, openQuery }),
+vi.mock('../../stores/deeplink', () => ({
+  applyDeepLinkTargets,
 }));
 vi.mock('../../stores/ui', () => ({
   useUIStore: (sel: (s: unknown) => unknown) =>
@@ -22,11 +24,11 @@ import { DeepLinkDisambiguation } from '../deeplink-disambiguation';
 describe('DeepLinkDisambiguation', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('lists candidates and joins the chosen one', () => {
+  it('lists candidates and delegates to applyDeepLinkTargets on choose', () => {
     render(<DeepLinkDisambiguation />);
     expect(screen.getByText('Libera work')).toBeInTheDocument();
     fireEvent.click(screen.getByText('Libera personal'));
-    expect(openOrJoinChannel).toHaveBeenCalledWith(2, '#c');
+    expect(applyDeepLinkTargets).toHaveBeenCalledWith(2, [{ name: '#c', isNick: false, key: '' }]);
     expect(setDeepLinkDisambiguation).toHaveBeenCalledWith(null);
   });
 
@@ -36,14 +38,14 @@ describe('DeepLinkDisambiguation', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it('calls openQuery for nick targets', () => {
+  it('passes nick targets to applyDeepLinkTargets', () => {
     disambig = {
       candidates: [{ networkId: 1, name: 'Libera work' }],
       targets: [{ name: 'alice', isNick: true, key: '' }],
     };
     render(<DeepLinkDisambiguation />);
     fireEvent.click(screen.getByText('Libera work'));
-    expect(openQuery).toHaveBeenCalledWith(1, 'alice');
+    expect(applyDeepLinkTargets).toHaveBeenCalledWith(1, [{ name: 'alice', isNick: true, key: '' }]);
     expect(setDeepLinkDisambiguation).toHaveBeenCalledWith(null);
   });
 
@@ -54,7 +56,7 @@ describe('DeepLinkDisambiguation', () => {
     };
     render(<DeepLinkDisambiguation />);
     fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
-    expect(openOrJoinChannel).not.toHaveBeenCalled();
+    expect(applyDeepLinkTargets).not.toHaveBeenCalled();
     expect(setDeepLinkDisambiguation).toHaveBeenCalledWith(null);
   });
 });

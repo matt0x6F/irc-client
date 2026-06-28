@@ -17,6 +17,7 @@ export {
     MonitorEntry,
     NetworkConfig,
     NetworkPrefill,
+    PendingDeepLink,
     PluginInfo,
     ScriptInfo,
     ServerCapabilitiesInfo,

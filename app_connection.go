@@ -941,6 +941,22 @@ func (a *App) autoConnect(ctx context.Context) {
 	}
 }
 
+// ConnectSavedNetwork connects to a saved network by ID, building its config
+// from stored state. Used by the deep-link flow when a link targets a saved but
+// currently-disconnected network. No-op-safe to call; connectNetwork handles an
+// already-connected client.
+func (a *App) ConnectSavedNetwork(networkID int64) error {
+	network, err := a.storage.GetNetwork(networkID)
+	if err != nil {
+		return fmt.Errorf("connect saved network %d: %w", networkID, err)
+	}
+	config, err := a.buildReconnectConfig(networkID, network)
+	if err != nil {
+		return fmt.Errorf("connect saved network %d: %w", networkID, err)
+	}
+	return a.connectNetwork(config, false)
+}
+
 // GetConnectionStatus returns whether a network is connected
 func (a *App) GetConnectionStatus(networkID int64) (bool, error) {
 	a.mu.RLock()

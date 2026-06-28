@@ -136,6 +136,32 @@ func TestHandleDeepLink_UnknownHostStoresPrefill(t *testing.T) {
 	}
 }
 
+func TestConnectSavedNetwork_UnknownIDErrors(t *testing.T) {
+	a, _ := newDeepLinkTestApp(t)
+	if err := a.ConnectSavedNetwork(999999); err == nil {
+		t.Fatal("expected error for unknown network id")
+	}
+}
+
+func TestHandleDeepLink_BuffersUntilFrontendReady(t *testing.T) {
+	a, _ := newDeepLinkTestApp(t)
+	_ = captureEmits(a)
+	a.handleDeepLink("irc://unknown.example/#c")
+
+	p := a.DrainPendingDeepLink()
+	if p == nil || p.Event != "deeplink:add-network" {
+		t.Fatalf("expected buffered add-network, got %+v", p)
+	}
+	if a.DrainPendingDeepLink() != nil {
+		t.Fatal("expected pending cleared after drain")
+	}
+	// After drain, frontend is ready: a new link is not buffered.
+	a.handleDeepLink("irc://unknown.example/#d")
+	if a.DrainPendingDeepLink() != nil {
+		t.Fatal("expected no buffering once frontend ready")
+	}
+}
+
 func TestFindNetworksByAddress_MultipleMatches(t *testing.T) {
 	a, s := newDeepLinkTestApp(t)
 	makeNetwork(t, s, "Libera work", "irc.libera.chat")

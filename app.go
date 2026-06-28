@@ -53,6 +53,8 @@ type App struct {
 	shutdownOnce          sync.Once                      // Ensure shutdown only runs once
 	emitFn                func(name string, data ...any) // test seam; nil in production
 	pendingNetworkPrefill *NetworkPrefill                // deep-link Add Network prefill; consumed by the settings window
+	frontendReady         bool                           // set once the webview drains pending deep links
+	pendingDeepLink       *PendingDeepLink               // cold-start deep link buffered until the webview is ready
 }
 
 // stsTarget is a pending plaintext→TLS upgrade: a host advertised STS over an

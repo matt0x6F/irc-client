@@ -1,5 +1,5 @@
-import { useNetworkStore } from '../stores/network';
 import { useUIStore } from '../stores/ui';
+import { applyDeepLinkTargets } from '../stores/deeplink';
 
 interface Target { name: string; isNick: boolean; key: string }
 
@@ -7,18 +7,13 @@ interface Target { name: string; isNick: boolean; key: string }
 // link should act on when more than one matches the host. Renders nothing when
 // there is no pending disambiguation.
 export function DeepLinkDisambiguation() {
-  const openOrJoinChannel = useNetworkStore((s) => s.openOrJoinChannel);
-  const openQuery = useNetworkStore((s) => s.openQuery);
   const pending = useUIStore((s) => s.deepLinkDisambiguation);
   const clear = useUIStore((s) => s.setDeepLinkDisambiguation);
 
   if (!pending) return null;
 
   const choose = (networkId: number) => {
-    for (const t of pending.targets as Target[]) {
-      if (t.isNick) void openQuery(networkId, t.name);
-      else void openOrJoinChannel(networkId, t.name);
-    }
+    void applyDeepLinkTargets(networkId, pending.targets as Target[]);
     clear(null);
   };
 

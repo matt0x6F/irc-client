@@ -563,6 +563,49 @@ export class NetworkPrefill {
 }
 
 /**
+ * PendingDeepLink is a deep-link action emitted before the webview was ready,
+ * buffered so the frontend can drain it on mount.
+ */
+export class PendingDeepLink {
+    /**
+     * Creates a new PendingDeepLink instance.
+     * @param {Partial<PendingDeepLink>} [$$source = {}] - The source object to create the PendingDeepLink.
+     */
+    constructor($$source = {}) {
+        if (!("event" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["event"] = "";
+        }
+        if (!("data" in $$source)) {
+            /**
+             * @member
+             * @type {{ [_ in string]?: any }}
+             */
+            this["data"] = {};
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new PendingDeepLink instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {PendingDeepLink}
+     */
+    static createFrom($$source = {}) {
+        const $$createField1_0 = $$createType6;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("data" in $$parsedSource) {
+            $$parsedSource["data"] = $$createField1_0($$parsedSource["data"]);
+        }
+        return new PendingDeepLink(/** @type {Partial<PendingDeepLink>} */($$parsedSource));
+    }
+}
+
+/**
  * PluginInfo represents plugin information for the frontend
  */
 export class PluginInfo {

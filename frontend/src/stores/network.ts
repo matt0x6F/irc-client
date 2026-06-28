@@ -210,7 +210,7 @@ interface NetworkState {
   setSelectedNetwork: (id: number | null) => void;
   setSelectedChannel: (channel: string | null) => void;
   selectPane: (networkId: number, channel: string | null) => Promise<void>;
-  openOrJoinChannel: (networkId: number, channel: string) => Promise<void>;
+  openOrJoinChannel: (networkId: number, channel: string, key?: string) => Promise<void>;
 
   // Network actions
   connectNetwork: (config: main.NetworkConfig) => Promise<void>;
@@ -796,13 +796,13 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
     }
   },
 
-  openOrJoinChannel: async (networkId, channel) => {
+  openOrJoinChannel: async (networkId, channel, key) => {
     try {
       const joined = await GetJoinedChannels(networkId);
       const isJoined =
         joined?.some((c) => c.name?.toLowerCase() === channel.toLowerCase()) ?? false;
       if (!isJoined) {
-        await SendCommand(networkId, `/join ${channel}`);
+        await SendCommand(networkId, key ? `/join ${channel} ${key}` : `/join ${channel}`);
       }
       await get().selectPane(networkId, channel);
     } catch (error) {

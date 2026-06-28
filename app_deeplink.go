@@ -32,6 +32,37 @@ func (a *App) GetPendingNetworkPrefill() *NetworkPrefill {
 	return p
 }
 
+// PendingDeepLink is a deep-link action emitted before the webview was ready,
+// buffered so the frontend can drain it on mount.
+type PendingDeepLink struct {
+	Event string         `json:"event"`
+	Data  map[string]any `json:"data"`
+}
+
+// dispatchOrBuffer emits the event for live listeners and, until the frontend
+// has signalled readiness, also buffers it so a cold-start link isn't lost when
+// it fires before the webview mounts its listeners.
+func (a *App) dispatchOrBuffer(event string, data map[string]any) {
+	a.emit(event, data)
+	a.mu.Lock()
+	if !a.frontendReady {
+		a.pendingDeepLink = &PendingDeepLink{Event: event, Data: data}
+	}
+	a.mu.Unlock()
+}
+
+// DrainPendingDeepLink marks the frontend ready (so later links emit live only)
+// and returns and clears any buffered cold-start deep link. Bound; called once
+// by the main window on startup.
+func (a *App) DrainPendingDeepLink() *PendingDeepLink {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.frontendReady = true
+	p := a.pendingDeepLink
+	a.pendingDeepLink = nil
+	return p
+}
+
 // isDeepLinkArg reports whether a CLI arg looks like one of our schemes.
 func isDeepLinkArg(arg string) bool {
 	return strings.HasPrefix(arg, "irc://") || strings.HasPrefix(arg, "ircs://")
@@ -80,11 +111,11 @@ func (a *App) handleDeepLink(raw string) {
 		a.setPendingNetworkPrefill(&NetworkPrefill{
 			Host: link.Host, Port: link.Port, TLS: link.TLS, Channel: firstChannel,
 		})
-		a.emit("deeplink:add-network", map[string]any{
+		a.dispatchOrBuffer("deeplink:add-network", map[string]any{
 			"host": link.Host, "port": link.Port, "tls": link.TLS, "channel": firstChannel,
 		})
 	case 1:
-		a.emit("deeplink:join", map[string]any{
+		a.dispatchOrBuffer("deeplink:join", map[string]any{
 			"networkId": matches[0].NetworkID, "targets": targets,
 		})
 	default:
@@ -92,7 +123,7 @@ func (a *App) handleDeepLink(raw string) {
 		for i, m := range matches {
 			cands[i] = map[string]any{"networkId": m.NetworkID, "name": m.Name}
 		}
-		a.emit("deeplink:disambiguate", map[string]any{
+		a.dispatchOrBuffer("deeplink:disambiguate", map[string]any{
 			"candidates": cands, "targets": targets,
 		})
 	}
