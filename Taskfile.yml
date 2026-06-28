@@ -76,6 +76,30 @@ tasks:
     cmds:
       - wails3 dev -config ./build/config.yml -port {{.VITE_PORT}}
 
+  dev:mcp:
+    desc: Run dev mode with the built-in MCP server so an LLM agent can drive the live app
+    summary: |
+      Same as `task dev`, but sets WAILS_MCP=1 so the Wails CLI adds the `mcp`
+      build tag (alongside the hardcoded fts5 tag). The MCP server starts inside
+      App.Run() and listens on http://127.0.0.1:9099/mcp by default — an MCP
+      client (Claude Code, an IDE assistant) can then inspect the DOM, call bound
+      Go methods, await Wails events, and simulate input against the REAL native
+      window. Unlike the server-mode e2e harness, this drives native-window
+      behaviour directly.
+
+      Connect Claude Code (while this is running):
+        claude mcp add --transport http cascade-dev http://127.0.0.1:9099/mcp
+
+      Override the endpoint or JS timeout via the documented env vars, e.g.
+      WAILS_MCP_PORT=9200 WAILS_MCP_TIMEOUT=60000 task dev:mcp
+
+      The `mcp` tag is opt-in and never present in `task build`/`task package`,
+      so production binaries carry none of the server code.
+    env:
+      WAILS_MCP: "1"
+    cmds:
+      - wails3 dev -config ./build/config.yml -port {{.VITE_PORT}}
+
   generate-bindings:
     desc: Regenerate the frontend bindings from the Go services
     cmds:
