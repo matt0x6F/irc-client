@@ -15,7 +15,12 @@ export default defineConfig({
   server: {
     port: Number(process.env.VITE_PORT) || 5173,
     strictPort: true,
-    host: 'localhost',
+    // Bind IPv4 explicitly: Wails' dev asset proxy dials tcp4 127.0.0.1, but
+    // 'localhost' resolves to ::1 (IPv6) first on some systems, leaving Vite
+    // IPv6-only — the proxy then gets "connection refused" and the webview
+    // never loads. 127.0.0.1 keeps the dev page reachable for both `task dev`
+    // and `task dev:mcp`.
+    host: '127.0.0.1',
   },
   resolve: {
     alias: {
