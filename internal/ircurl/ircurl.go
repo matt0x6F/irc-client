@@ -88,12 +88,14 @@ func Parse(raw string) (*Link, error) {
 		return link, nil
 	}
 	queryKey := u.Query().Get("key")
-	// If there was a fragment with ?key=value, extract it from there
+	// If there was a fragment with ?...&key=value, extract it from there
 	if queryKey == "" && u.Fragment != "" {
-		if idx := strings.Index(u.Fragment, "?key="); idx >= 0 {
-			queryKey = u.Fragment[idx+5:]
-			if ampIdx := strings.Index(queryKey, "&"); ampIdx >= 0 {
-				queryKey = queryKey[:ampIdx]
+		_, querySuffix, found := strings.Cut(u.Fragment, "?")
+		if found {
+			// Parse the query string from the fragment
+			fragmentQuery, err := url.ParseQuery(querySuffix)
+			if err == nil {
+				queryKey = fragmentQuery.Get("key")
 			}
 		}
 	}

@@ -47,6 +47,18 @@ func TestParse(t *testing.T) {
 		{name: "bad scheme", raw: "http://example.org/x", wantErr: true},
 		{name: "no host", raw: "irc:///#chan", wantErr: true},
 		{name: "target with space", raw: "irc://example.org/%23a%20b", wantErr: true},
+		{
+			name: "fragment with multi-param query, key not first",
+			raw:  "irc://example.org/#chan?foo=bar&key=hunter2",
+			want: &Link{Scheme: "irc", Host: "example.org", Port: 6667,
+				Targets: []Target{{Name: "#chan", Key: "hunter2"}}},
+		},
+		{
+			name: "path form with key",
+			raw:  "irc://example.org/secret?key=pw",
+			want: &Link{Scheme: "irc", Host: "example.org", Port: 6667,
+				Targets: []Target{{Name: "#secret", Key: "pw"}}},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
