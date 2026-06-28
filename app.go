@@ -52,6 +52,7 @@ type App struct {
 	startupWg             sync.WaitGroup
 	shutdownOnce          sync.Once // Ensure shutdown only runs once
 	emitFn                func(name string, data ...any) // test seam; nil in production
+	pendingNetworkPrefill *NetworkPrefill                // deep-link Add Network prefill; consumed by the settings window
 }
 
 // stsTarget is a pending plaintext→TLS upgrade: a host advertised STS over an

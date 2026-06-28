@@ -7,6 +7,31 @@ import (
 	"github.com/matt0x6f/irc-client/internal/logger"
 )
 
+// NetworkPrefill carries deep-link data for a network Cascade doesn't have saved
+// yet, so the settings window can open the Add Network form prefilled.
+type NetworkPrefill struct {
+	Host    string `json:"host"`
+	Port    int    `json:"port"`
+	TLS     bool   `json:"tls"`
+	Channel string `json:"channel"`
+}
+
+func (a *App) setPendingNetworkPrefill(p *NetworkPrefill) {
+	a.mu.Lock()
+	a.pendingNetworkPrefill = p
+	a.mu.Unlock()
+}
+
+// GetPendingNetworkPrefill returns the pending Add Network prefill (if any) and
+// clears it, so it is consumed exactly once. Bound for the settings window.
+func (a *App) GetPendingNetworkPrefill() *NetworkPrefill {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	p := a.pendingNetworkPrefill
+	a.pendingNetworkPrefill = nil
+	return p
+}
+
 // isDeepLinkArg reports whether a CLI arg looks like one of our schemes.
 func isDeepLinkArg(arg string) bool {
 	return strings.HasPrefix(arg, "irc://") || strings.HasPrefix(arg, "ircs://")
@@ -52,6 +77,9 @@ func (a *App) handleDeepLink(raw string) {
 	matches := a.resolveMatches(link.Host)
 	switch len(matches) {
 	case 0:
+		a.setPendingNetworkPrefill(&NetworkPrefill{
+			Host: link.Host, Port: link.Port, TLS: link.TLS, Channel: firstChannel,
+		})
 		a.emit("deeplink:add-network", map[string]any{
 			"host": link.Host, "port": link.Port, "tls": link.TLS, "channel": firstChannel,
 		})

@@ -16,6 +16,7 @@ export {
     LogConfig,
     MonitorEntry,
     NetworkConfig,
+    NetworkPrefill,
     PluginInfo,
     ScriptInfo,
     ServerCapabilitiesInfo,

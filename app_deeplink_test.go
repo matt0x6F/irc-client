@@ -117,6 +117,25 @@ func TestProcessStartupArgs_PicksUpDeepLink(t *testing.T) {
 	}
 }
 
+func TestHandleDeepLink_UnknownHostStoresPrefill(t *testing.T) {
+	a, _ := newDeepLinkTestApp(t)
+	_ = captureEmits(a)
+
+	a.handleDeepLink("ircs://unknown.example:7000/#chan")
+
+	p := a.GetPendingNetworkPrefill()
+	if p == nil {
+		t.Fatal("expected pending prefill stored")
+	}
+	if p.Host != "unknown.example" || p.Port != 7000 || !p.TLS || p.Channel != "#chan" {
+		t.Fatalf("bad prefill: %+v", p)
+	}
+	// Getter clears: second call returns nil.
+	if a.GetPendingNetworkPrefill() != nil {
+		t.Fatal("expected prefill to be cleared after read")
+	}
+}
+
 func TestFindNetworksByAddress_MultipleMatches(t *testing.T) {
 	a, s := newDeepLinkTestApp(t)
 	makeNetwork(t, s, "Libera work", "irc.libera.chat")

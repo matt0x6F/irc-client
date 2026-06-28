@@ -3,6 +3,14 @@ import { create } from 'zustand';
 // Settings is now its own native window (opened from the Go backend via
 // App.OpenSettings), not an in-app modal — so no settings state lives here.
 
+// DeepLinkDisambiguation holds the payload for the disambiguation picker shown
+// when a deep link matches multiple saved networks. Task 7 adds the picker
+// component; this task owns adding the state.
+export interface DeepLinkDisambiguation {
+  candidates: { networkId: number; name: string }[];
+  targets: { name: string; isNick: boolean; key: string }[];
+}
+
 interface UIState {
   // Topic modal
   showTopicModal: boolean;
@@ -54,6 +62,10 @@ interface UIState {
   // Help dialog
   helpOpen: boolean;
   setHelpOpen: (open: boolean) => void;
+
+  // Deep-link disambiguation picker (Task 7 renders the component)
+  deepLinkDisambiguation: DeepLinkDisambiguation | null;
+  setDeepLinkDisambiguation: (d: DeepLinkDisambiguation | null) => void;
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -96,4 +108,7 @@ export const useUIStore = create<UIState>((set) => ({
 
   helpOpen: false,
   setHelpOpen: (open) => set({ helpOpen: open }),
+
+  deepLinkDisambiguation: null,
+  setDeepLinkDisambiguation: (d) => set({ deepLinkDisambiguation: d }),
 }));

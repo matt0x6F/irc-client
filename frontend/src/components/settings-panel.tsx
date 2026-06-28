@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { ArrowLeft, ChevronRight } from 'lucide-react';
 import { main, storage } from '../../wailsjs/go/models';
-import { GetNetworks, SaveNetwork, ConnectNetwork, DeleteNetwork, DisconnectNetwork, GetConnectionStatus, GetServers, ListPlugins, EnablePlugin, DisablePlugin, ReloadPlugin, GetBuildInfo, CheckForUpdates, GetLogConfig, SetLogConfig, GetDefaultLogPath, GetSTSPolicies, ClearSTSPolicy, RequestNotificationPermission } from '../../wailsjs/go/main/App';
+import { GetNetworks, SaveNetwork, ConnectNetwork, DeleteNetwork, DisconnectNetwork, GetConnectionStatus, GetServers, ListPlugins, EnablePlugin, DisablePlugin, ReloadPlugin, GetBuildInfo, CheckForUpdates, GetLogConfig, SetLogConfig, GetDefaultLogPath, GetSTSPolicies, ClearSTSPolicy, RequestNotificationPermission, GetPendingNetworkPrefill } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import { PluginConfigForm } from './plugin-config-form';
 import { ScriptsPanel } from './scripts-panel';
@@ -246,6 +246,35 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
       loadStsPolicies();
     });
     return () => unsubscribe();
+  }, []);
+
+  // Deep-link prefill: when a deep link for an unknown host arrives, the backend
+  // stores a one-shot NetworkPrefill and emits deeplink:add-network. This window
+  // fetches it via GetPendingNetworkPrefill (which clears it atomically) and opens
+  // the Add Network form prefilled with host/port/tls. The channel from the URL is
+  // not part of NetworkConfig (no autojoin field), so it is dropped here — the user
+  // joins the channel after connecting.
+  useEffect(() => {
+    const applyPrefill = async () => {
+      const p = await GetPendingNetworkPrefill();
+      if (!p || !p.host) return;
+      setEditingNetwork(null);
+      setFormData(main.NetworkConfig.createFrom({
+        name: p.host,
+        servers: [{ address: p.host, port: p.port, tls: p.tls, order: 0 }],
+        nickname: '',
+        username: '',
+        realname: '',
+        password: '',
+      }));
+      setShowAddForm(true);
+      onSectionChange('networks');
+    };
+    // Cold-open: fetch once on mount in case a prefill was stored before this window opened.
+    void applyPrefill();
+    // Already-open: the backend re-emits deeplink:add-network on each new deep link.
+    const off = EventsOn('deeplink:add-network', () => { void applyPrefill(); });
+    return () => { off && off(); };
   }, []);
 
   const loadStsPolicies = async () => {
