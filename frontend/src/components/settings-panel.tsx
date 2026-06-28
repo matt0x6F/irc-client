@@ -129,6 +129,8 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
   const setTypingReceive = useSettingsStore((s) => s.setTypingReceive);
   const reconnectOnAuthFailure = useSettingsStore((s) => s.reconnectOnAuthFailure);
   const setReconnectOnAuthFailure = useSettingsStore((s) => s.setReconnectOnAuthFailure);
+  const unfurlsEnabled = useSettingsStore((s) => s.unfurlsEnabled);
+  const setUnfurlsEnabled = useSettingsStore((s) => s.setUnfurlsEnabled);
   const [notifyNotice, setNotifyNotice] = useState<string | null>(null);
 
   // Theme (appearance + accent)
@@ -1317,6 +1319,19 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
                 </div>
                 <p className="text-xs text-muted-foreground mt-2">
                   When enabled, consecutive join, part, or quit messages of the same type will be combined into a single line (e.g., "A, B, C joins" instead of three separate lines).
+                </p>
+              </div>
+
+              {/* Link previews */}
+              <div className="border border-border rounded-lg p-4 bg-card/50 shadow-[var(--shadow-sm)]">
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-sm font-medium">Link previews (unfurls)</span>
+                  <Toggle checked={unfurlsEnabled} onChange={setUnfurlsEnabled} />
+                </div>
+                <p className="text-xs text-muted-foreground mt-2">
+                  Show a "Preview" button beside links. Nothing is fetched until you click it —
+                  the preview is loaded by the app (not the page), so a link can't see your IP
+                  unless you choose to preview it. Off by default.
                 </p>
               </div>
 
