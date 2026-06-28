@@ -253,9 +253,17 @@ RequestExecutionLevel "${REQUEST_EXECUTION_LEVEL}"
 !macro wails.associateCustomProtocols
     ; Create custom protocols associations
     
+      !insertmacro CUSTOM_PROTOCOL_ASSOCIATE "irc" "IRC URL" "$INSTDIR\${PRODUCT_EXECUTABLE},0" "$INSTDIR\${PRODUCT_EXECUTABLE} $\"%1$\""
+    
+      !insertmacro CUSTOM_PROTOCOL_ASSOCIATE "ircs" "IRC over TLS URL" "$INSTDIR\${PRODUCT_EXECUTABLE},0" "$INSTDIR\${PRODUCT_EXECUTABLE} $\"%1$\""
+    
 !macroend
 
 !macro wails.unassociateCustomProtocols
     ; Delete app custom protocol associations
+    
+      !insertmacro CUSTOM_PROTOCOL_UNASSOCIATE "irc"
+    
+      !insertmacro CUSTOM_PROTOCOL_UNASSOCIATE "ircs"
     
 !macroend
