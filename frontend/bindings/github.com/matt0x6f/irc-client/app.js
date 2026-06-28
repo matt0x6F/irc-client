@@ -22,6 +22,9 @@ import * as irc$0 from "./internal/irc/models.js";
 import * as storage$0 from "./internal/storage/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
+import * as unfurl$0 from "./internal/unfurl/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
 import * as application$0 from "../../wailsapp/wails/v3/pkg/application/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -96,8 +99,8 @@ export function ClearSTSPolicy(hostname) {
 /**
  * CloseChannel hides a channel's buffer pane (is_open=false) WITHOUT leaving
  * the channel on the server. This is distinct from LeaveChannel, which sends a
- * real PART. It emits EventChannelsChanged so every window's server tree drops
- * the pane; SetChannelOpen alone only emits a pane-blur event.
+ * real PART when you are joined. It emits EventChannelsChanged so every window's
+ * server tree drops the pane; SetChannelOpen alone only emits a pane-blur event.
  * @param {number} networkID
  * @param {string} channelName
  * @returns {$CancellablePromise<void>}
@@ -604,7 +607,12 @@ export function Greet(name) {
 }
 
 /**
- * LeaveChannel leaves an IRC channel
+ * LeaveChannel leaves an IRC channel by sending a PART when joined and
+ * connected. It is overloaded: on the not-joined / no-client / lookup-error
+ * paths it instead just hides the buffer pane (SetChannelOpen false) and emits
+ * EventChannelsChanged. The UI only offers "Leave Channel" when joined (see
+ * server-tree.tsx), so in practice this always takes the PART path; callers
+ * that want a pure buffer-hide should use CloseChannel instead.
  * @param {number} networkID
  * @param {string} channelName
  * @returns {$CancellablePromise<void>}
@@ -977,6 +985,22 @@ export function ToggleNetworkAutoConnect(networkID) {
 }
 
 /**
+ * UnfurlURL returns a preview card for rawURL. It is the single network egress
+ * point for the feature: the webview never fetches preview content itself. A
+ * cache hit performs no network I/O. Failures are reported via Status
+ * ("blocked" for SSRF/scheme rejections, "error" otherwise) rather than a Go
+ * error, so the frontend can render a quiet inline state; a Go error is returned
+ * only for unexpected internal (cache) failures.
+ * @param {string} rawURL
+ * @returns {$CancellablePromise<unfurl$0.LinkPreview | null>}
+ */
+export function UnfurlURL(rawURL) {
+    return $Call.ByID(2006376526, rawURL).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType38($result);
+    }));
+}
+
+/**
  * UnpinMessage removes a pin
  * @param {number} messageID
  * @returns {$CancellablePromise<void>}
@@ -1023,3 +1047,5 @@ const $$createType33 = $models.ScriptInfo.createFrom;
 const $$createType34 = $Create.Array($$createType33);
 const $$createType35 = storage$0.SearchResult.createFrom;
 const $$createType36 = $Create.Array($$createType35);
+const $$createType37 = unfurl$0.LinkPreview.createFrom;
+const $$createType38 = $Create.Nullable($$createType37);

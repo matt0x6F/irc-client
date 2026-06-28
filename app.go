@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"github.com/matt0x6f/irc-client/internal/script"
 	"github.com/matt0x6f/irc-client/internal/security"
 	"github.com/matt0x6f/irc-client/internal/storage"
+	"github.com/matt0x6f/irc-client/internal/unfurl"
 	"github.com/wailsapp/wails/v3/pkg/application"
 	wailsevents "github.com/wailsapp/wails/v3/pkg/events"
 )
@@ -457,6 +459,65 @@ func (a *App) SetSetting(key, value string) error {
 		a.refreshNotificationPrefs()
 	}
 	return nil
+}
+
+const (
+	linkPreviewTTLSeconds = 7 * 24 * 60 * 60 // 7 days
+	linkPreviewMaxRows    = 500
+)
+
+// UnfurlURL returns a preview card for rawURL. It is the single network egress
+// point for the feature: the webview never fetches preview content itself. A
+// cache hit performs no network I/O. Failures are reported via Status
+// ("blocked" for SSRF/scheme rejections, "error" otherwise) rather than a Go
+// error, so the frontend can render a quiet inline state; a Go error is returned
+// only for unexpected internal (cache) failures.
+func (a *App) UnfurlURL(rawURL string) (*unfurl.LinkPreview, error) {
+	now := time.Now()
+	if cached, ok, err := a.storage.GetLinkPreview(rawURL, now.Unix(), linkPreviewTTLSeconds); err != nil {
+		return nil, err
+	} else if ok {
+		return cachedToPreview(cached), nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	preview, err := unfurl.Fetch(ctx, rawURL)
+	if err != nil {
+		status := "error"
+		if errors.Is(err, unfurl.ErrBlocked) {
+			status = "blocked"
+		}
+		result := &unfurl.LinkPreview{URL: rawURL, Status: status, FetchedAt: now.Format(time.RFC3339)}
+		if status == "blocked" { // cache blocked verdicts; never cache transient errors
+			_ = a.storage.UpsertLinkPreview(previewToCached(result, now.Unix()))
+			_ = a.storage.PruneLinkPreviews(linkPreviewMaxRows)
+		}
+		return result, nil
+	}
+
+	preview.Status = "ok"
+	preview.FetchedAt = now.Format(time.RFC3339)
+	if err := a.storage.UpsertLinkPreview(previewToCached(preview, now.Unix())); err == nil {
+		_ = a.storage.PruneLinkPreviews(linkPreviewMaxRows)
+	}
+	return preview, nil
+}
+
+func cachedToPreview(c *storage.CachedPreview) *unfurl.LinkPreview {
+	return &unfurl.LinkPreview{
+		URL: c.URL, Status: c.Status, Title: c.Title, Description: c.Description,
+		SiteName: c.SiteName, ImageDataURI: c.ImageDataURI,
+		FetchedAt: time.Unix(c.FetchedAt, 0).Format(time.RFC3339),
+	}
+}
+
+func previewToCached(p *unfurl.LinkPreview, nowUnix int64) storage.CachedPreview {
+	return storage.CachedPreview{
+		URL: p.URL, Status: p.Status, Title: p.Title, Description: p.Description,
+		SiteName: p.SiteName, ImageDataURI: p.ImageDataURI, FetchedAt: nowUnix,
+	}
 }
 
 // GetSTSPolicies returns every stored IRCv3 STS policy (host → enforced TLS port +
