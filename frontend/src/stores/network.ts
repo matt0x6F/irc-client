@@ -38,6 +38,8 @@ import {
   GetNetworkUserMeta,
   PrintLocalLines,
   SendMessageWithContext,
+  GetMessageByMsgID,
+  GetChannels,
 } from '../../wailsjs/go/main/App';
 import { useCommandsStore, lookupCommand } from './commands';
 import { usePreferencesStore } from './preferences';
@@ -169,6 +171,11 @@ interface NetworkState {
   // per-message Reply affordance; cleared on send or Escape.
   replyTarget: { msgid: string; nick: string; snippet: string } | null;
 
+  // Cross-buffer jump: when a reply parent is in another buffer, openParentMessage
+  // switches to that buffer and parks the msgid here so the message-view effect
+  // can scroll once the messages load.
+  pendingScrollMsgid: string | null;
+
   // Selection
   selectedNetwork: number | null;
   selectedChannel: string | null;
@@ -210,6 +217,10 @@ interface NetworkState {
   // Reply state actions
   setReplyTarget: (target: { msgid: string; nick: string; snippet: string }) => void;
   clearReplyTarget: () => void;
+
+  // Cross-buffer jump actions
+  openParentMessage: (networkId: number, msgid: string) => Promise<void>;
+  clearPendingScrollMsgid: () => void;
 
   // Activity tracking
   markActivity: (key: string) => void;
@@ -272,6 +283,7 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
   loadingHistory: false,
   reachedStart: false,
   replyTarget: null,
+  pendingScrollMsgid: null,
   selectedNetwork: null,
   selectedChannel: null,
 
@@ -998,6 +1010,29 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
   setReplyTarget: (target) => set({ replyTarget: target }),
 
   clearReplyTarget: () => set({ replyTarget: null }),
+
+  clearPendingScrollMsgid: () => set({ pendingScrollMsgid: null }),
+
+  openParentMessage: async (networkId, msgid) => {
+    try {
+      const parent = await GetMessageByMsgID(networkId, msgid);
+      let pane: string;
+      if (parent.channel_id != null) {
+        const channels = await GetChannels(networkId);
+        const ch = (channels as Array<{ id: number; name: string }>).find(
+          (c) => c.id === parent.channel_id
+        );
+        if (!ch) return; // parent's channel not known locally; give up quietly
+        pane = ch.name;
+      } else {
+        pane = `pm:${parent.pm_target}`;
+      }
+      await get().selectPane(networkId, pane);
+      set({ pendingScrollMsgid: msgid });
+    } catch (e) {
+      console.error('openParentMessage failed', e);
+    }
+  },
 
   markActivity: (key) =>
     set((state) => {

@@ -258,24 +258,39 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
   const msgidIndex = useMemo(() => buildMsgidIndex(messages), [messages]);
 
   // Reply jump: scroll to a message row by msgid and flash it briefly.
-  // Cross-buffer resolution is deferred to Task 3.4.
-  const scrollToMsgid = useCallback((msgid: string) => {
+  // Returns true if the element was found and scrolled, false otherwise.
+  const scrollToMsgid = useCallback((msgid: string): boolean => {
     const el = scrollContainerRef.current?.querySelector<HTMLElement>(`[data-msgid="${CSS.escape(msgid)}"]`);
-    if (!el) {
-      // TODO(3.4): message not in current buffer — will be handled in Task 3.4 (cross-buffer jump)
-      return;
-    }
+    if (!el) return false;
     el.scrollIntoView({ block: 'center' });
     el.classList.add('msg-flash');
     setTimeout(() => el.classList.remove('msg-flash'), 1200);
+    return true;
   }, []);
+
+  const pendingScrollMsgid = useNetworkStore((s) => s.pendingScrollMsgid);
+  const clearPendingScrollMsgid = useNetworkStore((s) => s.clearPendingScrollMsgid);
+  const openParentMessage = useNetworkStore((s) => s.openParentMessage);
+
+  // Consume pendingScrollMsgid: once the new buffer's messages load and the row
+  // appears in the DOM, scroll to it and clear the pending id. Runs on every
+  // messages update (after selectPane loads the new buffer).
+  useEffect(() => {
+    if (!pendingScrollMsgid) return;
+    if (scrollToMsgid(pendingScrollMsgid)) {
+      clearPendingScrollMsgid();
+    }
+  }, [pendingScrollMsgid, messages, scrollToMsgid, clearPendingScrollMsgid]);
 
   const jumpToReplyMsgid = useCallback(
     (replyMsgid: string) => {
       if (!replyMsgid) return;
-      scrollToMsgid(replyMsgid);
+      if (scrollToMsgid(replyMsgid)) return;
+      // Parent not in the current buffer — switch to the buffer that contains it.
+      if (networkId === null) return;
+      void openParentMessage(networkId, replyMsgid);
     },
-    [scrollToMsgid],
+    [scrollToMsgid, openParentMessage, networkId],
   );
 
   const pinnedMessages = useNetworkStore((s) => s.pinnedMessages);

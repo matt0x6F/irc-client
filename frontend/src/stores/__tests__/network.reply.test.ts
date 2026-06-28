@@ -12,10 +12,12 @@ vi.mock('../../../wailsjs/go/main/App', async (orig) => {
     SendMessageWithContext: vi.fn().mockResolvedValue(undefined),
     GetChannelIDByName: vi.fn().mockResolvedValue(42),
     GetConnectionStatus: vi.fn(),
+    GetMessageByMsgID: vi.fn(),
+    GetChannels: vi.fn(),
   };
 });
 
-import { SendMessageWithContext, SendMessage } from '../../../wailsjs/go/main/App';
+import { SendMessageWithContext, SendMessage, GetMessageByMsgID, GetChannels } from '../../../wailsjs/go/main/App';
 
 describe('network store: reply state', () => {
   beforeEach(() => {
@@ -95,5 +97,52 @@ describe('network store: reply send wiring (PM)', () => {
   it('PM send uses SendMessageWithContext with empty msgid when no reply', async () => {
     await useNetworkStore.getState().sendMessage('hey');
     expect(SendMessageWithContext).toHaveBeenCalledWith(1, 'alice', 'hey', '', '');
+  });
+});
+
+describe('network store: openParentMessage', () => {
+  let selectPaneSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    useNetworkStore.setState({
+      replyTarget: null,
+      selectedNetwork: 1,
+      selectedChannel: '#dev',
+      networks: [{ id: 1, nickname: 'me' } as any],
+      messages: [],
+      pendingScrollMsgid: null,
+    } as any);
+    (GetMessageByMsgID as ReturnType<typeof vi.fn>).mockClear();
+    (GetChannels as ReturnType<typeof vi.fn>).mockClear();
+    selectPaneSpy = vi.spyOn(useNetworkStore.getState(), 'selectPane').mockResolvedValue(undefined);
+  });
+
+  it('openParentMessage switches to the parent channel buffer and sets pendingScrollMsgid', async () => {
+    (GetMessageByMsgID as ReturnType<typeof vi.fn>).mockResolvedValue({
+      channel_id: 9,
+      pm_target: '',
+      msgid: 'p1',
+    });
+    (GetChannels as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: 9, name: '#other', network_id: 1 },
+    ]);
+
+    await useNetworkStore.getState().openParentMessage(1, 'p1');
+
+    expect(selectPaneSpy).toHaveBeenCalledWith(1, '#other');
+    expect(useNetworkStore.getState().pendingScrollMsgid).toBe('p1');
+  });
+
+  it('openParentMessage routes a PM parent to its pm: pane', async () => {
+    (GetMessageByMsgID as ReturnType<typeof vi.fn>).mockResolvedValue({
+      channel_id: null,
+      pm_target: 'bob',
+      msgid: 'p2',
+    });
+
+    await useNetworkStore.getState().openParentMessage(1, 'p2');
+
+    expect(selectPaneSpy).toHaveBeenCalledWith(1, 'pm:bob');
+    expect(useNetworkStore.getState().pendingScrollMsgid).toBe('p2');
   });
 });
