@@ -235,6 +235,59 @@ export class CommandInfo {
 }
 
 /**
+ * InviteView is one pending invite as seen by the frontend. ReceivedAt is an
+ * RFC3339 string — time.Time never crosses the Wails boundary.
+ */
+export class InviteView {
+    /**
+     * Creates a new InviteView instance.
+     * @param {Partial<InviteView>} [$$source = {}] - The source object to create the InviteView.
+     */
+    constructor($$source = {}) {
+        if (!("inviter" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["inviter"] = "";
+        }
+        if (!("channel" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["channel"] = "";
+        }
+        if (!("trusted" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["trusted"] = false;
+        }
+        if (!("receivedAt" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["receivedAt"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new InviteView instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {InviteView}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new InviteView(/** @type {Partial<InviteView>} */($$parsedSource));
+    }
+}
+
+/**
  * LastOpenPane represents the last open pane (channel or PM conversation)
  */
 export class LastOpenPane {
