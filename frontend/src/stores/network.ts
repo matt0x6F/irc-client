@@ -755,6 +755,14 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
     // A pending scrollback history request belongs to the pane we're leaving.
     clearHistoryWaiter();
 
+    // The invites pseudo-pane has no message history or channel to join.
+    // Just update selection and load the invite list, then bail.
+    if (channel === 'invites') {
+      set({ selectedNetwork: networkId, selectedChannel: 'invites' });
+      await get().loadInvites(networkId);
+      return;
+    }
+
     // Switching panes always returns to the live view and clears any anchor, and
     // resets CHATHISTORY pagination state for the freshly-selected buffer.
     set({
