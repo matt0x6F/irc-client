@@ -73,6 +73,33 @@ func (a *App) emitInvitesChanged(networkID int64) {
 	a.emit("invites.changed", map[string]any{"networkId": networkID})
 }
 
+// sweepInvitesOnce drops expired invites and notifies the frontend for each
+// affected network. Extracted from the ticker loop so it is unit-testable.
+func (a *App) sweepInvitesOnce() {
+	for _, net := range a.invites.sweep() {
+		a.emitInvitesChanged(net)
+	}
+}
+
+// startInviteSweeper runs sweepInvitesOnce on a 5-minute cadence until shutdown,
+// so a buddy invite's badge clears on its own once it passes the TTL.
+func (a *App) startInviteSweeper() {
+	a.startupWg.Add(1)
+	go func() {
+		defer a.startupWg.Done()
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-a.startupCtx.Done():
+				return
+			case <-ticker.C:
+				a.sweepInvitesOnce()
+			}
+		}
+	}()
+}
+
 // handleInviteReceived stores an inbound invite, classifies trust against the
 // buddy list, emits the change, and fires a desktop notification when warranted.
 func (a *App) handleInviteReceived(event events.Event) {

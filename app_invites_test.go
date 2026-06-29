@@ -76,6 +76,30 @@ func TestInviteNotifyDecision(t *testing.T) {
 	}
 }
 
+func TestApp_SweepEmitsForExpired(t *testing.T) {
+	a := newTestApp(t)
+	now := time.Now()
+	clock := &now
+	a.invites = newInviteStore(func() time.Time { return *clock }, func() time.Duration { return time.Hour })
+	a.invites.add(7, "alice", "#a", false)
+
+	var emittedNet int64 = -1
+	a.emitFn = func(name string, data ...any) {
+		if name == "invites.changed" {
+			if m, ok := data[0].(map[string]any); ok {
+				emittedNet, _ = m["networkId"].(int64)
+			}
+		}
+	}
+
+	*clock = now.Add(2 * time.Hour) // past TTL
+	a.sweepInvitesOnce()            // the single-pass helper the ticker calls
+
+	if emittedNet != 7 {
+		t.Fatalf("expected invites.changed for net 7, got %d", emittedNet)
+	}
+}
+
 func TestApp_IgnoreInviteSender_DropsAndBlocks(t *testing.T) {
 	a := newTestApp(t)
 	a.invites = newInviteStore(time.Now, func() time.Duration { return 24 * time.Hour })

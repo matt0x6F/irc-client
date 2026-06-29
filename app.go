@@ -275,6 +275,9 @@ func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) 
 		a.autoConnect(a.startupCtx)
 	}()
 
+	// Sweep expired invite TTLs every 5 minutes so badges clear automatically.
+	a.startInviteSweeper()
+
 	// Poll for self-updates in the background (no-op on dev builds where the
 	// updater was never configured). Surfaces the updater window only when a
 	// newer release is found — see startPeriodicUpdateCheck.
