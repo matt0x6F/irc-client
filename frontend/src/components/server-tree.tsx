@@ -238,7 +238,11 @@ export function ServerTree({
     if (window.getSelection) {
       window.getSelection()?.removeAllRanges();
     }
-    
+
+    // Reset the PM "Invite to" channel list so a prior network's channels never
+    // flash before this menu's own fetch resolves (only the 'pm' branch repopulates it).
+    setContextMenuJoinedChannels([]);
+
     // If it's a server context menu, load the network data
     if (type === 'server' && serverId) {
       const network = servers.find(n => n.id === serverId);
