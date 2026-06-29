@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 	"time"
 )
@@ -46,10 +47,17 @@ func fetchWith(ctx context.Context, rawURL string, guard ipGuard) (*LinkPreview,
 
 	client := newGuardedClient(fetchTimeout, maxRedirects, guard)
 
-	body, finalURL, err := fetchBounded(ctx, client, rawURL, "text/html", maxHTMLBytes)
+	body, contentType, finalURL, err := fetchTopLevel(ctx, client, rawURL)
 	if err != nil {
 		return nil, err
 	}
+
+	// A URL that resolves directly to an image (a pasted CDN/upload link) gets an
+	// image-only card; everything else is parsed as an HTML document.
+	if strings.HasPrefix(contentType, "image/") {
+		return imagePreview(body, finalURL)
+	}
+
 	md := parseMetadata(strings.NewReader(string(body)))
 
 	preview := &LinkPreview{
@@ -70,16 +78,85 @@ func fetchWith(ctx context.Context, rawURL string, guard ipGuard) (*LinkPreview,
 	return preview, nil
 }
 
-// fetchBounded GETs rawURL, enforces the content-type prefix, and reads at most
-// maxBytes. It returns the body and the final (post-redirect) URL.
-func fetchBounded(ctx context.Context, c *http.Client, rawURL, wantType string, maxBytes int64) ([]byte, string, error) {
+// imagePreview builds an image-only card for a URL that is itself an image. The
+// mime type is decided solely by DetectContentType on the payload bytes (never
+// the server-declared header), matching fetchImage's anti-spoofing guarantee.
+func imagePreview(body []byte, finalURL string) (*LinkPreview, error) {
+	mime := http.DetectContentType(body)
+	if !strings.HasPrefix(mime, "image/") {
+		return nil, fmt.Errorf("unfurl: payload is not an image (%s)", mime)
+	}
+	preview := &LinkPreview{
+		URL:          finalURL,
+		ImageDataURI: "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(body),
+	}
+	// Surface the host and file name so the card has a label beside the image.
+	if u, err := url.Parse(finalURL); err == nil {
+		preview.SiteName = u.Host
+		if name := path.Base(u.Path); name != "" && name != "/" && name != "." {
+			preview.Title = name
+		}
+	}
+	return preview, nil
+}
+
+// newPreviewRequest builds a GET carrying the link-preview fetch headers.
+func newPreviewRequest(ctx context.Context, rawURL string) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	req.Header.Set("User-Agent", "Cascade-Chat-LinkPreview/1.0")
 	req.Header.Set("Accept-Language", "en")
 	req.Header.Set("DNT", "1")
+	return req, nil
+}
+
+// fetchTopLevel GETs rawURL and dispatches on the response Content-Type: HTML
+// and image responses are both accepted (each with its own byte cap) so a URL
+// that points straight at an image still produces a preview. Anything else is
+// rejected. It returns the body, the lowercased Content-Type, and the final
+// (post-redirect) URL.
+func fetchTopLevel(ctx context.Context, c *http.Client, rawURL string) ([]byte, string, string, error) {
+	req, err := newPreviewRequest(ctx, rawURL)
+	if err != nil {
+		return nil, "", "", err
+	}
+	resp, err := c.Do(req)
+	if err != nil {
+		return nil, "", "", err // wraps ErrBlocked when the dialer rejected the IP
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", "", fmt.Errorf("unfurl: status %d", resp.StatusCode)
+	}
+
+	ct := strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Type")))
+	var maxBytes int64
+	switch {
+	case strings.HasPrefix(ct, "text/html"):
+		maxBytes = maxHTMLBytes
+	case strings.HasPrefix(ct, "image/"):
+		maxBytes = maxImgBytes
+	default:
+		return nil, "", "", fmt.Errorf("unfurl: unsupported content-type %q", ct)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes))
+	if err != nil {
+		return nil, "", "", err
+	}
+	return body, ct, resp.Request.URL.String(), nil
+}
+
+// fetchBounded GETs rawURL, enforces the content-type prefix, and reads at most
+// maxBytes. It returns the body and the final (post-redirect) URL.
+func fetchBounded(ctx context.Context, c *http.Client, rawURL, wantType string, maxBytes int64) ([]byte, string, error) {
+	req, err := newPreviewRequest(ctx, rawURL)
+	if err != nil {
+		return nil, "", err
+	}
 
 	resp, err := c.Do(req)
 	if err != nil {
