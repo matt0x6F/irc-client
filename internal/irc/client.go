@@ -44,6 +44,7 @@ type IRCClient struct {
 	network               *storage.Network
 	mu                    sync.RWMutex
 	connected             bool
+	loopDone              chan struct{} // Closed when the library's Loop() goroutine fully exits; lets teardown wait for a clean stop (guarded by mu)
 	saslEnabled           bool
 	saslMechanism         string
 	saslUsername          string
@@ -3940,7 +3941,7 @@ func (c *IRCClient) Connect() error {
 	})
 
 	// Start the connection loop in a goroutine
-	go c.conn.Loop()
+	c.runLoop()
 
 	// Auto-join is gated on registration completion, not a fixed timer: JOIN is
 	// what makes the server send the NAMES list that builds the roster, and a
@@ -4024,21 +4025,87 @@ func (c *IRCClient) announceBotMode() {
 }
 
 // Disconnect disconnects from the IRC server
-func (c *IRCClient) Disconnect() error {
+// runLoop launches the library's connection Loop in a goroutine and records a
+// done channel that closes when that goroutine fully exits. Teardown waits on it
+// so a follow-on reconnect can't race a socket that is still being torn down.
+//
+// This matters because the library's Loop auto-reconnects on ANY drop unless its
+// quit flag is set — and ReconnectFreq=0 does NOT disable that (the library
+// silently defaults it to two minutes). A teardown that fails to set quit would
+// therefore leak this goroutine as a ghost that reconnects under a fallback nick
+// and holds the preferred nick hostage, which is exactly the bug this guards.
+func (c *IRCClient) runLoop() {
+	done := make(chan struct{})
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.loopDone = done
+	c.mu.Unlock()
+	go func() {
+		defer close(done)
+		c.conn.Loop()
+	}()
+}
 
-	if !c.connected {
+// Disconnect tears the connection down deterministically. It does NOT merely send
+// a raw QUIT: it drives the library's Quit(), which both sends the QUIT and sets
+// the library's quit flag. That flag is the only thing that stops Loop() from
+// auto-reconnecting on the resulting socket close (ReconnectFreq=0 does not
+// disable it — see runLoop). Without it a "disconnected" client leaks a Loop
+// goroutine that reconnects under a fallback nick and holds the preferred nick
+// hostage — the ghost-session bug. After signalling quit it waits, bounded, for
+// the Loop goroutine to fully exit so a follow-on reconnect can't race a socket
+// that is still closing.
+//
+// Idempotent and safe on an already-dropped client (connected == false): the
+// quit flag must still be set there, because a dropped client's Loop is the one
+// about to reconnect. The mutex is released before the wait — the Loop's own
+// disconnect callback acquires it on the way out.
+// signalQuit puts the library connection into the quitting state — it sends a
+// QUIT and, crucially, sets the library's quit flag, which is the ONLY thing
+// that stops Loop() from auto-reconnecting on the resulting socket close (see
+// runLoop). It marks us disconnected and returns the loopDone channel so callers
+// that want a deterministic teardown can wait on it. It never waits itself, so
+// it is safe to call from inside the Loop's own callbacks (where waiting on
+// loopDone would deadlock). Idempotent.
+func (c *IRCClient) signalQuit(reason string) <-chan struct{} {
+	c.mu.Lock()
+	conn := c.conn
+	done := c.loopDone
+	c.connected = false
+	c.mu.Unlock()
+
+	if conn == nil {
 		return nil
 	}
+	conn.QuitMessage = reason
+	conn.Quit()
+	return done
+}
 
-	// Send QUIT command with reason
-	if err := c.conn.SendRaw("QUIT :Disconnecting"); err != nil {
-		logger.Log.Warn().Err(err).Msg("Failed to send QUIT command, trying conn.Quit()")
-		// Fallback to conn.Quit() if SendRaw fails
-		c.conn.Quit()
+// StopReconnect stops a connection we are abandoning WITHOUT immediately
+// re-dialing (a drop we have decided not to reconnect, e.g. AutoConnect off). It
+// sets the library quit flag so the orphaned Loop goroutine cannot silently
+// reconnect minutes later as a ghost holding our nick. It does not wait — the
+// quit flag alone prevents the reconnect; there is no follow-on dial to race.
+func (c *IRCClient) StopReconnect() {
+	c.signalQuit("Disconnecting")
+}
+
+// Disconnect tears the connection down deterministically: it signals quit (so the
+// library Loop cannot auto-reconnect as a ghost — the bug this guards) and then
+// waits, bounded, for that Loop goroutine to fully exit so a follow-on reconnect
+// can't race a socket that is still closing. Safe and idempotent on an
+// already-dropped client. The mutex is not held across the wait — the Loop's own
+// disconnect callback acquires it on the way out.
+func (c *IRCClient) Disconnect() error {
+	done := c.signalQuit("Disconnecting")
+
+	if done != nil {
+		select {
+		case <-done:
+		case <-time.After(constants.ConnectionTeardownTimeout):
+			logger.Log.Warn().Int64("network_id", c.networkID).Msg("Disconnect: timed out waiting for connection loop to exit; quit flag is set so it will not reconnect")
+		}
 	}
-	c.connected = false
 	return nil
 }
 

@@ -117,17 +117,16 @@ func (c *IRCClient) handleCapLSMissingSASL(allCaps string) {
 	}
 }
 
-// abortAuth tears the connection down after an authentication failure. The QUIT
-// routes through the library DisconnectCallback -> EventConnectionLost, where
-// the app layer sees AuthFailed() and suppresses auto-reconnect unless the user
-// opted in.
+// abortAuth tears the connection down after an authentication failure. It routes
+// through signalQuit so the library quit flag is set — otherwise the Loop
+// goroutine would auto-reconnect on the resulting socket close and retry the same
+// failing credentials forever (and ghost the nick). The QUIT routes through the
+// library DisconnectCallback -> EventConnectionLost, where the app layer sees
+// AuthFailed() and suppresses auto-reconnect unless the user opted in. It does
+// not wait for the Loop to exit: abortAuth runs inside a SASL callback on the
+// Loop goroutine, where waiting would deadlock.
 func (c *IRCClient) abortAuth() {
-	if err := c.conn.SendRaw("QUIT :Authentication failed"); err != nil {
-		c.conn.Quit()
-	}
-	c.mu.Lock()
-	c.connected = false
-	c.mu.Unlock()
+	c.signalQuit("Authentication failed")
 }
 
 // joinErrorReasons maps the standard join-failure numerics to a short,

@@ -241,6 +241,7 @@ func (a *App) connectNetwork(config NetworkConfig, reconnect bool) error {
 	}
 
 	// Check if already connected to this network (by ID)
+	var staleClient *irc.IRCClient
 	if existingClient, exists := a.ircClients[network.ID]; exists {
 		if existingClient.IsConnectedDirect() {
 			logger.Log.Warn().Str("network", config.Name).Int64("id", network.ID).Msg("Already connected, rejecting duplicate connection")
@@ -248,6 +249,7 @@ func (a *App) connectNetwork(config NetworkConfig, reconnect bool) error {
 			return fmt.Errorf("already connected to %s", config.Name)
 		}
 		logger.Log.Debug().Str("network", config.Name).Int64("id", network.ID).Msg("Cleaning up disconnected client before reconnecting")
+		staleClient = existingClient
 		delete(a.ircClients, network.ID)
 	}
 
@@ -257,6 +259,17 @@ func (a *App) connectNetwork(config NetworkConfig, reconnect bool) error {
 	logger.Log.Debug().Str("network_key", networkKey).Str("network", config.Name).Int64("id", network.ID).Msg("Marked as connecting")
 
 	a.mu.Unlock()
+
+	// Deterministically stop the stale client before dialing again. Removing it
+	// from the map only drops our reference — its library Loop goroutine keeps
+	// running and would auto-reconnect as a ghost session that holds our preferred
+	// nick, forcing the new connection onto a fallback nick (and the +r/+f channel
+	// forwards that follow). Disconnect sets the quit flag and waits, bounded, for
+	// that goroutine to exit. Called outside a.mu so the wait can't stall other
+	// networks' operations.
+	if staleClient != nil {
+		staleClient.Disconnect()
+	}
 
 	// Wait a bit for any existing connection to clean up
 	time.Sleep(constants.ConnectionCleanupDelay)
@@ -370,10 +383,11 @@ func (a *App) connectNetwork(config NetworkConfig, reconnect bool) error {
 		if existingClient, exists := a.ircClients[network.ID]; exists && existingClient != ircClient {
 			if existingClient.IsConnectedDirect() {
 				logger.Log.Warn().Str("network", config.Name).Int64("id", network.ID).Msg("Another connection completed first, disconnecting duplicate")
-				ircClient.Disconnect()
 				delete(a.connectingNetworks, networkKey)
 				close(connectDone)
 				a.mu.Unlock()
+				// Outside a.mu: Disconnect waits (bounded) for the Loop goroutine.
+				ircClient.Disconnect()
 				return fmt.Errorf("connection to %s already established by another process", config.Name)
 			}
 		}
@@ -588,6 +602,13 @@ func (a *App) handleConnectionLost(networkID int64) {
 
 	if !network.AutoConnect {
 		logger.Log.Debug().Int64("network_id", networkID).Str("network", network.Name).Msg("Auto-connect disabled, skipping reconnect")
+		// We are deliberately not reconnecting, but the dropped client's library
+		// Loop will auto-reconnect on its own (~2 min) unless we set its quit flag.
+		// Stop it so a network the user left disconnected can't silently come back
+		// as a ghost session under a fallback nick.
+		if hasClient && client != nil {
+			client.StopReconnect()
+		}
 		a.mu.Lock()
 		delete(a.reconnectingNetworks, networkID)
 		a.mu.Unlock()
@@ -1019,10 +1040,10 @@ func (a *App) GetCurrentNick(networkID int64) (string, error) {
 // DisconnectNetwork disconnects from a network
 func (a *App) DisconnectNetwork(networkID int64) error {
 	a.mu.Lock()
-	defer a.mu.Unlock()
 
 	client, exists := a.ircClients[networkID]
 	if !exists {
+		a.mu.Unlock()
 		return fmt.Errorf("network not connected")
 	}
 
@@ -1030,17 +1051,25 @@ func (a *App) DisconnectNetwork(networkID int64) error {
 	// doesn't trip auto-reconnect (handleConnectionLost consumes the flag). Only
 	// when actually connected: disconnecting an already-dead client fires no
 	// DisconnectCallback, so the flag would otherwise leak onto the next genuine
-	// drop and wrongly suppress that reconnect.
+	// drop and wrongly suppress that reconnect. Set before the (lock-free)
+	// Disconnect so it is in place before the teardown fires the callback.
 	if client.IsConnectedDirect() {
 		a.intentionalDisconnect[networkID] = true
 	}
+	a.mu.Unlock()
 
+	// Disconnect blocks until the library Loop goroutine exits (bounded), so it
+	// must not run under a.mu — that lock guards every network's state.
 	if err := client.Disconnect(); err != nil {
+		a.mu.Lock()
 		delete(a.intentionalDisconnect, networkID)
+		a.mu.Unlock()
 		return fmt.Errorf("failed to disconnect: %w", err)
 	}
 
+	a.mu.Lock()
 	delete(a.ircClients, networkID)
+	a.mu.Unlock()
 	return nil
 }
 
@@ -1049,11 +1078,16 @@ func (a *App) DeleteNetwork(networkID int64) error {
 	a.mu.Lock()
 	client, exists := a.ircClients[networkID]
 	if exists {
-		client.Disconnect()
 		delete(a.ircClients, networkID)
 	}
 	delete(a.connectionGapOpen, networkID)
 	a.mu.Unlock()
+
+	// Stop the client outside a.mu: Disconnect waits (bounded) for the library
+	// Loop goroutine to exit, and that lock guards every network's state.
+	if exists && client != nil {
+		client.Disconnect()
+	}
 
 	if err := a.storage.DeleteNetwork(networkID); err != nil {
 		return err
