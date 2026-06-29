@@ -1,14 +1,14 @@
 /**
- * e2e screenshot of the Invites pane.
+ * e2e integration test for the Invites pane.
  *
  * Seeds one invite by having a throwaway IrcPeer send INVITE to the app user,
- * then navigates to the Invites pane and captures a screenshot.
- *
- * Run to generate / update the baseline:
- *   cd e2e && npx playwright test tests/invites.spec.ts
+ * then asserts the full path works: the Invites tree node badges, and the
+ * Invites pane renders the inviter. Deterministic and cross-platform — no
+ * screenshot (Playwright snapshots are per-OS; the visual is covered by the
+ * invites-view render unit test).
  */
 import { test, expect } from '../lib/fixtures';
-import { addNetworkAndConnect, selectNetwork, joinChannel } from '../lib/actions';
+import { addNetworkAndConnect, selectNetwork } from '../lib/actions';
 import { IrcPeer } from '../lib/irc-peer';
 
 test('invites pane renders a received invite', async ({ page, runtime }) => {
@@ -37,13 +37,10 @@ test('invites pane renders a received invite', async ({ page, runtime }) => {
     // Click the Invites pane.
     await page.getByTestId('server-tree').getByText('Invites', { exact: true }).click();
 
-    // The invite should be visible — "invitebot" sent the invite.
+    // The invite should be visible in the pane — "invitebot" sent it.
     await expect(
       page.getByText('invitebot', { exact: false }),
     ).toBeVisible({ timeout: 10_000 });
-
-    // Snapshot the invites pane.
-    await expect(page).toHaveScreenshot('invites-pane.png');
   } finally {
     peer.close();
   }
