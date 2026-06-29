@@ -47,6 +47,7 @@ type App struct {
 	mu                    sync.RWMutex
 	channelListCache      map[int64]channelListCacheEntry // Cached LIST results keyed by network ID
 	channelListCacheMu    sync.RWMutex                    // Guards channelListCache; separate from mu to avoid contention
+	invites               *inviteStore                    // session-only received-invite inbox (in-memory)
 	startupCtx            context.Context
 	startupCancel         context.CancelFunc
 	startupWg             sync.WaitGroup
@@ -129,6 +130,8 @@ func NewApp() (*App, error) {
 		channelListCache:      make(map[int64]channelListCacheEntry),
 	}
 
+	app.invites = newInviteStore(time.Now, app.inviteTTL)
+
 	scriptDir := filepath.Join(baseDir, "scripts")
 	app.scriptMgr = script.NewManager(eventBus, scriptDir, script.Host{
 		Send: app.SendMessage,
@@ -183,6 +186,7 @@ func NewApp() (*App, error) {
 	eventBus.Subscribe(irc.EventChannelBanList, app)
 	eventBus.Subscribe(irc.EventSTSPolicy, app)
 	eventBus.Subscribe(irc.EventMonitorChanged, app)
+	eventBus.Subscribe(irc.EventInviteReceived, app)
 
 	go app.processPluginActions()
 
@@ -270,6 +274,9 @@ func (a *App) ServiceStartup(ctx context.Context, _ application.ServiceOptions) 
 		defer a.startupWg.Done()
 		a.autoConnect(a.startupCtx)
 	}()
+
+	// Sweep expired invite TTLs every 5 minutes so badges clear automatically.
+	a.startInviteSweeper()
 
 	// Poll for self-updates in the background (no-op on dev builds where the
 	// updater was never configured). Surfaces the updater window only when a

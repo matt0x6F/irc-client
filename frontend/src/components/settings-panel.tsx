@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { ArrowLeft, ChevronRight } from 'lucide-react';
 import { main, storage } from '../../wailsjs/go/models';
-import { GetNetworks, SaveNetwork, ConnectNetwork, DeleteNetwork, DisconnectNetwork, GetConnectionStatus, GetServers, ListPlugins, EnablePlugin, DisablePlugin, ReloadPlugin, GetBuildInfo, CheckForUpdates, GetLogConfig, SetLogConfig, GetDefaultLogPath, GetSTSPolicies, ClearSTSPolicy, RequestNotificationPermission, GetPendingNetworkPrefill } from '../../wailsjs/go/main/App';
+import { GetNetworks, SaveNetwork, ConnectNetwork, DeleteNetwork, DisconnectNetwork, GetConnectionStatus, GetServers, ListPlugins, EnablePlugin, DisablePlugin, ReloadPlugin, GetBuildInfo, CheckForUpdates, GetLogConfig, SetLogConfig, GetDefaultLogPath, GetSTSPolicies, ClearSTSPolicy, RequestNotificationPermission, GetPendingNetworkPrefill, GetSetting, SetSetting } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import { PluginConfigForm } from './plugin-config-form';
 import { ScriptsPanel } from './scripts-panel';
@@ -133,6 +133,27 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
   const setUnfurlsEnabled = useSettingsStore((s) => s.setUnfurlsEnabled);
   const [notifyNotice, setNotifyNotice] = useState<string | null>(null);
 
+  // Invite notification settings — loaded from the backend settings table once
+  // on mount; changes written through immediately via SetSetting.
+  type InviteAttentionLevel = 'trusted' | 'quiet' | 'all';
+  const [inviteAttentionLevel, setInviteAttentionLevelState] = useState<InviteAttentionLevel>('trusted');
+  const [inviteTtlHours, setInviteTtlHoursState] = useState<number>(24);
+
+  const setInviteAttentionLevel = (value: InviteAttentionLevel) => {
+    setInviteAttentionLevelState(value);
+    SetSetting('invites.attentionLevel', value).catch((e) =>
+      console.error('Failed to persist invites.attentionLevel:', e),
+    );
+  };
+
+  const setInviteTtlHours = (value: number) => {
+    const clamped = Math.max(1, value);
+    setInviteTtlHoursState(clamped);
+    SetSetting('invites.ttlHours', String(clamped)).catch((e) =>
+      console.error('Failed to persist invites.ttlHours:', e),
+    );
+  };
+
   // Theme (appearance + accent)
   const themeMode = useThemeStore((s) => s.mode);
   const accent = useThemeStore((s) => s.accent);
@@ -198,6 +219,18 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
     GetDefaultLogPath()
       .then(setDefaultLogPath)
       .catch((error) => console.error('Failed to load default log path:', error));
+    // Load invite settings from the backend settings table.
+    GetSetting('invites.attentionLevel')
+      .then((v) => {
+        if (v === 'trusted' || v === 'quiet' || v === 'all') setInviteAttentionLevelState(v);
+      })
+      .catch((e) => console.error('Failed to load invites.attentionLevel:', e));
+    GetSetting('invites.ttlHours')
+      .then((v) => {
+        const n = parseInt(v, 10);
+        if (!isNaN(n) && n >= 1) setInviteTtlHoursState(n);
+      })
+      .catch((e) => console.error('Failed to load invites.ttlHours:', e));
   }, []);
 
   // Persist a log-config change and apply it live. The backend rejects an
@@ -1501,6 +1534,49 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
                 <div className="flex items-center justify-between gap-4">
                   <span className="text-sm font-medium">Only when window is unfocused</span>
                   <Toggle checked={notifyOnlyWhenUnfocused} onChange={setNotifyOnlyWhenUnfocused} />
+                </div>
+              </div>
+
+              {/* Invite settings */}
+              <div className="border border-border rounded-lg p-4 bg-card/50 shadow-[var(--shadow-sm)] space-y-4">
+                <div className="text-sm font-semibold">Invites</div>
+
+                <div>
+                  <label className="flex items-center justify-between gap-4">
+                    <span className="text-sm font-medium">Notify me about invites from</span>
+                    <select
+                      value={inviteAttentionLevel}
+                      onChange={(e) => setInviteAttentionLevel(e.target.value as InviteAttentionLevel)}
+                      className="border border-border rounded px-2 py-1 bg-background text-sm"
+                      data-testid="invite-attention-level-select"
+                    >
+                      <option value="trusted">Trusted senders only (default)</option>
+                      <option value="quiet">Quiet (no notifications)</option>
+                      <option value="all">All invites</option>
+                    </select>
+                  </label>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Controls when receiving a channel invite fires a desktop notification. "Trusted" means the sender is on your buddy (MONITOR) list.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="flex items-center justify-between gap-4">
+                    <span className="text-sm font-medium">Keep invites for (hours)</span>
+                    <input
+                      type="number"
+                      min={1}
+                      value={inviteTtlHours}
+                      onChange={(e) => setInviteTtlHoursState(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                      onBlur={(e) => setInviteTtlHours(parseInt(e.target.value, 10) || 1)}
+                      className="w-20 px-2 py-1 text-sm border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all shadow-[var(--shadow-sm)] focus:shadow-[var(--shadow-md)]"
+                      style={{ transition: 'var(--transition-base)' }}
+                      data-testid="invite-ttl-hours-input"
+                    />
+                  </label>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Received invites are discarded after this many hours. Minimum 1 hour. Default is 24.
+                  </p>
                 </div>
               </div>
             </div>

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { GetChannelInfo } from '../../wailsjs/go/main/App';
+import { GetChannelInfo, GetJoinedChannels } from '../../wailsjs/go/main/App';
 import { main, storage } from '../../wailsjs/go/models';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import { UserInfo } from './user-info';
@@ -33,6 +33,8 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
   const [loading, setLoading] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null);
   const [showUserInfo, setShowUserInfo] = useState<{ nickname: string } | null>(null);
+  // Other channels on this network the current user is joined to (for "Invite to" submenu).
+  const [otherChannels, setOtherChannels] = useState<storage.Channel[]>([]);
   // Right-sidebar tab: the channel member list, or the network's MONITOR buddies.
   const [sidebarView, setSidebarView] = useState<'users' | 'monitor'>('users');
   const addMonitorNick = useNetworkStore((s) => s.addMonitorNick);
@@ -50,6 +52,19 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
   useEffect(() => {
     networkIdRef.current = networkId;
     channelNameRef.current = channelName;
+  }, [networkId, channelName]);
+
+  // Load other joined channels on this network for the "Invite to" submenu.
+  useEffect(() => {
+    if (networkId === null) {
+      setOtherChannels([]);
+      return;
+    }
+    void GetJoinedChannels(networkId).then((channels) => {
+      setOtherChannels(channels.filter((ch) => ch.name !== channelName));
+    }).catch(() => {
+      setOtherChannels([]);
+    });
   }, [networkId, channelName]);
 
   // Get users list for nickname colors (must be called before any conditional returns)
@@ -403,19 +418,6 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
     return highestMode === 'q' || highestMode === 'a' || highestMode === 'o' || highestMode === 'h';
   };
 
-  const canInvite = (): boolean => {
-    if (!currentUser) return false;
-    
-    // Fallback: if no capabilities, check for '@' prefix directly
-    if (!capabilities || !capabilities.prefix_string) {
-      return currentUser.modes?.includes('@') || false;
-    }
-    
-    const highestMode = getCurrentUserHighestMode();
-    // INVITE typically requires op or higher, or voice in invite-only channels
-    return highestMode === 'q' || highestMode === 'a' || highestMode === 'o' || highestMode === 'h' || highestMode === 'v';
-  };
-
   // Context menu handler
   const handleContextMenu = (e: React.MouseEvent, user: storage.ChannelUser) => {
     e.preventDefault();
@@ -481,12 +483,6 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
   const handleDevoice = async (nickname: string) => {
     if (!channelName) return;
     await onSendCommand(`/devoice ${channelName} ${nickname}`);
-    setContextMenu(null);
-  };
-
-  const handleInvite = async (nickname: string) => {
-    if (!channelName) return;
-    await onSendCommand(`/invite ${nickname} ${channelName}`);
     setContextMenu(null);
   };
 
@@ -696,22 +692,28 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
                   </>
                 )}
 
-                {/* Other Section */}
-                {canInvite() && (
+                {/* Invite to another channel */}
+                {otherChannels.length > 0 && (
                   <>
                     {(canOp() || canVoice()) && <div className="border-t border-border my-1" />}
-                    <button
-                      className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
-                      style={{ transition: 'var(--transition-base)' }}
-                      onClick={() => handleInvite(contextMenu.user!.nickname)}
-                    >
-                      Invite
-                    </button>
+                    <div className="px-4 py-1 text-xs font-semibold text-muted-foreground uppercase">Invite to</div>
+                    {otherChannels.map((ch) => (
+                      <button
+                        key={ch.name}
+                        className="w-full text-left px-4 py-2 text-sm hover:bg-accent"
+                        onClick={() => {
+                          void onSendCommand(`/invite ${contextMenu.user!.nickname} ${ch.name}`);
+                          setContextMenu(null);
+                        }}
+                      >
+                        {ch.name}
+                      </button>
+                    ))}
                   </>
                 )}
 
                 {/* Show message if no commands available */}
-                {!canKick() && !canBan() && !canOp() && !canVoice() && !canInvite() && (
+                {!canKick() && !canBan() && !canOp() && !canVoice() && otherChannels.length === 0 && (
                   <div className="px-4 py-2 text-sm text-muted-foreground">
                     No operator commands available
                   </div>

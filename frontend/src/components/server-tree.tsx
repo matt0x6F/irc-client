@@ -57,6 +57,7 @@ export function ServerTree({
   const [contextMenuChannelData, setContextMenuChannelData] = useState<Channel | null>(null);
   const [contextMenuNetworkData, setContextMenuNetworkData] = useState<storage.Network | null>(null);
   const [contextMenuIsJoined, setContextMenuIsJoined] = useState<boolean>(false);
+  const [contextMenuJoinedChannels, setContextMenuJoinedChannels] = useState<Channel[]>([]);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<{ serverId: number; serverName: string } | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
 
@@ -64,6 +65,9 @@ export function ServerTree({
   // DM-list dots. Seeded on expand, kept fresh by 'monitor-event' in App.tsx.
   const presence = useNetworkStore((s) => s.presence);
   const loadPresence = useNetworkStore((s) => s.loadPresence);
+
+  // Reactive invite counts — subscribed so the badge re-renders when invites change.
+  const invitesByNetwork = useNetworkStore((s) => s.invitesByNetwork);
 
   // Load channels and PM conversations for expanded networks
   useEffect(() => {
@@ -125,6 +129,9 @@ export function ServerTree({
       // correspondents plus durable buddies). Live updates arrive via
       // 'monitor-event'.
       void loadPresence(networkId);
+
+      // Populate the invite badge without waiting for an invite event.
+      void useNetworkStore.getState().loadInvites(networkId);
     });
   }, [expandedServers, servers, loadPresence]);
 
@@ -231,7 +238,11 @@ export function ServerTree({
     if (window.getSelection) {
       window.getSelection()?.removeAllRanges();
     }
-    
+
+    // Reset the PM "Invite to" channel list so a prior network's channels never
+    // flash before this menu's own fetch resolves (only the 'pm' branch repopulates it).
+    setContextMenuJoinedChannels([]);
+
     // If it's a server context menu, load the network data
     if (type === 'server' && serverId) {
       const network = servers.find(n => n.id === serverId);
@@ -257,7 +268,18 @@ export function ServerTree({
         console.error('Failed to load channel data for context menu:', error);
       }
     }
-    
+
+    // If it's a PM context menu, load joined channels for the "Invite to" submenu
+    if (type === 'pm' && serverId) {
+      try {
+        const joinedChannels = await GetJoinedChannels(serverId);
+        setContextMenuJoinedChannels(joinedChannels ?? []);
+      } catch (error) {
+        console.error('Failed to load joined channels for PM context menu:', error);
+        setContextMenuJoinedChannels([]);
+      }
+    }
+
     setContextMenuChannelData(channelData);
     setContextMenuIsJoined(isJoined);
     setContextMenu({
@@ -443,6 +465,33 @@ export function ServerTree({
                         <Terminal className="w-3.5 h-3.5 flex-shrink-0 opacity-85" />
                         <span className="text-sm">Server log</span>
                       </div>
+                      {/* Invites pane */}
+                      {(() => {
+                        const inviteCount = (invitesByNetwork[network.id] ?? []).length;
+                        return (
+                          <div
+                            className={`px-2 py-1.5 mr-1 rounded-md cursor-pointer select-none transition-all flex items-center justify-between ${
+                              isSelected && selectedChannel === 'invites'
+                                ? 'cc-active-pane'
+                                : 'hover:bg-accent/70'
+                            }`}
+                            style={{ transition: 'var(--transition-base)' }}
+                            onClick={() => onSelectChannel(network.id, 'invites')}
+                            onMouseDown={(e) => {
+                              if (e.button === 2) {
+                                e.preventDefault();
+                              }
+                            }}
+                          >
+                            <span className="text-sm">Invites</span>
+                            {inviteCount > 0 && (
+                              <span className="bg-primary text-primary-foreground text-xs px-1.5 min-w-[1.25rem] text-center rounded-full ml-2" title="Pending invites">
+                                {inviteCount > 99 ? '99+' : inviteCount}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })()}
                       {/* Regular channels */}
                       {networkChannels.map((channel) => {
                         const activityKey = `${network.id}:${channel}`;
@@ -768,6 +817,18 @@ export function ServerTree({
               <button
                 className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground"
                 onClick={() => {
+                  const nick = window.prompt(`Invite to ${contextMenu.channel}:`)?.trim();
+                  if (nick && contextMenu.serverId && contextMenu.channel) {
+                    void SendCommand(contextMenu.serverId, `/invite ${nick} ${contextMenu.channel}`);
+                  }
+                  setContextMenu({ x: 0, y: 0, type: null });
+                }}
+              >
+                Invite user…
+              </button>
+              <button
+                className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground"
+                onClick={() => {
                   if (contextMenu.serverId && contextMenu.channel) {
                     handleCloseChannel(contextMenu.serverId, contextMenu.channel);
                   }
@@ -856,6 +917,29 @@ export function ServerTree({
               >
                 Whois
               </button>
+              <div className="border-t border-border my-1" />
+              <div className="px-4 py-1 text-xs font-semibold text-muted-foreground uppercase">Invite to</div>
+              {contextMenuJoinedChannels.length === 0 ? (
+                <div className="w-full text-left px-4 py-2 text-sm text-muted-foreground">
+                  No channels — join one first
+                </div>
+              ) : (
+                contextMenuJoinedChannels.map((ch) => (
+                  <button
+                    key={ch.name}
+                    className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
+                    style={{ transition: 'var(--transition-base)' }}
+                    onClick={() => {
+                      if (contextMenu.serverId && contextMenu.user) {
+                        void SendCommand(contextMenu.serverId, `/invite ${contextMenu.user} ${ch.name}`);
+                      }
+                      setContextMenu({ x: 0, y: 0, type: null });
+                    }}
+                  >
+                    {ch.name}
+                  </button>
+                ))
+              )}
               <div className="border-t border-border my-1" />
               <div className="px-4 py-1 text-xs font-semibold text-muted-foreground uppercase">
                 CTCP

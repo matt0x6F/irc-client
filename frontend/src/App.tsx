@@ -24,6 +24,7 @@ import { HelpDialog } from './components/help-dialog';
 import { UpdateAvailableDialog } from './components/update-available-dialog';
 import { AuthBanner } from './components/AuthBanner';
 import { DeepLinkDisambiguation } from './components/deeplink-disambiguation';
+import { InvitesView } from './components/invites-view';
 import { List, Settings } from 'lucide-react';
 
 function App() {
@@ -365,6 +366,19 @@ function App() {
       }
     });
     return () => unsubscribe();
+  }, []);
+
+  // Invites events: reload the invites list for the affected network whenever
+  // an invite arrives or the backend flushes expired ones.
+  useEffect(() => {
+    const offInvites = EventsOn('invites.changed', (data: { networkId: number }) => {
+      if (typeof data?.networkId === 'number') {
+        void useNetworkStore.getState().loadInvites(data.networkId);
+      }
+    });
+    return () => {
+      offInvites();
+    };
   }, []);
 
   // Message events for real-time updates and activity tracking
@@ -794,6 +808,7 @@ function App() {
                   )}
                   {selectedChannel &&
                     selectedChannel !== 'status' &&
+                    selectedChannel !== 'invites' &&
                     !selectedChannel.startsWith('pm:') && (
                       <>
                         <span className="text-muted-foreground/50">/</span>
@@ -819,6 +834,12 @@ function App() {
                     <>
                       <span className="text-muted-foreground/50">/</span>
                       <span className="text-muted-foreground font-medium">Status</span>
+                    </>
+                  )}
+                  {selectedChannel === 'invites' && (
+                    <>
+                      <span className="text-muted-foreground/50">/</span>
+                      <span className="text-muted-foreground font-medium">Invites</span>
                     </>
                   )}
                 </>
@@ -874,7 +895,7 @@ function App() {
                 <Settings size={18} />
               </button>
               {/* Right sidebar toggle — show for channels and PMs */}
-              {selectedChannel && selectedChannel !== 'status' && (
+              {selectedChannel && selectedChannel !== 'status' && selectedChannel !== 'invites' && (
                 <button
                   onClick={toggleRightSidebar}
                   data-testid="toggle-right-sidebar"
@@ -891,6 +912,7 @@ function App() {
           </div>
           {selectedChannel &&
             selectedChannel !== 'status' &&
+            selectedChannel !== 'invites' &&
             !selectedChannel.startsWith('pm:') &&
             channelInfo?.channel && (
               <div className="px-5 pb-3 flex items-center gap-4 text-sm border-t border-border/50 pt-2">
@@ -925,7 +947,9 @@ function App() {
         {/* Content Area */}
         <div className="flex-1 flex overflow-hidden">
           <div className="flex-1 overflow-y-auto">
-            {selectedNetwork !== null ? (
+            {selectedChannel === 'invites' && selectedNetwork !== null ? (
+              <InvitesView networkId={selectedNetwork} />
+            ) : selectedNetwork !== null ? (
               <MessageView
                 messages={messages}
                 networkId={selectedNetwork}
@@ -946,6 +970,7 @@ function App() {
           {/* Right Sidebar — Users (channels only) + Pinned messages */}
           {selectedChannel &&
             selectedChannel !== 'status' &&
+            selectedChannel !== 'invites' &&
             (() => {
               const isPM = selectedChannel.startsWith('pm:');
               // PMs have no user list, so the pinned tab is the only option there.
@@ -1042,7 +1067,7 @@ function App() {
         </div>
 
         {/* Input Area */}
-        {selectedNetwork !== null && selectedChannel !== null && (
+        {selectedNetwork !== null && selectedChannel !== null && selectedChannel !== 'invites' && (
           <InputArea
             onSendMessage={handleSendMessage}
             placeholder={
@@ -1061,6 +1086,7 @@ function App() {
         selectedNetwork !== null &&
         selectedChannel !== null &&
         selectedChannel !== 'status' &&
+        selectedChannel !== 'invites' &&
         channelInfo?.channel && (
           <TopicEditModal
             networkId={selectedNetwork}
@@ -1075,6 +1101,7 @@ function App() {
         selectedNetwork !== null &&
         selectedChannel !== null &&
         selectedChannel !== 'status' &&
+        selectedChannel !== 'invites' &&
         channelInfo?.channel && (
           <ChannelModeEditor
             networkId={selectedNetwork}

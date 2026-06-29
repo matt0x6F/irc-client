@@ -40,11 +40,13 @@ import {
   SendMessageWithContext,
   GetMessageByMsgID,
   GetChannels,
+  GetInvites,
 } from '../../wailsjs/go/main/App';
 import { useCommandsStore, lookupCommand } from './commands';
 import { usePreferencesStore } from './preferences';
 import { useUIStore } from './ui';
 import { formatCommandHelp, formatHelpList } from '../lib/help-format';
+import { expandInvite } from './invite-command';
 
 // UserMetaT mirrors the Go irc.UserMeta JSON shape: the live, session-local
 // roster attributes Cascade tracks per nick via away-notify / account-notify /
@@ -271,6 +273,10 @@ interface NetworkState {
 
   // DM / query
   openQuery: (networkId: number, nick: string) => Promise<void>;
+
+  // Invites (INVITE command — received invites, per network)
+  invitesByNetwork: Record<number, main.InviteView[]>;
+  loadInvites: (networkId: number) => Promise<void>;
 }
 
 export const useNetworkStore = create<NetworkState>((set, get) => ({
@@ -297,6 +303,7 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
   pendingScrollMsgid: null,
   selectedNetwork: null,
   selectedChannel: null,
+  invitesByNetwork: {},
 
   loadNetworks: async () => {
     try {
@@ -748,6 +755,14 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
     // A pending scrollback history request belongs to the pane we're leaving.
     clearHistoryWaiter();
 
+    // The invites pseudo-pane has no message history or channel to join.
+    // Just update selection and load the invite list, then bail.
+    if (channel === 'invites') {
+      set({ selectedNetwork: networkId, selectedChannel: 'invites' });
+      await get().loadInvites(networkId);
+      return;
+    }
+
     // Switching panes always returns to the live view and clears any anchor, and
     // resets CHATHISTORY pagination state for the freshly-selected buffer.
     set({
@@ -943,6 +958,22 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
               ? `${cmd} ${selectedChannel}`
               : `${cmd} ${selectedChannel} ${parts.join(' ')}`;
         }
+      }
+
+      // Handle /invite — default the channel to the active pane.
+      const inviteResult = expandInvite(commandToSend, selectedChannel);
+      if (inviteResult !== null && typeof inviteResult === 'object') {
+        const target =
+          selectedChannel === 'status'
+            ? 'status'
+            : selectedChannel.startsWith('pm:')
+              ? selectedChannel.substring(3)
+              : selectedChannel;
+        await PrintLocalLines(selectedNetwork, target, [inviteResult.error]);
+        await loadMessages();
+        return;
+      } else if (typeof inviteResult === 'string') {
+        commandToSend = inviteResult;
       }
 
       try {
@@ -1277,6 +1308,15 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
       console.error('Failed to open query:', error);
     }
     await get().selectPane(networkId, `pm:${nick}`);
+  },
+
+  loadInvites: async (networkId) => {
+    try {
+      const invites = await GetInvites(networkId);
+      set((s) => ({ invitesByNetwork: { ...s.invitesByNetwork, [networkId]: invites ?? [] } }));
+    } catch (e) {
+      console.error('Failed to load invites:', e);
+    }
   },
 
   restoreLastPane: async () => {

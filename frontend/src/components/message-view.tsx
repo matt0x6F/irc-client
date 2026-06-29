@@ -226,35 +226,6 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
   // Subscribing to the Set reference re-renders when addBot replaces it.
   const botSet = useNetworkStore((s) => (networkId !== null ? s.botNicks[networkId] : undefined));
 
-  // Render an invite-notify status line, turning channel tokens (#foo / &bar)
-  // into clickable links that issue /join.
-  const renderInviteText = useCallback(
-    (text: string) =>
-      text.split(/(\s[#&]\S+)/g).map((part, i) => {
-        const m = part.match(/^(\s)([#&]\S+)$/);
-        if (m && networkId !== null) {
-          const channel = m[2];
-          return (
-            <span key={i}>
-              {m[1]}
-              <button
-                type="button"
-                className="text-primary underline underline-offset-2 hover:opacity-80 cursor-pointer"
-                title={`Join ${channel}`}
-                onClick={() => {
-                  void useNetworkStore.getState().openOrJoinChannel(networkId, channel);
-                }}
-              >
-                {channel}
-              </button>
-            </span>
-          );
-        }
-        return <span key={i}>{part}</span>;
-      }),
-    [networkId]
-  );
-
   // Build a msgid→message index once per render for fast parent lookup.
   const msgidIndex = useMemo(() => buildMsgidIndex(messages), [messages]);
 
@@ -554,10 +525,9 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
           const isStatus = msg.message_type === 'status';
           const isCommand = msg.message_type === 'command';
           const isMarker = msg.message_type === 'marker';
-          const isInvite = msg.message_type === 'invite';
           const isSystemMessage = msg.message_type === 'join' || msg.message_type === 'part' || msg.message_type === 'quit' || msg.message_type === 'mode';
           const isEven = index % 2 === 0;
-          const isRegularMessage = !isError && !isWarning && !isStatus && !isCommand && !isMarker && !isSystemMessage && !isInvite;
+          const isRegularMessage = !isError && !isWarning && !isStatus && !isCommand && !isMarker && !isSystemMessage;
           const hasMention = isRegularMessage && isMention(msg.message);
 
           // Connection delineation marker ("Disconnected"/"Reconnected"): a centered
@@ -602,7 +572,7 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
                   ? 'bg-destructive/10 border-l-2 border-destructive shadow-[var(--shadow-sm)]'
                   : isWarning
                   ? 'bg-amber-500/10 border-l-2 border-amber-500'
-                  : isStatus || isCommand || isInvite
+                  : isStatus || isCommand
                   ? 'opacity-70'
                   : isEven
                   ? 'bg-muted/20'
@@ -677,11 +647,7 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
                       {msg.channel_context.replace(/^#/, '')}
                     </button>
                   )}
-                  {isInvite ? (
-                    <span className="text-sm flex-1 text-muted-foreground italic">
-                      {renderInviteText(msg.message)}
-                    </span>
-                  ) : isSystemMessage ? (
+                  {isSystemMessage ? (
                     <span className="text-sm flex-1 text-muted-foreground">
                       {isConsolidated && consolidated._nicknames && consolidated._actionText ? (
                         // Render consolidated message with colored nicknames

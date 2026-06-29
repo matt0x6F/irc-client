@@ -165,28 +165,6 @@ describe('MessageView bot badge', () => {
   })
 })
 
-describe('MessageView invite-line channel links', () => {
-  it('invite-line channel click calls openOrJoinChannel', () => {
-    const spy = vi
-      .spyOn(useNetworkStore.getState(), 'openOrJoinChannel')
-      .mockResolvedValue(undefined)
-
-    // renderInviteText splits on /(\s[#&]\S+)/g — the channel must be preceded by a space.
-    const msg = makeMessage({
-      id: 10,
-      user: '*',
-      message: 'You have been invited to #welcome',
-      message_type: 'invite',
-    })
-
-    render(<MessageView messages={[msg]} networkId={3} selectedChannel="#chan" />)
-
-    fireEvent.click(screen.getByRole('button', { name: '#welcome' }))
-    expect(spy).toHaveBeenCalledWith(3, '#welcome')
-    spy.mockRestore()
-  })
-})
-
 describe('MessageView channel-context pill', () => {
   it('renders an in-#channel pill on a PM with channel_context', () => {
     const pm = makeMessage({

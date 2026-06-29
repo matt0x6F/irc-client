@@ -223,6 +223,12 @@ func (a *App) OnEvent(event events.Event) {
 		return
 	}
 
+	// Route inbound invites to the session inbox; trust/notify are handled inside.
+	if event.Type == irc.EventInviteReceived {
+		a.handleInviteReceived(event)
+		return
+	}
+
 	// Desktop notifications
 	a.handleDesktopNotification(event)
 }

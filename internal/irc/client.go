@@ -1040,11 +1040,10 @@ func (c *IRCClient) maybeApplyExtendedJoin(e ircmsg.Message) {
 	})
 }
 
-// handleInvite surfaces an inbound INVITE in the network status buffer. The
-// invitee form (":inviter INVITE you #chan") arrives whether or not invite-notify
-// is negotiated; with invite-notify the server additionally relays invites of
-// *other* users to a channel's operators (":inviter INVITE someone #chan"). Both
-// are written as a clickable status line so the channel can be joined directly.
+// handleInvite routes an inbound INVITE. An invite addressed to us is emitted as
+// EventInviteReceived for the in-memory Invites inbox (App owns trust/notify).
+// The invite-notify "ops FYI" form (a third party invited to a channel we
+// operate) is informational only and stays a plain status line.
 func (c *IRCClient) handleInvite(e ircmsg.Message) {
 	if len(e.Params) < 2 {
 		return
@@ -1053,43 +1052,40 @@ func (c *IRCClient) handleInvite(e ircmsg.Message) {
 	channel := e.Params[1]
 	inviter := e.Nick()
 
-	var text string
-	if strings.EqualFold(target, c.CurrentNick()) {
-		text = fmt.Sprintf("%s invited you to %s", inviter, channel)
-	} else {
-		text = fmt.Sprintf("%s invited %s to %s", inviter, target, channel)
+	if !strings.EqualFold(target, c.CurrentNick()) {
+		c.writeStatusLine("status", fmt.Sprintf("%s invited %s to %s", inviter, target, channel))
+		return
 	}
 
-	rawLine, _ := e.Line()
-	// Sync write so the row is committed before the event below tells the
-	// frontend to reload the status buffer (avoids a write/notify race).
-	if err := c.storage.WriteMessageSync(storage.Message{
-		NetworkID:   c.networkID,
-		ChannelID:   nil, // status buffer
-		User:        "*",
-		Message:     text,
-		MessageType: "invite",
-		Timestamp:   time.Now(),
-		RawLine:     rawLine,
-	}); err != nil {
-		logger.Log.Warn().Err(err).Msg("Failed to write INVITE status line")
-	}
-
-	// channel:nil routes the line to the status buffer and refreshes it live
-	// (see the message-event handler in App.tsx).
 	c.eventBus.Emit(events.Event{
-		Type: EventMessageReceived,
+		Type: EventInviteReceived,
 		Data: map[string]interface{}{
-			"network":     c.network.Address,
-			"networkId":   c.networkID,
-			"channel":     nil,
-			"user":        "*",
-			"message":     text,
-			"messageType": "privmsg",
+			"networkId":  c.networkID,
+			"inviter":    inviter,
+			"channel":    channel,
+			"receivedAt": time.Now().Format(time.RFC3339),
 		},
 		Timestamp: time.Now(),
 		Source:    events.EventSourceIRC,
 	})
+}
+
+// handleInviting surfaces RPL_INVITING (341) as a status confirmation after we
+// send an INVITE. Params: "<me> <nick> <channel>".
+func (c *IRCClient) handleInviting(e ircmsg.Message) {
+	if len(e.Params) < 3 {
+		return
+	}
+	c.writeStatusLine("status", fmt.Sprintf("Invited %s to %s", e.Params[1], e.Params[2]))
+}
+
+// handleUserOnChannel surfaces ERR_USERONCHANNEL (443) when the target of an
+// INVITE is already on the channel. Params: "<me> <nick> <channel> :<reason>".
+func (c *IRCClient) handleUserOnChannel(e ircmsg.Message) {
+	if len(e.Params) < 3 {
+		return
+	}
+	c.writeStatusLine("status", fmt.Sprintf("%s is already on %s", e.Params[1], e.Params[2]))
 }
 
 // writeStatusLine writes a line to the network status buffer and refreshes it
@@ -1812,7 +1808,9 @@ func (c *IRCClient) setupHandlers() {
 	c.conn.AddCallback("CHGHOST", c.handleChghost)
 	c.conn.AddCallback("SETNAME", c.handleSetname)
 	c.conn.AddCallback("INVITE", c.handleInvite)
-	c.conn.AddCallback("354", c.handleWhoxReply) // RPL_WHOSPCRPL (WHOX)
+	c.conn.AddCallback("341", c.handleInviting)      // RPL_INVITING (INVITE send success)
+	c.conn.AddCallback("443", c.handleUserOnChannel) // ERR_USERONCHANNEL (INVITE target already on channel)
+	c.conn.AddCallback("354", c.handleWhoxReply)     // RPL_WHOSPCRPL (WHOX)
 	// MONITOR presence: 730 RPL_MONONLINE, 731 RPL_MONOFFLINE.
 	c.conn.AddCallback("730", func(e ircmsg.Message) { c.handleMonitorPresence(e, true) })
 	c.conn.AddCallback("731", func(e ircmsg.Message) { c.handleMonitorPresence(e, false) })
