@@ -367,6 +367,19 @@ function App() {
     return () => unsubscribe();
   }, []);
 
+  // Invites events: reload the invites list for the affected network whenever
+  // an invite arrives or the backend flushes expired ones.
+  useEffect(() => {
+    const offInvites = EventsOn('invites.changed', (data: { networkId: number }) => {
+      if (typeof data?.networkId === 'number') {
+        void useNetworkStore.getState().loadInvites(data.networkId);
+      }
+    });
+    return () => {
+      offInvites();
+    };
+  }, []);
+
   // Message events for real-time updates and activity tracking
   useEffect(() => {
     const unsubscribe = EventsOn('message-event', (data: any) => {

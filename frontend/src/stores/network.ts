@@ -40,6 +40,7 @@ import {
   SendMessageWithContext,
   GetMessageByMsgID,
   GetChannels,
+  GetInvites,
 } from '../../wailsjs/go/main/App';
 import { useCommandsStore, lookupCommand } from './commands';
 import { usePreferencesStore } from './preferences';
@@ -272,6 +273,10 @@ interface NetworkState {
 
   // DM / query
   openQuery: (networkId: number, nick: string) => Promise<void>;
+
+  // Invites (INVITE command — received invites, per network)
+  invitesByNetwork: Record<number, main.InviteView[]>;
+  loadInvites: (networkId: number) => Promise<void>;
 }
 
 export const useNetworkStore = create<NetworkState>((set, get) => ({
@@ -298,6 +303,7 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
   pendingScrollMsgid: null,
   selectedNetwork: null,
   selectedChannel: null,
+  invitesByNetwork: {},
 
   loadNetworks: async () => {
     try {
@@ -1294,6 +1300,15 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
       console.error('Failed to open query:', error);
     }
     await get().selectPane(networkId, `pm:${nick}`);
+  },
+
+  loadInvites: async (networkId) => {
+    try {
+      const invites = await GetInvites(networkId);
+      set((s) => ({ invitesByNetwork: { ...s.invitesByNetwork, [networkId]: invites ?? [] } }));
+    } catch (e) {
+      console.error('Failed to load invites:', e);
+    }
   },
 
   restoreLastPane: async () => {
