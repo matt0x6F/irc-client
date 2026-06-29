@@ -11,5 +11,7 @@ frontend/dist
 # Zensical docs build output + local docs venv
 /site/
 /.venv/
-# Implementation plans are local-only (see PR #98); never commit them.
+# Design specs and implementation plans are local-only; never commit them.
 docs/plans/
+docs/superpowers/specs/
+docs/superpowers/plans/
