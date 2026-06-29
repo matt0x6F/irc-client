@@ -28,6 +28,28 @@ describe('LinkPreviewCard', () => {
     expect(screen.getByText('World')).toBeInTheDocument();
   });
 
+  it('renders the preview image as a full-width hero, not a tiny crop', async () => {
+    (UnfurlURL as ReturnType<typeof vi.fn>).mockResolvedValue({
+      url: 'https://x.example',
+      status: 'ok',
+      title: 'Video',
+      description: '',
+      siteName: 'YouTube',
+      imageDataUri: 'data:image/png;base64,iVBORw0KGgo=',
+      fetchedAt: '',
+    });
+    const { container } = render(<LinkPreviewCard url="https://x.example" />);
+    const img = await waitFor(() => {
+      const el = container.querySelector('img');
+      if (!el) throw new Error('no image rendered');
+      return el as HTMLImageElement;
+    });
+    expect(img.getAttribute('src')).toBe('data:image/png;base64,iVBORw0KGgo=');
+    // Default (pre-measure) layout must be the wide hero, never the legacy h-12 w-12 crop.
+    expect(img.className).toContain('w-full');
+    expect(img.className).not.toContain('h-12');
+  });
+
   it('shows a blocked notice for a blocked status', async () => {
     (UnfurlURL as ReturnType<typeof vi.fn>).mockResolvedValue({
       url: 'http://10.0.0.1',

@@ -96,6 +96,24 @@ func TestParseMetadataOpenGraphBeatsTwitter(t *testing.T) {
 	}
 }
 
+func TestParseMetadataCollapsesWhitespace(t *testing.T) {
+	// Real-world og:description values frequently contain newlines and runs of
+	// spaces that render as jammed/ragged text in a clamped card. Collapse them.
+	html := `<html><head>
+		<meta property="og:title" content="Spaced   Title">
+		<meta property="og:description" content="line one
+line two		tabbed   spaced">
+	</head></html>`
+
+	md := parseMetadata(strings.NewReader(html))
+	if md.Title != "Spaced Title" {
+		t.Errorf("Title = %q, want %q", md.Title, "Spaced Title")
+	}
+	if md.Description != "line one line two tabbed spaced" {
+		t.Errorf("Description = %q, want collapsed single-spaced text", md.Description)
+	}
+}
+
 func TestParseMetadataNameDescription(t *testing.T) {
 	html := `<html><head>
 		<meta name="description" content="Generic description">

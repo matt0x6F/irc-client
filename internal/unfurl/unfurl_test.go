@@ -46,7 +46,47 @@ func TestFetchWithNonHTMLRejected(t *testing.T) {
 	}))
 	defer srv.Close()
 	if _, err := fetchWith(context.Background(), srv.URL, permissiveGuard); err == nil {
-		t.Fatal("expected error for non-HTML content type")
+		t.Fatal("expected error for non-JSON/HTML/image content type")
+	}
+}
+
+// TestFetchWithDirectImageURL verifies that a URL which resolves directly to an
+// image (e.g. a pasted https://host/upload/x.png link) yields an image-only
+// preview card rather than the "unexpected content-type" error that the
+// HTML-only path used to produce. The mime type must come from the payload
+// bytes (DetectContentType), not the server header.
+func TestFetchWithDirectImageURL(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		// Full 8-byte PNG signature so DetectContentType reports image/png.
+		w.Write([]byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A})
+	}))
+	defer srv.Close()
+
+	p, err := fetchWith(context.Background(), srv.URL+"/uploads/photo.png", permissiveGuard)
+	if err != nil {
+		t.Fatalf("fetchWith: unexpected error: %v", err)
+	}
+	if !strings.HasPrefix(p.ImageDataURI, "data:image/png;base64,") {
+		t.Errorf("image not embedded as data URI: %q", p.ImageDataURI)
+	}
+	if p.Title != "photo.png" {
+		t.Errorf("Title = %q, want the image filename %q", p.Title, "photo.png")
+	}
+}
+
+// TestFetchWithImageURLSpoofedType verifies that a server claiming image/* but
+// serving non-image bytes is rejected (the data URI mime is decided by the
+// payload, never the server header).
+func TestFetchWithImageURLSpoofedType(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.Write([]byte("<html>not an image</html>"))
+	}))
+	defer srv.Close()
+
+	if _, err := fetchWith(context.Background(), srv.URL+"/x.png", permissiveGuard); err == nil {
+		t.Fatal("expected error: payload is not actually an image")
 	}
 }
 

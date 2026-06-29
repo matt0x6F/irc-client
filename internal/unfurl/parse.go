@@ -96,7 +96,18 @@ func finalize(md metadata, twTitle, twDesc, twImage, htmlTitle string) metadata 
 	if md.ImageURL == "" {
 		md.ImageURL = twImage
 	}
+	// Real-world og/twitter descriptions often embed newlines and ragged spacing
+	// that render as jammed text in a clamped card. Collapse to single spaces.
+	md.Title = collapseWS(md.Title)
+	md.Description = collapseWS(md.Description)
+	md.SiteName = collapseWS(md.SiteName)
 	return md
+}
+
+// collapseWS replaces any run of whitespace (spaces, tabs, newlines) with a
+// single space and trims the ends.
+func collapseWS(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }
 
 func firstNonEmpty(vals ...string) string {

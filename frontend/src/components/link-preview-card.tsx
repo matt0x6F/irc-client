@@ -68,24 +68,67 @@ export function LinkPreviewCard({ url }: { url: string }) {
   if (state.kind === 'error') {
     return <div className={shell + ' text-muted-foreground'}>Preview unavailable.</div>;
   }
-  return (
-    <div className={shell + ' flex gap-2'}>
-      {state.imageDataUri ? (
-        <img
-          src={state.imageDataUri}
-          alt=""
-          className="h-12 w-12 shrink-0 rounded object-cover"
-        />
+  return <OkCard url={url} {...state} />;
+}
+
+function OkCard({
+  url,
+  title,
+  description,
+  siteName,
+  imageDataUri,
+}: {
+  url: string;
+  title: string;
+  description: string;
+  siteName: string;
+  imageDataUri: string;
+}) {
+  // Measure the loaded image so we can pick a layout: large/landscape art renders
+  // as a full-width hero (the natural shape for article/video thumbnails), while a
+  // small logo/favicon falls back to a left-aligned thumbnail instead of being
+  // stretched. Before the image loads we assume hero — that covers most og:images.
+  const [dims, setDims] = React.useState<{ w: number; h: number } | null>(null);
+  const measure = (e: React.SyntheticEvent<HTMLImageElement>) =>
+    setDims({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight });
+  const isSmallLogo = dims !== null && (dims.w < 200 || dims.h > dims.w * 1.2);
+
+  const shell = 'mt-1 max-w-md rounded-md border border-border bg-card/50 p-2 text-xs';
+  const text = (
+    <div className="min-w-0">
+      {siteName ? <div className="text-muted-foreground">{siteName}</div> : null}
+      <div className="font-medium truncate">{title || url}</div>
+      {description ? (
+        <div className="text-muted-foreground line-clamp-3">{description}</div>
       ) : null}
-      <div className="min-w-0">
-        {state.siteName ? (
-          <div className="text-muted-foreground">{state.siteName}</div>
-        ) : null}
-        <div className="font-medium truncate">{state.title || url}</div>
-        {state.description ? (
-          <div className="text-muted-foreground line-clamp-2">{state.description}</div>
-        ) : null}
+    </div>
+  );
+
+  if (!imageDataUri) {
+    return <div className={shell}>{text}</div>;
+  }
+  if (isSmallLogo) {
+    return (
+      <div className={shell + ' flex gap-2'}>
+        <img
+          src={imageDataUri}
+          alt=""
+          onLoad={measure}
+          className="h-14 w-14 shrink-0 rounded object-cover"
+        />
+        {text}
       </div>
+    );
+  }
+  return (
+    <div className={shell}>
+      <img
+        src={imageDataUri}
+        alt=""
+        onLoad={measure}
+        className="mb-2 w-full max-h-72 rounded object-contain bg-muted/40"
+      />
+      {text}
     </div>
   );
 }
