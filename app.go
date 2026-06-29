@@ -47,6 +47,7 @@ type App struct {
 	mu                    sync.RWMutex
 	channelListCache      map[int64]channelListCacheEntry // Cached LIST results keyed by network ID
 	channelListCacheMu    sync.RWMutex                    // Guards channelListCache; separate from mu to avoid contention
+	invites               *inviteStore                    // session-only received-invite inbox (in-memory)
 	startupCtx            context.Context
 	startupCancel         context.CancelFunc
 	startupWg             sync.WaitGroup
@@ -129,6 +130,8 @@ func NewApp() (*App, error) {
 		channelListCache:      make(map[int64]channelListCacheEntry),
 	}
 
+	app.invites = newInviteStore(time.Now, app.inviteTTL)
+
 	scriptDir := filepath.Join(baseDir, "scripts")
 	app.scriptMgr = script.NewManager(eventBus, scriptDir, script.Host{
 		Send: app.SendMessage,
@@ -183,6 +186,7 @@ func NewApp() (*App, error) {
 	eventBus.Subscribe(irc.EventChannelBanList, app)
 	eventBus.Subscribe(irc.EventSTSPolicy, app)
 	eventBus.Subscribe(irc.EventMonitorChanged, app)
+	eventBus.Subscribe(irc.EventInviteReceived, app)
 
 	go app.processPluginActions()
 
