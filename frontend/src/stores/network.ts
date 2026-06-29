@@ -45,6 +45,7 @@ import { useCommandsStore, lookupCommand } from './commands';
 import { usePreferencesStore } from './preferences';
 import { useUIStore } from './ui';
 import { formatCommandHelp, formatHelpList } from '../lib/help-format';
+import { expandInvite } from './invite-command';
 
 // UserMetaT mirrors the Go irc.UserMeta JSON shape: the live, session-local
 // roster attributes Cascade tracks per nick via away-notify / account-notify /
@@ -943,6 +944,22 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
               ? `${cmd} ${selectedChannel}`
               : `${cmd} ${selectedChannel} ${parts.join(' ')}`;
         }
+      }
+
+      // Handle /invite — default the channel to the active pane.
+      const inviteResult = expandInvite(commandToSend, selectedChannel);
+      if (inviteResult !== null && typeof inviteResult === 'object') {
+        const target =
+          selectedChannel === 'status'
+            ? 'status'
+            : selectedChannel.startsWith('pm:')
+              ? selectedChannel.substring(3)
+              : selectedChannel;
+        await PrintLocalLines(selectedNetwork, target, [inviteResult.error]);
+        await loadMessages();
+        return;
+      } else if (typeof inviteResult === 'string') {
+        commandToSend = inviteResult;
       }
 
       try {
