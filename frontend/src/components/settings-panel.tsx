@@ -1556,7 +1556,7 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
                     </select>
                   </label>
                   <p className="text-xs text-muted-foreground mt-2">
-                    Controls when receiving a channel invite fires a desktop notification. "Trusted" means the sender shares a common channel with you.
+                    Controls when receiving a channel invite fires a desktop notification. "Trusted" means the sender is on your buddy (MONITOR) list.
                   </p>
                 </div>
 
