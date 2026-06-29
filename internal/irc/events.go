@@ -31,6 +31,7 @@ const (
 	EventSTSPolicy             = "sts.policy"      // server advertised an IRCv3 STS policy in CAP LS
 	EventMonitorChanged        = "monitor.changed" // a monitored nick's online/offline state changed (MONITOR)
 	EventTypingReceived        = "typing.received" // a peer sent an IRCv3 +typing client tag (active/paused/done)
+	EventInviteReceived        = "invite.received" // an INVITE addressed to us (actionable)
 )
 
 // UserMeta holds the live, session-local roster attributes Cascade tracks for a

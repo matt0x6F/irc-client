@@ -1040,11 +1040,10 @@ func (c *IRCClient) maybeApplyExtendedJoin(e ircmsg.Message) {
 	})
 }
 
-// handleInvite surfaces an inbound INVITE in the network status buffer. The
-// invitee form (":inviter INVITE you #chan") arrives whether or not invite-notify
-// is negotiated; with invite-notify the server additionally relays invites of
-// *other* users to a channel's operators (":inviter INVITE someone #chan"). Both
-// are written as a clickable status line so the channel can be joined directly.
+// handleInvite routes an inbound INVITE. An invite addressed to us is emitted as
+// EventInviteReceived for the in-memory Invites inbox (App owns trust/notify).
+// The invite-notify "ops FYI" form (a third party invited to a channel we
+// operate) is informational only and stays a plain status line.
 func (c *IRCClient) handleInvite(e ircmsg.Message) {
 	if len(e.Params) < 2 {
 		return
@@ -1053,39 +1052,18 @@ func (c *IRCClient) handleInvite(e ircmsg.Message) {
 	channel := e.Params[1]
 	inviter := e.Nick()
 
-	var text string
-	if strings.EqualFold(target, c.CurrentNick()) {
-		text = fmt.Sprintf("%s invited you to %s", inviter, channel)
-	} else {
-		text = fmt.Sprintf("%s invited %s to %s", inviter, target, channel)
+	if !strings.EqualFold(target, c.CurrentNick()) {
+		c.writeStatusLine("status", fmt.Sprintf("%s invited %s to %s", inviter, target, channel))
+		return
 	}
 
-	rawLine, _ := e.Line()
-	// Sync write so the row is committed before the event below tells the
-	// frontend to reload the status buffer (avoids a write/notify race).
-	if err := c.storage.WriteMessageSync(storage.Message{
-		NetworkID:   c.networkID,
-		ChannelID:   nil, // status buffer
-		User:        "*",
-		Message:     text,
-		MessageType: "invite",
-		Timestamp:   time.Now(),
-		RawLine:     rawLine,
-	}); err != nil {
-		logger.Log.Warn().Err(err).Msg("Failed to write INVITE status line")
-	}
-
-	// channel:nil routes the line to the status buffer and refreshes it live
-	// (see the message-event handler in App.tsx).
 	c.eventBus.Emit(events.Event{
-		Type: EventMessageReceived,
+		Type: EventInviteReceived,
 		Data: map[string]interface{}{
-			"network":     c.network.Address,
-			"networkId":   c.networkID,
-			"channel":     nil,
-			"user":        "*",
-			"message":     text,
-			"messageType": "privmsg",
+			"networkId":  c.networkID,
+			"inviter":    inviter,
+			"channel":    channel,
+			"receivedAt": time.Now().Format(time.RFC3339),
 		},
 		Timestamp: time.Now(),
 		Source:    events.EventSourceIRC,
