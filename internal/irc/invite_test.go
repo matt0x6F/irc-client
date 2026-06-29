@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ergochat/irc-go/ircmsg"
 	"github.com/matt0x6f/irc-client/internal/events"
 )
 
@@ -87,5 +88,61 @@ func TestHandleInvite_IgnoredWithoutParams(t *testing.T) {
 		t.Fatalf("INVITE with no params must not emit an event; got %+v", e)
 	case <-time.After(100 * time.Millisecond):
 		// pass
+	}
+}
+
+func TestHandleInviting_RPL341WritesConfirmation(t *testing.T) {
+	c, _ := newUserMetaTestClient(t)
+
+	// 341 RPL_INVITING: "<me> <nick> <channel>"
+	msg := ircmsg.MakeMessage(nil, "server", "341", "me", "bob", "#chan")
+	c.handleInviting(msg)
+
+	if !statusBufferHas(t, c, "status", "Invited bob to #chan") {
+		t.Fatal("RPL_INVITING (341) must write 'Invited <nick> to <channel>' to the status buffer")
+	}
+}
+
+func TestHandleInviting_RPL341TooFewParamsIsIgnored(t *testing.T) {
+	c, _ := newUserMetaTestClient(t)
+
+	// Fewer than 3 params — must not panic.
+	msg := ircmsg.MakeMessage(nil, "server", "341", "me", "bob")
+	c.handleInviting(msg) // must not panic or write anything
+
+	msgs, err := c.storage.GetMessages(c.networkID, nil, 10)
+	if err != nil {
+		t.Fatalf("GetMessages: %v", err)
+	}
+	if len(msgs) != 0 {
+		t.Fatalf("expected no status rows, got %d", len(msgs))
+	}
+}
+
+func TestHandleUserOnChannel_443WritesError(t *testing.T) {
+	c, _ := newUserMetaTestClient(t)
+
+	// 443 ERR_USERONCHANNEL: "<me> <nick> <channel> :is already on channel"
+	msg := ircmsg.MakeMessage(nil, "server", "443", "me", "bob", "#chan", "is already on channel")
+	c.handleUserOnChannel(msg)
+
+	if !statusBufferHas(t, c, "status", "bob is already on #chan") {
+		t.Fatal("ERR_USERONCHANNEL (443) must write '<nick> is already on <channel>' to the status buffer")
+	}
+}
+
+func TestHandleUserOnChannel_443TooFewParamsIsIgnored(t *testing.T) {
+	c, _ := newUserMetaTestClient(t)
+
+	// Fewer than 3 params — must not panic.
+	msg := ircmsg.MakeMessage(nil, "server", "443", "me", "bob")
+	c.handleUserOnChannel(msg) // must not panic or write anything
+
+	msgs, err := c.storage.GetMessages(c.networkID, nil, 10)
+	if err != nil {
+		t.Fatalf("GetMessages: %v", err)
+	}
+	if len(msgs) != 0 {
+		t.Fatalf("expected no status rows, got %d", len(msgs))
 	}
 }

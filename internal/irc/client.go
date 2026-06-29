@@ -1070,6 +1070,24 @@ func (c *IRCClient) handleInvite(e ircmsg.Message) {
 	})
 }
 
+// handleInviting surfaces RPL_INVITING (341) as a status confirmation after we
+// send an INVITE. Params: "<me> <nick> <channel>".
+func (c *IRCClient) handleInviting(e ircmsg.Message) {
+	if len(e.Params) < 3 {
+		return
+	}
+	c.writeStatusLine("status", fmt.Sprintf("Invited %s to %s", e.Params[1], e.Params[2]))
+}
+
+// handleUserOnChannel surfaces ERR_USERONCHANNEL (443) when the target of an
+// INVITE is already on the channel. Params: "<me> <nick> <channel> :<reason>".
+func (c *IRCClient) handleUserOnChannel(e ircmsg.Message) {
+	if len(e.Params) < 3 {
+		return
+	}
+	c.writeStatusLine("status", fmt.Sprintf("%s is already on %s", e.Params[1], e.Params[2]))
+}
+
 // writeStatusLine writes a line to the network status buffer and refreshes it
 // live. The sync write commits the row before the event fires (avoiding a
 // write/notify race), and channel:nil routes the refresh to the status buffer
@@ -1790,7 +1808,9 @@ func (c *IRCClient) setupHandlers() {
 	c.conn.AddCallback("CHGHOST", c.handleChghost)
 	c.conn.AddCallback("SETNAME", c.handleSetname)
 	c.conn.AddCallback("INVITE", c.handleInvite)
-	c.conn.AddCallback("354", c.handleWhoxReply) // RPL_WHOSPCRPL (WHOX)
+	c.conn.AddCallback("341", c.handleInviting)      // RPL_INVITING (INVITE send success)
+	c.conn.AddCallback("443", c.handleUserOnChannel) // ERR_USERONCHANNEL (INVITE target already on channel)
+	c.conn.AddCallback("354", c.handleWhoxReply)     // RPL_WHOSPCRPL (WHOX)
 	// MONITOR presence: 730 RPL_MONONLINE, 731 RPL_MONOFFLINE.
 	c.conn.AddCallback("730", func(e ircmsg.Message) { c.handleMonitorPresence(e, true) })
 	c.conn.AddCallback("731", func(e ircmsg.Message) { c.handleMonitorPresence(e, false) })
