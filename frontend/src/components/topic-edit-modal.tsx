@@ -1,7 +1,6 @@
-import { useState, useEffect, useRef } from 'react';
-import { SendCommand, GetNetworks } from '../../wailsjs/go/main/App';
+import { useState, useEffect } from 'react';
+import { SendCommand } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
-import { storage } from '../../wailsjs/go/models';
 
 interface TopicEditModalProps {
   networkId: number;
@@ -15,14 +14,9 @@ export function TopicEditModal({ networkId, channelName, currentTopic, onClose, 
   const [topic, setTopic] = useState(currentTopic);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const networksRef = useRef<storage.Network[]>([]);
 
   useEffect(() => {
     setTopic(currentTopic);
-    // Load networks to get network address for error event matching
-    GetNetworks().then(nets => {
-      networksRef.current = nets || [];
-    });
   }, [currentTopic]);
 
   const handleSave = async (e: React.FormEvent) => {
@@ -45,11 +39,9 @@ export function TopicEditModal({ networkId, channelName, currentTopic, onClose, 
       const eventType = data?.type;
       if (eventType === 'error') {
         const eventData = data?.data || {};
-        const network = eventData.network;
         const channel = eventData.channel;
-        const currentNetwork = networksRef.current.find(n => n.id === networkId);
-        // Match by network and channel (if channel is specified in error)
-        if (currentNetwork && network === currentNetwork.address) {
+        // Match by unique networkId, not the deprecated (non-unique) address.
+        if (Number(eventData.networkId) === networkId) {
           // If error has a channel, it must match; if no channel in error, it's a general error
           if (!channel || channel === channelName) {
             resolved = true;
@@ -67,10 +59,8 @@ export function TopicEditModal({ networkId, channelName, currentTopic, onClose, 
       const eventType = data?.type;
       if (eventType === 'channel.topic') {
         const eventData = data?.data || {};
-        const network = eventData.network;
         const channel = eventData.channel;
-        const currentNetwork = networksRef.current.find(n => n.id === networkId);
-        if (currentNetwork && network === currentNetwork.address && channel === channelName) {
+        if (Number(eventData.networkId) === networkId && channel === channelName) {
           resolved = true;
           // Topic changed successfully
           onUpdate();

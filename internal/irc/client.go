@@ -1842,9 +1842,10 @@ func (c *IRCClient) setupHandlers() {
 		c.eventBus.Emit(events.Event{
 			Type: EventChannelTopic,
 			Data: map[string]interface{}{
-				"network": c.network.Address,
-				"channel": channel,
-				"topic":   topic,
+				"network":   c.network.Address,
+				"networkId": c.networkID,
+				"channel":   channel,
+				"topic":     topic,
 			},
 			Timestamp: time.Now(),
 			Source:    events.EventSourceIRC,
@@ -1871,9 +1872,10 @@ func (c *IRCClient) setupHandlers() {
 		c.eventBus.Emit(events.Event{
 			Type: EventChannelTopic,
 			Data: map[string]interface{}{
-				"network": c.network.Address,
-				"channel": channel,
-				"topic":   topic,
+				"network":   c.network.Address,
+				"networkId": c.networkID,
+				"channel":   channel,
+				"topic":     topic,
 			},
 			Timestamp: time.Now(),
 			Source:    events.EventSourceIRC,
@@ -2036,10 +2038,11 @@ func (c *IRCClient) setupHandlers() {
 		c.eventBus.Emit(events.Event{
 			Type: EventError,
 			Data: map[string]interface{}{
-				"network": c.network.Address,
-				"channel": channel,
-				"error":   errorMsg,
-				"code":    "482",
+				"network":   c.network.Address,
+				"networkId": c.networkID,
+				"channel":   channel,
+				"error":     errorMsg,
+				"code":      "482",
 			},
 			Timestamp: time.Now(),
 			Source:    events.EventSourceIRC,
@@ -2083,10 +2086,11 @@ func (c *IRCClient) setupHandlers() {
 		c.eventBus.Emit(events.Event{
 			Type: EventError,
 			Data: map[string]interface{}{
-				"network": c.network.Address,
-				"channel": channel,
-				"error":   errorMsg,
-				"code":    "442",
+				"network":   c.network.Address,
+				"networkId": c.networkID,
+				"channel":   channel,
+				"error":     errorMsg,
+				"code":      "442",
 			},
 			Timestamp: time.Now(),
 			Source:    events.EventSourceIRC,
@@ -2116,9 +2120,10 @@ func (c *IRCClient) setupHandlers() {
 		c.eventBus.Emit(events.Event{
 			Type: EventError,
 			Data: map[string]interface{}{
-				"network": c.network.Address,
-				"error":   errorMsg,
-				"code":    "481",
+				"network":   c.network.Address,
+				"networkId": c.networkID,
+				"error":     errorMsg,
+				"code":      "481",
 			},
 			Timestamp: time.Now(),
 			Source:    events.EventSourceIRC,
@@ -2187,9 +2192,10 @@ func (c *IRCClient) setupHandlers() {
 		c.eventBus.Emit(events.Event{
 			Type: EventChannelMode,
 			Data: map[string]interface{}{
-				"network": c.network.Address,
-				"channel": target,
-				"modes":   newModes,
+				"network":   c.network.Address,
+				"networkId": c.networkID,
+				"channel":   target,
+				"modes":     newModes,
 			},
 			Timestamp: time.Now(),
 			Source:    events.EventSourceIRC,
@@ -2263,9 +2269,10 @@ func (c *IRCClient) setupHandlers() {
 		c.eventBus.Emit(events.Event{
 			Type: EventChannelMode,
 			Data: map[string]interface{}{
-				"network": c.network.Address,
-				"channel": channel,
-				"modes":   newModes,
+				"network":   c.network.Address,
+				"networkId": c.networkID,
+				"channel":   channel,
+				"modes":     newModes,
 			},
 			Timestamp: time.Now(),
 			Source:    events.EventSourceIRC,

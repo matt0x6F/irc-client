@@ -5,6 +5,7 @@ import { main } from '../wailsjs/go/models';
 import { useNetworkStore } from './stores/network';
 import { useUIStore } from './stores/ui';
 import { eventMatchesPane } from './lib/pane-routing';
+import { activityTargetForEvent } from './lib/activity';
 import { initCommands } from './stores/commands';
 import { initDeepLinks } from './stores/deeplink';
 import { useNotificationRouting } from './hooks/useNotificationRouting';
@@ -386,51 +387,32 @@ function App() {
     const unsubscribe = EventsOn('message-event', (data: any) => {
       const eventType = data?.type;
       const eventData = data?.data || {};
-      const network = eventData.network;
+      // Resolve the source network by its unique id (the deprecated `network`
+      // address is non-unique and collides across networks sharing an address).
+      const networkId =
+        eventData.networkId != null && eventData.networkId !== ''
+          ? Number(eventData.networkId)
+          : undefined;
       const target = eventData.target || eventData.channel;
 
-      // Track activity for unfocused channels/PMs
+      // Track activity for unfocused channels/PMs. The activity target is resolved
+      // by the event's unique networkId (see lib/activity.ts) — never by the
+      // deprecated, non-unique `network` address, which collided across networks
+      // sharing an address (e.g. two Ergo servers' #programming badges merging).
       if (eventType === 'message.received' || eventType === 'message.sent') {
-        const networkObj = networks.find((n) => n.address === network);
-        if (networkObj && target && target !== 'status') {
-          const isChannel = target.startsWith('#') || target.startsWith('&');
-          let pmUser: string | null = null;
-          if (!isChannel) {
-            // With echo-message, our own sent PMs come back as a 'message.received'
-            // event whose user is *us*. That isn't a new incoming message — the
-            // matching 'message.sent' already tracked the conversation — so don't
-            // badge it (and never key it to our own nick, which created a phantom
-            // self-PM badge). The conversation peer is the target, not the sender.
-            const isEcho =
-              eventType === 'message.received' &&
-              !!networkObj.nickname &&
-              !!eventData.user &&
-              eventData.user.toLowerCase() === networkObj.nickname.toLowerCase();
-            if (!isEcho) {
-              pmUser = eventType === 'message.received' ? eventData.user || null : target;
-            }
-          }
-          const pmKey = pmUser ? `pm:${pmUser}` : null;
-          const activityKey = isChannel
-            ? `${networkObj.id}:${target}`
-            : pmKey
-            ? `${networkObj.id}:${pmKey}`
-            : null;
-
-          if (activityKey) {
-            const isFocused =
-              selectedNetwork === networkObj.id &&
-              (isChannel ? selectedChannel === target : selectedChannel === pmKey);
-            if (!isFocused) {
-              markActivity(activityKey);
-            }
+        const activity = activityTargetForEvent(eventType, eventData, networks);
+        if (activity) {
+          const isFocused =
+            selectedNetwork === activity.networkId && selectedChannel === activity.paneKey;
+          if (!isFocused) {
+            markActivity(activity.activityKey);
           }
         }
       }
 
       // Handle pending join channel switching
       if (eventType === 'user.joined') {
-        const networkObj = networks.find((n) => n.address === network);
+        const networkObj = networks.find((n) => n.id === networkId);
         if (networkObj) {
           const user = eventData.user;
           const channel = eventData.channel || target;
@@ -468,7 +450,7 @@ function App() {
       // Refresh messages if event matches current view
       if (selectedNetwork === null) return;
       const currentNetwork = networks.find((n) => n.id === selectedNetwork);
-      if (currentNetwork && network === currentNetwork.address) {
+      if (currentNetwork && networkId === currentNetwork.id) {
         // Route the event to its buffer key (pm:<peer> for DMs via the backend's
         // pmTarget, #chan for channels, status otherwise) and compare to the open
         // pane. Matching DMs on the raw target never lined up with the "pm:<peer>"
@@ -507,7 +489,11 @@ function App() {
       // anchored, reload so the new history appears now rather than on the next poll.
       if (store.viewMode !== 'live' || selectedNetwork === null) return;
       const currentNetwork = networks.find((n) => n.id === selectedNetwork);
-      if (!currentNetwork || eventData.network !== currentNetwork.address) return;
+      const eventNetworkId =
+        eventData.networkId != null && eventData.networkId !== ''
+          ? Number(eventData.networkId)
+          : undefined;
+      if (!currentNetwork || eventNetworkId !== currentNetwork.id) return;
       const sel = store.selectedChannel;
       const matches =
         sel === target ||
@@ -523,10 +509,13 @@ function App() {
       if (selectedNetwork === null || selectedChannel === null || selectedChannel === 'status') return;
       const eventType = data?.type;
       const eventData = data?.data || {};
-      const network = eventData.network;
+      const eventNetworkId =
+        eventData.networkId != null && eventData.networkId !== ''
+          ? Number(eventData.networkId)
+          : undefined;
       const channel = eventData.channel;
       const currentNetwork = networks.find((n) => n.id === selectedNetwork);
-      if (currentNetwork && network === currentNetwork.address && channel === selectedChannel) {
+      if (currentNetwork && eventNetworkId === currentNetwork.id && channel === selectedChannel) {
         if (eventType === 'channel.topic' || eventType === 'channel.mode') {
           loadChannelInfo();
         }

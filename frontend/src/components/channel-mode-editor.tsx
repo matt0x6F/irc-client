@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
-import { SendCommand, GetNetworks, RequestChannelBans } from '../../wailsjs/go/main/App';
+import { SendCommand, RequestChannelBans } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
-import { main, storage } from '../../wailsjs/go/models';
+import { main } from '../../wailsjs/go/models';
 import { describeBan } from '../lib/extban';
 import { describeMode, type ModeContext } from '../lib/chanmodes';
 
@@ -157,7 +157,6 @@ export function ChannelModeEditor({
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const networksRef = useRef<storage.Network[]>([]);
 
   // Re-parse when the channel's modes change underneath us (e.g. a live MODE arrived).
   useEffect(() => {
@@ -165,9 +164,6 @@ export function ChannelModeEditor({
     initialRef.current = parsed;
     setFlags(new Set(parsed.flags));
     setParams({ ...parsed.params });
-    GetNetworks().then((nets) => {
-      networksRef.current = nets || [];
-    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentModes]);
 
@@ -273,13 +269,12 @@ export function ChannelModeEditor({
       modeUnsub();
     };
 
-    const currentNetwork = () => networksRef.current.find((n) => n.id === networkId);
-
+    // Match events by the unique networkId, not the deprecated (non-unique)
+    // address — two networks can share an address, which collided here.
     const errorUnsub = EventsOn('message-event', (data: any) => {
       if (resolved || data?.type !== 'error') return;
       const d = data?.data || {};
-      const net = currentNetwork();
-      if (net && d.network === net.address && (!d.channel || d.channel === channelName)) {
+      if (Number(d.networkId) === networkId && (!d.channel || d.channel === channelName)) {
         resolved = true;
         setError(d.error || 'The server rejected the mode change');
         setSaving(false);
@@ -290,8 +285,7 @@ export function ChannelModeEditor({
     const modeUnsub = EventsOn('message-event', (data: any) => {
       if (resolved || data?.type !== 'channel.mode') return;
       const d = data?.data || {};
-      const net = currentNetwork();
-      if (net && d.network === net.address && d.channel === channelName) {
+      if (Number(d.networkId) === networkId && d.channel === channelName) {
         resolved = true;
         onUpdate();
         onClose();
