@@ -44,6 +44,7 @@ type IRCClient struct {
 	network               *storage.Network
 	mu                    sync.RWMutex
 	connected             bool
+	abandoned             bool          // Sticky: this IRCClient is retired and must never re-register. Set on any drop (onDisconnect) and on explicit teardown (signalQuit); a later connect from the library Loop's own reconnect is then ignored by onConnect. The app recovers every drop with a fresh IRCClient, so an abandoned one is gone for good (guarded by mu)
 	loopDone              chan struct{} // Closed when the library's Loop() goroutine fully exits; lets teardown wait for a clean stop (guarded by mu)
 	saslEnabled           bool
 	saslMechanism         string
@@ -1380,158 +1381,194 @@ func (c *IRCClient) handlePrivmsg(e ircmsg.Message) {
 	})
 }
 
+// onConnect is the library connect callback: it marks the client connected,
+// records the status line, kicks off IRCv3 capability negotiation, and announces
+// EventConnectionEstablished.
+func (c *IRCClient) onConnect(e ircmsg.Message) {
+	c.mu.Lock()
+	abandoned := c.abandoned
+	if !abandoned {
+		c.connected = true
+	}
+	c.mu.Unlock()
+
+	// Ghost guard: we already signalled quit on this client, but the library Loop
+	// fired one last reconnect anyway (it doesn't re-check its quit flag after the
+	// reconnect delay). Refuse to participate — don't mark connected, negotiate
+	// CAP, write status, or announce Established. Re-issue Quit so the socket the
+	// Loop just opened is torn down promptly instead of lingering until the next
+	// iteration; the Loop then sees the quit flag and exits for good.
+	if abandoned {
+		c.signalQuit("Disconnecting")
+		return
+	}
+
+	// Store connection message in status window
+	rawLine, _ := e.Line()
+	statusMsg := storage.Message{
+		NetworkID:   c.networkID,
+		ChannelID:   nil, // Status window
+		User:        "*",
+		Message:     "Connected to server",
+		MessageType: "status",
+		Timestamp:   time.Now(),
+		RawLine:     rawLine,
+	}
+	c.storage.WriteMessage(statusMsg)
+
+	// Always start IRCv3 capability negotiation
+	c.storage.WriteMessage(storage.Message{
+		NetworkID:   c.networkID,
+		ChannelID:   nil,
+		User:        "*",
+		Message:     "Starting IRCv3 capability negotiation (CAP LS 302)",
+		MessageType: "status",
+		Timestamp:   time.Now(),
+	})
+	c.conn.SendRaw("CAP LS 302")
+
+	// On connection established, restore channel state after restart
+	// Clear all channel_users entries since we're not actually joined anymore
+	if err := c.storage.ClearNetworkChannelUsers(c.networkID); err != nil {
+		logger.Log.Warn().Err(err).Msg("Failed to clear channel users on connection")
+	} else {
+		logger.Log.Debug().Msg("Cleared channel users on connection (restoring state after restart)")
+	}
+
+	c.eventBus.Emit(events.Event{
+		Type:      EventConnectionEstablished,
+		Data:      map[string]interface{}{"network": c.network.Address, "networkId": c.networkID},
+		Timestamp: time.Now(),
+		Source:    events.EventSourceIRC,
+	})
+}
+
+// onDisconnect is the library disconnect callback: it marks the client
+// disconnected, records "Disconnected" in every open channel and the status
+// window, clears stale user lists, and announces EventConnectionLost (which the
+// app turns into an auto-reconnect with a fresh client).
+func (c *IRCClient) onDisconnect(e ircmsg.Message) {
+	c.mu.Lock()
+	c.connected = false
+	// The app is the sole reconnect owner: every drop is recovered by building a
+	// FRESH IRCClient (handleConnectionLost -> connectNetwork), never by reusing
+	// this object. So retire this one the instant it drops. The library Loop will
+	// try to reconnect it on its own — immediately, for a long-lived link whose
+	// reconnect delay has already elapsed — but this callback provably runs to
+	// completion before that reconnect (ergochat's readLoop fires disconnect
+	// callbacks in a defer that precedes wg.Done(), and Loop waits on wg before
+	// re-dialing). Setting abandoned here therefore closes the race that a later
+	// signalQuit could not: the Loop's reconnect lands in onConnect as a no-op
+	// instead of a ghost that steals the nick and reports itself connected.
+	c.abandoned = true
+	// Reset nick-collision state so a reconnect starts from a clean slate.
+	c.currentNick = ""
+	c.nickCollisionNotified = false
+	c.pendingManualNick = ""
+	c.mu.Unlock()
+
+	// Write "Disconnected" messages to all open/joined channels BEFORE clearing users
+	// This ensures we can still identify which channels the user was in
+	// Do this SYNCHRONOUSLY so it completes before the process can exit
+	logger.Log.Info().Int64("network_id", c.networkID).Msg("Disconnect callback: writing messages to channels")
+
+	var channelsToNotify []storage.Channel
+	if c.network.Nickname != "" {
+		// Get channels that are open or where we're joined
+		openChannels, err := c.storage.GetOpenChannels(c.networkID, c.network.Nickname)
+		if err == nil && len(openChannels) > 0 {
+			channelsToNotify = openChannels
+			logger.Log.Debug().Int64("network_id", c.networkID).Int("open_channels", len(openChannels)).Msg("Disconnect callback: found open channels via GetOpenChannels")
+		} else if err != nil {
+			logger.Log.Debug().Err(err).Int64("network_id", c.networkID).Msg("Disconnect callback: error getting open channels")
+		}
+	}
+
+	// Fallback: if GetOpenChannels didn't work or returned nothing, get all channels
+	// and filter to those that are open
+	if len(channelsToNotify) == 0 {
+		allChannels, err := c.storage.GetChannels(c.networkID)
+		if err == nil {
+			for _, ch := range allChannels {
+				if ch.IsOpen {
+					channelsToNotify = append(channelsToNotify, ch)
+				}
+			}
+			logger.Log.Debug().Int64("network_id", c.networkID).Int("open_channels", len(channelsToNotify)).Int("total_channels", len(allChannels)).Msg("Disconnect callback: found open channels via fallback")
+		} else {
+			logger.Log.Debug().Err(err).Int64("network_id", c.networkID).Msg("Disconnect callback: error getting all channels")
+		}
+	}
+
+	// Write "Disconnected" message to each channel
+	if len(channelsToNotify) > 0 {
+		logger.Log.Info().Int64("network_id", c.networkID).Int("channel_count", len(channelsToNotify)).Msg("Disconnect callback: writing disconnect messages to channels")
+		for _, channel := range channelsToNotify {
+			disconnectMsg := storage.Message{
+				NetworkID:   c.networkID,
+				ChannelID:   &channel.ID,
+				User:        "*",
+				Message:     "Disconnected",
+				MessageType: "status",
+				Timestamp:   time.Now(),
+				RawLine:     "",
+			}
+			// Use WriteMessageDirect to ensure immediate persistence
+			if err := c.storage.WriteMessageDirect(disconnectMsg); err != nil {
+				if err.Error() != "storage is closed" {
+					logger.Log.Warn().Err(err).Int64("network_id", c.networkID).Str("channel", channel.Name).Msg("Disconnect callback: failed to write disconnect message to channel")
+				} else {
+					logger.Log.Debug().Int64("network_id", c.networkID).Str("channel", channel.Name).Msg("Disconnect callback: storage closed, skipping channel")
+				}
+			} else {
+				logger.Log.Debug().Int64("network_id", c.networkID).Str("channel", channel.Name).Int64("channel_id", channel.ID).Msg("Disconnect callback: wrote disconnect message to channel")
+			}
+		}
+	}
+
+	// Clear all channel user lists for this network since we're disconnected
+	// This prevents showing stale user lists when reconnecting
+	channels, err := c.storage.GetChannels(c.networkID)
+	if err == nil {
+		for _, ch := range channels {
+			if err := c.storage.ClearChannelUsers(ch.ID); err != nil {
+				logger.Log.Error().Err(err).Str("channel", ch.Name).Msg("Failed to clear users for channel")
+			} else {
+				logger.Log.Debug().Str("channel", ch.Name).Msg("Cleared user list for channel")
+			}
+		}
+	}
+
+	// Store disconnection message in status window
+	rawLine, _ := e.Line()
+	statusMsg := storage.Message{
+		NetworkID:   c.networkID,
+		ChannelID:   nil, // Status window
+		User:        "*",
+		Message:     "Disconnected from server",
+		MessageType: "status",
+		Timestamp:   time.Now(),
+		RawLine:     rawLine,
+	}
+	c.storage.WriteMessage(statusMsg)
+
+	c.eventBus.Emit(events.Event{
+		Type:      EventConnectionLost,
+		Data:      map[string]interface{}{"network": c.network.Address, "networkId": c.networkID},
+		Timestamp: time.Now(),
+		Source:    events.EventSourceIRC,
+	})
+
+	logger.Log.Debug().Int64("network_id", c.networkID).Msg("Disconnect callback: finished processing disconnect")
+}
+
 // setupHandlers sets up IRC event handlers
 func (c *IRCClient) setupHandlers() {
 	// Connection established
-	c.conn.AddConnectCallback(func(e ircmsg.Message) {
-		c.mu.Lock()
-		c.connected = true
-		c.mu.Unlock()
-
-		// Store connection message in status window
-		rawLine, _ := e.Line()
-		statusMsg := storage.Message{
-			NetworkID:   c.networkID,
-			ChannelID:   nil, // Status window
-			User:        "*",
-			Message:     "Connected to server",
-			MessageType: "status",
-			Timestamp:   time.Now(),
-			RawLine:     rawLine,
-		}
-		c.storage.WriteMessage(statusMsg)
-
-		// Always start IRCv3 capability negotiation
-		c.storage.WriteMessage(storage.Message{
-			NetworkID:   c.networkID,
-			ChannelID:   nil,
-			User:        "*",
-			Message:     "Starting IRCv3 capability negotiation (CAP LS 302)",
-			MessageType: "status",
-			Timestamp:   time.Now(),
-		})
-		c.conn.SendRaw("CAP LS 302")
-
-		// On connection established, restore channel state after restart
-		// Clear all channel_users entries since we're not actually joined anymore
-		if err := c.storage.ClearNetworkChannelUsers(c.networkID); err != nil {
-			logger.Log.Warn().Err(err).Msg("Failed to clear channel users on connection")
-		} else {
-			logger.Log.Debug().Msg("Cleared channel users on connection (restoring state after restart)")
-		}
-
-		c.eventBus.Emit(events.Event{
-			Type:      EventConnectionEstablished,
-			Data:      map[string]interface{}{"network": c.network.Address, "networkId": c.networkID},
-			Timestamp: time.Now(),
-			Source:    events.EventSourceIRC,
-		})
-	})
+	c.conn.AddConnectCallback(c.onConnect)
 
 	// Connection lost
-	c.conn.AddDisconnectCallback(func(e ircmsg.Message) {
-		c.mu.Lock()
-		c.connected = false
-		// Reset nick-collision state so a reconnect starts from a clean slate.
-		c.currentNick = ""
-		c.nickCollisionNotified = false
-		c.pendingManualNick = ""
-		c.mu.Unlock()
-
-		// Write "Disconnected" messages to all open/joined channels BEFORE clearing users
-		// This ensures we can still identify which channels the user was in
-		// Do this SYNCHRONOUSLY so it completes before the process can exit
-		logger.Log.Info().Int64("network_id", c.networkID).Msg("Disconnect callback: writing messages to channels")
-
-		var channelsToNotify []storage.Channel
-		if c.network.Nickname != "" {
-			// Get channels that are open or where we're joined
-			openChannels, err := c.storage.GetOpenChannels(c.networkID, c.network.Nickname)
-			if err == nil && len(openChannels) > 0 {
-				channelsToNotify = openChannels
-				logger.Log.Debug().Int64("network_id", c.networkID).Int("open_channels", len(openChannels)).Msg("Disconnect callback: found open channels via GetOpenChannels")
-			} else if err != nil {
-				logger.Log.Debug().Err(err).Int64("network_id", c.networkID).Msg("Disconnect callback: error getting open channels")
-			}
-		}
-
-		// Fallback: if GetOpenChannels didn't work or returned nothing, get all channels
-		// and filter to those that are open
-		if len(channelsToNotify) == 0 {
-			allChannels, err := c.storage.GetChannels(c.networkID)
-			if err == nil {
-				for _, ch := range allChannels {
-					if ch.IsOpen {
-						channelsToNotify = append(channelsToNotify, ch)
-					}
-				}
-				logger.Log.Debug().Int64("network_id", c.networkID).Int("open_channels", len(channelsToNotify)).Int("total_channels", len(allChannels)).Msg("Disconnect callback: found open channels via fallback")
-			} else {
-				logger.Log.Debug().Err(err).Int64("network_id", c.networkID).Msg("Disconnect callback: error getting all channels")
-			}
-		}
-
-		// Write "Disconnected" message to each channel
-		if len(channelsToNotify) > 0 {
-			logger.Log.Info().Int64("network_id", c.networkID).Int("channel_count", len(channelsToNotify)).Msg("Disconnect callback: writing disconnect messages to channels")
-			for _, channel := range channelsToNotify {
-				disconnectMsg := storage.Message{
-					NetworkID:   c.networkID,
-					ChannelID:   &channel.ID,
-					User:        "*",
-					Message:     "Disconnected",
-					MessageType: "status",
-					Timestamp:   time.Now(),
-					RawLine:     "",
-				}
-				// Use WriteMessageDirect to ensure immediate persistence
-				if err := c.storage.WriteMessageDirect(disconnectMsg); err != nil {
-					if err.Error() != "storage is closed" {
-						logger.Log.Warn().Err(err).Int64("network_id", c.networkID).Str("channel", channel.Name).Msg("Disconnect callback: failed to write disconnect message to channel")
-					} else {
-						logger.Log.Debug().Int64("network_id", c.networkID).Str("channel", channel.Name).Msg("Disconnect callback: storage closed, skipping channel")
-					}
-				} else {
-					logger.Log.Debug().Int64("network_id", c.networkID).Str("channel", channel.Name).Int64("channel_id", channel.ID).Msg("Disconnect callback: wrote disconnect message to channel")
-				}
-			}
-		}
-
-		// Clear all channel user lists for this network since we're disconnected
-		// This prevents showing stale user lists when reconnecting
-		channels, err := c.storage.GetChannels(c.networkID)
-		if err == nil {
-			for _, ch := range channels {
-				if err := c.storage.ClearChannelUsers(ch.ID); err != nil {
-					logger.Log.Error().Err(err).Str("channel", ch.Name).Msg("Failed to clear users for channel")
-				} else {
-					logger.Log.Debug().Str("channel", ch.Name).Msg("Cleared user list for channel")
-				}
-			}
-		}
-
-		// Store disconnection message in status window
-		rawLine, _ := e.Line()
-		statusMsg := storage.Message{
-			NetworkID:   c.networkID,
-			ChannelID:   nil, // Status window
-			User:        "*",
-			Message:     "Disconnected from server",
-			MessageType: "status",
-			Timestamp:   time.Now(),
-			RawLine:     rawLine,
-		}
-		c.storage.WriteMessage(statusMsg)
-
-		c.eventBus.Emit(events.Event{
-			Type:      EventConnectionLost,
-			Data:      map[string]interface{}{"network": c.network.Address, "networkId": c.networkID},
-			Timestamp: time.Now(),
-			Source:    events.EventSourceIRC,
-		})
-
-		logger.Log.Debug().Int64("network_id", c.networkID).Msg("Disconnect callback: finished processing disconnect")
-	})
+	c.conn.AddDisconnectCallback(c.onDisconnect)
 
 	// PRIVMSG received
 	c.conn.AddCallback("PRIVMSG", c.handlePrivmsg)
@@ -4078,6 +4115,14 @@ func (c *IRCClient) signalQuit(reason string) <-chan struct{} {
 	conn := c.conn
 	done := c.loopDone
 	c.connected = false
+	// Sticky: this client is being torn down. The library Loop checks its quit
+	// flag only at the top of its iteration, not after the reconnect delay, so a
+	// Quit() that lands mid-cycle still lets it complete one more Connect(). The
+	// abandoned flag makes that final connect callback a no-op (see onConnect) so
+	// the doomed socket can't re-register, steal the nick, or report itself
+	// connected. Never cleared — an abandoned client is gone for good; a real
+	// reconnect always uses a fresh IRCClient.
+	c.abandoned = true
 	c.mu.Unlock()
 
 	if conn == nil {
