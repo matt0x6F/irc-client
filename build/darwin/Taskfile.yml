@@ -152,6 +152,26 @@ tasks:
         fi
       - cp "{{.BIN_DIR}}/{{.APP_NAME}}" "{{.BIN_DIR}}/{{.APP_NAME}}.app/Contents/MacOS"
       - cp build/darwin/Info.plist "{{.BIN_DIR}}/{{.APP_NAME}}.app/Contents"
+      # Stamp the packaged Info.plist with the real version so Finder "Get Info",
+      # Spotlight, and crash reports match the in-binary version (set via ldflags).
+      # The source plist is generated from config.yml and intentionally stays at the
+      # 0.0.1 placeholder; we inject into the bundle's copy only, and before the
+      # codesign step below so the signature seals the stamped plist. Mirrors the
+      # APP_VERSION-else-git-describe pattern used by create:zip / create:dmg.
+      - |
+        set -euo pipefail
+        PLIST="{{.BIN_DIR}}/{{.APP_NAME}}.app/Contents/Info.plist"
+        RAW="${APP_VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo dev)}"
+        VER="${RAW#v}"
+        if [ -x /usr/libexec/PlistBuddy ]; then
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VER" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VER" "$PLIST"
+        else
+          # Cross-compile host without PlistBuddy: the placeholder appears only at the
+          # two version fields, so a literal swap is safe.
+          sed -i.bak "s|<string>0.0.1</string>|<string>$VER</string>|g" "$PLIST" && rm -f "$PLIST.bak"
+        fi
+        echo "Stamped Info.plist CFBundleShortVersionString/CFBundleVersion = $VER"
       - task: '{{if eq OS "darwin"}}codesign:adhoc{{else}}codesign:skip{{end}}'
 
   codesign:adhoc:
