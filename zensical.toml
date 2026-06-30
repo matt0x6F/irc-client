@@ -26,6 +26,7 @@ nav = [
     "developers/plugin-system.md",
     "developers/events.md",
     "developers/ircv3-support.md",
+    "developers/protocol-references.md",
     "developers/releases.md",
   ] },
   { "Scripting" = [

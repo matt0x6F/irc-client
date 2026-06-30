@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ergochat/irc-go/ircevent"
@@ -56,35 +57,37 @@ type IRCClient struct {
 	saslCapRequested      bool
 	saslCapAcknowledged   bool
 	scramState            *SCRAMState
-	namesInProgress       map[string]bool       // Track channels currently receiving NAMES list
-	namesMu               sync.Mutex            // Mutex for namesInProgress map
-	serverCapabilities    *ServerCapabilities   // Server capabilities from ISUPPORT
-	supportsWHOX          bool                  // Server advertised the WHOX token in ISUPPORT (guarded by mu)
-	supportsMonitor       bool                  // Server advertised the MONITOR token in ISUPPORT (guarded by mu)
-	monitorLimit          int                   // MONITOR=<limit> from ISUPPORT; 0 = unlimited/unknown (guarded by mu)
-	monitorStatus         map[string]bool       // MONITOR presence: lowercased nick -> online (guarded by monitorMu)
-	monitorArmed          map[string]bool       // Nicks currently on the server MONITOR list (guarded by monitorMu)
-	monitorMu             sync.Mutex            // Mutex for monitorStatus and monitorArmed
-	whoisInProgress       map[string]*WhoisInfo // Track WHOIS requests in progress (key: nickname)
-	whoisMu               sync.Mutex            // Mutex for whoisInProgress map
-	knownBots             map[string]bool       // Nicks recognized as IRCv3 bots this session (key: lowercased nick)
-	knownBotsMu           sync.Mutex            // Mutex for knownBots map
-	userMeta              map[string]*UserMeta  // Live roster attributes (away/account/host) this session (key: lowercased nick)
-	userMetaMu            sync.Mutex            // Mutex for userMeta map
-	autoJoinOnce          *sync.Once            // Guards the one auto-join per connection; re-created each Connect (guarded by mu)
-	autoJoinAction        func()                // What triggerAutoJoin runs once per connection; defaults to doAutoJoin (injectable for tests)
-	enabledCaps           map[string]bool       // IRCv3 capabilities granted by the server
-	chatHistoryMaxBatch   int                   // Max messages per CHATHISTORY request, from the chathistory=N cap value (0 = unknown, use default)
-	capNegotiationDone    bool                  // Whether CAP negotiation has finished
-	channelListItems      []ChannelListItem     // Temporary storage for LIST response
-	channelListMu         sync.Mutex            // Mutex for channelListItems
-	banLists              map[string][]BanEntry // Per-channel ban entries collected between 367 and 368
-	banListsMu            sync.Mutex            // Mutex for banLists
-	rateLimiter           *RateLimiter          // Rate limiter for outgoing messages
-	currentNick           string                // Nick the server currently knows us by; differs from the preferred nick during a collision (guarded by mu)
-	nickCollisionNotified bool                  // True once we've told the user (one time) that the preferred nick was unavailable (guarded by mu)
-	pendingManualNick     string                // Nick the user explicitly asked for via /nick and is awaiting; lets us surface a failure that the library's silent background reclaims would otherwise hide (guarded by mu)
-	reconnecting          bool                  // True when this connection is an auto-reconnect after an unexpected drop (guarded by mu)
+	namesInProgress       map[string]bool        // Track channels currently receiving NAMES list
+	namesMu               sync.Mutex             // Mutex for namesInProgress map
+	serverCapabilities    *ServerCapabilities    // Server capabilities from ISUPPORT
+	chanTypesAtomic       atomic.Pointer[string] // CHANTYPES from ISUPPORT (e.g. "#&"); lock-free so channel detection is callable anywhere
+	caseMappingAtomic     atomic.Pointer[string] // CASEMAPPING from ISUPPORT (e.g. "ascii"); lock-free so nick folding is callable anywhere
+	supportsWHOX          bool                   // Server advertised the WHOX token in ISUPPORT (guarded by mu)
+	supportsMonitor       bool                   // Server advertised the MONITOR token in ISUPPORT (guarded by mu)
+	monitorLimit          int                    // MONITOR=<limit> from ISUPPORT; 0 = unlimited/unknown (guarded by mu)
+	monitorStatus         map[string]bool        // MONITOR presence: lowercased nick -> online (guarded by monitorMu)
+	monitorArmed          map[string]bool        // Nicks currently on the server MONITOR list (guarded by monitorMu)
+	monitorMu             sync.Mutex             // Mutex for monitorStatus and monitorArmed
+	whoisInProgress       map[string]*WhoisInfo  // Track WHOIS requests in progress (key: nickname)
+	whoisMu               sync.Mutex             // Mutex for whoisInProgress map
+	knownBots             map[string]bool        // Nicks recognized as IRCv3 bots this session (key: lowercased nick)
+	knownBotsMu           sync.Mutex             // Mutex for knownBots map
+	userMeta              map[string]*UserMeta   // Live roster attributes (away/account/host) this session (key: lowercased nick)
+	userMetaMu            sync.Mutex             // Mutex for userMeta map
+	autoJoinOnce          *sync.Once             // Guards the one auto-join per connection; re-created each Connect (guarded by mu)
+	autoJoinAction        func()                 // What triggerAutoJoin runs once per connection; defaults to doAutoJoin (injectable for tests)
+	enabledCaps           map[string]bool        // IRCv3 capabilities granted by the server
+	chatHistoryMaxBatch   int                    // Max messages per CHATHISTORY request, from the chathistory=N cap value (0 = unknown, use default)
+	capNegotiationDone    bool                   // Whether CAP negotiation has finished
+	channelListItems      []ChannelListItem      // Temporary storage for LIST response
+	channelListMu         sync.Mutex             // Mutex for channelListItems
+	banLists              map[string][]BanEntry  // Per-channel ban entries collected between 367 and 368
+	banListsMu            sync.Mutex             // Mutex for banLists
+	rateLimiter           *RateLimiter           // Rate limiter for outgoing messages
+	currentNick           string                 // Nick the server currently knows us by; differs from the preferred nick during a collision (guarded by mu)
+	nickCollisionNotified bool                   // True once we've told the user (one time) that the preferred nick was unavailable (guarded by mu)
+	pendingManualNick     string                 // Nick the user explicitly asked for via /nick and is awaiting; lets us surface a failure that the library's silent background reclaims would otherwise hide (guarded by mu)
+	reconnecting          bool                   // True when this connection is an auto-reconnect after an unexpected drop (guarded by mu)
 }
 
 // ServerCapabilities stores parsed ISUPPORT information
@@ -96,6 +99,8 @@ type ServerCapabilities struct {
 	ChanModesB   map[rune]bool // Type B modes (always parameterized, e.g. k)
 	ChanModesC   map[rune]bool // Type C modes (parameterized only when set, e.g. l)
 	ChanModesD   map[rune]bool // Type D modes (boolean flags, e.g. imnpst)
+	ChanTypes    string        // CHANTYPES token: channel-prefix characters (e.g. "#&"); empty means use the default
+	CaseMapping  string        // CASEMAPPING token: nick/channel case-fold rule (e.g. "ascii", "rfc1459")
 	UTF8Only     bool          // UTF8ONLY token present: server accepts only UTF-8 (ratified)
 	ExtbanPrefix rune          // EXTBAN prefix char (e.g. '$'); 0 if none/unadvertised
 	ExtbanTypes  map[rune]bool // EXTBAN type letters (e.g. 'a' for account-extban)
@@ -326,7 +331,7 @@ func nickErrorAttempt(e ircmsg.Message) string {
 func (c *IRCClient) surfaceManualNickError(attempted, message string) bool {
 	c.mu.Lock()
 	manual := c.pendingManualNick != "" &&
-		(attempted == "" || strings.EqualFold(attempted, c.pendingManualNick))
+		(attempted == "" || c.sameName(attempted, c.pendingManualNick))
 	if manual {
 		c.pendingManualNick = ""
 	}
@@ -525,10 +530,10 @@ func (c *IRCClient) handlePart(e ircmsg.Message) {
 
 // handleQuit processes an inbound QUIT: the user left the network entirely, so it
 // drops their live roster metadata and removes them from every channel they were
-// in, writing a quit line to each. Nick matching is case-insensitive (IRC nick
-// equality folds case per the server's CASEMAPPING), so a QUIT whose source nick
-// differs in case from the stored roster entry still clears it rather than
-// leaving a ghost behind.
+// in, writing a quit line to each. Nick matching uses sameName (the server's
+// advertised CASEMAPPING), so a QUIT whose source nick differs only in case —
+// including the rfc1459 []\~ ↔ {}|^ pairing — still clears the stored roster
+// entry rather than leaving a ghost behind.
 func (c *IRCClient) handleQuit(e ircmsg.Message) {
 	user := e.Nick()
 	reason := ""
@@ -548,7 +553,7 @@ func (c *IRCClient) handleQuit(e ircmsg.Message) {
 			users, err := c.storage.GetChannelUsers(ch.ID)
 			if err == nil {
 				for _, u := range users {
-					if strings.EqualFold(u.Nickname, user) {
+					if c.sameName(u.Nickname, user) {
 						// User is in this channel, remove them
 						if err := c.storage.RemoveChannelUser(ch.ID, user); err != nil {
 							logger.Log.Error().Err(err).Str("user", user).Str("channel", ch.Name).Msg("Failed to remove user from channel user list")
@@ -677,14 +682,14 @@ func (c *IRCClient) handleNickMessage(e ircmsg.Message) {
 
 	// Detect when the change is our own and keep our tracked nick in sync.
 	c.mu.RLock()
-	isSelf := strings.EqualFold(oldNick, c.currentNick)
+	isSelf := c.sameName(oldNick, c.currentNick)
 	c.mu.RUnlock()
 	if !isSelf {
 		return
 	}
 
 	preferred := c.preferredNick()
-	reclaimed := strings.EqualFold(newNick, preferred)
+	reclaimed := c.sameName(newNick, preferred)
 	c.mu.Lock()
 	c.currentNick = newNick
 	// Our nick changed successfully, so any manual /nick request is now resolved.
@@ -826,7 +831,7 @@ func (c *IRCClient) markBot(nick string) {
 // shared markBot path so the self nick shows the bot badge. All other user-mode
 // changes are intentionally ignored (we track no general self-usermode state).
 func (c *IRCClient) markSelfBotFromUserMode(target, modeStr string) {
-	if !strings.EqualFold(target, c.CurrentNick()) {
+	if !c.sameName(target, c.CurrentNick()) {
 		return
 	}
 	c.mu.RLock()
@@ -1054,7 +1059,7 @@ func (c *IRCClient) handleInvite(e ircmsg.Message) {
 	channel := e.Params[1]
 	inviter := e.Nick()
 
-	if !strings.EqualFold(target, c.CurrentNick()) {
+	if !c.sameName(target, c.CurrentNick()) {
 		c.writeStatusLine("status", fmt.Sprintf("%s invited %s to %s", inviter, target, channel))
 		return
 	}
@@ -1143,6 +1148,68 @@ func (c *IRCClient) handleStandardReply(e ircmsg.Message, messageType string) {
 		text = fmt.Sprintf("%s %s: %s", e.Command, command, description)
 	}
 	c.writeStatusLine(messageType, text)
+}
+
+// genericErrorNumerics are server error replies that carry a human-readable
+// description but have no dedicated handler. ergochat/irc-go drops any numeric
+// without a registered callback silently (it rejects wildcard callbacks), so
+// without this a failed PM (401 ERR_NOSUCHNICK), a blocked channel send
+// (404 ERR_CANNOTSENDTOCHAN), or a typo'd command (421 ERR_UNKNOWNCOMMAND) would
+// give the user no feedback at all. Numerics that already have purpose-built
+// handlers (join errors 470–477, nick errors 431–437, 481/482, SASL 90x, …) are
+// intentionally excluded so they aren't shown twice.
+var genericErrorNumerics = []string{
+	"401", // ERR_NOSUCHNICK
+	"402", // ERR_NOSUCHSERVER
+	"403", // ERR_NOSUCHCHANNEL
+	"404", // ERR_CANNOTSENDTOCHAN
+	"405", // ERR_TOOMANYCHANNELS
+	"406", // ERR_WASNOSUCHNICK
+	"407", // ERR_TOOMANYTARGETS
+	"408", // ERR_NOSUCHSERVICE
+	"409", // ERR_NOORIGIN
+	"411", // ERR_NORECIPIENT
+	"412", // ERR_NOTEXTTOSEND
+	"413", // ERR_NOTOPLEVEL
+	"414", // ERR_WILDTOPLEVEL
+	"415", // ERR_BADMASK
+	"421", // ERR_UNKNOWNCOMMAND
+	"423", // ERR_NOADMININFO
+	"424", // ERR_FILEERROR
+	"441", // ERR_USERNOTINCHANNEL
+	"444", // ERR_NOLOGIN
+	"451", // ERR_NOTREGISTERED
+	"461", // ERR_NEEDMOREPARAMS
+	"462", // ERR_ALREADYREGISTERED
+	"463", // ERR_NOPERMFORHOST
+	"464", // ERR_PASSWDMISMATCH
+	"465", // ERR_YOUREBANNEDCREEP
+	"466", // ERR_YOUWILLBEBANNED
+	"467", // ERR_KEYSET
+	"472", // ERR_UNKNOWNMODE
+	"476", // ERR_BADCHANMASK
+	"478", // ERR_BANLISTFULL
+	"479", // ERR_BADCHANNAME
+	"480", // ERR_CANNOTKNOCK / ERR_THROTTLE
+	"483", // ERR_CANTKILLSERVER
+	"484", // ERR_RESTRICTED
+	"485", // ERR_UNIQOPPRIVSNEEDED
+	"491", // ERR_NOOPERHOST
+	"501", // ERR_UMODEUNKNOWNFLAG
+	"502", // ERR_USERSDONTMATCH
+	"524", // ERR_HELPNOTFOUND
+	"525", // ERR_INVALIDKEY
+	"723", // ERR_NOPRIVS
+}
+
+// handleServerNumeric surfaces a generic server error reply (see
+// genericErrorNumerics) as an error line in the status buffer. The wire form is
+// "<numeric> <me> [<subject>...] :<description>"; formatServerNumeric renders the
+// subject(s) and description into one line. Without this the reply is dropped.
+func (c *IRCClient) handleServerNumeric(e ircmsg.Message) {
+	if text := formatServerNumeric(e.Params); text != "" {
+		c.writeStatusLine("error", text)
+	}
 }
 
 // handleSetname processes the setname capability: ":nick SETNAME :new real name"
@@ -1742,6 +1809,13 @@ func (c *IRCClient) setupHandlers() {
 	c.conn.AddCallback("474", c.handleJoinError) // ERR_BANNEDFROMCHAN
 	c.conn.AddCallback("475", c.handleJoinError) // ERR_BADCHANNELKEY
 	c.conn.AddCallback("477", c.handleJoinError) // ERR_NEEDREGGEDNICK
+
+	// Surface common server error numerics that otherwise vanish — there is no
+	// catch-all callback in ergochat/irc-go, so an unregistered numeric is dropped
+	// without any user-visible output. See genericErrorNumerics.
+	for _, code := range genericErrorNumerics {
+		c.conn.AddCallback(code, c.handleServerNumeric)
+	}
 
 	// User quit
 	c.conn.AddCallback("QUIT", c.handleQuit)
@@ -3020,7 +3094,7 @@ func (c *IRCClient) isEchoMessage(e ircmsg.Message) bool {
 	if nick == "" {
 		nick = c.network.Nickname // before registration assigns a live nick
 	}
-	return strings.EqualFold(e.Nick(), nick)
+	return c.sameName(e.Nick(), nick)
 }
 
 // isMe reports whether the given nick is the one the server currently knows us
@@ -3030,7 +3104,7 @@ func (c *IRCClient) isEchoMessage(e ircmsg.Message) bool {
 // taken), comparing against the preferred nick silently fails for every echo and
 // self-membership event, drifting the UI away from the real socket state.
 func (c *IRCClient) isMe(nick string) bool {
-	return strings.EqualFold(nick, c.CurrentNick())
+	return c.sameName(nick, c.CurrentNick())
 }
 
 // pmPeer returns the conversation peer (the other party) for a private message.
@@ -3361,7 +3435,7 @@ func (c *IRCClient) MonitorReconcileNick(nick string) {
 	isBuddy := false
 	if nicks, err := c.storage.GetMonitoredNicks(c.networkID); err == nil {
 		for _, n := range nicks {
-			if strings.EqualFold(n, nick) {
+			if c.sameName(n, nick) {
 				isBuddy = true
 				break
 			}
@@ -3370,7 +3444,7 @@ func (c *IRCClient) MonitorReconcileNick(nick string) {
 	hasOpenPM := false
 	if open, err := c.storage.GetPrivateMessageConversations(c.networkID, c.network.Nickname, true); err == nil {
 		for _, u := range open {
-			if strings.EqualFold(u, nick) {
+			if c.sameName(u, nick) {
 				hasOpenPM = true
 				break
 			}
@@ -4349,9 +4423,38 @@ func (c *IRCClient) SetReconnecting(v bool) {
 	c.mu.Unlock()
 }
 
-// isChannelName reports whether name is an IRC channel (vs. a nick/PM target).
-func isChannelName(name string) bool {
-	return len(name) > 0 && (name[0] == '#' || name[0] == '&')
+// isChannelName reports whether name is an IRC channel (vs. a nick/PM target),
+// honoring the server's advertised CHANTYPES (RPL_ISUPPORT) and falling back to
+// the conventional "#&" before the server advertises one.
+func (c *IRCClient) isChannelName(name string) bool {
+	return channelNameMatches(name, c.chanTypes())
+}
+
+// chanTypes returns the server-advertised CHANTYPES set, or the default "#&"
+// when the server hasn't advertised one yet. Lock-free.
+func (c *IRCClient) chanTypes() string {
+	if p := c.chanTypesAtomic.Load(); p != nil && *p != "" {
+		return *p
+	}
+	return defaultChanTypes
+}
+
+// caseMapping returns the server-advertised CASEMAPPING, or "rfc1459" (the
+// protocol default when the server says nothing). Lock-free.
+func (c *IRCClient) caseMapping() string {
+	if p := c.caseMappingAtomic.Load(); p != nil && *p != "" {
+		return *p
+	}
+	return "rfc1459"
+}
+
+// sameName reports whether two nicks (or channels) are equal under the server's
+// CASEMAPPING. Use this for identity checks instead of strings.EqualFold, which
+// applies Unicode folding the server doesn't and misses the rfc1459 []\~ ↔ {}|^
+// pairing.
+func (c *IRCClient) sameName(a, b string) bool {
+	m := c.caseMapping()
+	return casefold(m, a) == casefold(m, b)
 }
 
 // channelsToJoin returns the channels the auto-join goroutine should JOIN on this
@@ -4372,7 +4475,7 @@ func (c *IRCClient) channelsToJoin(reconnect bool) ([]storage.Channel, error) {
 		}
 		result := make([]storage.Channel, 0, len(open))
 		for _, ch := range open {
-			if isChannelName(ch.Name) {
+			if c.isChannelName(ch.Name) {
 				result = append(result, ch)
 			}
 		}
@@ -4385,7 +4488,7 @@ func (c *IRCClient) channelsToJoin(reconnect bool) ([]storage.Channel, error) {
 	}
 	result := make([]storage.Channel, 0, len(all))
 	for _, ch := range all {
-		if ch.AutoJoin && isChannelName(ch.Name) {
+		if ch.AutoJoin && c.isChannelName(ch.Name) {
 			result = append(result, ch)
 		}
 	}
@@ -4502,6 +4605,28 @@ func (c *IRCClient) applyISUPPORTToken(param string) {
 		// Valueless token announcing extended-WHO (354) support.
 		c.mu.Lock()
 		c.supportsWHOX = true
+		c.mu.Unlock()
+
+	case strings.HasPrefix(param, "CHANTYPES="):
+		// CHANTYPES=<chars> advertises the channel-prefix characters this server
+		// uses (commonly "#", sometimes "#&", "+", "!"). Recording it lets channel
+		// detection adapt instead of assuming "#&". An empty value (the server
+		// supports no channel types) is stored verbatim so chanTypes() can fall
+		// back to the default rather than treating everything as a channel.
+		chanTypes := param[len("CHANTYPES="):]
+		c.chanTypesAtomic.Store(&chanTypes)
+		c.mu.Lock()
+		c.serverCapabilities.ChanTypes = chanTypes
+		c.mu.Unlock()
+
+	case strings.HasPrefix(param, "CASEMAPPING="):
+		// CASEMAPPING=<name> tells us how the server folds case for nick/channel
+		// equality ("ascii", "rfc1459", "rfc1459-strict"). We fold the same way so
+		// "Nick[a]" and "nick{a}" resolve to one identity on rfc1459 networks.
+		caseMapping := param[len("CASEMAPPING="):]
+		c.caseMappingAtomic.Store(&caseMapping)
+		c.mu.Lock()
+		c.serverCapabilities.CaseMapping = caseMapping
 		c.mu.Unlock()
 
 	case param == "UTF8ONLY":
@@ -4647,6 +4772,8 @@ func (c *IRCClient) GetServerCapabilities() *ServerCapabilities {
 		Prefix:       make(map[rune]rune),
 		PrefixString: c.serverCapabilities.PrefixString,
 		ChanModes:    c.serverCapabilities.ChanModes,
+		ChanTypes:    c.serverCapabilities.ChanTypes,
+		CaseMapping:  c.serverCapabilities.CaseMapping,
 		UTF8Only:     c.serverCapabilities.UTF8Only,
 		ExtbanPrefix: c.serverCapabilities.ExtbanPrefix,
 		Software:     c.serverCapabilities.Software,

@@ -47,7 +47,7 @@ func (c *IRCClient) getReplyTag(e ircmsg.Message) string {
 // a valid channel name; anything else is ignored.
 func (c *IRCClient) getChannelContext(e ircmsg.Message) string {
 	v := firstTag(e, tagChannelContextDraft, tagChannelContext)
-	if v == "" || !isChannelName(v) {
+	if v == "" || !c.isChannelName(v) {
 		return ""
 	}
 	return v
