@@ -27,6 +27,68 @@ func (ts *testSubscriber) getEvents() []Event {
 	return copied
 }
 
+// orderedSub records the "i" field of every event and signals once it has seen
+// `want` of them.
+type orderedSub struct {
+	mu    sync.Mutex
+	got   []int
+	want  int
+	done  chan struct{}
+	fired bool
+}
+
+func (s *orderedSub) OnEvent(e Event) {
+	s.mu.Lock()
+	s.got = append(s.got, e.Data["i"].(int))
+	if len(s.got) == s.want && !s.fired {
+		s.fired = true
+		close(s.done)
+	}
+	s.mu.Unlock()
+}
+
+func (s *orderedSub) snapshot() []int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]int(nil), s.got...)
+}
+
+func (s *orderedSub) count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.got)
+}
+
+// Emit must deliver events to a subscriber in emit order and lose none. The old
+// per-event goroutine dispatch (`go sub.OnEvent(...)`) scrambled ordering under
+// load.
+func TestEmitPreservesOrderAndDeliversAll(t *testing.T) {
+	eb := NewEventBus()
+	const n = 200
+	rec := &orderedSub{done: make(chan struct{}), want: n}
+	eb.Subscribe("seq", rec)
+
+	for i := 0; i < n; i++ {
+		eb.Emit(Event{Type: "seq", Data: map[string]interface{}{"i": i}})
+	}
+
+	select {
+	case <-rec.done:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out; delivered %d of %d events", rec.count(), n)
+	}
+
+	got := rec.snapshot()
+	if len(got) != n {
+		t.Fatalf("delivered %d events, want %d", len(got), n)
+	}
+	for i, v := range got {
+		if v != i {
+			t.Fatalf("event at position %d delivered out of order: got %d", i, v)
+		}
+	}
+}
+
 func TestNewEventBus(t *testing.T) {
 	eb := NewEventBus()
 	if eb == nil {

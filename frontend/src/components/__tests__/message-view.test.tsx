@@ -11,6 +11,7 @@ vi.mock('../../hooks/useNicknameColors', () => ({
 }))
 
 const storeState = {
+  messages: [] as storage.Message[],
   networks: [] as Array<{ id: number; nickname: string }>,
   currentNick: {} as Record<number, string>,
   botNicks: {} as Record<number, Set<string>>,
@@ -42,6 +43,19 @@ vi.mock('../../stores/network', () => {
   useNetworkStore.getState = () => storeState
   return { useNetworkStore }
 })
+
+// jsdom has no layout, so the real virtualizer would render zero rows. These tests
+// exercise the per-row rendering branches (not scroll behavior, which is covered by
+// e2e), so stub the virtualizer to render every row.
+vi.mock('@tanstack/react-virtual', () => ({
+  useVirtualizer: ({ count }: { count: number }) => ({
+    getTotalSize: () => count * 44,
+    getVirtualItems: () =>
+      Array.from({ length: count }, (_, index) => ({ key: index, index, start: index * 44, size: 44 })),
+    scrollToIndex: () => {},
+    measureElement: () => {},
+  }),
+}))
 
 // The consolidate-join/quit preference now comes from the settings store. Stub it
 // (default off) so these tests don't pull in the real Wails bindings.
@@ -84,6 +98,17 @@ const makeMessage = (overrides: Partial<storage.Message>) =>
     ...overrides,
   })
 
+// MessageView now reads messages from the store (not a prop); seed the mock store
+// then render.
+const renderView = (
+  messages: storage.Message[],
+  networkId: number | null,
+  selectedChannel?: string | null,
+) => {
+  storeState.messages = messages
+  return render(<MessageView networkId={networkId} selectedChannel={selectedChannel} />)
+}
+
 describe('MessageView mention highlight', () => {
   // After a runtime /nick, "who am I" must come from the live server-assigned nick
   // (currentNick), not the stale configured network.nickname. A message mentioning
@@ -93,7 +118,7 @@ describe('MessageView mention highlight', () => {
     storeState.currentNick = { 1: 'newnick' }
     const msg = makeMessage({ id: 7, user: 'alice', message: 'hey newnick how are you', message_type: 'privmsg' })
 
-    render(<MessageView messages={[msg]} networkId={1} selectedChannel="#chan" />)
+    renderView([msg], 1, '#chan')
 
     expect(screen.getByTestId('message-item')).toHaveClass('cc-mention')
 
@@ -107,7 +132,7 @@ describe('MessageView reply quote strip', () => {
     const parent = makeMessage({ id: 1, msgid: 'p1', user: 'bob', message: 'original text here' })
     const reply = makeMessage({ id: 2, msgid: 'c1', reply_msgid: 'p1', user: 'amy', message: 'reply text' })
 
-    render(<MessageView messages={[parent, reply]} networkId={1} selectedChannel="#chan" />)
+    renderView([parent, reply], 1, '#chan')
 
     // The quote strip button contains the parent nick; find it there (the parent row
     // also shows "bob" in a nick span, so we look inside the .reply-quote button)
@@ -120,7 +145,7 @@ describe('MessageView reply quote strip', () => {
   it('renders muted fallback when parent is not in the loaded set', () => {
     const reply = makeMessage({ id: 2, msgid: 'c1', reply_msgid: 'missing-parent', user: 'amy', message: 'reply text' })
 
-    render(<MessageView messages={[reply]} networkId={1} selectedChannel="#chan" />)
+    renderView([reply], 1, '#chan')
 
     expect(screen.getByText(/replying to an earlier message/i)).toBeInTheDocument()
   })
@@ -129,7 +154,7 @@ describe('MessageView reply quote strip', () => {
     const msg1 = makeMessage({ id: 1, msgid: 'abc123', user: 'alice', message: 'hello' })
     const msg2 = makeMessage({ id: 2, msgid: 'def456', user: 'bob', message: 'world' })
 
-    render(<MessageView messages={[msg1, msg2]} networkId={1} selectedChannel="#chan" />)
+    renderView([msg1, msg2], 1, '#chan')
 
     const rows = screen.getAllByTestId('message-item')
     const dataMsgids = rows.map((r) => r.getAttribute('data-msgid')).filter(Boolean)
@@ -143,7 +168,7 @@ describe('MessageView bot badge', () => {
     storeState.botNicks = { 1: new Set(['buildbot']) }
     const msg = makeMessage({ id: 3, user: 'BuildBot', message: 'build passed', message_type: 'privmsg' })
 
-    render(<MessageView messages={[msg]} networkId={1} selectedChannel="#chan" />)
+    renderView([msg], 1, '#chan')
 
     expect(screen.getByText('bot')).toBeInTheDocument()
     storeState.botNicks = {}
@@ -153,7 +178,7 @@ describe('MessageView bot badge', () => {
     storeState.botNicks = { 1: new Set(['buildbot']) }
     const msg = makeMessage({ id: 4, user: 'alice', message: 'hi', message_type: 'privmsg' })
 
-    render(<MessageView messages={[msg]} networkId={1} selectedChannel="#chan" />)
+    renderView([msg], 1, '#chan')
 
     expect(screen.queryByText('bot')).toBeNull()
     storeState.botNicks = {}
@@ -174,7 +199,7 @@ describe('MessageView channel-context pill', () => {
       reply_msgid: '',
     })
 
-    render(<MessageView messages={[pm]} networkId={1} selectedChannel="pm:bob" />)
+    renderView([pm], 1, 'pm:bob')
 
     // The pill strips the leading '#' and renders the channel name next to the Hash icon
     expect(screen.getByText('dev')).toBeInTheDocument()
@@ -194,7 +219,7 @@ describe('MessageView channel-context pill', () => {
       reply_msgid: '',
     })
 
-    render(<MessageView messages={[chan]} networkId={1} selectedChannel="#general" />)
+    renderView([chan], 1, '#general')
 
     // No pill should render for a channel message
     expect(document.querySelector('.channel-context-pill')).toBeNull()
@@ -206,7 +231,7 @@ describe('MessageView nick interactions', () => {
     storeState.openQuery = vi.fn()
     const msg = makeMessage({ id: 20, user: 'alice', message: 'hi', message_type: 'privmsg' })
 
-    render(<MessageView messages={[msg]} networkId={1} selectedChannel="#chan" />)
+    renderView([msg], 1, '#chan')
 
     fireEvent.doubleClick(screen.getByTestId('author-nick'))
 
@@ -216,7 +241,7 @@ describe('MessageView nick interactions', () => {
   it('opens the shared user context menu when the author nick is right-clicked', () => {
     const msg = makeMessage({ id: 21, user: 'alice', message: 'hi', message_type: 'privmsg' })
 
-    render(<MessageView messages={[msg]} networkId={1} selectedChannel="#chan" />)
+    renderView([msg], 1, '#chan')
 
     // No menu until the nick is right-clicked.
     expect(screen.queryByText('CTCP Version')).toBeNull()
@@ -230,7 +255,7 @@ describe('MessageView nick interactions', () => {
 
   it('right-click menu offers a single Invite entry, not a per-channel list', () => {
     const msg = makeMessage({ id: 22, user: 'alice', message: 'hi', message_type: 'privmsg' })
-    render(<MessageView messages={[msg]} networkId={1} selectedChannel="#chan" />)
+    renderView([msg], 1, '#chan')
 
     fireEvent.contextMenu(screen.getByTestId('author-nick'))
 

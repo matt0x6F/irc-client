@@ -166,25 +166,13 @@ func NewApp() (*App, error) {
 		return ok
 	})
 
-	// Subscribe to events for frontend forwarding
-	eventBus.Subscribe(irc.EventMessageSent, app)
-	eventBus.Subscribe(irc.EventMessageReceived, app)
-	eventBus.Subscribe(irc.EventConnectionEstablished, app)
-	eventBus.Subscribe(irc.EventConnectionLost, app)
-	eventBus.Subscribe(irc.EventChannelsChanged, app)
-	eventBus.Subscribe(irc.EventUserJoined, app)
-	eventBus.Subscribe(irc.EventUserParted, app)
-	eventBus.Subscribe(irc.EventUserQuit, app)
-	eventBus.Subscribe(irc.EventUserKicked, app)
-	eventBus.Subscribe(irc.EventUserNick, app)
-	eventBus.Subscribe(irc.EventWhoisReceived, app)
-	eventBus.Subscribe(irc.EventChannelListEnd, app)
-	eventBus.Subscribe(irc.EventChannelMode, app)
-	eventBus.Subscribe(irc.EventChannelUserMode, app)
-	eventBus.Subscribe(irc.EventChannelBanList, app)
-	eventBus.Subscribe(irc.EventSTSPolicy, app)
-	eventBus.Subscribe(irc.EventMonitorChanged, app)
-	eventBus.Subscribe(irc.EventInviteReceived, app)
+	// Subscribe to every event OnEvent forwards to the frontend. This MUST stay in
+	// sync with the branches in app_events.go OnEvent — a handled-but-unsubscribed
+	// event is a dead forward (the frontend never sees it). appForwardedEventTypes
+	// is the single source of truth, guarded by TestAppSubscribesEveryForwardedEvent.
+	for _, evType := range appForwardedEventTypes {
+		eventBus.Subscribe(evType, app)
+	}
 
 	go app.processPluginActions()
 

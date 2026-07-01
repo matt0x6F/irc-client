@@ -12,6 +12,45 @@ import (
 	"github.com/matt0x6f/irc-client/internal/notification"
 )
 
+// appForwardedEventTypes lists every event type OnEvent forwards to the frontend.
+// NewApp subscribes the App to each. This MUST include every event.Type that
+// OnEvent branches on — a handled-but-unsubscribed type is a dead forward the
+// frontend never receives. Kept honest by TestAppSubscribesEveryForwardedEvent.
+//
+// (Several of these were previously unsubscribed and silently relied on the old
+// 2-second frontend poll to re-fetch pollable state — nick, topic, errors — while
+// non-pollable ones like typing/history/user-meta simply never arrived. Removing
+// the poll made complete, correct subscriptions mandatory.)
+var appForwardedEventTypes = []string{
+	irc.EventMessageSent,
+	irc.EventMessageReceived,
+	irc.EventConnectionEstablished,
+	irc.EventConnectionLost,
+	irc.EventChannelsChanged,
+	irc.EventUserJoined,
+	irc.EventUserParted,
+	irc.EventUserQuit,
+	irc.EventUserKicked,
+	irc.EventUserNick,
+	irc.EventNickChanged,
+	irc.EventChannelTopic,
+	irc.EventChannelMode,
+	irc.EventChannelUserMode,
+	irc.EventChannelBanList,
+	irc.EventError,
+	"channel.names.complete",
+	irc.EventWhoisReceived,
+	irc.EventChannelListEnd,
+	irc.EventHistoryReceived,
+	irc.EventTypingReceived,
+	irc.EventBotDetected,
+	irc.EventMonitorChanged,
+	irc.EventUserMetaChanged,
+	irc.EventSASLFailed,
+	irc.EventSTSPolicy,
+	irc.EventInviteReceived,
+}
+
 // OnEvent implements the events.Subscriber interface to forward events to frontend
 func (a *App) OnEvent(event events.Event) {
 	if a.app == nil {

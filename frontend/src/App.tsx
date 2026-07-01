@@ -35,7 +35,6 @@ function App() {
   const networks = useNetworkStore((s) => s.networks);
   const selectedNetwork = useNetworkStore((s) => s.selectedNetwork);
   const selectedChannel = useNetworkStore((s) => s.selectedChannel);
-  const messages = useNetworkStore((s) => s.messages);
   const connectionStatus = useNetworkStore((s) => s.connectionStatus);
   const currentNick = useNetworkStore((s) => s.currentNick);
   const channelInfo = useNetworkStore((s) => s.channelInfo);
@@ -44,7 +43,6 @@ function App() {
   const loadMessages = useNetworkStore((s) => s.loadMessages);
   const loadChannelInfo = useNetworkStore((s) => s.loadChannelInfo);
   const loadConnectionStatus = useNetworkStore((s) => s.loadConnectionStatus);
-  const refreshAllConnectionStatus = useNetworkStore((s) => s.refreshAllConnectionStatus);
   const loadCurrentNick = useNetworkStore((s) => s.loadCurrentNick);
   const loadServerCapabilities = useNetworkStore((s) => s.loadServerCapabilities);
   const loadPinnedMessages = useNetworkStore((s) => s.loadPinnedMessages);
@@ -263,7 +261,9 @@ function App() {
     return () => clearTimeout(timeoutId);
   }, [networks]);
 
-  // Load data when selection changes
+  // Load data when selection changes. Refreshes are fully event-driven
+  // thereafter (message-event, connection-status, current-nick, channel.topic/
+  // mode) — there is deliberately no periodic poll here.
   useEffect(() => {
     if (selectedNetwork !== null) {
       loadMessages();
@@ -274,13 +274,6 @@ function App() {
       loadPinnedMessages();
       loadNetworkBots();
       loadNetworkUserMeta();
-      const interval = setInterval(() => {
-        loadMessages();
-        refreshAllConnectionStatus();
-        loadCurrentNick();
-        loadChannelInfo();
-      }, 2000);
-      return () => clearInterval(interval);
     }
   }, [selectedNetwork, selectedChannel]);
 
@@ -958,7 +951,6 @@ function App() {
               <InvitesView networkId={selectedNetwork} />
             ) : selectedNetwork !== null ? (
               <MessageView
-                messages={messages}
                 networkId={selectedNetwork}
                 selectedChannel={selectedChannel}
               />
