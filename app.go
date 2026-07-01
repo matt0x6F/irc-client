@@ -40,7 +40,6 @@ type App struct {
 	ircClients            map[int64]*irc.IRCClient
 	connectingNetworks    map[string]chan struct{} // Track networks currently connecting by "address:port"
 	reconnectingNetworks  map[int64]bool           // Track networks currently reconnecting (by network ID)
-	connectionGapOpen     map[int64]bool           // Networks with an open disconnect→reconnect gap (by network ID)
 	stsUpgrades           map[int64]stsTarget      // Pending plaintext→TLS STS upgrades (by network ID)
 	stsUpgrading          map[int64]bool           // Networks mid-STS-upgrade; suppresses auto-reconnect (by network ID)
 	intentionalDisconnect map[int64]bool           // Networks the user deliberately disconnected; suppresses auto-reconnect once (by network ID)
@@ -123,7 +122,6 @@ func NewApp() (*App, error) {
 		ircClients:            make(map[int64]*irc.IRCClient),
 		connectingNetworks:    make(map[string]chan struct{}),
 		reconnectingNetworks:  make(map[int64]bool),
-		connectionGapOpen:     make(map[int64]bool),
 		stsUpgrades:           make(map[int64]stsTarget),
 		stsUpgrading:          make(map[int64]bool),
 		intentionalDisconnect: make(map[int64]bool),

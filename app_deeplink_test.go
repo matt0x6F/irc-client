@@ -22,7 +22,6 @@ func newDeepLinkTestApp(t *testing.T) (*App, *storage.Storage) {
 	t.Cleanup(func() { _ = s.Close() })
 	a := &App{
 		storage:              s,
-		connectionGapOpen:    make(map[int64]bool),
 		reconnectingNetworks: make(map[int64]bool),
 		ircClients:           make(map[int64]*irc.IRCClient),
 	}
