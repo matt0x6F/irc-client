@@ -42,6 +42,7 @@ func TestBuiltinRegistryCoverage(t *testing.T) {
 		"CLOSE": CategoryClient, "QUOTE": CategoryServer, "RAW": CategoryServer,
 		"VERSION": CategoryCTCP, "CTCP": CategoryCTCP, "PING": CategoryCTCP,
 		"OP": CategoryServer, "HOP": CategoryServer, "DEVOICE": CategoryServer,
+		"WHO": CategoryServer, "WHOIS": CategoryServer, "WHOWAS": CategoryServer,
 		"HELP": CategoryClient,
 	}
 	for name, cat := range cases {

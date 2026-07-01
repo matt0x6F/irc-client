@@ -83,6 +83,17 @@ func formatTopicWhoTime(setter string, when time.Time) string {
 	return fmt.Sprintf("Topic set by %s on %s", setter, when.Format(topicWhoTimeLayout))
 }
 
+// formatWhoReply renders one RPL_WHOREPLY (352) row into a human-readable status
+// line. flags encode presence and role — the first char is H (here) or G (gone/
+// away), an optional '*' marks a server operator, and a trailing channel-prefix
+// (@, +, …) shows membership — so they are surfaced verbatim. realname must already
+// have its leading WHO hop-count stripped. server is accepted for completeness but
+// omitted from the line to keep it readable.
+func formatWhoReply(channel, user, host, server, nick, flags, realname string) string {
+	_ = server
+	return fmt.Sprintf("%s (%s) %s@%s on %s — %s", nick, flags, user, host, channel, realname)
+}
+
 // formatServerNumeric renders a generic server numeric reply (e.g. ERR_NOSUCHNICK)
 // into a human-readable status line. params are the raw message params: params[0]
 // is our own nick, the trailing param is the human-readable description, and any
