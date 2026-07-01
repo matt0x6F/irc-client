@@ -179,10 +179,17 @@ func (p *channelRoutingProvider) Download(ctx context.Context, r *updater.Releas
 }
 
 // newGitHubChannelProvider builds the channel-routing github provider used by
-// the updater. It instantiates two providers up front — one tracking stable
-// releases (/releases/latest), one tracking prereleases (/releases) — and routes
-// between them on each call via usePrerelease, so a channel switch needs no
-// restart. usePrerelease is read live (typically App.updateChannelPrerelease).
+// the updater. It instantiates two providers up front and routes between them on
+// each call via usePrerelease, so a channel switch needs no restart.
+// usePrerelease is read live (typically App.updateChannelPrerelease).
+//
+//   - stable: the stock github provider against /releases/latest, which GitHub
+//     ranks by semver and which excludes prereleases — correct as-is.
+//   - prerelease: semverMaxProvider, NOT the stock provider. The stock provider
+//     takes the first entry from /releases, but that list is not version-ordered
+//     (GitHub returned a newer rc mid-page, below an older one), so it silently
+//     reported "up to date" while a newer prerelease existed. semverMaxProvider
+//     fetches a page and selects the highest semver itself. See its doc comment.
 func newGitHubChannelProvider(usePrerelease func() bool) (updater.Provider, error) {
 	base := github.Config{
 		Repository:    "matt0x6f/irc-client",
@@ -197,7 +204,7 @@ func newGitHubChannelProvider(usePrerelease func() bool) (updater.Provider, erro
 	}
 	preCfg := base
 	preCfg.Prerelease = true
-	pre, err := github.New(preCfg)
+	pre, err := newSemverMaxProvider(preCfg)
 	if err != nil {
 		return nil, err
 	}
