@@ -3,6 +3,7 @@ import { SendCommand } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import { useNetworkStore } from '../stores/network';
 import { casefold } from '../lib/casefold';
+import { Modal } from './ui/modal';
 
 interface WhoisInfo {
   nickname: string;
@@ -78,35 +79,21 @@ export function UserInfo({ networkId, nickname, onClose }: UserInfoProps) {
 
   if (loading && !whoisInfo) {
     return (
-      <div data-testid="user-info-panel" className="w-80 border-l border-border p-4">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="font-semibold">User Info</h3>
-          <button
-            onClick={onClose}
-            className="text-muted-foreground hover:text-foreground"
-          >
-            ×
-          </button>
+      <Modal title="User Info" onClose={onClose} size="sm">
+        <div data-testid="user-info-panel" className="text-sm text-muted-foreground">
+          Loading user information...
         </div>
-        <div className="text-sm text-muted-foreground">Loading user information...</div>
-      </div>
+      </Modal>
     );
   }
 
   if (!whoisInfo) {
     return (
-      <div data-testid="user-info-panel" className="w-80 border-l border-border p-4">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="font-semibold">User Info</h3>
-          <button
-            onClick={onClose}
-            className="text-muted-foreground hover:text-foreground"
-          >
-            ×
-          </button>
+      <Modal title="User Info" onClose={onClose} size="sm">
+        <div data-testid="user-info-panel" className="text-sm text-muted-foreground">
+          No information available
         </div>
-        <div className="text-sm text-muted-foreground">No information available</div>
-      </div>
+      </Modal>
     );
   }
 
@@ -124,18 +111,8 @@ export function UserInfo({ networkId, nickname, onClose }: UserInfoProps) {
   };
 
   return (
-    <div data-testid="user-info-panel" className="w-80 border-l border-border p-4 overflow-y-auto">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="font-semibold">User Info</h3>
-        <button
-          onClick={onClose}
-          className="text-muted-foreground hover:text-foreground"
-        >
-          ×
-        </button>
-      </div>
-
-      <div className="space-y-4 text-sm">
+    <Modal title="User Info" onClose={onClose} size="sm">
+      <div data-testid="user-info-panel" className="min-w-0 space-y-4 text-sm">
         <div>
           <div className="font-semibold text-lg mb-2 flex items-center gap-2">
             {whoisInfo.nickname}
@@ -161,12 +138,12 @@ export function UserInfo({ networkId, nickname, onClose }: UserInfoProps) {
             )}
           </div>
           {(whoisInfo.account_name || meta?.account) && (
-            <div className="text-muted-foreground">
+            <div className="text-muted-foreground break-words">
               Account: <span className="text-foreground">{whoisInfo.account_name || meta?.account}</span>
             </div>
           )}
           {(meta?.away_message || whoisInfo.away) && (
-            <div className="text-muted-foreground">
+            <div className="text-muted-foreground break-words">
               Away: <span className="text-foreground">{meta?.away_message || whoisInfo.away}</span>
             </div>
           )}
@@ -174,7 +151,7 @@ export function UserInfo({ networkId, nickname, onClose }: UserInfoProps) {
 
         <div>
           <div className="font-semibold mb-1">Hostmask</div>
-          <div className="text-muted-foreground font-mono text-xs">
+          <div className="text-muted-foreground font-mono text-xs break-all">
             {whoisInfo.username}@{whoisInfo.hostmask}
           </div>
         </div>
@@ -182,16 +159,16 @@ export function UserInfo({ networkId, nickname, onClose }: UserInfoProps) {
         {(meta?.realname || whoisInfo.real_name) && (
           <div>
             <div className="font-semibold mb-1">Real Name</div>
-            <div className="text-muted-foreground">{meta?.realname || whoisInfo.real_name}</div>
+            <div className="text-muted-foreground break-words">{meta?.realname || whoisInfo.real_name}</div>
           </div>
         )}
 
         {whoisInfo.server && (
           <div>
             <div className="font-semibold mb-1">Server</div>
-            <div className="text-muted-foreground">{whoisInfo.server}</div>
+            <div className="text-muted-foreground break-words">{whoisInfo.server}</div>
             {whoisInfo.server_info && (
-              <div className="text-muted-foreground text-xs mt-1">{whoisInfo.server_info}</div>
+              <div className="text-muted-foreground text-xs mt-1 break-words">{whoisInfo.server_info}</div>
             )}
           </div>
         )}
@@ -217,7 +194,7 @@ export function UserInfo({ networkId, nickname, onClose }: UserInfoProps) {
               {whoisInfo.channels.map((channel, idx) => (
                 <span
                   key={idx}
-                  className="text-xs bg-accent px-2 py-1 rounded text-muted-foreground"
+                  className="text-xs bg-accent px-2 py-1 rounded text-muted-foreground break-all"
                 >
                   {channel}
                 </span>
@@ -226,7 +203,7 @@ export function UserInfo({ networkId, nickname, onClose }: UserInfoProps) {
           </div>
         )}
       </div>
-    </div>
+    </Modal>
   );
 }
 

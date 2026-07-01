@@ -1058,14 +1058,6 @@ function App() {
                 </div>
               );
             })()}
-
-          {showUserInfo && (
-            <UserInfo
-              networkId={showUserInfo.networkId}
-              nickname={showUserInfo.nickname}
-              onClose={() => setShowUserInfo(null)}
-            />
-          )}
         </div>
 
         {/* Input Area */}
@@ -1127,6 +1119,14 @@ function App() {
 
       {showKeyboardShortcuts && (
         <KeyboardShortcutsModal onClose={closeKeyboardShortcuts} />
+      )}
+
+      {showUserInfo && (
+        <UserInfo
+          networkId={showUserInfo.networkId}
+          nickname={showUserInfo.nickname}
+          onClose={() => setShowUserInfo(null)}
+        />
       )}
 
       <HelpDialog />
