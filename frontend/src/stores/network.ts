@@ -1,10 +1,12 @@
 import { create } from 'zustand';
 import { storage, main } from '../../wailsjs/go/models';
 import { markdownToIrc } from '../lib/irc-markup';
+import { isChannelName } from '../lib/channel-name';
 import {
   GetNetworks,
   GetConnectionStatus,
   GetCurrentNick,
+  GetServerCapabilities,
   ConnectNetwork,
   DisconnectNetwork,
   DeleteNetwork,
@@ -135,6 +137,10 @@ interface NetworkState {
   connectionStatusAt: Record<number, number>; // last-applied event time (ms) per network
   authState: Record<number, { reason: string } | undefined>;
   currentNick: Record<number, string>; // server-assigned nick per network; differs from the configured nick during a collision
+  // CHANTYPES per network (from ISUPPORT, defaults applied backend-side). Cached
+  // so channel-vs-nick detection can adapt to the server (e.g. '+'/'!' channels)
+  // without an async call at every check.
+  chanTypes: Record<number, string>;
   messages: storage.Message[];
   channelInfo: main.ChannelInfo | null;
   unreadCounts: Map<string, number>;
@@ -198,6 +204,7 @@ interface NetworkState {
   loadConnectionStatus: (networkId?: number) => Promise<void>;
   refreshAllConnectionStatus: () => Promise<void>;
   loadCurrentNick: (networkId?: number) => Promise<void>;
+  loadServerCapabilities: (networkId?: number) => Promise<void>;
 
   // Pinned message actions
   loadPinnedMessages: () => Promise<void>;
@@ -285,6 +292,7 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
   connectionStatusAt: {},
   authState: {},
   currentNick: {},
+  chanTypes: {},
   messages: [],
   channelInfo: null,
   unreadCounts: new Map(),
@@ -631,6 +639,22 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
     }
   },
 
+  loadServerCapabilities: async (networkId?: number) => {
+    const id = networkId ?? get().selectedNetwork;
+    if (id === null) return;
+    try {
+      const caps = await GetServerCapabilities(id);
+      const chantypes = caps?.chantypes;
+      if (chantypes) {
+        set((state) => ({
+          chanTypes: { ...state.chanTypes, [id]: chantypes },
+        }));
+      }
+    } catch (error) {
+      console.error('Failed to load server capabilities:', error);
+    }
+  },
+
   loadPinnedMessages: async () => {
     const { selectedNetwork, selectedChannel } = get();
     if (selectedNetwork === null) {
@@ -951,7 +975,7 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
         const rest = trimmedMessage.substring(cmdLength).trim();
         const parts = rest ? rest.split(/\s+/) : [];
 
-        if (parts.length === 0 || (!parts[0].startsWith('#') && !parts[0].startsWith('&'))) {
+        if (parts.length === 0 || !isChannelName(parts[0], get().chanTypes[selectedNetwork])) {
           const cmd = isPart ? '/part' : '/leave';
           commandToSend =
             parts.length === 0

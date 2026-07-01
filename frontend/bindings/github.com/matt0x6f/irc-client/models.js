@@ -905,6 +905,24 @@ export class ServerCapabilitiesInfo {
              */
             this["chanmodes_d"] = "";
         }
+        if (!("chantypes" in $$source)) {
+            /**
+             * Channel/identity ISUPPORT tokens, with protocol defaults applied so the
+             * frontend always has a usable value (see internal/irc CHANTYPES/CASEMAPPING).
+             * channel-prefix characters, e.g. "#&+!" (default "#&")
+             * @member
+             * @type {string}
+             */
+            this["chantypes"] = "";
+        }
+        if (!("casemapping" in $$source)) {
+            /**
+             * nick/channel case-fold rule, e.g. "ascii" (default "rfc1459")
+             * @member
+             * @type {string}
+             */
+            this["casemapping"] = "";
+        }
         if (!("utf8only" in $$source)) {
             /**
              * Ratified IRCv3 ISUPPORT tokens.

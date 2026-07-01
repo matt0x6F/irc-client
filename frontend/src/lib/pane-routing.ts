@@ -9,6 +9,8 @@
 // The backend already computes the peer (pmPeer) and now ships it as `pmTarget`,
 // so routing is authoritative here rather than re-derived from the sender.
 
+import { isChannelName } from './channel-name';
+
 export interface RoutableEvent {
   // The raw target on received events: a channel, or (for DMs) the recipient nick
   // (which is our own nick). Sent events use `target` instead — see below.
@@ -31,7 +33,7 @@ export function eventPaneKey(e: RoutableEvent): string | null {
   // same way the message handler does (`eventData.target || eventData.channel`).
   const raw = e.target ?? e.channel;
   if (raw === null || raw === undefined || raw === '') return 'status';
-  if (raw.startsWith('#') || raw.startsWith('&')) return raw;
+  if (isChannelName(raw)) return raw;
 
   // Non-channel target with no pmTarget: a sent DM, or a legacy received event
   // (pre-pmTarget). Treat the bare target as the PM peer so it routes to the DM pane.

@@ -140,6 +140,76 @@ describe('IRCFormattedText', () => {
       })
     })
   })
+
+  describe('extended color palette (16-98)', () => {
+    it('applies an extended foreground color', () => {
+      // Color 20 = dark green in the mIRC extended palette
+      const text = '\x0320extended\x03'
+      const { container } = render(<IRCFormattedText text={text} />)
+      const spans = container.querySelectorAll('span > span')
+      expect(spans[0]).toHaveTextContent('extended')
+      expect(spans[0]).toHaveStyle({ color: '#004700' })
+    })
+
+    it('applies an extended background color', () => {
+      // fg=52 (bright red), bg=94 (grey) in the extended palette
+      const text = '\x0352,94extended bg\x03'
+      const { container } = render(<IRCFormattedText text={text} />)
+      const spans = container.querySelectorAll('span > span')
+      expect(spans[0]).toHaveStyle({
+        color: '#FF0000',
+        backgroundColor: '#818181',
+      })
+    })
+  })
+
+  describe('hex color (0x04)', () => {
+    it('applies a hex foreground color', () => {
+      const text = '\x04FF00AAhex\x04'
+      const { container } = render(<IRCFormattedText text={text} />)
+      const spans = container.querySelectorAll('span > span')
+      expect(spans[0]).toHaveTextContent('hex')
+      expect(spans[0]).toHaveStyle({ color: '#FF00AA' })
+    })
+
+    it('applies hex foreground and background colors', () => {
+      const text = '\x04FF00AA,00FF00hex\x04'
+      const { container } = render(<IRCFormattedText text={text} />)
+      const spans = container.querySelectorAll('span > span')
+      expect(spans[0]).toHaveStyle({
+        color: '#FF00AA',
+        backgroundColor: '#00FF00',
+      })
+    })
+
+    it('resets hex color when bare 0x04 is used', () => {
+      const text = '\x04FF00AAhex\x04normal'
+      const { container } = render(<IRCFormattedText text={text} />)
+      const spans = container.querySelectorAll('span > span')
+      expect(spans[0]).toHaveStyle({ color: '#FF00AA' })
+      expect((spans[1] as HTMLElement).style.color).toBe('')
+    })
+  })
+
+  describe('strikethrough (0x1E)', () => {
+    it('renders struck-through text', () => {
+      const text = '\x1Estruck\x1E'
+      const { container } = render(<IRCFormattedText text={text} />)
+      const span = container.querySelector('.line-through')
+      expect(span).toBeInTheDocument()
+      expect(span).toHaveTextContent('struck')
+    })
+  })
+
+  describe('monospace (0x11)', () => {
+    it('renders monospace text', () => {
+      const text = '\x11code\x11'
+      const { container } = render(<IRCFormattedText text={text} />)
+      const span = container.querySelector('.font-mono')
+      expect(span).toBeInTheDocument()
+      expect(span).toHaveTextContent('code')
+    })
+  })
 })
 
 describe('IRCFormattedText channel links', () => {

@@ -5,7 +5,11 @@ package irc
 // CHANTYPES-aware channel detection, and formatting of generic server numerics.
 // They are kept free of client state so they can be unit-tested directly.
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+	"time"
+)
 
 // defaultChanTypes is the conventional channel-prefix set used before the server
 // advertises CHANTYPES in RPL_ISUPPORT (and when it never does).
@@ -63,6 +67,20 @@ func channelNameMatches(name, chantypes string) bool {
 		chantypes = defaultChanTypes
 	}
 	return len(name) > 0 && strings.IndexByte(chantypes, name[0]) >= 0
+}
+
+// topicWhoTimeLayout is the human-readable timestamp shown for RPL_TOPICWHOTIME
+// (333). Kept in one place so the format is consistent and testable.
+const topicWhoTimeLayout = "Jan 2, 2006 15:04"
+
+// formatTopicWhoTime renders RPL_TOPICWHOTIME (333) — who set a channel's topic
+// and when — into a channel system line. setter may be empty (some servers omit
+// it), in which case only the time is shown.
+func formatTopicWhoTime(setter string, when time.Time) string {
+	if setter == "" {
+		return "Topic set on " + when.Format(topicWhoTimeLayout)
+	}
+	return fmt.Sprintf("Topic set by %s on %s", setter, when.Format(topicWhoTimeLayout))
 }
 
 // formatServerNumeric renders a generic server numeric reply (e.g. ERR_NOSUCHNICK)

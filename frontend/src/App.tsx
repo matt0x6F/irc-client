@@ -6,6 +6,7 @@ import { useNetworkStore } from './stores/network';
 import { useUIStore } from './stores/ui';
 import { eventMatchesPane } from './lib/pane-routing';
 import { activityTargetForEvent } from './lib/activity';
+import { isChannelName } from './lib/channel-name';
 import { initCommands } from './stores/commands';
 import { initDeepLinks } from './stores/deeplink';
 import { useNotificationRouting } from './hooks/useNotificationRouting';
@@ -44,6 +45,7 @@ function App() {
   const loadConnectionStatus = useNetworkStore((s) => s.loadConnectionStatus);
   const refreshAllConnectionStatus = useNetworkStore((s) => s.refreshAllConnectionStatus);
   const loadCurrentNick = useNetworkStore((s) => s.loadCurrentNick);
+  const loadServerCapabilities = useNetworkStore((s) => s.loadServerCapabilities);
   const loadPinnedMessages = useNetworkStore((s) => s.loadPinnedMessages);
   const noteNewWhileAnchored = useNetworkStore((s) => s.noteNewWhileAnchored);
   const pinnedCount = useNetworkStore((s) => s.pinnedMessages.length);
@@ -264,6 +266,7 @@ function App() {
       loadMessages();
       loadConnectionStatus();
       loadCurrentNick();
+      loadServerCapabilities();
       loadChannelInfo();
       loadPinnedMessages();
       loadNetworkBots();
@@ -289,6 +292,9 @@ function App() {
         // Dismiss any auth-failure banner once the network comes back up.
         if (connected === true) {
           useNetworkStore.getState().clearAuthFailed(Number(networkId));
+          // ISUPPORT (CHANTYPES/CASEMAPPING) arrives right after connect; refresh
+          // the cached capabilities so channel detection uses the real set.
+          void useNetworkStore.getState().loadServerCapabilities(Number(networkId));
         }
       }
     });
@@ -425,8 +431,9 @@ function App() {
             pending &&
             pending.networkId === networkObj.id
           ) {
+            const chanTypes = useNetworkStore.getState().chanTypes[networkObj.id];
             const norm = (ch: string) =>
-              ch.startsWith('#') || ch.startsWith('&') ? ch.toLowerCase() : '#' + ch.toLowerCase();
+              isChannelName(ch, chanTypes) ? ch.toLowerCase() : '#' + ch.toLowerCase();
             if (norm(pending.channel) === norm(channel)) {
               const nId = networkObj.id;
               const chName = channel;
@@ -605,7 +612,8 @@ function App() {
     if (trimmed.toLowerCase().startsWith('/join ')) {
       const rest = trimmed.substring(5).trim();
       const parts = rest ? rest.split(/\s+/) : [];
-      if (parts.length > 0 && (parts[0].startsWith('#') || parts[0].startsWith('&'))) {
+      const joinChanTypes = useNetworkStore.getState().chanTypes[selectedNetwork];
+      if (parts.length > 0 && isChannelName(parts[0], joinChanTypes)) {
         pendingJoinChannelRef.current = {
           networkId: selectedNetwork,
           channel: parts[0],
@@ -805,7 +813,12 @@ function App() {
                           data-testid="active-channel-name"
                           className="text-muted-foreground font-medium"
                         >
-                          {selectedChannel.startsWith('#') || selectedChannel.startsWith('&')
+                          {isChannelName(
+                            selectedChannel,
+                            selectedNetwork !== null
+                              ? useNetworkStore.getState().chanTypes[selectedNetwork]
+                              : undefined
+                          )
                             ? selectedChannel
                             : `#${selectedChannel}`}
                         </span>

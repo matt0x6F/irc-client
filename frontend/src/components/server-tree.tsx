@@ -6,6 +6,7 @@ import { useUIStore } from '../stores/ui';
 import { useNetworkStore } from '../stores/network';
 import { usePreferencesStore } from '../stores/preferences';
 import { dmPresenceState } from '../lib/presence';
+import { isChannelName } from '../lib/channel-name';
 import markUrl from '../assets/brand/cascade-mark.svg';
 import { Terminal } from 'lucide-react';
 
@@ -516,7 +517,7 @@ export function ServerTree({
                             }}
                           >
                             <span className={`text-sm truncate ${unreadCount > 0 ? 'font-semibold' : ''}`}>
-                              {channel.startsWith('#') || channel.startsWith('&') ? (
+                              {isChannelName(channel, useNetworkStore.getState().chanTypes[network.id]) ? (
                                 <>
                                   <span className="text-muted-foreground/50">{channel[0]}</span>
                                   {channel.slice(1)}

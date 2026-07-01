@@ -10,6 +10,8 @@
 // address, so resolving by address makes Array.find return whichever network
 // sorts first, leaking one network's activity onto another's badge.
 
+import { isChannelName } from './channel-name';
+
 export interface ActivityNetwork {
   id: number;
   address: string;
@@ -66,7 +68,7 @@ export function activityTargetForEvent(
   const target = e.target || e.channel;
   if (!target || target === 'status') return null;
 
-  const isChannel = target.startsWith('#') || target.startsWith('&');
+  const isChannel = isChannelName(target);
 
   let paneKey: string | null = null;
   if (isChannel) {
