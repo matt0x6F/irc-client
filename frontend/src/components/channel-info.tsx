@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { GetChannelInfo, GetJoinedChannels } from '../../wailsjs/go/main/App';
+import { GetChannelInfo } from '../../wailsjs/go/main/App';
 import { main, storage } from '../../wailsjs/go/models';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import { UserInfo } from './user-info';
+import { UserContextMenu } from './user-context-menu';
 import { MonitorList } from './monitor-list';
 import { useNicknameColors } from '../hooks/useNicknameColors';
 import { useNetworkStore } from '../stores/network';
@@ -27,7 +28,7 @@ interface ChannelInfoProps {
 interface ContextMenu {
   x: number;
   y: number;
-  user: storage.ChannelUser | null;
+  nick: string;
 }
 
 export function ChannelInfo({ networkId, channelName, currentNickname, onSendCommand, onOpenQuery }: ChannelInfoProps) {
@@ -35,14 +36,8 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
   const [loading, setLoading] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null);
   const [showUserInfo, setShowUserInfo] = useState<{ nickname: string } | null>(null);
-  // Other channels on this network the current user is joined to (for "Invite to" submenu).
-  const [otherChannels, setOtherChannels] = useState<storage.Channel[]>([]);
   // Right-sidebar tab: the channel member list, or the network's MONITOR buddies.
   const [sidebarView, setSidebarView] = useState<'users' | 'monitor'>('users');
-  const addMonitorNick = useNetworkStore((s) => s.addMonitorNick);
-  const selectPane = useNetworkStore((s) => s.selectPane);
-  const setChannelContext = useNetworkStore((s) => s.setChannelContext);
-  const contextMenuRef = useRef<HTMLDivElement>(null);
   // Use refs to avoid stale closures in event listener
   const networkIdRef = useRef<number | null>(networkId);
   const channelNameRef = useRef<string | null>(channelName);
@@ -57,17 +52,6 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
   }, [networkId, channelName]);
 
   // Load other joined channels on this network for the "Invite to" submenu.
-  useEffect(() => {
-    if (networkId === null) {
-      setOtherChannels([]);
-      return;
-    }
-    void GetJoinedChannels(networkId).then((channels) => {
-      setOtherChannels(channels.filter((ch) => ch.name !== channelName));
-    }).catch(() => {
-      setOtherChannels([]);
-    });
-  }, [networkId, channelName]);
 
   // Get users list for nickname colors (must be called before any conditional returns)
   const users = (channelInfo?.users || []) as storage.ChannelUser[];
@@ -249,38 +233,6 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
     return () => unsubscribe();
   }, [networkId, channelName, loadChannelInfo]);
 
-  // Close context menu on outside click
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (contextMenuRef.current && !contextMenuRef.current.contains(event.target as Node)) {
-        setContextMenu(null);
-      }
-    };
-
-    if (contextMenu) {
-      document.addEventListener('mousedown', handleClickOutside);
-      return () => {
-        document.removeEventListener('mousedown', handleClickOutside);
-      };
-    }
-  }, [contextMenu]);
-
-  // Close context menu on Escape key
-  useEffect(() => {
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setContextMenu(null);
-      }
-    };
-
-    if (contextMenu) {
-      document.addEventListener('keydown', handleEscape);
-      return () => {
-        document.removeEventListener('keydown', handleEscape);
-      };
-    }
-  }, [contextMenu]);
-
   if (networkId === null || channelName === null || channelName === 'status') {
     return null;
   }
@@ -328,175 +280,15 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
     usersByMode[key].sort((a, b) => a.nickname.localeCompare(b.nickname));
   });
 
-  // Find current user in the user list
-  const currentUser = currentNickname 
-    ? users.find(u => u.nickname.toLowerCase() === currentNickname.toLowerCase())
-    : null;
-
-  // Get server capabilities
-  const capabilities = channelInfo?.capabilities;
-  const prefixMap = capabilities?.prefix || {};
-  const chanModes = capabilities?.chanmodes || '';
-
-  // Helper function to get mode letter from prefix character
-  const getModeFromPrefix = (prefixChar: string): string | null => {
-    return prefixMap[prefixChar] || null;
-  };
-
-  // Helper function to check if user has a specific mode
-  const userHasMode = (user: storage.ChannelUser, modeLetter: string): boolean => {
-    if (!user.modes) return false;
-    // Check if user has any prefix that maps to this mode
-    for (const prefixChar of user.modes) {
-      if (getModeFromPrefix(prefixChar) === modeLetter) {
-        return true;
-      }
-    }
-    return false;
-  };
-
-  // Get highest mode letter for current user
-  const getCurrentUserHighestMode = (): string | null => {
-    if (!currentUser || !currentUser.modes) return null;
-    
-    // Common mode hierarchy (higher to lower): q, a, o, h, v
-    const modeHierarchy = ['q', 'a', 'o', 'h', 'v'];
-    
-    for (const mode of modeHierarchy) {
-      if (userHasMode(currentUser, mode)) {
-        return mode;
-      }
-    }
-    
-    return null;
-  };
-
-  // Permission check functions using server capabilities
-  // Fallback: if capabilities not available, check for '@' prefix (op) directly
-  const canKick = (): boolean => {
-    if (!currentUser) return false;
-    
-    // Fallback: if no capabilities, check for '@' prefix directly
-    if (!capabilities || !capabilities.prefix_string) {
-      return currentUser.modes?.includes('@') || false;
-    }
-    
-    const highestMode = getCurrentUserHighestMode();
-    // Typically requires op (o) or higher, but varies by server
-    return highestMode === 'q' || highestMode === 'a' || highestMode === 'o';
-  };
-
-  const canBan = (): boolean => {
-    if (!currentUser) return false;
-    
-    // Fallback: if no capabilities, check for '@' prefix directly
-    if (!capabilities || !capabilities.prefix_string) {
-      return currentUser.modes?.includes('@') || false;
-    }
-    
-    const highestMode = getCurrentUserHighestMode();
-    // Ban modes typically require op or higher
-    return highestMode === 'q' || highestMode === 'a' || highestMode === 'o';
-  };
-
-  const canOp = (): boolean => {
-    if (!currentUser) return false;
-    
-    // Fallback: if no capabilities, check for '@' prefix directly
-    if (!capabilities || !capabilities.prefix_string) {
-      return currentUser.modes?.includes('@') || false;
-    }
-    
-    const highestMode = getCurrentUserHighestMode();
-    // Setting op mode requires op or higher
-    return highestMode === 'q' || highestMode === 'a' || highestMode === 'o';
-  };
-
-  const canVoice = (): boolean => {
-    if (!currentUser) return false;
-    
-    // Fallback: if no capabilities, check for '@' or '%' prefix directly
-    if (!capabilities || !capabilities.prefix_string) {
-      return currentUser.modes?.includes('@') || currentUser.modes?.includes('%') || false;
-    }
-    
-    const highestMode = getCurrentUserHighestMode();
-    // Voice mode may be set by op, halfop, or higher (varies by server)
-    return highestMode === 'q' || highestMode === 'a' || highestMode === 'o' || highestMode === 'h';
-  };
-
-  // Context menu handler
+  // Open the shared nickname context menu at the click position. The menu itself
+  // derives permissions, joined channels, and the available actions.
   const handleContextMenu = (e: React.MouseEvent, user: storage.ChannelUser) => {
     e.preventDefault();
     e.stopPropagation();
-    
-    // Prevent text selection
     if (window.getSelection) {
       window.getSelection()?.removeAllRanges();
     }
-    
-    setContextMenu({
-      x: e.clientX,
-      y: e.clientY,
-      user,
-    });
-  };
-
-  // Command handlers
-  const handleKick = async (nickname: string) => {
-    if (!channelName) return;
-    await onSendCommand(`/kick ${channelName} ${nickname}`);
-    setContextMenu(null);
-  };
-
-  const handleKickBan = async (nickname: string) => {
-    if (!channelName) return;
-    await onSendCommand(`/kick ${channelName} ${nickname}`);
-    // Ban mask: nickname!*@*
-    await onSendCommand(`/ban ${channelName} ${nickname}!*@*`);
-    setContextMenu(null);
-  };
-
-  const handleBan = async (nickname: string) => {
-    if (!channelName) return;
-    await onSendCommand(`/ban ${channelName} ${nickname}!*@*`);
-    setContextMenu(null);
-  };
-
-  const handleUnban = async (nickname: string) => {
-    if (!channelName) return;
-    await onSendCommand(`/unban ${channelName} ${nickname}!*@*`);
-    setContextMenu(null);
-  };
-
-  const handleOp = async (nickname: string) => {
-    if (!channelName) return;
-    await onSendCommand(`/op ${channelName} ${nickname}`);
-    setContextMenu(null);
-  };
-
-  const handleDeop = async (nickname: string) => {
-    if (!channelName) return;
-    await onSendCommand(`/deop ${channelName} ${nickname}`);
-    setContextMenu(null);
-  };
-
-  const handleVoice = async (nickname: string) => {
-    if (!channelName) return;
-    await onSendCommand(`/voice ${channelName} ${nickname}`);
-    setContextMenu(null);
-  };
-
-  const handleDevoice = async (nickname: string) => {
-    if (!channelName) return;
-    await onSendCommand(`/devoice ${channelName} ${nickname}`);
-    setContextMenu(null);
-  };
-
-  // Check if target user is self
-  const isSelf = (user: storage.ChannelUser | null): boolean => {
-    if (!user || !currentNickname) return false;
-    return user.nickname.toLowerCase() === currentNickname.toLowerCase();
+    setContextMenu({ x: e.clientX, y: e.clientY, nick: user.nickname });
   };
 
   // Flatten users into one role-ordered list. Each carries its role icon +
@@ -601,237 +393,19 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
       </>
       )}
 
-      {/* Context Menu */}
-      {contextMenu && contextMenu.user && (
-        <div
-          ref={contextMenuRef}
-          className="fixed z-50 bg-card border border-border rounded-lg shadow-[var(--shadow-lg)] min-w-[180px] backdrop-blur-md"
-          style={{
-            left: `${contextMenu.x}px`,
-            top: `${contextMenu.y}px`,
-            backgroundColor: 'var(--card)',
-            transition: 'var(--transition-base)',
-          }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="py-1">
-            {/* Only show commands if user has permissions and target is not self */}
-            {!isSelf(contextMenu.user) && (
-              <>
-                {/* Moderation Section */}
-                {canKick() && (
-                  <>
-                    <button
-                      className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
-                      style={{ transition: 'var(--transition-base)' }}
-                      onClick={() => handleKick(contextMenu.user!.nickname)}
-                    >
-                      Kick
-                    </button>
-                    <button
-                      className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
-                      style={{ transition: 'var(--transition-base)' }}
-                      onClick={() => handleKickBan(contextMenu.user!.nickname)}
-                    >
-                      Kick & Ban
-                    </button>
-                    <div className="border-t border-border my-1" />
-                  </>
-                )}
-
-                {/* Bans Section */}
-                {canBan() && (
-                  <>
-                    <button
-                      className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
-                      style={{ transition: 'var(--transition-base)' }}
-                      onClick={() => handleBan(contextMenu.user!.nickname)}
-                    >
-                      Ban
-                    </button>
-                    <button
-                      className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
-                      style={{ transition: 'var(--transition-base)' }}
-                      onClick={() => handleUnban(contextMenu.user!.nickname)}
-                    >
-                      Unban
-                    </button>
-                    <div className="border-t border-border my-1" />
-                  </>
-                )}
-
-                {/* Permissions Section */}
-                {canOp() && (
-                  <>
-                    <button
-                      className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
-                      style={{ transition: 'var(--transition-base)' }}
-                      onClick={() => handleOp(contextMenu.user!.nickname)}
-                    >
-                      Op
-                    </button>
-                    <button
-                      className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
-                      style={{ transition: 'var(--transition-base)' }}
-                      onClick={() => handleDeop(contextMenu.user!.nickname)}
-                    >
-                      Deop
-                    </button>
-                  </>
-                )}
-
-                {canVoice() && (
-                  <>
-                    <button
-                      className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
-                      style={{ transition: 'var(--transition-base)' }}
-                      onClick={() => handleVoice(contextMenu.user!.nickname)}
-                    >
-                      Voice
-                    </button>
-                    <button
-                      className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
-                      style={{ transition: 'var(--transition-base)' }}
-                      onClick={() => handleDevoice(contextMenu.user!.nickname)}
-                    >
-                      Devoice
-                    </button>
-                  </>
-                )}
-
-                {/* Invite to another channel */}
-                {otherChannels.length > 0 && (
-                  <>
-                    {(canOp() || canVoice()) && <div className="border-t border-border my-1" />}
-                    <div className="px-4 py-1 text-xs font-semibold text-muted-foreground uppercase">Invite to</div>
-                    {otherChannels.map((ch) => (
-                      <button
-                        key={ch.name}
-                        className="w-full text-left px-4 py-2 text-sm hover:bg-accent"
-                        onClick={() => {
-                          void onSendCommand(`/invite ${contextMenu.user!.nickname} ${ch.name}`);
-                          setContextMenu(null);
-                        }}
-                      >
-                        {ch.name}
-                      </button>
-                    ))}
-                  </>
-                )}
-
-                {/* Show message if no commands available */}
-                {!canKick() && !canBan() && !canOp() && !canVoice() && otherChannels.length === 0 && (
-                  <div className="px-4 py-2 text-sm text-muted-foreground">
-                    No operator commands available
-                  </div>
-                )}
-              </>
-            )}
-
-            {/* Show message if trying to operate on self */}
-            {isSelf(contextMenu.user) && (
-              <div className="px-4 py-2 text-sm text-muted-foreground">
-                Cannot operate on yourself
-              </div>
-            )}
-
-            {/* User Info & CTCP options - available for all users */}
-            <div className="border-t border-border my-1" />
-            <button
-              className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
-              style={{ transition: 'var(--transition-base)' }}
-              onClick={() => {
-                if (contextMenu.user) {
-                  setShowUserInfo({ nickname: contextMenu.user.nickname });
-                  setContextMenu(null);
-                }
-              }}
-            >
-              Whois
-            </button>
-            <button
-              className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
-              style={{ transition: 'var(--transition-base)' }}
-              onClick={() => {
-                if (contextMenu.user && networkId !== null) {
-                  void addMonitorNick(networkId, contextMenu.user.nickname);
-                  setContextMenu(null);
-                }
-              }}
-            >
-              Monitor this user
-            </button>
-            {channelName && !isSelf(contextMenu.user) && (
-              <button
-                className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
-                style={{ transition: 'var(--transition-base)' }}
-                onClick={() => {
-                  if (contextMenu.user && networkId !== null && channelName) {
-                    const pane = `pm:${contextMenu.user.nickname}`;
-                    void selectPane(networkId, pane).then(() => {
-                      setChannelContext(pane, channelName);
-                    });
-                    setContextMenu(null);
-                  }
-                }}
-              >
-                Message privately (re: {channelName})
-              </button>
-            )}
-            <div className="border-t border-border my-1" />
-            <div className="px-4 py-1 text-xs font-semibold text-muted-foreground uppercase">
-              CTCP
-            </div>
-            <button
-              className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
-              style={{ transition: 'var(--transition-base)' }}
-              onClick={() => {
-                if (contextMenu.user && networkId !== null) {
-                  onSendCommand(`/version ${contextMenu.user.nickname}`);
-                  setContextMenu(null);
-                }
-              }}
-            >
-              CTCP Version
-            </button>
-            <button
-              className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
-              style={{ transition: 'var(--transition-base)' }}
-              onClick={() => {
-                if (contextMenu.user && networkId !== null) {
-                  onSendCommand(`/time ${contextMenu.user.nickname}`);
-                  setContextMenu(null);
-                }
-              }}
-            >
-              CTCP Time
-            </button>
-            <button
-              className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
-              style={{ transition: 'var(--transition-base)' }}
-              onClick={() => {
-                if (contextMenu.user && networkId !== null) {
-                  onSendCommand(`/ping ${contextMenu.user.nickname}`);
-                  setContextMenu(null);
-                }
-              }}
-            >
-              CTCP Ping
-            </button>
-            <button
-              className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
-              style={{ transition: 'var(--transition-base)' }}
-              onClick={() => {
-                if (contextMenu.user && networkId !== null) {
-                  onSendCommand(`/clientinfo ${contextMenu.user.nickname}`);
-                  setContextMenu(null);
-                }
-              }}
-            >
-              CTCP ClientInfo
-            </button>
-          </div>
-        </div>
+      {/* Nickname context menu (shared with the message buffer) */}
+      {contextMenu && (
+        <UserContextMenu
+          networkId={networkId}
+          channelName={channelName}
+          targetNick={contextMenu.nick}
+          currentNickname={currentNickname}
+          x={contextMenu.x}
+          y={contextMenu.y}
+          onClose={() => setContextMenu(null)}
+          onSendCommand={onSendCommand}
+          onShowUserInfo={(nick) => setShowUserInfo({ nickname: nick })}
+        />
       )}
 
       {/* User Info Panel */}
