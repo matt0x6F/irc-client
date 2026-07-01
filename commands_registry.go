@@ -82,6 +82,7 @@ func buildBuiltinRegistry() *CommandRegistry {
 	reg(&CommandSpec{Name: "AWAY", Category: CategoryServer, Usage: "[message]", Description: "Set or clear your away status", MinArgs: 0, handler: cmdAway})
 	reg(&CommandSpec{Name: "WHOIS", Category: CategoryServer, Usage: "nickname", Description: "Look up information about a user", MinArgs: 1, handler: cmdWhois})
 	reg(&CommandSpec{Name: "WHOWAS", Category: CategoryServer, Usage: "nickname", Description: "Look up a user who has left", MinArgs: 1, handler: cmdWhowas})
+	reg(&CommandSpec{Name: "WHO", Category: CategoryServer, Usage: "target", Description: "List users matching a channel, nick, or mask", MinArgs: 1, handler: cmdWho})
 	reg(&CommandSpec{Name: "ME", Aliases: []string{"ACTION"}, Category: CategoryServer, Usage: "[channel|user] action text", Description: "Send an action message", MinArgs: 2, handler: cmdMe})
 	reg(&CommandSpec{Name: "CTCP", Category: CategoryCTCP, Usage: "target command [args]", Description: "Send a CTCP request", MinArgs: 2, handler: cmdCtcp})
 	reg(&CommandSpec{Name: "VERSION", Category: CategoryCTCP, Usage: "target", Description: "Request a user's client version", MinArgs: 1, handler: cmdVersion})
@@ -163,6 +164,13 @@ func cmdWhois(a *App, client *irc.IRCClient, networkID int64, args []string) err
 
 func cmdWhowas(a *App, client *irc.IRCClient, networkID int64, args []string) error {
 	return client.SendRawCommand(fmt.Sprintf("WHOWAS %s", args[0]))
+}
+
+// cmdWho issues a user-initiated WHO. RequestWho marks the target pending so its
+// 352/315 replies are surfaced to the status buffer (and kept distinct from the
+// automatic roster-seeding WHOX). Only the mask is used, so the 315 echo correlates.
+func cmdWho(a *App, client *irc.IRCClient, networkID int64, args []string) error {
+	return client.RequestWho(args[0])
 }
 
 func cmdMe(a *App, client *irc.IRCClient, networkID int64, args []string) error {

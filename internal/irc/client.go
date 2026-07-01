@@ -70,6 +70,8 @@ type IRCClient struct {
 	monitorMu             sync.Mutex             // Mutex for monitorStatus and monitorArmed
 	whoisInProgress       map[string]*WhoisInfo  // Track WHOIS requests in progress (key: nickname)
 	whoisMu               sync.Mutex             // Mutex for whoisInProgress map
+	whoPending            map[string]bool        // Targets of user-initiated /who awaiting replies (key: folded mask); distinguishes 352/315 from roster-seed WHOX (guarded by whoMu)
+	whoMu                 sync.Mutex             // Mutex for whoPending map
 	knownBots             map[string]bool        // Nicks recognized as IRCv3 bots this session (key: lowercased nick)
 	knownBotsMu           sync.Mutex             // Mutex for knownBots map
 	userMeta              map[string]*UserMeta   // Live roster attributes (away/account/host) this session (key: lowercased nick)
@@ -1959,6 +1961,8 @@ func (c *IRCClient) setupHandlers() {
 	c.conn.AddCallback("341", c.handleInviting)      // RPL_INVITING (INVITE send success)
 	c.conn.AddCallback("443", c.handleUserOnChannel) // ERR_USERONCHANNEL (INVITE target already on channel)
 	c.conn.AddCallback("354", c.handleWhoxReply)     // RPL_WHOSPCRPL (WHOX)
+	c.conn.AddCallback("352", c.handleWhoReply)      // RPL_WHOREPLY (user-initiated /who)
+	c.conn.AddCallback("315", c.handleEndOfWho)      // RPL_ENDOFWHO (closes a /who)
 	// MONITOR presence: 730 RPL_MONONLINE, 731 RPL_MONOFFLINE.
 	c.conn.AddCallback("730", func(e ircmsg.Message) { c.handleMonitorPresence(e, true) })
 	c.conn.AddCallback("731", func(e ircmsg.Message) { c.handleMonitorPresence(e, false) })
@@ -3459,6 +3463,79 @@ func (c *IRCClient) applyWhoxRow(params []string) {
 			m.Realname = realname
 		}
 	})
+}
+
+// RequestWho issues a user-initiated WHO for target (a nick, channel, or mask) and
+// records the target so the resulting RPL_WHOREPLY (352) / RPL_ENDOFWHO (315) rows
+// are surfaced to the status buffer. A plain WHO (no WHOX field set) is sent even
+// on WHOX servers, so its 352 replies are unambiguously distinct from the roster-
+// seeding WHOX (354) issued on join — the two never collide. Marks pending before
+// sending so a reply that races back is never dropped; a no-op send when offline.
+func (c *IRCClient) RequestWho(target string) error {
+	if target == "" {
+		return fmt.Errorf("who target required")
+	}
+	key := c.foldKey(target)
+	c.whoMu.Lock()
+	if c.whoPending == nil {
+		c.whoPending = make(map[string]bool)
+	}
+	c.whoPending[key] = true
+	c.whoMu.Unlock()
+	if c.conn == nil {
+		return nil // not connected; the WHO is simply not sent
+	}
+	return c.conn.SendRaw("WHO " + target)
+}
+
+// handleWhoReply surfaces one RPL_WHOREPLY (352) row to the status buffer when a
+// user-initiated /who is in flight. Params follow the RFC layout:
+//
+//	[ourNick, channel, user, host, server, nick, flags, "<hopcount> <realname>"]
+//
+// Roster seeding uses WHOX (354), never a plain WHO, so a 352 only arrives in
+// response to a user query; the pending gate additionally ignores any unsolicited
+// 352 a server might send.
+func (c *IRCClient) handleWhoReply(e ircmsg.Message) {
+	if len(e.Params) < 8 {
+		return
+	}
+	c.whoMu.Lock()
+	pending := len(c.whoPending) > 0
+	c.whoMu.Unlock()
+	if !pending {
+		return
+	}
+	channel, user, host := e.Params[1], e.Params[2], e.Params[3]
+	server, nick, flags := e.Params[4], e.Params[5], e.Params[6]
+	// The trailing param is "<hopcount> <realname>"; drop the hop count.
+	realname := e.Params[7]
+	if i := strings.IndexByte(realname, ' '); i >= 0 {
+		realname = realname[i+1:]
+	}
+	c.writeStatusLine("status", formatWhoReply(channel, user, host, server, nick, flags, realname))
+}
+
+// handleEndOfWho closes out a user-initiated /who: for a pending target it writes a
+// footer and clears the marker. The roster-seeding WHOX also ends with a 315, so
+// this correlates on the echoed mask (params[1]) and stays silent for any 315 whose
+// target we did not query.
+func (c *IRCClient) handleEndOfWho(e ircmsg.Message) {
+	if len(e.Params) < 2 {
+		return
+	}
+	mask := e.Params[1]
+	key := c.foldKey(mask)
+	c.whoMu.Lock()
+	wasUser := c.whoPending[key]
+	if wasUser {
+		delete(c.whoPending, key)
+	}
+	c.whoMu.Unlock()
+	if !wasUser {
+		return // roster-seed WHOX's terminator, or an unsolicited 315
+	}
+	c.writeStatusLine("status", "End of WHO for "+mask)
 }
 
 // monitorSupported reports whether the server advertised MONITOR in ISUPPORT.
