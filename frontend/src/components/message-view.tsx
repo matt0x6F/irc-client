@@ -526,37 +526,10 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
           const isWarning = msg.message_type === 'warning';
           const isStatus = msg.message_type === 'status';
           const isCommand = msg.message_type === 'command';
-          const isMarker = msg.message_type === 'marker';
           const isSystemMessage = msg.message_type === 'join' || msg.message_type === 'part' || msg.message_type === 'quit' || msg.message_type === 'mode';
           const isEven = index % 2 === 0;
-          const isRegularMessage = !isError && !isWarning && !isStatus && !isCommand && !isMarker && !isSystemMessage;
+          const isRegularMessage = !isError && !isWarning && !isStatus && !isCommand && !isSystemMessage;
           const hasMention = isRegularMessage && isMention(msg.message);
-
-          // Connection delineation marker ("Disconnected"/"Reconnected"): a centered
-          // divider line that brackets a drop→reconnect gap in the buffer's scrollback.
-          // Rendered as its own row rather than a normal message (no avatar, no pin).
-          if (isMarker) {
-            return (
-              <div
-                key={msg.id}
-                ref={(el) => {
-                  if (el) messageRefs.current.set(msg.id, el);
-                  else messageRefs.current.delete(msg.id);
-                }}
-                data-testid="connection-marker"
-                className="flex items-center gap-3 py-2 select-none"
-              >
-                <div className="flex-1 h-px bg-border" />
-                <span className="flex-shrink-0 text-xs font-medium uppercase tracking-wide text-muted-foreground/80">
-                  {msg.message}
-                  <span className="ml-2 font-mono normal-case tracking-normal text-muted-foreground/60">
-                    {new Date(msg.timestamp).toLocaleTimeString()}
-                  </span>
-                </span>
-                <div className="flex-1 h-px bg-border" />
-              </div>
-            );
-          }
 
           return (
             <div

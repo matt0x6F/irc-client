@@ -1572,64 +1572,10 @@ func (c *IRCClient) onDisconnect(e ircmsg.Message) {
 	c.pendingManualNick = ""
 	c.mu.Unlock()
 
-	// Write "Disconnected" messages to all open/joined channels BEFORE clearing users
-	// This ensures we can still identify which channels the user was in
-	// Do this SYNCHRONOUSLY so it completes before the process can exit
-	logger.Log.Info().Int64("network_id", c.networkID).Msg("Disconnect callback: writing messages to channels")
-
-	var channelsToNotify []storage.Channel
-	if c.network.Nickname != "" {
-		// Get channels that are open or where we're joined
-		openChannels, err := c.storage.GetOpenChannels(c.networkID, c.network.Nickname)
-		if err == nil && len(openChannels) > 0 {
-			channelsToNotify = openChannels
-			logger.Log.Debug().Int64("network_id", c.networkID).Int("open_channels", len(openChannels)).Msg("Disconnect callback: found open channels via GetOpenChannels")
-		} else if err != nil {
-			logger.Log.Debug().Err(err).Int64("network_id", c.networkID).Msg("Disconnect callback: error getting open channels")
-		}
-	}
-
-	// Fallback: if GetOpenChannels didn't work or returned nothing, get all channels
-	// and filter to those that are open
-	if len(channelsToNotify) == 0 {
-		allChannels, err := c.storage.GetChannels(c.networkID)
-		if err == nil {
-			for _, ch := range allChannels {
-				if ch.IsOpen {
-					channelsToNotify = append(channelsToNotify, ch)
-				}
-			}
-			logger.Log.Debug().Int64("network_id", c.networkID).Int("open_channels", len(channelsToNotify)).Int("total_channels", len(allChannels)).Msg("Disconnect callback: found open channels via fallback")
-		} else {
-			logger.Log.Debug().Err(err).Int64("network_id", c.networkID).Msg("Disconnect callback: error getting all channels")
-		}
-	}
-
-	// Write "Disconnected" message to each channel
-	if len(channelsToNotify) > 0 {
-		logger.Log.Info().Int64("network_id", c.networkID).Int("channel_count", len(channelsToNotify)).Msg("Disconnect callback: writing disconnect messages to channels")
-		for _, channel := range channelsToNotify {
-			disconnectMsg := storage.Message{
-				NetworkID:   c.networkID,
-				ChannelID:   &channel.ID,
-				User:        "*",
-				Message:     "Disconnected",
-				MessageType: "status",
-				Timestamp:   time.Now(),
-				RawLine:     "",
-			}
-			// Use WriteMessageDirect to ensure immediate persistence
-			if err := c.storage.WriteMessageDirect(disconnectMsg); err != nil {
-				if err.Error() != "storage is closed" {
-					logger.Log.Warn().Err(err).Int64("network_id", c.networkID).Str("channel", channel.Name).Msg("Disconnect callback: failed to write disconnect message to channel")
-				} else {
-					logger.Log.Debug().Int64("network_id", c.networkID).Str("channel", channel.Name).Msg("Disconnect callback: storage closed, skipping channel")
-				}
-			} else {
-				logger.Log.Debug().Int64("network_id", c.networkID).Str("channel", channel.Name).Int64("channel_id", channel.ID).Msg("Disconnect callback: wrote disconnect message to channel")
-			}
-		}
-	}
+	// The per-channel drop is surfaced by the QUIT/JOIN protocol messages the server
+	// echoes (see handleQuit / JOIN handler), so onDisconnect no longer writes its own
+	// "Disconnected" status line into each channel — that was redundant. The
+	// status-window notice below still records the drop on the network console.
 
 	// Clear all channel user lists for this network since we're disconnected
 	// This prevents showing stale user lists when reconnecting

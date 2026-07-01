@@ -80,7 +80,6 @@ func newConnectionLostTestApp(t *testing.T) *App {
 		storage:               s,
 		connectingNetworks:    make(map[string]chan struct{}),
 		reconnectingNetworks:  make(map[int64]bool),
-		connectionGapOpen:     make(map[int64]bool),
 		stsUpgrading:          make(map[int64]bool),
 		intentionalDisconnect: make(map[int64]bool),
 	}
