@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { SendCommand } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import { useNetworkStore } from '../stores/network';
+import { casefold } from '../lib/casefold';
 
 interface WhoisInfo {
   nickname: string;
@@ -33,7 +34,9 @@ export function UserInfo({ networkId, nickname, onClose }: UserInfoProps) {
   // a point-in-time snapshot; this stays current as the user goes away/back or
   // logs in/out while the panel is open.
   const meta = useNetworkStore((s) =>
-    networkId !== null ? s.userMeta[networkId]?.[nickname.toLowerCase()] : undefined
+    networkId !== null
+      ? s.userMeta[networkId]?.[casefold(s.caseMapping?.[networkId] ?? '', nickname)]
+      : undefined
   );
 
   useEffect(() => {

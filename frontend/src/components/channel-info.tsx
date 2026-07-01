@@ -7,6 +7,7 @@ import { MonitorList } from './monitor-list';
 import { useNicknameColors } from '../hooks/useNicknameColors';
 import { useNetworkStore } from '../stores/network';
 import { isChannelName } from '../lib/channel-name';
+import { casefold } from '../lib/casefold';
 import { useSettingsStore } from '../stores/settings';
 import { Shield, Crown, Star, Mic, ShieldCheck } from 'lucide-react';
 
@@ -85,6 +86,9 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
   // the map reference re-renders when setUserMeta replaces it, so away members
   // dim and un-dim live.
   const userMetaMap = useNetworkStore((s) => (networkId !== null ? s.userMeta[networkId] : undefined));
+  // CASEMAPPING for this network, so member-list lookups fold nicks the same way
+  // the store keys them (rfc1459 []\~ -> {}|^). Empty falls back to rfc1459.
+  const caseMapping = useNetworkStore((s) => (networkId !== null ? s.caseMapping?.[networkId] : undefined)) ?? '';
 
   const loadChannelInfo = useCallback(async () => {
     if (networkId === null || channelName === null || channelName === 'status') {
@@ -540,7 +544,7 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
         </div>
 
         {orderedUsers.map(({ user, Icon, color }) => {
-          const meta = userMetaMap?.[user.nickname.toLowerCase()];
+          const meta = userMetaMap?.[casefold(caseMapping, user.nickname)];
           const away = !!meta?.away;
           // Tooltip: away status (with reason) takes priority over color, and the
           // user@host (from userhost-in-names on join, or a later chghost) is
@@ -578,7 +582,7 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
             >
               {user.nickname}
             </span>
-            {botSet?.has(user.nickname.toLowerCase()) && (
+            {botSet?.has(casefold(caseMapping, user.nickname)) && (
               <span
                 className="ml-auto text-[10px] uppercase font-semibold tracking-wide px-1 py-0.5 rounded bg-accent text-muted-foreground flex-shrink-0"
                 title="This user is a bot (IRCv3 bot mode)"

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import { useNetworkStore } from '../stores/network';
 import { buddyPresence } from '../lib/presence';
+import { casefold } from '../lib/casefold';
 
 interface MonitorListProps {
   networkId: number | null;
@@ -16,6 +17,7 @@ export function MonitorList({ networkId }: MonitorListProps) {
   // Per-network roster metadata: with extended-monitor this carries live away
   // state for monitored buddies even when we share no channel with them.
   const userMeta = useNetworkStore((s) => (networkId !== null ? s.userMeta[networkId] : undefined));
+  const caseMapping = useNetworkStore((s) => (networkId !== null ? s.caseMapping?.[networkId] : undefined)) ?? '';
   const loadMonitor = useNetworkStore((s) => s.loadMonitor);
   const addMonitorNick = useNetworkStore((s) => s.addMonitorNick);
   const removeMonitorNick = useNetworkStore((s) => s.removeMonitorNick);
@@ -66,7 +68,7 @@ export function MonitorList({ networkId }: MonitorListProps) {
 
       <div className="flex-1 overflow-y-auto">
         {list.map((b) => {
-          const meta = userMeta?.[b.nick.toLowerCase()];
+          const meta = userMeta?.[casefold(caseMapping, b.nick)];
           const presence = buddyPresence(b.online, meta?.away ?? false);
           const dotClass =
             presence === 'online' ? 'bg-green-500' : presence === 'away' ? 'bg-amber-500' : 'bg-muted-foreground/40';

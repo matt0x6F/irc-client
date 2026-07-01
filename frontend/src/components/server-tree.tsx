@@ -7,6 +7,7 @@ import { useNetworkStore } from '../stores/network';
 import { usePreferencesStore } from '../stores/preferences';
 import { dmPresenceState } from '../lib/presence';
 import { isChannelName } from '../lib/channel-name';
+import { casefold } from '../lib/casefold';
 import markUrl from '../assets/brand/cascade-mark.svg';
 import { Terminal } from 'lucide-react';
 
@@ -65,6 +66,9 @@ export function ServerTree({
   // Live MONITOR presence per network (lowercased nick -> online), driving the
   // DM-list dots. Seeded on expand, kept fresh by 'monitor-event' in App.tsx.
   const presence = useNetworkStore((s) => s.presence);
+  // CASEMAPPING per network, so DM-presence lookups fold nicks the same way the
+  // store keys them (rfc1459 []\~ -> {}|^). Empty falls back to rfc1459.
+  const caseMapping = useNetworkStore((s) => s.caseMapping);
   const loadPresence = useNetworkStore((s) => s.loadPresence);
 
   // Reactive invite counts — subscribed so the badge re-renders when invites change.
@@ -544,7 +548,10 @@ export function ServerTree({
                             const pmKey = `pm:${user}`;
                             const activityKey = `${network.id}:${pmKey}`;
                             const unreadCount = unreadCounts.get(activityKey) || 0;
-                            const dotState = dmPresenceState(user, presence[network.id]?.[user.toLowerCase()]);
+                            const dotState = dmPresenceState(
+                              user,
+                              presence[network.id]?.[casefold(caseMapping?.[network.id] ?? '', user)]
+                            );
                             return (
                               <div
                                 key={pmKey}

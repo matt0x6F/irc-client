@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { storage, main } from '../../wailsjs/go/models';
 import { markdownToIrc } from '../lib/irc-markup';
 import { isChannelName } from '../lib/channel-name';
+import { casefold } from '../lib/casefold';
 import {
   GetNetworks,
   GetConnectionStatus,
@@ -141,6 +142,11 @@ interface NetworkState {
   // so channel-vs-nick detection can adapt to the server (e.g. '+'/'!' channels)
   // without an async call at every check.
   chanTypes: Record<number, string>;
+  // CASEMAPPING per network (from ISUPPORT, defaults applied backend-side). Cached
+  // so nick/channel map keys fold the SAME way the backend does — plain
+  // toLowerCase() would split Nick[a] and nick{a} on rfc1459 servers. See
+  // lib/casefold.ts; consumed by the roster/presence/bot helpers below.
+  caseMapping: Record<number, string>;
   messages: storage.Message[];
   channelInfo: main.ChannelInfo | null;
   unreadCounts: Map<string, number>;
@@ -293,6 +299,7 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
   authState: {},
   currentNick: {},
   chanTypes: {},
+  caseMapping: {},
   messages: [],
   channelInfo: null,
   unreadCounts: new Map(),
@@ -648,6 +655,12 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
       if (chantypes) {
         set((state) => ({
           chanTypes: { ...state.chanTypes, [id]: chantypes },
+        }));
+      }
+      const casemapping = caps?.casemapping;
+      if (casemapping) {
+        set((state) => ({
+          caseMapping: { ...state.caseMapping, [id]: casemapping },
         }));
       }
     } catch (error) {
@@ -1184,7 +1197,10 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
     try {
       const nicks = await GetNetworkBots(id);
       set((state) => ({
-        botNicks: { ...state.botNicks, [id]: new Set((nicks || []).map((n) => n.toLowerCase())) },
+        botNicks: {
+          ...state.botNicks,
+          [id]: new Set((nicks || []).map((n) => casefold(get().caseMapping[id] ?? '', n))),
+        },
       }));
     } catch (error) {
       console.error('Failed to load network bots:', error);
@@ -1193,7 +1209,7 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
 
   addBot: (networkId, nick) =>
     set((state) => {
-      const key = nick.toLowerCase();
+      const key = casefold(get().caseMapping[networkId] ?? '', nick);
       const existing = state.botNicks[networkId];
       if (existing?.has(key)) return state; // no-op: avoid needless re-render
       const next = new Set(existing ?? []);
@@ -1202,7 +1218,7 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
     }),
 
   isBot: (networkId, nick) =>
-    get().botNicks[networkId]?.has(nick.toLowerCase()) ?? false,
+    get().botNicks[networkId]?.has(casefold(get().caseMapping[networkId] ?? '', nick)) ?? false,
 
   // Hydrate the MONITOR buddy list (membership + presence) for a network from the
   // backend. Live presence toggles arrive via 'monitor-event' -> setMonitorOnline.
@@ -1237,10 +1253,11 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
     set((state) => {
       const list = state.monitor[networkId];
       if (!list) return state;
-      const key = nick.toLowerCase();
+      const mapping = get().caseMapping[networkId] ?? '';
+      const key = casefold(mapping, nick);
       let changed = false;
       const next = list.map((b) => {
-        if (b.nick.toLowerCase() === key && b.online !== online) {
+        if (casefold(mapping, b.nick) === key && b.online !== online) {
           changed = true;
           return { ...b, online };
         }
@@ -1258,7 +1275,7 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
       const snapshot = await GetMonitorPresence(networkId);
       const map: Record<string, boolean> = {};
       for (const [nick, online] of Object.entries(snapshot || {})) {
-        map[nick.toLowerCase()] = !!online;
+        map[casefold(get().caseMapping[networkId] ?? '', nick)] = !!online;
       }
       set((state) => ({ presence: { ...state.presence, [networkId]: map } }));
     } catch (error) {
@@ -1268,7 +1285,7 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
 
   setPresence: (networkId, nick, online) =>
     set((state) => {
-      const key = nick.toLowerCase();
+      const key = casefold(get().caseMapping[networkId] ?? '', nick);
       const current = state.presence[networkId];
       if (current && current[key] === online) return state; // no change
       const next: Record<string, boolean> = { ...(current ?? {}) };
@@ -1286,7 +1303,7 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
       const meta = await GetNetworkUserMeta(id);
       const map: Record<string, UserMetaT> = {};
       for (const [nick, m] of Object.entries(meta || {})) {
-        map[nick.toLowerCase()] = {
+        map[casefold(get().caseMapping[id] ?? '', nick)] = {
           away: !!m?.away,
           away_message: m?.away_message ?? '',
           account: m?.account ?? '',
@@ -1302,7 +1319,7 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
 
   setUserMeta: (networkId, nick, meta) =>
     set((state) => {
-      const key = nick.toLowerCase();
+      const key = casefold(get().caseMapping[networkId] ?? '', nick);
       const existing = state.userMeta[networkId]?.[key];
       // No-op when nothing changed, to avoid needless re-renders.
       if (
@@ -1320,10 +1337,10 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
     }),
 
   getUserMeta: (networkId, nick) =>
-    get().userMeta[networkId]?.[nick.toLowerCase()],
+    get().userMeta[networkId]?.[casefold(get().caseMapping[networkId] ?? '', nick)],
 
   isAway: (networkId, nick) =>
-    get().userMeta[networkId]?.[nick.toLowerCase()]?.away ?? false,
+    get().userMeta[networkId]?.[casefold(get().caseMapping[networkId] ?? '', nick)]?.away ?? false,
 
   openQuery: async (networkId, nick) => {
     try {
