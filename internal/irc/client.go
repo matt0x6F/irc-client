@@ -804,7 +804,7 @@ func (c *IRCClient) markBot(nick string) {
 	if nick == "" {
 		return
 	}
-	key := strings.ToLower(nick)
+	key := c.foldKey(nick)
 
 	c.knownBotsMu.Lock()
 	if c.knownBots[key] {
@@ -907,7 +907,7 @@ func (c *IRCClient) applyUserMeta(nick string, mutate func(*UserMeta)) {
 	if nick == "" {
 		return
 	}
-	key := strings.ToLower(nick)
+	key := c.foldKey(nick)
 
 	c.userMetaMu.Lock()
 	current := UserMeta{}
@@ -954,8 +954,8 @@ func (c *IRCClient) renameUserMeta(oldNick, newNick string) {
 	if oldNick == "" || newNick == "" {
 		return
 	}
-	oldKey := strings.ToLower(oldNick)
-	newKey := strings.ToLower(newNick)
+	oldKey := c.foldKey(oldNick)
+	newKey := c.foldKey(newNick)
 	if oldKey == newKey {
 		return
 	}
@@ -982,7 +982,7 @@ func (c *IRCClient) removeUserMeta(nick string) {
 		return
 	}
 	c.userMetaMu.Lock()
-	delete(c.userMeta, strings.ToLower(nick))
+	delete(c.userMeta, c.foldKey(nick))
 	c.userMetaMu.Unlock()
 }
 
@@ -1279,7 +1279,7 @@ func (c *IRCClient) maybeApplyAccountTag(e ircmsg.Message) {
 func (c *IRCClient) UserMetaFor(nick string) (UserMeta, bool) {
 	c.userMetaMu.Lock()
 	defer c.userMetaMu.Unlock()
-	if m := c.userMeta[strings.ToLower(nick)]; m != nil {
+	if m := c.userMeta[c.foldKey(nick)]; m != nil {
 		return *m, true
 	}
 	return UserMeta{}, false
@@ -1303,7 +1303,7 @@ func (c *IRCClient) AllUserMeta() map[string]UserMeta {
 func (c *IRCClient) accountFor(nick string) string {
 	c.userMetaMu.Lock()
 	defer c.userMetaMu.Unlock()
-	if m, ok := c.userMeta[strings.ToLower(nick)]; ok && m != nil {
+	if m, ok := c.userMeta[c.foldKey(nick)]; ok && m != nil {
 		return m.Account
 	}
 	return ""
@@ -2074,7 +2074,7 @@ func (c *IRCClient) setupHandlers() {
 		}
 
 		// Use lowercase channel name as key for namesInProgress to handle case variations
-		channelKey := strings.ToLower(channel)
+		channelKey := c.foldKey(channel)
 
 		// On first NAMES response for a channel, clear the existing user list
 		// This ensures we start fresh when receiving the NAMES list
@@ -2131,7 +2131,7 @@ func (c *IRCClient) setupHandlers() {
 			return
 		}
 		channel := e.Params[1]
-		channelKey := strings.ToLower(channel)
+		channelKey := c.foldKey(channel)
 		logger.Log.Debug().Str("channel", channel).Msg("Finished receiving user list for channel")
 
 		// Mark that we're done receiving NAMES for this channel
@@ -2467,7 +2467,7 @@ func (c *IRCClient) setupHandlers() {
 		if len(e.Params) >= 5 {
 			fmt.Sscanf(e.Params[4], "%d", &entry.Time)
 		}
-		key := strings.ToLower(channel)
+		key := c.foldKey(channel)
 		c.banListsMu.Lock()
 		c.banLists[key] = append(c.banLists[key], entry)
 		c.banListsMu.Unlock()
@@ -2479,7 +2479,7 @@ func (c *IRCClient) setupHandlers() {
 			return
 		}
 		channel := e.Params[1]
-		key := strings.ToLower(channel)
+		key := c.foldKey(channel)
 		c.banListsMu.Lock()
 		entries := c.banLists[key]
 		delete(c.banLists, key)
@@ -3547,7 +3547,7 @@ func (c *IRCClient) MonitorSet(nick string, on bool) {
 	if nick == "" || !c.monitorSupported() {
 		return
 	}
-	key := strings.ToLower(nick)
+	key := c.foldKey(nick)
 	c.monitorMu.Lock()
 	armed := c.monitorArmed[key]
 	atLimit := c.monitorLimit > 0 && len(c.monitorArmed) >= c.monitorLimit
@@ -3579,7 +3579,7 @@ func (c *IRCClient) MonitorAdd(nick string) error {
 		return fmt.Errorf("monitor nick required")
 	}
 	c.monitorMu.Lock()
-	c.monitorArmed[strings.ToLower(nick)] = true
+	c.monitorArmed[c.foldKey(nick)] = true
 	c.monitorMu.Unlock()
 	if c.conn == nil {
 		return nil // not connected yet; armed-set re-sent on connect
@@ -3592,7 +3592,7 @@ func (c *IRCClient) MonitorRemove(nick string) error {
 	if nick == "" {
 		return fmt.Errorf("monitor nick required")
 	}
-	key := strings.ToLower(nick)
+	key := c.foldKey(nick)
 	c.monitorMu.Lock()
 	delete(c.monitorStatus, key)
 	delete(c.monitorArmed, key)
@@ -3625,7 +3625,7 @@ func (c *IRCClient) sendInitialMonitor() {
 	seen := make(map[string]bool)
 	var armed []string
 	add := func(nick string, isBuddy, hasOpenPM bool) {
-		key := strings.ToLower(nick)
+		key := c.foldKey(nick)
 		if seen[key] || !desiredMonitorState(nick, c.network.Nickname, isBuddy, hasOpenPM) {
 			return
 		}
@@ -3652,7 +3652,7 @@ func (c *IRCClient) sendInitialMonitor() {
 	c.monitorMu.Lock()
 	c.monitorArmed = make(map[string]bool, len(armed))
 	for _, n := range armed {
-		c.monitorArmed[strings.ToLower(n)] = true
+		c.monitorArmed[c.foldKey(n)] = true
 	}
 	c.monitorMu.Unlock()
 
@@ -3678,7 +3678,7 @@ func (c *IRCClient) setMonitorPresence(nick string, online bool) {
 	if nick == "" {
 		return
 	}
-	key := strings.ToLower(nick)
+	key := c.foldKey(nick)
 	c.monitorMu.Lock()
 	prev, existed := c.monitorStatus[key]
 	if existed && prev == online {
@@ -4542,6 +4542,15 @@ func (c *IRCClient) CaseMapping() string {
 func (c *IRCClient) sameName(a, b string) bool {
 	m := c.CaseMapping()
 	return casefold(m, a) == casefold(m, b)
+}
+
+// foldKey folds a nick or channel into the canonical key used for the client's
+// in-memory maps (roster, presence, ban lists, NAMES-in-progress). It applies the
+// server's CASEMAPPING, so entries for the same identity share one bucket even on
+// rfc1459 networks where []\~ fold to {}|^. Every map keyed by a nick/channel MUST
+// build its key with this rather than strings.ToLower, or lookups split and desync.
+func (c *IRCClient) foldKey(s string) string {
+	return casefold(c.CaseMapping(), s)
 }
 
 // channelsToJoin returns the channels the auto-join goroutine should JOIN on this

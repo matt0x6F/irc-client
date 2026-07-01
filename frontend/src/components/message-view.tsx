@@ -3,6 +3,7 @@ import { storage } from '../../wailsjs/go/models';
 import { IRCFormattedText } from './irc-formatted-text';
 import { useNicknameColors } from '../hooks/useNicknameColors';
 import { useNetworkStore } from '../stores/network';
+import { casefold } from '../lib/casefold';
 import { useSettingsStore } from '../stores/settings';
 import { SendCommand } from '../../wailsjs/go/main/App';
 import { CornerUpLeft, Hash } from 'lucide-react';
@@ -225,6 +226,7 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
   // Bot set for this network: badge messages whose author is a recognized bot.
   // Subscribing to the Set reference re-renders when addBot replaces it.
   const botSet = useNetworkStore((s) => (networkId !== null ? s.botNicks[networkId] : undefined));
+  const caseMapping = useNetworkStore((s) => (networkId !== null ? s.caseMapping?.[networkId] : undefined)) ?? '';
 
   // Build a msgid→message index once per render for fast parent lookup.
   const msgidIndex = useMemo(() => buildMsgidIndex(messages), [messages]);
@@ -628,7 +630,7 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
                       {msg.user}
                     </span>
                   )}
-                  {msg.user !== '*' && !isSystemMessage && botSet?.has(msg.user.toLowerCase()) && (
+                  {msg.user !== '*' && !isSystemMessage && botSet?.has(casefold(caseMapping, msg.user)) && (
                     <span
                       className="text-[10px] uppercase font-semibold tracking-wide px-1 py-0.5 rounded bg-accent text-muted-foreground flex-shrink-0"
                       title="This user is a bot (IRCv3 bot mode)"

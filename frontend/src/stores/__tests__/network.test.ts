@@ -132,6 +132,60 @@ describe('network store: user meta', () => {
   });
 });
 
+// The roster/presence/bot maps key by a CASEMAPPING-folded nick so the frontend
+// buckets identities the SAME way the backend does. On an rfc1459 network the
+// bytes []\~ fold to {}|^, so "Nick[a]" and "nick{a}" are one user; plain
+// toLowerCase() would split them. See lib/casefold.ts.
+describe('network store: CASEMAPPING-aware nick folding', () => {
+  const meta = (over: Partial<{ away: boolean; account: string }> = {}) => ({
+    away: false,
+    away_message: '',
+    account: '',
+    host: '',
+    realname: '',
+    ...over,
+  });
+
+  beforeEach(() => {
+    useNetworkStore.setState({ userMeta: {}, botNicks: {}, presence: {}, caseMapping: {} });
+  });
+
+  it('rfc1459: userMeta for Nick[a] resolves for the equivalent nick{a}', () => {
+    useNetworkStore.setState({ caseMapping: { 1: 'rfc1459' } });
+    const { setUserMeta, getUserMeta } = useNetworkStore.getState();
+    setUserMeta(1, 'Nick[a]', meta({ account: 'acct' }));
+    expect(Object.keys(useNetworkStore.getState().userMeta[1])).toEqual(['nick{a}']);
+    expect(getUserMeta(1, 'nick{a}')?.account).toBe('acct');
+  });
+
+  it('rfc1459 is the default when no CASEMAPPING is cached yet', () => {
+    const { setUserMeta, getUserMeta } = useNetworkStore.getState();
+    setUserMeta(1, 'Nick[a]', meta({ account: 'acct' }));
+    expect(getUserMeta(1, 'nick{a}')?.account).toBe('acct');
+  });
+
+  it('ascii: brackets stay distinct (mapping is respected)', () => {
+    useNetworkStore.setState({ caseMapping: { 1: 'ascii' } });
+    const { setUserMeta, getUserMeta } = useNetworkStore.getState();
+    setUserMeta(1, 'Nick[a]', meta({ account: 'acct' }));
+    expect(getUserMeta(1, 'nick{a}')).toBeUndefined();
+    expect(getUserMeta(1, 'NICK[A]')?.account).toBe('acct'); // ASCII case still folds
+  });
+
+  it('isBot folds bot nicks under rfc1459', () => {
+    useNetworkStore.setState({ caseMapping: { 1: 'rfc1459' } });
+    const { addBot, isBot } = useNetworkStore.getState();
+    addBot(1, 'Bot[x]');
+    expect(isBot(1, 'bot{x}')).toBe(true);
+  });
+
+  it('setPresence folds nicks under rfc1459 (\\ -> |)', () => {
+    useNetworkStore.setState({ caseMapping: { 1: 'rfc1459' } });
+    useNetworkStore.getState().setPresence(1, 'Bud\\dy', true);
+    expect(useNetworkStore.getState().presence[1]['bud|dy']).toBe(true);
+  });
+});
+
 describe('network store: connectionStatus ordering', () => {
   beforeEach(() => {
     useNetworkStore.setState({ connectionStatus: {}, connectionStatusAt: {} });
