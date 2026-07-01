@@ -748,6 +748,10 @@ type ServerCapabilitiesInfo struct {
 	ChanModesB string `json:"chanmodes_b"`
 	ChanModesC string `json:"chanmodes_c"`
 	ChanModesD string `json:"chanmodes_d"`
+	// Channel/identity ISUPPORT tokens, with protocol defaults applied so the
+	// frontend always has a usable value (see internal/irc CHANTYPES/CASEMAPPING).
+	ChanTypes   string `json:"chantypes"`   // channel-prefix characters, e.g. "#&+!" (default "#&")
+	CaseMapping string `json:"casemapping"` // nick/channel case-fold rule, e.g. "ascii" (default "rfc1459")
 	// Ratified IRCv3 ISUPPORT tokens.
 	UTF8Only     bool   `json:"utf8only"`      // server accepts only UTF-8 content
 	ExtbanPrefix string `json:"extban_prefix"` // EXTBAN prefix, e.g. "$" (empty if none)
@@ -799,6 +803,8 @@ func (a *App) GetServerCapabilities(networkID int64) (*ServerCapabilitiesInfo, e
 			Prefix:       make(map[string]string),
 			PrefixString: "",
 			ChanModes:    "",
+			ChanTypes:    "#&",
+			CaseMapping:  "rfc1459",
 		}, nil
 	}
 
@@ -818,6 +824,8 @@ func (a *App) GetServerCapabilities(networkID int64) (*ServerCapabilitiesInfo, e
 		ChanModesB:     clsB,
 		ChanModesC:     clsC,
 		ChanModesD:     clsD,
+		ChanTypes:      client.ChanTypes(),
+		CaseMapping:    client.CaseMapping(),
 		UTF8Only:       cap.UTF8Only,
 		ExtbanPrefix:   extbanPrefix,
 		ExtbanTypes:    extbanTypes,

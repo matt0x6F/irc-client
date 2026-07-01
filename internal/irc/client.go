@@ -1125,6 +1125,42 @@ func (c *IRCClient) writeStatusLine(messageType, text string) {
 	})
 }
 
+// writeChannelSystemLine writes an informational system line into a specific
+// channel's buffer (rather than the network status buffer) and refreshes it
+// live. Used for server numerics that describe a channel we're in — e.g.
+// RPL_TOPICWHOTIME (333) / RPL_NOTOPIC (331). If we aren't tracking the channel,
+// the line falls back to the status buffer so it is never dropped.
+func (c *IRCClient) writeChannelSystemLine(channel, messageType, text string) {
+	ch, err := c.storage.GetChannelByName(c.networkID, channel)
+	if err != nil {
+		c.writeStatusLine(messageType, text)
+		return
+	}
+	if err := c.storage.WriteMessageSync(storage.Message{
+		NetworkID:   c.networkID,
+		ChannelID:   &ch.ID,
+		User:        "*",
+		Message:     text,
+		MessageType: messageType,
+		Timestamp:   time.Now(),
+	}); err != nil {
+		logger.Log.Warn().Err(err).Str("channel", channel).Str("type", messageType).Msg("Failed to write channel system line")
+	}
+	c.eventBus.Emit(events.Event{
+		Type: EventMessageReceived,
+		Data: map[string]interface{}{
+			"network":     c.network.Address,
+			"networkId":   c.networkID,
+			"channel":     channel,
+			"user":        "*",
+			"message":     text,
+			"messageType": "privmsg",
+		},
+		Timestamp: time.Now(),
+		Source:    events.EventSourceIRC,
+	})
+}
+
 // handleStandardReply surfaces an IRCv3 standard reply (FAIL / WARN / NOTE) in
 // the status buffer. The wire form is
 //
@@ -1963,6 +1999,34 @@ func (c *IRCClient) setupHandlers() {
 		})
 	})
 
+	// RPL_TOPICWHOTIME (333) - who set the current topic and when. Arrives right
+	// after 332 on join / topic query. Wire form: "<me> <channel> <setter> <unixtime>".
+	// Without a callback irc-go drops it, so the "topic set by …" context is lost.
+	c.conn.AddCallback("333", func(e ircmsg.Message) {
+		if len(e.Params) < 4 {
+			return
+		}
+		channel := e.Params[1]
+		setter := e.Params[2]
+		var setAt int64
+		fmt.Sscanf(e.Params[3], "%d", &setAt)
+		c.writeChannelSystemLine(channel, "status", formatTopicWhoTime(setter, time.Unix(setAt, 0)))
+	})
+
+	// RPL_NOTOPIC (331) - the channel has no topic set. Wire form:
+	// "<me> <channel> :No topic is set". Surfaced as a channel status line.
+	c.conn.AddCallback("331", func(e ircmsg.Message) {
+		if len(e.Params) < 2 {
+			return
+		}
+		channel := e.Params[1]
+		text := "No topic is set"
+		if len(e.Params) >= 3 && e.Params[len(e.Params)-1] != "" {
+			text = e.Params[len(e.Params)-1]
+		}
+		c.writeChannelSystemLine(channel, "status", text)
+	})
+
 	// TOPIC command - when someone changes the topic
 	c.conn.AddCallback("TOPIC", func(e ircmsg.Message) {
 		if len(e.Params) < 2 {
@@ -2521,6 +2585,27 @@ func (c *IRCClient) setupHandlers() {
 
 	// WHOIS response handlers
 	// RPL_WHOISUSER (311) - Basic user information
+	// RPL_AWAY (301) - "<me> <nick> :<away message>". Sent during a WHOIS for an
+	// away user, and unsolicited when we message someone who is away. Without a
+	// callback irc-go drops it, so the away message never surfaced. When a WHOIS
+	// is in progress we fold it into that result; otherwise we show a status line.
+	c.conn.AddCallback("301", func(e ircmsg.Message) {
+		if len(e.Params) < 3 {
+			return
+		}
+		nick := e.Params[1]
+		away := e.Params[len(e.Params)-1]
+		c.whoisMu.Lock()
+		wi := c.whoisInProgress[nick]
+		if wi != nil {
+			wi.Away = away
+		}
+		c.whoisMu.Unlock()
+		if wi == nil {
+			c.writeStatusLine("status", fmt.Sprintf("%s is away: %s", nick, away))
+		}
+	})
+
 	c.conn.AddCallback("311", func(e ircmsg.Message) {
 		if len(e.Params) < 4 {
 			return
@@ -4427,21 +4512,23 @@ func (c *IRCClient) SetReconnecting(v bool) {
 // honoring the server's advertised CHANTYPES (RPL_ISUPPORT) and falling back to
 // the conventional "#&" before the server advertises one.
 func (c *IRCClient) isChannelName(name string) bool {
-	return channelNameMatches(name, c.chanTypes())
+	return channelNameMatches(name, c.ChanTypes())
 }
 
-// chanTypes returns the server-advertised CHANTYPES set, or the default "#&"
-// when the server hasn't advertised one yet. Lock-free.
-func (c *IRCClient) chanTypes() string {
+// ChanTypes returns the server-advertised CHANTYPES set, or the default "#&"
+// when the server hasn't advertised one yet. Exported so the App can surface it
+// to the frontend (ServerCapabilitiesInfo). Lock-free.
+func (c *IRCClient) ChanTypes() string {
 	if p := c.chanTypesAtomic.Load(); p != nil && *p != "" {
 		return *p
 	}
 	return defaultChanTypes
 }
 
-// caseMapping returns the server-advertised CASEMAPPING, or "rfc1459" (the
-// protocol default when the server says nothing). Lock-free.
-func (c *IRCClient) caseMapping() string {
+// CaseMapping returns the server-advertised CASEMAPPING, or "rfc1459" (the
+// protocol default when the server says nothing). Exported so the App can
+// surface it to the frontend (ServerCapabilitiesInfo). Lock-free.
+func (c *IRCClient) CaseMapping() string {
 	if p := c.caseMappingAtomic.Load(); p != nil && *p != "" {
 		return *p
 	}
@@ -4453,7 +4540,7 @@ func (c *IRCClient) caseMapping() string {
 // applies Unicode folding the server doesn't and misses the rfc1459 []\~ ↔ {}|^
 // pairing.
 func (c *IRCClient) sameName(a, b string) bool {
-	m := c.caseMapping()
+	m := c.CaseMapping()
 	return casefold(m, a) == casefold(m, b)
 }
 

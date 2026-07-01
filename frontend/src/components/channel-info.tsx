@@ -6,6 +6,7 @@ import { UserInfo } from './user-info';
 import { MonitorList } from './monitor-list';
 import { useNicknameColors } from '../hooks/useNicknameColors';
 import { useNetworkStore } from '../stores/network';
+import { isChannelName } from '../lib/channel-name';
 import { useSettingsStore } from '../stores/settings';
 import { Shield, Crown, Star, Mic, ShieldCheck } from 'lucide-react';
 
@@ -116,7 +117,9 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
     const normalizeChannel = (ch: string | null | undefined): string => {
       if (!ch) return '';
       const normalized = ch.toLowerCase().trim();
-      return normalized.startsWith('#') || normalized.startsWith('&') ? normalized : '#' + normalized;
+      const chanTypes =
+        networkId !== null ? useNetworkStore.getState().chanTypes[networkId] : undefined;
+      return isChannelName(normalized, chanTypes) ? normalized : '#' + normalized;
     };
     
     const currentChannelNormalized = normalizeChannel(channelName);

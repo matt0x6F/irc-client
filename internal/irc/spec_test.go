@@ -3,6 +3,7 @@ package irc
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestServerErrorNumericWritesStatus verifies that a server error numeric with
@@ -87,8 +88,8 @@ func TestISUPPORTChanTypesDrivesChannelDetection(t *testing.T) {
 	if !c.isChannelName("+local") {
 		t.Fatal("after CHANTYPES=#&+, + should be a channel prefix")
 	}
-	if got := c.chanTypes(); got != "#&+" {
-		t.Fatalf("chanTypes() = %q, want #&+", got)
+	if got := c.ChanTypes(); got != "#&+" {
+		t.Fatalf("ChanTypes() = %q, want #&+", got)
 	}
 }
 
@@ -102,8 +103,38 @@ func TestISUPPORTCasemappingDrivesNickFolding(t *testing.T) {
 	if c.sameName("Nick[a]", "nick{a}") {
 		t.Fatal("ascii casemapping must NOT fold brackets — these are distinct nicks")
 	}
-	if got := c.caseMapping(); got != "ascii" {
-		t.Fatalf("caseMapping() = %q, want ascii", got)
+	if got := c.CaseMapping(); got != "ascii" {
+		t.Fatalf("CaseMapping() = %q, want ascii", got)
+	}
+}
+
+func TestExportedChanTypesAndCaseMapping(t *testing.T) {
+	c := &IRCClient{serverCapabilities: &ServerCapabilities{}}
+	// Defaults before any 005 (these are surfaced to the frontend).
+	if got := c.ChanTypes(); got != "#&" {
+		t.Fatalf("default ChanTypes() = %q, want #&", got)
+	}
+	if got := c.CaseMapping(); got != "rfc1459" {
+		t.Fatalf("default CaseMapping() = %q, want rfc1459", got)
+	}
+	c.applyISUPPORTToken("CHANTYPES=#&+!")
+	c.applyISUPPORTToken("CASEMAPPING=ascii")
+	if got := c.ChanTypes(); got != "#&+!" {
+		t.Fatalf("ChanTypes() = %q, want #&+!", got)
+	}
+	if got := c.CaseMapping(); got != "ascii" {
+		t.Fatalf("CaseMapping() = %q, want ascii", got)
+	}
+}
+
+func TestFormatTopicWhoTime(t *testing.T) {
+	when := time.Date(2026, time.June, 30, 14, 22, 0, 0, time.UTC)
+	if got, want := formatTopicWhoTime("alice", when), "Topic set by alice on Jun 30, 2026 14:22"; got != want {
+		t.Fatalf("formatTopicWhoTime = %q, want %q", got, want)
+	}
+	// A missing setter still yields a sensible line.
+	if got, want := formatTopicWhoTime("", when), "Topic set on Jun 30, 2026 14:22"; got != want {
+		t.Fatalf("formatTopicWhoTime (no setter) = %q, want %q", got, want)
 	}
 }
 

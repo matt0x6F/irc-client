@@ -14,6 +14,7 @@ interface WhoisInfo {
   idle_time: number;
   sign_on_time: number;
   account_name: string;
+  away: string;
   network: string;
   is_bot: boolean;
 }
@@ -143,10 +144,14 @@ export function UserInfo({ networkId, nickname, onClose }: UserInfoProps) {
                 bot
               </span>
             )}
-            {meta?.away && (
+            {(meta?.away || whoisInfo.away) && (
               <span
                 className="text-[10px] uppercase font-semibold tracking-wide px-1.5 py-0.5 rounded bg-accent text-muted-foreground"
-                title={meta.away_message ? `Away: ${meta.away_message}` : 'Away'}
+                title={
+                  meta?.away_message || whoisInfo.away
+                    ? `Away: ${meta?.away_message || whoisInfo.away}`
+                    : 'Away'
+                }
               >
                 away
               </span>
@@ -157,9 +162,9 @@ export function UserInfo({ networkId, nickname, onClose }: UserInfoProps) {
               Account: <span className="text-foreground">{whoisInfo.account_name || meta?.account}</span>
             </div>
           )}
-          {meta?.away && meta.away_message && (
+          {(meta?.away_message || whoisInfo.away) && (
             <div className="text-muted-foreground">
-              Away: <span className="text-foreground">{meta.away_message}</span>
+              Away: <span className="text-foreground">{meta?.away_message || whoisInfo.away}</span>
             </div>
           )}
         </div>

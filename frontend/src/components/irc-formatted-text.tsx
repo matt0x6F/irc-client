@@ -6,12 +6,20 @@ interface IRCFormatState {
   bold: boolean;
   italic: boolean;
   underline: boolean;
+  strikethrough: boolean;
+  monospace: boolean;
   reverse: boolean;
   fgColor: number | null;
   bgColor: number | null;
+  // Hex colors (0x04 RRGGBB). When set, they take precedence over the indexed
+  // palette for the same span.
+  fgHex: string | null;
+  bgHex: string | null;
 }
 
-// IRC color palette (standard 16 colors)
+// IRC color palette: the standard 16 colors (0-15) plus the extended 16-98
+// palette defined at https://modern.ircdocs.horse/formatting.html#colors.
+// 99 is "default" (rendered as no explicit color).
 export const IRC_COLORS: Record<number, string> = {
   0: '#FFFFFF', // White
   1: '#000000', // Black
@@ -29,7 +37,33 @@ export const IRC_COLORS: Record<number, string> = {
   13: '#FF00FF', // Light Magenta
   14: '#7F7F7F', // Gray
   15: '#CFCFCF', // Light Gray
+  // Extended palette (16-98).
+  16: '#470000', 17: '#472100', 18: '#474700', 19: '#324700', 20: '#004700',
+  21: '#00472C', 22: '#004747', 23: '#002747', 24: '#000047', 25: '#2E0047',
+  26: '#470047', 27: '#47002A',
+  28: '#740000', 29: '#743A00', 30: '#747400', 31: '#517400', 32: '#007400',
+  33: '#007449', 34: '#007474', 35: '#004074', 36: '#000074', 37: '#4B0074',
+  38: '#740074', 39: '#740045',
+  40: '#B50000', 41: '#B56300', 42: '#B5B500', 43: '#7DB500', 44: '#00B500',
+  45: '#00B571', 46: '#00B5B5', 47: '#0063B5', 48: '#0000B5', 49: '#7500B5',
+  50: '#B500B5', 51: '#B5006B',
+  52: '#FF0000', 53: '#FF8C00', 54: '#FFFF00', 55: '#B2FF00', 56: '#00FF00',
+  57: '#00FFA0', 58: '#00FFFF', 59: '#008CFF', 60: '#0000FF', 61: '#A500FF',
+  62: '#FF00FF', 63: '#FF0098',
+  64: '#FF5959', 65: '#FFB459', 66: '#FFFF71', 67: '#CFFF60', 68: '#6FFF6F',
+  69: '#65FFC9', 70: '#6DFFFF', 71: '#59B4FF', 72: '#5959FF', 73: '#C459FF',
+  74: '#FF66FF', 75: '#FF59BC',
+  76: '#FF9C9C', 77: '#FFD39C', 78: '#FFFF9C', 79: '#E2FF9C', 80: '#9CFF9C',
+  81: '#9CFFDB', 82: '#9CFFFF', 83: '#9CD3FF', 84: '#9C9CFF', 85: '#DC9CFF',
+  86: '#FF9CFF', 87: '#FF94D3',
+  88: '#000000', 89: '#131313', 90: '#282828', 91: '#363636', 92: '#4D4D4D',
+  93: '#656565', 94: '#818181', 95: '#9F9F9F', 96: '#BCBCBC', 97: '#E2E2E2',
+  98: '#FFFFFF',
 };
+
+// The largest indexed color; 99 (default) and anything higher render as no color.
+const MAX_COLOR_INDEX = 98;
+const HEX_COLOR_AT = /^[0-9A-Fa-f]{6}/;
 
 interface FormattedSegment {
   text: string;
@@ -45,9 +79,13 @@ function parseIRCFormatting(text: string): FormattedSegment[] {
     bold: false,
     italic: false,
     underline: false,
+    strikethrough: false,
+    monospace: false,
     reverse: false,
     fgColor: null,
     bgColor: null,
+    fgHex: null,
+    bgHex: null,
   };
 
   let i = 0;
@@ -78,9 +116,12 @@ function parseIRCFormatting(text: string): FormattedSegment[] {
           fg += text[i];
           i++;
         }
+        // An indexed color code overrides any active hex color.
+        format.fgHex = null;
+        format.bgHex = null;
         if (fg) {
           const fgNum = parseInt(fg, 10);
-          format.fgColor = fgNum >= 0 && fgNum <= 15 ? fgNum : null;
+          format.fgColor = fgNum >= 0 && fgNum <= MAX_COLOR_INDEX ? fgNum : null;
         } else {
           format.fgColor = null;
           format.bgColor = null;
@@ -96,10 +137,40 @@ function parseIRCFormatting(text: string): FormattedSegment[] {
           }
           if (bg) {
             const bgNum = parseInt(bg, 10);
-            format.bgColor = bgNum >= 0 && bgNum <= 15 ? bgNum : null;
+            format.bgColor = bgNum >= 0 && bgNum <= MAX_COLOR_INDEX ? bgNum : null;
           }
         } else {
           format.bgColor = null;
+        }
+        break;
+
+      case 0x04: // Hex color (RRGGBB[,RRGGBB]); a bare 0x04 resets color.
+        if (currentText) {
+          segments.push({ text: currentText, format: { ...format } });
+          currentText = '';
+        }
+        i++;
+        {
+          const fgMatch = HEX_COLOR_AT.exec(text.slice(i));
+          if (fgMatch) {
+            // A hex color overrides any active indexed color.
+            format.fgColor = null;
+            format.bgColor = null;
+            format.fgHex = '#' + fgMatch[0];
+            i += 6;
+            if (text[i] === ',') {
+              const bgMatch = HEX_COLOR_AT.exec(text.slice(i + 1));
+              if (bgMatch) {
+                format.bgHex = '#' + bgMatch[0];
+                i += 7;
+              }
+            }
+          } else {
+            format.fgHex = null;
+            format.bgHex = null;
+            format.fgColor = null;
+            format.bgColor = null;
+          }
         }
         break;
 
@@ -112,10 +183,32 @@ function parseIRCFormatting(text: string): FormattedSegment[] {
           bold: false,
           italic: false,
           underline: false,
+          strikethrough: false,
+          monospace: false,
           reverse: false,
           fgColor: null,
           bgColor: null,
+          fgHex: null,
+          bgHex: null,
         };
+        i++;
+        break;
+
+      case 0x11: // Monospace
+        if (currentText) {
+          segments.push({ text: currentText, format: { ...format } });
+          currentText = '';
+        }
+        format.monospace = !format.monospace;
+        i++;
+        break;
+
+      case 0x1E: // Strikethrough
+        if (currentText) {
+          segments.push({ text: currentText, format: { ...format } });
+          currentText = '';
+        }
+        format.strikethrough = !format.strikethrough;
         i++;
         break;
 
@@ -328,27 +421,41 @@ export function IRCFormattedText({
       if (segment.format.underline) {
         classes.push('underline');
       }
-
-      if (segment.format.fgColor !== null) {
-        style.color = IRC_COLORS[segment.format.fgColor] || IRC_COLORS[0];
+      if (segment.format.strikethrough) {
+        classes.push('line-through');
       }
-      if (segment.format.bgColor !== null) {
-        style.backgroundColor = IRC_COLORS[segment.format.bgColor] || IRC_COLORS[1];
+      if (segment.format.monospace) {
+        classes.push('font-mono');
       }
 
-      // Reverse video swaps foreground and background
+      // Resolve the effective colors: a hex color (0x04) takes precedence over
+      // the indexed palette (0x03) for the same span.
+      const fg =
+        segment.format.fgHex ??
+        (segment.format.fgColor !== null
+          ? IRC_COLORS[segment.format.fgColor] || IRC_COLORS[0]
+          : null);
+      const bg =
+        segment.format.bgHex ??
+        (segment.format.bgColor !== null
+          ? IRC_COLORS[segment.format.bgColor] || IRC_COLORS[1]
+          : null);
+
       if (segment.format.reverse) {
-        if (segment.format.fgColor !== null && segment.format.bgColor !== null) {
-          const temp = style.color;
-          style.color = style.backgroundColor;
-          style.backgroundColor = temp;
-        } else if (segment.format.fgColor !== null) {
-          style.backgroundColor = style.color;
+        // Reverse video swaps foreground and background.
+        if (fg !== null && bg !== null) {
+          style.color = bg;
+          style.backgroundColor = fg;
+        } else if (fg !== null) {
+          style.backgroundColor = fg;
           style.color = IRC_COLORS[1]; // Default to black background
-        } else if (segment.format.bgColor !== null) {
-          style.color = style.backgroundColor;
+        } else if (bg !== null) {
+          style.color = bg;
           style.backgroundColor = IRC_COLORS[0]; // Default to white background
         }
+      } else {
+        if (fg !== null) style.color = fg;
+        if (bg !== null) style.backgroundColor = bg;
       }
 
       return (

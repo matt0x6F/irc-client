@@ -73,6 +73,7 @@ type WhoisInfo struct {
 	IdleTime    int64    `json:"idle_time"`    // seconds
 	SignOnTime  int64    `json:"sign_on_time"` // unix timestamp
 	AccountName string   `json:"account_name"` // if logged in
+	Away        string   `json:"away"`         // away message from RPL_AWAY (301); empty if not away
 	Network     string   `json:"network"`
 	IsBot       bool     `json:"is_bot"` // true if the server returned RPL_WHOISBOT (335)
 }
