@@ -32,7 +32,7 @@ type App struct {
 	commands      *CommandRegistry
 	pluginManager *plugin.Manager
 	scriptMgr     *script.Manager
-	keychain      *security.Keychain
+	creds         *security.CredentialStore
 	notifier      *notification.Notifier
 	// notifyWindow is set once at startup (AttachNotifications) and only read on
 	// the Wails main-thread bound path (FocusMainWindow), so no mutex is needed.
@@ -103,7 +103,7 @@ func NewApp() (*App, error) {
 	applyLogConfig(stor, baseDir)
 
 	eventBus := events.NewEventBus()
-	keychain := security.NewKeychain()
+	creds := security.NewCredentialStore(security.NewKeychain())
 
 	pluginDir := filepath.Join(baseDir, "plugins")
 	pluginMgr := plugin.NewManager(eventBus, pluginDir)
@@ -117,7 +117,7 @@ func NewApp() (*App, error) {
 		eventBus:              eventBus,
 		commands:              buildBuiltinRegistry(),
 		pluginManager:         pluginMgr,
-		keychain:              keychain,
+		creds:                 creds,
 		notifier:              notifier,
 		ircClients:            make(map[int64]*irc.IRCClient),
 		connectingNetworks:    make(map[string]chan struct{}),
@@ -361,9 +361,41 @@ func (a *App) ServiceShutdown() error {
 
 // --- Data retrieval methods (thin wrappers over storage) ---
 
-// GetNetworks retrieves all networks
+// GetNetworks retrieves all networks. Secret values are stripped before the
+// networks reach the frontend; Has* flags report presence instead.
 func (a *App) GetNetworks() ([]storage.Network, error) {
-	return a.storage.GetNetworks()
+	networks, err := a.storage.GetNetworks()
+	if err != nil {
+		return nil, err
+	}
+	for i := range networks {
+		a.annotateSecretFlags(&networks[i])
+	}
+	return networks, nil
+}
+
+// annotateSecretFlags fills the Has*/CredentialStorageInsecure flags from the
+// keychain-or-column state, then blanks the secret fields so the value never
+// leaves the backend. A secret still sitting in a plaintext column (legacy or
+// keychain-unavailable fallback) marks the network as insecurely stored.
+func (a *App) annotateSecretFlags(n *storage.Network) {
+	saslPw := derefStr(n.SASLPassword)
+
+	n.HasPassword = a.creds.Resolve(n.ID, security.FieldPassword, n.Password) != ""
+	n.HasSASLPassword = a.creds.Resolve(n.ID, security.FieldSASLPassword, saslPw) != ""
+	n.CredentialStorageInsecure = n.Password != "" || saslPw != ""
+
+	// SASLExternalCert is a path, not a secret, so it is left intact.
+	n.Password = ""
+	n.SASLPassword = nil
+}
+
+// derefStr returns the value of a *string, or "" when nil.
+func derefStr(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 // GetServers retrieves server addresses for a network

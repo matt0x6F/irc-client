@@ -1,60 +1,55 @@
 package security
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/zalando/go-keyring"
 )
 
 const (
-	// KeychainService is the service name used for storing passwords in the keychain
+	// KeychainService is the service name used for storing secrets in the OS keychain.
 	KeychainService = "cascade-chat"
 )
 
-// Keychain provides secure password storage using OS keychain
+// Keychain provides secure secret storage using the OS keychain. It implements
+// SecretBackend.
 type Keychain struct{}
 
-// NewKeychain creates a new keychain instance
+// NewKeychain creates a new keychain instance.
 func NewKeychain() *Keychain {
 	return &Keychain{}
 }
 
-// StorePassword stores a password for a network in the OS keychain
-// user parameter should be the network ID or name
-func (k *Keychain) StorePassword(user string, password string) error {
-	if password == "" {
-		// Empty password, delete instead
-		return k.DeletePassword(user)
-	}
-	err := keyring.Set(KeychainService, user, password)
-	if err != nil {
-		return fmt.Errorf("failed to store password in keychain: %w", err)
+// Set stores value under key in the OS keychain.
+func (k *Keychain) Set(key, value string) error {
+	if err := keyring.Set(KeychainService, key, value); err != nil {
+		return fmt.Errorf("failed to store secret in keychain: %w", err)
 	}
 	return nil
 }
 
-// GetPassword retrieves a password for a network from the OS keychain
-// user parameter should be the network ID or name
-func (k *Keychain) GetPassword(user string) (string, error) {
-	password, err := keyring.Get(KeychainService, user)
+// Get retrieves the secret stored under key. A missing key returns "" with no
+// error.
+func (k *Keychain) Get(key string) (string, error) {
+	value, err := keyring.Get(KeychainService, key)
 	if err != nil {
-		if err == keyring.ErrNotFound {
-			return "", nil // Not found is not an error, just return empty
+		if errors.Is(err, keyring.ErrNotFound) {
+			return "", nil
 		}
-		return "", fmt.Errorf("failed to get password from keychain: %w", err)
+		return "", fmt.Errorf("failed to get secret from keychain: %w", err)
 	}
-	return password, nil
+	return value, nil
 }
 
-// DeletePassword removes a password for a network from the OS keychain
-// user parameter should be the network ID or name
-func (k *Keychain) DeletePassword(user string) error {
-	err := keyring.Delete(KeychainService, user)
+// Delete removes the secret stored under key. A missing key is a no-op.
+func (k *Keychain) Delete(key string) error {
+	err := keyring.Delete(KeychainService, key)
 	if err != nil {
-		if err == keyring.ErrNotFound {
-			return nil // Not found is not an error
+		if errors.Is(err, keyring.ErrNotFound) {
+			return nil
 		}
-		return fmt.Errorf("failed to delete password from keychain: %w", err)
+		return fmt.Errorf("failed to delete secret from keychain: %w", err)
 	}
 	return nil
 }

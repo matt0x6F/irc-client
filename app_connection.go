@@ -8,6 +8,7 @@ import (
 	"github.com/matt0x6f/irc-client/internal/constants"
 	"github.com/matt0x6f/irc-client/internal/irc"
 	"github.com/matt0x6f/irc-client/internal/logger"
+	"github.com/matt0x6f/irc-client/internal/security"
 	"github.com/matt0x6f/irc-client/internal/storage"
 	"github.com/matt0x6f/irc-client/internal/validation"
 )
@@ -87,8 +88,26 @@ func (a *App) buildNetworkFromConfig(config NetworkConfig, servers []ServerConfi
 		}
 	}
 
+	// Resolve the secrets to persist. An empty incoming secret means "unchanged":
+	// preserve whatever is already stored so a masked, untouched field in the UI
+	// doesn't wipe the saved secret. A new network has nothing to preserve. The
+	// secrets themselves are written to the keychain by secureNetworkSecrets
+	// below, never into the columns here.
+	existing := network != nil
+	effPassword := config.Password
+	effSASLPassword := config.SASLPassword
+	if existing {
+		if effPassword == "" {
+			effPassword = a.creds.Resolve(network.ID, security.FieldPassword, network.Password)
+		}
+		if effSASLPassword == "" {
+			effSASLPassword = a.creds.Resolve(network.ID, security.FieldSASLPassword, derefStr(network.SASLPassword))
+		}
+	}
+
 	if network == nil {
-		// Create new network record
+		// Create new network record. Secret columns are left blank; secrets go to
+		// the keychain in secureNetworkSecrets.
 		network = &storage.Network{
 			Name:             config.Name,
 			Address:          servers[0].Address,
@@ -97,11 +116,9 @@ func (a *App) buildNetworkFromConfig(config NetworkConfig, servers []ServerConfi
 			Nickname:         config.Nickname,
 			Username:         config.Username,
 			Realname:         config.Realname,
-			Password:         config.Password,
 			SASLEnabled:      config.SASLEnabled,
 			SASLMechanism:    stringPtr(config.SASLMechanism),
 			SASLUsername:     stringPtr(config.SASLUsername),
-			SASLPassword:     stringPtr(config.SASLPassword),
 			SASLExternalCert: stringPtr(config.SASLExternalCert),
 			AutoConnect:      persistAutoConnect && config.AutoConnect,
 			IdentifyAsBot:    persistAutoConnect && config.IdentifyAsBot,
@@ -113,16 +130,17 @@ func (a *App) buildNetworkFromConfig(config NetworkConfig, servers []ServerConfi
 			return nil, fmt.Errorf("failed to create network: %w", err)
 		}
 	} else {
-		// Update existing network config
+		// Update existing network config. Secret columns are blanked here and
+		// (re)written to the keychain in secureNetworkSecrets.
 		network.Name = config.Name
 		network.Nickname = config.Nickname
 		network.Username = config.Username
 		network.Realname = config.Realname
-		network.Password = config.Password
+		network.Password = ""
 		network.SASLEnabled = config.SASLEnabled
 		network.SASLMechanism = stringPtr(config.SASLMechanism)
 		network.SASLUsername = stringPtr(config.SASLUsername)
-		network.SASLPassword = stringPtr(config.SASLPassword)
+		network.SASLPassword = nil
 		network.SASLExternalCert = stringPtr(config.SASLExternalCert)
 		// Only an explicit user edit may change the auto_connect preference;
 		// a connect operation must preserve the stored value.
@@ -134,6 +152,11 @@ func (a *App) buildNetworkFromConfig(config NetworkConfig, servers []ServerConfi
 		if err := a.storage.UpdateNetwork(network); err != nil {
 			return nil, fmt.Errorf("failed to update network: %w", err)
 		}
+	}
+
+	// Move the resolved secrets into the keychain (or plaintext-column fallback).
+	if err := a.secureNetworkSecrets(network, effPassword, effSASLPassword); err != nil {
+		return nil, err
 	}
 
 	// Sync servers: delete old ones and create new ones
@@ -155,6 +178,73 @@ func (a *App) buildNetworkFromConfig(config NetworkConfig, servers []ServerConfi
 	}
 
 	return network, nil
+}
+
+// secureNetworkSecrets stores the network's secrets in the keychain and blanks
+// the corresponding DB columns. When the keychain is unavailable it falls back
+// to persisting the secret in the plaintext column (so the network still works)
+// and logs a warning; the getter then reports CredentialStorageInsecure. It
+// re-persists the network to save the blanked or fallback columns. Requires
+// network.ID to be set.
+func (a *App) secureNetworkSecrets(n *storage.Network, password, saslPassword string) error {
+	store := func(field, value string, clear func(), keep func(string)) {
+		used, err := a.creds.Store(n.ID, field, value)
+		if used {
+			clear()
+			return
+		}
+		keep(value)
+		if value != "" {
+			logger.Log.Warn().Err(err).Int64("network_id", n.ID).Str("field", field).
+				Msg("Keychain unavailable; storing IRC secret in plaintext database column (fallback)")
+		}
+	}
+
+	store(security.FieldPassword, password,
+		func() { n.Password = "" },
+		func(v string) { n.Password = v })
+	store(security.FieldSASLPassword, saslPassword,
+		func() { n.SASLPassword = nil },
+		func(v string) { n.SASLPassword = stringPtr(v) })
+
+	if err := a.storage.UpdateNetwork(n); err != nil {
+		return fmt.Errorf("failed to persist secured network secrets: %w", err)
+	}
+	return nil
+}
+
+// hydrateNetworkSecrets fills in secrets on an in-memory network from the
+// keychain (falling back to any legacy plaintext column). The argument is
+// expected to be a throwaway copy used to build a connection, so the resolved
+// plaintext is never re-persisted.
+func (a *App) hydrateNetworkSecrets(n *storage.Network) {
+	n.Password = a.creds.Resolve(n.ID, security.FieldPassword, n.Password)
+	if v := a.creds.Resolve(n.ID, security.FieldSASLPassword, derefStr(n.SASLPassword)); v != "" {
+		n.SASLPassword = stringPtr(v)
+	}
+	// SASLExternalCert is a path, not a secret; it stays in the column as-is.
+}
+
+// migrateNetworkSecrets lazily moves any legacy plaintext secrets on the stored
+// network row into the keychain and blanks the columns, persisting the change.
+// A no-op when the columns are already empty or the keychain is unavailable.
+func (a *App) migrateNetworkSecrets(n *storage.Network) {
+	changed := false
+	if moved, _ := a.creds.Migrate(n.ID, security.FieldPassword, n.Password); moved && n.Password != "" {
+		n.Password = ""
+		changed = true
+	}
+	if sp := derefStr(n.SASLPassword); sp != "" {
+		if moved, _ := a.creds.Migrate(n.ID, security.FieldSASLPassword, sp); moved {
+			n.SASLPassword = nil
+			changed = true
+		}
+	}
+	if changed {
+		if err := a.storage.UpdateNetwork(n); err != nil {
+			logger.Log.Warn().Err(err).Int64("network_id", n.ID).Msg("Failed to persist lazy secret migration")
+		}
+	}
 }
 
 // SaveNetwork saves network configuration without connecting
@@ -287,6 +377,10 @@ func (a *App) connectNetwork(config NetworkConfig, reconnect bool) error {
 	}
 	a.mu.Unlock()
 
+	// Lazily migrate any legacy plaintext secrets on this row into the keychain
+	// before dialing, so a reconnect leaves the DB clean.
+	a.migrateNetworkSecrets(network)
+
 	// Try connecting to servers in order
 	var lastErr error
 	for i, srv := range dbServers {
@@ -295,6 +389,9 @@ func (a *App) connectNetwork(config NetworkConfig, reconnect bool) error {
 		tempNetwork.Address = srv.Address
 		tempNetwork.Port = srv.Port
 		tempNetwork.TLS = srv.TLS
+		// Resolve secrets from the keychain onto this throwaway copy; the values
+		// are used only to build the connection and are never re-persisted.
+		a.hydrateNetworkSecrets(&tempNetwork)
 
 		// Enforce STS before dialing: a host with a pending in-session upgrade or a
 		// stored policy is forced onto TLS at the policy port. This rewrites only the
@@ -766,15 +863,19 @@ func (a *App) buildReconnectConfig(networkID int64, network *storage.Network) (N
 	}
 
 	config := NetworkConfig{
-		Name:          network.Name,
-		Nickname:      network.Nickname,
-		Username:      network.Username,
-		Realname:      network.Realname,
-		Password:      network.Password,
-		SASLEnabled:   network.SASLEnabled,
-		AutoConnect:   network.AutoConnect,
-		IdentifyAsBot: network.IdentifyAsBot,
-		Servers:       serverConfigs,
+		Name:     network.Name,
+		Nickname: network.Nickname,
+		Username: network.Username,
+		Realname: network.Realname,
+		// Secrets are resolved from the keychain (falling back to any legacy
+		// plaintext column). This config is used only for internal reconnects.
+		Password:         a.creds.Resolve(networkID, security.FieldPassword, network.Password),
+		SASLPassword:     a.creds.Resolve(networkID, security.FieldSASLPassword, derefStr(network.SASLPassword)),
+		SASLExternalCert: derefStr(network.SASLExternalCert), // a path, not a secret
+		SASLEnabled:      network.SASLEnabled,
+		AutoConnect:      network.AutoConnect,
+		IdentifyAsBot:    network.IdentifyAsBot,
+		Servers:          serverConfigs,
 	}
 
 	if network.SASLMechanism != nil {
@@ -782,12 +883,6 @@ func (a *App) buildReconnectConfig(networkID int64, network *storage.Network) (N
 	}
 	if network.SASLUsername != nil {
 		config.SASLUsername = *network.SASLUsername
-	}
-	if network.SASLPassword != nil {
-		config.SASLPassword = *network.SASLPassword
-	}
-	if network.SASLExternalCert != nil {
-		config.SASLExternalCert = *network.SASLExternalCert
 	}
 
 	return config, nil
@@ -906,27 +1001,25 @@ func (a *App) autoConnect(ctx context.Context) {
 					}
 				}
 				config := NetworkConfig{
-					Servers:       serverConfigs,
-					Name:          network.Name,
-					Nickname:      network.Nickname,
-					Username:      network.Username,
-					Realname:      network.Realname,
-					Password:      network.Password,
-					SASLEnabled:   network.SASLEnabled,
-					AutoConnect:   network.AutoConnect,
-					IdentifyAsBot: network.IdentifyAsBot,
+					Servers:  serverConfigs,
+					Name:     network.Name,
+					Nickname: network.Nickname,
+					Username: network.Username,
+					Realname: network.Realname,
+					// Resolve secrets from the keychain (falling back to any legacy
+					// plaintext column) for the auto-connect.
+					Password:         a.creds.Resolve(network.ID, security.FieldPassword, network.Password),
+					SASLPassword:     a.creds.Resolve(network.ID, security.FieldSASLPassword, derefStr(network.SASLPassword)),
+					SASLExternalCert: derefStr(network.SASLExternalCert), // a path, not a secret
+					SASLEnabled:      network.SASLEnabled,
+					AutoConnect:      network.AutoConnect,
+					IdentifyAsBot:    network.IdentifyAsBot,
 				}
 				if network.SASLMechanism != nil {
 					config.SASLMechanism = *network.SASLMechanism
 				}
 				if network.SASLUsername != nil {
 					config.SASLUsername = *network.SASLUsername
-				}
-				if network.SASLPassword != nil {
-					config.SASLPassword = *network.SASLPassword
-				}
-				if network.SASLExternalCert != nil {
-					config.SASLExternalCert = *network.SASLExternalCert
 				}
 
 				logger.Log.Debug().
@@ -1081,6 +1174,10 @@ func (a *App) DeleteNetwork(networkID int64) error {
 
 	if err := a.storage.DeleteNetwork(networkID); err != nil {
 		return err
+	}
+	// Remove any secrets held in the keychain for this network.
+	if err := a.creds.Delete(networkID); err != nil {
+		logger.Log.Warn().Err(err).Int64("network_id", networkID).Msg("Failed to delete network secrets from keychain")
 	}
 	a.emit("networks:changed")
 	return nil

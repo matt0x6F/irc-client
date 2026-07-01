@@ -4673,8 +4673,24 @@ func (c *IRCClient) WriteStatusMessage(message string) error {
 	return c.storage.WriteMessage(statusMsg)
 }
 
+// validateRawCommand rejects a raw command containing a CR or LF. The library's
+// SendRaw appends its own "\r\n" without validating the payload, so an embedded
+// newline would smuggle an additional IRC command onto the wire (CRLF injection).
+// Parameterized sends (Privmsg/SendWithTags) route through ircmsg assembly which
+// already rejects these bytes; this is the guard for the raw passthrough path.
+func validateRawCommand(command string) error {
+	if strings.ContainsAny(command, "\r\n") {
+		return fmt.Errorf("raw command contains illegal newline")
+	}
+	return nil
+}
+
 // SendRawCommand sends a raw IRC command
 func (c *IRCClient) SendRawCommand(command string) error {
+	if err := validateRawCommand(command); err != nil {
+		return err
+	}
+
 	c.mu.RLock()
 	if !c.connected {
 		c.mu.RUnlock()

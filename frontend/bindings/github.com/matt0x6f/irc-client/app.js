@@ -520,7 +520,8 @@ export function GetNetworkUserMeta(networkID) {
 }
 
 /**
- * GetNetworks retrieves all networks
+ * GetNetworks retrieves all networks. Secret values are stripped before the
+ * networks reach the frontend; Has* flags report presence instead.
  * @returns {$CancellablePromise<storage$0.Network[]>}
  */
 export function GetNetworks() {

@@ -660,11 +660,12 @@ export function ServerTree({
                           nickname: network.nickname,
                           username: network.username,
                           realname: network.realname,
-                          password: network.password,
+                          // Keychain-backed; the backend resolves secrets on connect.
+                          password: '',
                           sasl_enabled: network.sasl_enabled || false,
                           sasl_mechanism: network.sasl_mechanism || '',
                           sasl_username: network.sasl_username || '',
-                          sasl_password: network.sasl_password || '',
+                          sasl_password: '',
                           sasl_external_cert: network.sasl_external_cert || '',
                         };
                         

@@ -159,7 +159,8 @@ export function ServerList({ servers, selectedServer, onSelectServer, onConnect,
                         nickname: network.nickname,
                         username: network.username,
                         realname: network.realname,
-                        password: network.password,
+                        // Keychain-backed; the backend resolves the secret on connect.
+                        password: '',
                       }));
                     }}
                     className="px-2 py-1 text-xs border border-border rounded hover:bg-primary hover:text-primary-foreground"

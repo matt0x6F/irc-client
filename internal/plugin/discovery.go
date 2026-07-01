@@ -9,8 +9,11 @@ import (
 	"github.com/matt0x6f/irc-client/internal/logger"
 )
 
-// DiscoverPlugins discovers plugins in the system
-func DiscoverPlugins(pluginDir string) ([]*PluginInfo, error) {
+// DiscoverPlugins discovers plugins in the system. PATH-based discovery is a
+// supply-chain risk (any cascade-* executable on PATH would auto-load with full
+// user privileges), so it is opt-in: callers pass allowPATH only when the user
+// has explicitly enabled it. Dedicated-directory discovery is always performed.
+func DiscoverPlugins(pluginDir string, allowPATH bool) ([]*PluginInfo, error) {
 	var plugins []*PluginInfo
 
 	// Discover plugins in dedicated directory
@@ -22,13 +25,15 @@ func DiscoverPlugins(pluginDir string) ([]*PluginInfo, error) {
 		plugins = append(plugins, dirPlugins...)
 	}
 
-	// Discover plugins in PATH
-	pathPlugins, err := discoverInPATH()
-	if err != nil {
-		// Non-fatal, just log
-		logger.Log.Warn().Err(err).Msg("Failed to discover plugins in PATH")
+	// Discover plugins in PATH only when explicitly opted in.
+	if allowPATH {
+		pathPlugins, err := discoverInPATH()
+		if err != nil {
+			// Non-fatal, just log
+			logger.Log.Warn().Err(err).Msg("Failed to discover plugins in PATH")
+		}
+		plugins = append(plugins, pathPlugins...)
 	}
-	plugins = append(plugins, pathPlugins...)
 
 	return plugins, nil
 }

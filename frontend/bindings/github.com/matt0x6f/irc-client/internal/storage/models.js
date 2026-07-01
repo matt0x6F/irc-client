@@ -349,14 +349,6 @@ export class Network {
              */
             this["realname"] = "";
         }
-        if (!("password" in $$source)) {
-            /**
-             * Should be encrypted
-             * @member
-             * @type {string}
-             */
-            this["password"] = "";
-        }
         if (!("sasl_enabled" in $$source)) {
             /**
              * @member
@@ -377,13 +369,6 @@ export class Network {
              * @type {string | null}
              */
             this["sasl_username"] = null;
-        }
-        if (!("sasl_password" in $$source)) {
-            /**
-             * @member
-             * @type {string | null}
-             */
-            this["sasl_password"] = null;
         }
         if (!("sasl_external_cert" in $$source)) {
             /**
@@ -419,6 +404,31 @@ export class Network {
              * @type {time$0.Time}
              */
             this["updated_at"] = null;
+        }
+        if (!("hasPassword" in $$source)) {
+            /**
+             * Computed, non-persisted flags populated by the App layer for the frontend.
+             * Has* report whether a secret is set (keychain or fallback column) without
+             * exposing the value; CredentialStorageInsecure is true when any secret is
+             * currently held in a plaintext column rather than the keychain.
+             * @member
+             * @type {boolean}
+             */
+            this["hasPassword"] = false;
+        }
+        if (!("hasSaslPassword" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["hasSaslPassword"] = false;
+        }
+        if (!("credentialStorageInsecure" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["credentialStorageInsecure"] = false;
         }
 
         Object.assign(this, $$source);
