@@ -4,24 +4,38 @@ import "time"
 
 // Network represents an IRC network configuration
 type Network struct {
-	ID               int64     `db:"id" json:"id"`
-	Name             string    `db:"name" json:"name"`
-	Address          string    `db:"address" json:"address"` // Deprecated: use Servers
-	Port             int       `db:"port" json:"port"`       // Deprecated: use Servers
-	TLS              bool      `db:"tls" json:"tls"`         // Deprecated: use Servers
-	Nickname         string    `db:"nickname" json:"nickname"`
-	Username         string    `db:"username" json:"username"`
-	Realname         string    `db:"realname" json:"realname"`
-	Password         string    `db:"password" json:"password"` // Should be encrypted
+	ID       int64  `db:"id" json:"id"`
+	Name     string `db:"name" json:"name"`
+	Address  string `db:"address" json:"address"` // Deprecated: use Servers
+	Port     int    `db:"port" json:"port"`       // Deprecated: use Servers
+	TLS      bool   `db:"tls" json:"tls"`         // Deprecated: use Servers
+	Nickname string `db:"nickname" json:"nickname"`
+	Username string `db:"username" json:"username"`
+	Realname string `db:"realname" json:"realname"`
+	// Password and SASLPassword live in the OS keychain, not the database. These
+	// columns hold values only as a fallback when the keychain is unavailable, or
+	// transiently for legacy rows awaiting lazy migration; they are never
+	// serialized to the frontend (json:"-") — see the Has* flags below.
+	// SASLExternalCert is a client-certificate *path*, not a secret, so it stays a
+	// normal field.
+	Password         string    `db:"password" json:"-"`
 	SASLEnabled      bool      `db:"sasl_enabled" json:"sasl_enabled"`
 	SASLMechanism    *string   `db:"sasl_mechanism" json:"sasl_mechanism"`
 	SASLUsername     *string   `db:"sasl_username" json:"sasl_username"`
-	SASLPassword     *string   `db:"sasl_password" json:"sasl_password"`
+	SASLPassword     *string   `db:"sasl_password" json:"-"`
 	SASLExternalCert *string   `db:"sasl_external_cert" json:"sasl_external_cert"`
 	AutoConnect      bool      `db:"auto_connect" json:"auto_connect"`
 	IdentifyAsBot    bool      `db:"identify_as_bot" json:"identify_as_bot"`
 	CreatedAt        time.Time `db:"created_at" json:"created_at"`
 	UpdatedAt        time.Time `db:"updated_at" json:"updated_at"`
+
+	// Computed, non-persisted flags populated by the App layer for the frontend.
+	// Has* report whether a secret is set (keychain or fallback column) without
+	// exposing the value; CredentialStorageInsecure is true when any secret is
+	// currently held in a plaintext column rather than the keychain.
+	HasPassword               bool `db:"-" json:"hasPassword"`
+	HasSASLPassword           bool `db:"-" json:"hasSaslPassword"`
+	CredentialStorageInsecure bool `db:"-" json:"credentialStorageInsecure"`
 }
 
 // Server represents a single server address within a network

@@ -453,11 +453,13 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
       nickname: network.nickname,
       username: network.username,
       realname: network.realname,
-      password: network.password,
+      password: '', // secrets are keychain-backed and never sent to the UI; empty = unchanged on save
+
       sasl_enabled: network.sasl_enabled || false,
       sasl_mechanism: network.sasl_mechanism || '',
       sasl_username: network.sasl_username || '',
-      sasl_password: network.sasl_password || '',
+      sasl_password: '', // keychain-backed; empty = unchanged on save
+
       sasl_external_cert: network.sasl_external_cert || '',
       auto_connect: network.auto_connect || false,
       identify_as_bot: network.identify_as_bot || false,
@@ -611,11 +613,13 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
         nickname: network.nickname,
         username: network.username,
         realname: network.realname,
-        password: network.password,
+        password: '', // secrets are keychain-backed and never sent to the UI; empty = unchanged on save
+
         sasl_enabled: network.sasl_enabled || false,
         sasl_mechanism: network.sasl_mechanism || '',
         sasl_username: network.sasl_username || '',
-        sasl_password: network.sasl_password || '',
+        sasl_password: '', // keychain-backed; empty = unchanged on save
+
         sasl_external_cert: network.sasl_external_cert || '',
       };
       
@@ -1045,6 +1049,11 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
                         data-testid="network-realname-input"
                       />
                     </div>
+                    {editingNetwork?.credentialStorageInsecure && (
+                      <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+                        This network's secrets are stored in the local database because the OS keychain was unavailable. Re-save while your keychain is unlocked to move them into secure storage.
+                      </div>
+                    )}
                     <div>
                       <label className="block text-sm font-medium mb-1.5">Password (optional)</label>
                       <input
@@ -1053,7 +1062,7 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
                         onChange={(e) => setFormData(main.NetworkConfig.createFrom({ ...formData, password: e.target.value }))}
                         className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all shadow-[var(--shadow-sm)] focus:shadow-[var(--shadow-md)]"
                         style={{ transition: 'var(--transition-base)' }}
-                        placeholder="Server password"
+                        placeholder={editingNetwork?.hasPassword ? '•••••••• (unchanged)' : 'Server password'}
                       />
                     </div>
                   </div>
@@ -1141,7 +1150,7 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
                                 value={formData.sasl_password || ''}
                                 onChange={(e) => setFormData(main.NetworkConfig.createFrom({ ...formData, sasl_password: e.target.value }))}
                                 className="w-full px-2 py-1 text-sm border border-border rounded"
-                                placeholder="SASL password"
+                                placeholder={editingNetwork?.hasSaslPassword ? '•••••••• (unchanged)' : 'SASL password'}
                               />
                             </div>
                           </>

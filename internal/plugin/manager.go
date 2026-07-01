@@ -71,6 +71,23 @@ func NewManager(eventBus *events.EventBus, pluginDir string) *Manager {
 	return pm
 }
 
+// allowPATHDiscovery reports whether the user has opted in to discovering
+// plugins from the system PATH (setting "plugins.discover_path" == "true").
+// PATH discovery is off by default because any cascade-* executable on PATH
+// would otherwise auto-load with full user privileges. Absent storage or an
+// unset value both mean disabled.
+func (pm *Manager) allowPATHDiscovery() bool {
+	if pm.storage == nil {
+		return false
+	}
+	v, err := pm.storage.GetSetting("plugins.discover_path")
+	if err != nil {
+		logger.Log.Warn().Err(err).Msg("Failed to read plugins.discover_path setting; defaulting to PATH discovery off")
+		return false
+	}
+	return v == "true"
+}
+
 // OnEvent implements the Subscriber interface
 func (pm *Manager) OnEvent(event events.Event) {
 	pm.mu.RLock()
@@ -140,7 +157,7 @@ func (pm *Manager) SetStorage(stor *storage.Storage) {
 
 // DiscoverAndLoad discovers and loads all available plugins
 func (pm *Manager) DiscoverAndLoad() error {
-	plugins, err := DiscoverPlugins(pm.pluginDir)
+	plugins, err := DiscoverPlugins(pm.pluginDir, pm.allowPATHDiscovery())
 	if err != nil {
 		return fmt.Errorf("failed to discover plugins: %w", err)
 	}
@@ -377,7 +394,7 @@ func (pm *Manager) ReloadPlugin(name string) error {
 	defer pm.mu.Unlock()
 
 	// Discover the plugin to get its current info
-	plugins, err := DiscoverPlugins(pm.pluginDir)
+	plugins, err := DiscoverPlugins(pm.pluginDir, pm.allowPATHDiscovery())
 	if err != nil {
 		return fmt.Errorf("failed to discover plugins: %w", err)
 	}
@@ -581,7 +598,7 @@ func (pm *Manager) GetPluginMetadata(info *PluginInfo) (*PluginInfo, error) {
 // If a plugin has config_schema in the database, it will be included.
 func (pm *Manager) ListPlugins() []*PluginInfo {
 	// Discover all plugins
-	plugins, err := DiscoverPlugins(pm.pluginDir)
+	plugins, err := DiscoverPlugins(pm.pluginDir, pm.allowPATHDiscovery())
 	if err != nil {
 		logger.Log.Warn().Err(err).Msg("Failed to discover plugins for list")
 		// Fall back to just loaded plugins
@@ -885,7 +902,7 @@ func (pm *Manager) SetPluginEnabled(name string, enabled bool, stor *storage.Sto
 		}
 
 		// Discover the plugin to get its info
-		plugins, err := DiscoverPlugins(pm.pluginDir)
+		plugins, err := DiscoverPlugins(pm.pluginDir, pm.allowPATHDiscovery())
 		if err != nil {
 			return fmt.Errorf("failed to discover plugins: %w", err)
 		}
