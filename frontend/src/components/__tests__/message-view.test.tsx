@@ -31,6 +31,10 @@ const storeState = {
   pendingScrollMsgid: null as string | null,
   clearPendingScrollMsgid: vi.fn(),
   openParentMessage: vi.fn(),
+  // Used by the double-click-to-DM and the shared user context menu.
+  openQuery: vi.fn(),
+  addMonitorNick: vi.fn(),
+  setChannelContext: vi.fn(),
 }
 
 vi.mock('../../stores/network', () => {
@@ -44,6 +48,23 @@ vi.mock('../../stores/network', () => {
 vi.mock('../../stores/settings', () => ({
   useSettingsStore: (selector: (s: { consolidateJoinQuit: boolean }) => unknown) =>
     selector({ consolidateJoinQuit: false }),
+}))
+
+// The shared user context menu routes Whois through the app-level UI store.
+const uiState = { setShowUserInfo: vi.fn() }
+vi.mock('../../stores/ui', () => ({
+  useUIStore: Object.assign(
+    (sel: (s: typeof uiState) => unknown) => sel(uiState),
+    { getState: () => uiState },
+  ),
+}))
+
+// The menu fetches a fresh permission snapshot (self modes + capabilities) and the
+// joined-channel list on open; stub both so tests stay off the Wails bridge.
+vi.mock('../../../wailsjs/go/main/App', () => ({
+  SendCommand: vi.fn().mockResolvedValue(undefined),
+  GetChannelInfo: vi.fn().mockResolvedValue({ users: [], capabilities: null }),
+  GetJoinedChannels: vi.fn().mockResolvedValue([]),
 }))
 
 const makeMessage = (overrides: Partial<storage.Message>) =>
@@ -177,5 +198,33 @@ describe('MessageView channel-context pill', () => {
 
     // No pill should render for a channel message
     expect(document.querySelector('.channel-context-pill')).toBeNull()
+  })
+})
+
+describe('MessageView nick interactions', () => {
+  it('opens a DM when the author nick is double-clicked', () => {
+    storeState.openQuery = vi.fn()
+    const msg = makeMessage({ id: 20, user: 'alice', message: 'hi', message_type: 'privmsg' })
+
+    render(<MessageView messages={[msg]} networkId={1} selectedChannel="#chan" />)
+
+    fireEvent.doubleClick(screen.getByTestId('author-nick'))
+
+    expect(storeState.openQuery).toHaveBeenCalledWith(1, 'alice')
+  })
+
+  it('opens the shared user context menu when the author nick is right-clicked', () => {
+    const msg = makeMessage({ id: 21, user: 'alice', message: 'hi', message_type: 'privmsg' })
+
+    render(<MessageView messages={[msg]} networkId={1} selectedChannel="#chan" />)
+
+    // No menu until the nick is right-clicked.
+    expect(screen.queryByText('CTCP Version')).toBeNull()
+
+    fireEvent.contextMenu(screen.getByTestId('author-nick'))
+
+    // The same always-available entries the userlist menu shows.
+    expect(screen.getByText('Whois')).toBeInTheDocument()
+    expect(screen.getByText('CTCP Version')).toBeInTheDocument()
   })
 })

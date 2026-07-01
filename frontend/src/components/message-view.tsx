@@ -1,8 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { storage } from '../../wailsjs/go/models';
 import { IRCFormattedText } from './irc-formatted-text';
+import { UserContextMenu } from './user-context-menu';
 import { useNicknameColors } from '../hooks/useNicknameColors';
 import { useNetworkStore } from '../stores/network';
+import { useUIStore } from '../stores/ui';
 import { casefold } from '../lib/casefold';
 import { useSettingsStore } from '../stores/settings';
 import { SendCommand } from '../../wailsjs/go/main/App';
@@ -272,6 +274,9 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
   const unpinMessage = useNetworkStore((s) => s.unpinMessage);
   const setReplyTarget = useNetworkStore((s) => s.setReplyTarget);
   const selectPane = useNetworkStore((s) => s.selectPane);
+  const openQuery = useNetworkStore((s) => s.openQuery);
+  // Right-click-a-nick context menu, anchored at the click position.
+  const [userMenu, setUserMenu] = useState<{ x: number; y: number; nick: string } | null>(null);
   const viewMode = useNetworkStore((s) => s.viewMode);
   const anchoredMessageId = useNetworkStore((s) => s.anchoredMessageId);
   const clearAnchorFlash = useNetworkStore((s) => s.clearAnchorFlash);
@@ -592,12 +597,26 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
                     {new Date(msg.timestamp).toLocaleTimeString()}
                   </span>
                   {msg.user !== '*' && !isSystemMessage && (
-                    <span 
+                    <span
+                      data-testid="author-nick"
                       className={`text-sm font-medium ${
-                        isStatus || isCommand ? 'text-muted-foreground italic' : 'text-primary'
+                        isStatus || isCommand ? 'text-muted-foreground italic' : 'text-primary cursor-pointer hover:underline'
                       }`}
-                      style={{ 
+                      style={{
                         color: (isStatus || isCommand) ? undefined : (nicknameColors.get(msg.user) || undefined)
+                      }}
+                      title={isStatus || isCommand ? undefined : `Double-click to message ${msg.user}, right-click for actions`}
+                      onDoubleClick={() => {
+                        if (!isStatus && !isCommand && networkId !== null) {
+                          void openQuery(networkId, msg.user);
+                        }
+                      }}
+                      onContextMenu={(e) => {
+                        if (isStatus || isCommand || networkId === null) return;
+                        e.preventDefault();
+                        e.stopPropagation();
+                        window.getSelection?.()?.removeAllRanges();
+                        setUserMenu({ x: e.clientX, y: e.clientY, nick: msg.user });
                       }}
                     >
                       {msg.user}
@@ -764,6 +783,21 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
             <path d="m19 12-7 7-7-7" />
           </svg>
         </button>
+      )}
+      {userMenu && networkId !== null && (
+        <UserContextMenu
+          networkId={networkId}
+          channelName={selectedChannel ?? null}
+          targetNick={userMenu.nick}
+          currentNickname={currentNickname}
+          x={userMenu.x}
+          y={userMenu.y}
+          onClose={() => setUserMenu(null)}
+          onSendCommand={(command) => SendCommand(networkId, command)}
+          onShowUserInfo={(nick) =>
+            useUIStore.getState().setShowUserInfo({ networkId, nickname: nick })
+          }
+        />
       )}
     </div>
   );
