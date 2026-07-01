@@ -51,7 +51,7 @@ vi.mock('../../stores/settings', () => ({
 }))
 
 // The shared user context menu routes Whois through the app-level UI store.
-const uiState = { setShowUserInfo: vi.fn() }
+const uiState = { setShowUserInfo: vi.fn(), setInviteTo: vi.fn() }
 vi.mock('../../stores/ui', () => ({
   useUIStore: Object.assign(
     (sel: (s: typeof uiState) => unknown) => sel(uiState),
@@ -226,5 +226,16 @@ describe('MessageView nick interactions', () => {
     // The same always-available entries the userlist menu shows.
     expect(screen.getByText('Whois')).toBeInTheDocument()
     expect(screen.getByText('CTCP Version')).toBeInTheDocument()
+  })
+
+  it('right-click menu offers a single Invite entry, not a per-channel list', () => {
+    const msg = makeMessage({ id: 22, user: 'alice', message: 'hi', message_type: 'privmsg' })
+    render(<MessageView messages={[msg]} networkId={1} selectedChannel="#chan" />)
+
+    fireEvent.contextMenu(screen.getByTestId('author-nick'))
+
+    expect(screen.getByText('Invite to channel…')).toBeInTheDocument()
+    // The old inline "Invite to" section header must be gone.
+    expect(screen.queryByText('Invite to', { exact: true })).toBeNull()
   })
 })

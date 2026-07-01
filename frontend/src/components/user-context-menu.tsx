@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { main, storage } from '../../wailsjs/go/models';
-import { GetChannelInfo, GetJoinedChannels } from '../../wailsjs/go/main/App';
+import { GetChannelInfo } from '../../wailsjs/go/main/App';
 import { useNetworkStore } from '../stores/network';
+import { useUIStore } from '../stores/ui';
 
 interface UserContextMenuProps {
   networkId: number;
@@ -48,15 +49,13 @@ export function UserContextMenu({
   const setChannelContext = useNetworkStore((s) => s.setChannelContext);
 
   const [channelInfo, setChannelInfo] = useState<main.ChannelInfo | null>(null);
-  const [otherChannels, setOtherChannels] = useState<storage.Channel[]>([]);
 
-  // Snapshot membership + capabilities (for permission gating) and the other
-  // joined channels (for "Invite to") when the menu opens. A one-shot fetch keeps
-  // this component usable from anywhere without the caller pre-loading state.
+  // Snapshot membership + capabilities (for permission gating) when the menu
+  // opens. A one-shot fetch keeps this component usable from anywhere without
+  // the caller pre-loading state.
   useEffect(() => {
     if (!isRealChannel(channelName)) {
       setChannelInfo(null);
-      setOtherChannels([]);
       return;
     }
     let cancelled = false;
@@ -66,13 +65,6 @@ export function UserContextMenu({
       })
       .catch(() => {
         if (!cancelled) setChannelInfo(null);
-      });
-    void GetJoinedChannels(networkId)
-      .then((chs) => {
-        if (!cancelled) setOtherChannels(chs.filter((c) => c.name !== channelName));
-      })
-      .catch(() => {
-        if (!cancelled) setOtherChannels([]);
       });
     return () => {
       cancelled = true;
@@ -218,21 +210,21 @@ export function UserContextMenu({
               </>
             )}
 
-            {/* Invite to another channel */}
-            {otherChannels.length > 0 && (
+            {/* Invite to another channel — opens the searchable picker modal */}
+            {isRealChannel(channelName) && (
               <>
                 {(canOp() || canVoice()) && <div className="border-t border-border my-1" />}
-                <div className="px-4 py-1 text-xs font-semibold text-muted-foreground uppercase">Invite to</div>
-                {otherChannels.map((ch) => (
-                  <button key={ch.name} className="w-full text-left px-4 py-2 text-sm hover:bg-accent" onClick={() => send(`/invite ${targetNick} ${ch.name}`)}>
-                    {ch.name}
-                  </button>
-                ))}
+                <button
+                  className={itemClass}
+                  style={{ transition: 'var(--transition-base)' }}
+                  onClick={() => {
+                    useUIStore.getState().setInviteTo({ networkId, nick: targetNick, channel: channelName });
+                    onClose();
+                  }}
+                >
+                  Invite to channel…
+                </button>
               </>
-            )}
-
-            {!canKick() && !canBan() && !canOp() && !canVoice() && otherChannels.length === 0 && (
-              <div className="px-4 py-2 text-sm text-muted-foreground">No operator commands available</div>
             )}
           </>
         )}

@@ -24,6 +24,10 @@ interface UIState {
   showUserInfo: { networkId: number; nickname: string } | null;
   setShowUserInfo: (info: { networkId: number; nickname: string } | null) => void;
 
+  // Invite-to-channel picker (rendered app-level; triggered from the user menu)
+  inviteTo: { networkId: number; nick: string; channel: string | null } | null;
+  setInviteTo: (v: { networkId: number; nick: string; channel: string | null } | null) => void;
+
   // Search modal
   showSearch: boolean;
   toggleSearch: () => void;
@@ -77,6 +81,9 @@ export const useUIStore = create<UIState>((set) => ({
 
   showUserInfo: null,
   setShowUserInfo: (info) => set({ showUserInfo: info }),
+
+  inviteTo: null,
+  setInviteTo: (v) => set({ inviteTo: v }),
 
   showSearch: false,
   toggleSearch: () => set((state) => ({ showSearch: !state.showSearch })),
