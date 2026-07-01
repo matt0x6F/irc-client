@@ -27,6 +27,7 @@ import { UpdateAvailableDialog } from './components/update-available-dialog';
 import { AuthBanner } from './components/AuthBanner';
 import { DeepLinkDisambiguation } from './components/deeplink-disambiguation';
 import { InvitesView } from './components/invites-view';
+import { InviteToChannelModal } from './components/invite-to-channel-modal';
 import { List, Settings } from 'lucide-react';
 
 function App() {
@@ -75,6 +76,8 @@ function App() {
   const setShowModeModal = useUIStore((s) => s.setShowModeModal);
   const showUserInfo = useUIStore((s) => s.showUserInfo);
   const setShowUserInfo = useUIStore((s) => s.setShowUserInfo);
+  const inviteTo = useUIStore((s) => s.inviteTo);
+  const setInviteTo = useUIStore((s) => s.setInviteTo);
   const showSearch = useUIStore((s) => s.showSearch);
   const openSearch = useUIStore((s) => s.openSearch);
   const closeSearch = useUIStore((s) => s.closeSearch);
@@ -1058,14 +1061,6 @@ function App() {
                 </div>
               );
             })()}
-
-          {showUserInfo && (
-            <UserInfo
-              networkId={showUserInfo.networkId}
-              nickname={showUserInfo.nickname}
-              onClose={() => setShowUserInfo(null)}
-            />
-          )}
         </div>
 
         {/* Input Area */}
@@ -1127,6 +1122,23 @@ function App() {
 
       {showKeyboardShortcuts && (
         <KeyboardShortcutsModal onClose={closeKeyboardShortcuts} />
+      )}
+
+      {showUserInfo && (
+        <UserInfo
+          networkId={showUserInfo.networkId}
+          nickname={showUserInfo.nickname}
+          onClose={() => setShowUserInfo(null)}
+        />
+      )}
+
+      {inviteTo && (
+        <InviteToChannelModal
+          networkId={inviteTo.networkId}
+          nick={inviteTo.nick}
+          currentChannel={inviteTo.channel}
+          onClose={() => setInviteTo(null)}
+        />
       )}
 
       <HelpDialog />

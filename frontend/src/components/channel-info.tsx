@@ -2,11 +2,11 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { GetChannelInfo } from '../../wailsjs/go/main/App';
 import { main, storage } from '../../wailsjs/go/models';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
-import { UserInfo } from './user-info';
 import { UserContextMenu } from './user-context-menu';
 import { MonitorList } from './monitor-list';
 import { useNicknameColors } from '../hooks/useNicknameColors';
 import { useNetworkStore } from '../stores/network';
+import { useUIStore } from '../stores/ui';
 import { isChannelName } from '../lib/channel-name';
 import { casefold } from '../lib/casefold';
 import { useSettingsStore } from '../stores/settings';
@@ -35,7 +35,6 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
   const [channelInfo, setChannelInfo] = useState<main.ChannelInfo | null>(null);
   const [loading, setLoading] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null);
-  const [showUserInfo, setShowUserInfo] = useState<{ nickname: string } | null>(null);
   // Right-sidebar tab: the channel member list, or the network's MONITOR buddies.
   const [sidebarView, setSidebarView] = useState<'users' | 'monitor'>('users');
   // Use refs to avoid stale closures in event listener
@@ -404,16 +403,7 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
           y={contextMenu.y}
           onClose={() => setContextMenu(null)}
           onSendCommand={onSendCommand}
-          onShowUserInfo={(nick) => setShowUserInfo({ nickname: nick })}
-        />
-      )}
-
-      {/* User Info Panel */}
-      {showUserInfo && (
-        <UserInfo
-          networkId={networkId}
-          nickname={showUserInfo.nickname}
-          onClose={() => setShowUserInfo(null)}
+          onShowUserInfo={(nick) => useUIStore.getState().setShowUserInfo({ networkId, nickname: nick })}
         />
       )}
     </div>
