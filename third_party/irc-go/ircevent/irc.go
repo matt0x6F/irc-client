@@ -662,8 +662,11 @@ func (irc *Connection) Connect() (err error) {
 		if irc.SASLMech == "" {
 			irc.SASLMech = "PLAIN"
 		}
-		if !(irc.SASLMech == "PLAIN" || irc.SASLMech == "EXTERNAL") {
+		if irc.SASLMechanism == nil && !(irc.SASLMech == "PLAIN" || irc.SASLMech == "EXTERNAL") {
 			return fmt.Errorf("unsupported SASL mechanism %s", irc.SASLMech)
+		}
+		if irc.SASLMechanism != nil && irc.SASLMech != irc.SASLMechanism.Name() {
+			return fmt.Errorf("SASLMech %q does not match SASLMechanism.Name() %q", irc.SASLMech, irc.SASLMechanism.Name())
 		}
 		if irc.MaxLineLen == 0 {
 			irc.MaxLineLen = 512
@@ -707,6 +710,7 @@ func (irc *Connection) Connect() (err error) {
 	irc.wg.Add(3)
 	irc.capsChan = make(chan capResult, len(irc.RequestCaps))
 	irc.saslChan = make(chan saslResult, 1)
+	irc.saslBuffer = nil
 	irc.welcomeChan = make(chan empty)
 	irc.registered = false
 	irc.isupportPartial = make(map[string]string)

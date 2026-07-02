@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/ergochat/irc-go/ircmsg"
+	"github.com/ergochat/irc-go/ircutils"
 )
 
 type empty struct{}
@@ -40,6 +41,16 @@ type capResult struct {
 	ack     bool
 }
 
+// SASLMechanism supplies SASL responses, letting callers implement mechanisms
+// (e.g. SCRAM) beyond the built-in PLAIN/EXTERNAL. When non-nil it takes
+// precedence over the built-in AUTHENTICATE handling. Respond is called once per
+// inbound AUTHENTICATE challenge (already reassembled and base64-decoded); a
+// returned error aborts the exchange.
+type SASLMechanism interface {
+	Name() string
+	Respond(challenge []byte) (response []byte, err error)
+}
+
 type Connection struct {
 	// config data, user-settable
 	Server          string
@@ -53,7 +64,8 @@ type Connection struct {
 	SASLLogin       string   // SASL credentials to log in with (failure is fatal by default)
 	SASLPassword    string
 	SASLMech        string
-	SASLOptional    bool // make SASL failure non-fatal
+	SASLMechanism   SASLMechanism // optional: custom SASL mechanism (overrides built-in PLAIN/EXTERNAL)
+	SASLOptional    bool          // make SASL failure non-fatal
 	QuitMessage     string
 	Version         string
 	Timeout         time.Duration
@@ -95,7 +107,8 @@ type Connection struct {
 	// sent outside of negotiation will not cause the relevant callbacks to block.
 	welcomeChan chan empty      // signals that we got 001 and we are now connected
 	saslChan    chan saslResult // transmits the final outcome of SASL negotiation
-	capsChan    chan capResult  // transmits the final status of each CAP negotiated
+	saslBuffer  *ircutils.SASLBuffer
+	capsChan    chan capResult // transmits the final status of each CAP negotiated
 	capFlags    uint32
 
 	// callback state

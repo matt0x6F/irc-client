@@ -41,6 +41,35 @@ func (irc *Connection) composeSaslPlainResponse() []byte {
 
 func (irc *Connection) setupSASLCallbacks() {
 	irc.AddCallback("AUTHENTICATE", func(e ircmsg.Message) {
+		if irc.SASLMechanism != nil {
+			if irc.saslBuffer == nil {
+				irc.saslBuffer = ircutils.NewSASLBuffer(0)
+			}
+			chunk := "+"
+			if len(e.Params) > 0 {
+				chunk = e.Params[0]
+			}
+			done, challenge, err := irc.saslBuffer.Add(chunk)
+			if err != nil {
+				irc.Send("AUTHENTICATE", "*")
+				irc.submitSASLResult(saslResult{true, err})
+				return
+			}
+			if !done {
+				return // more challenge chunks to come
+			}
+			resp, err := irc.SASLMechanism.Respond(challenge)
+			if err != nil {
+				irc.Send("AUTHENTICATE", "*")
+				irc.submitSASLResult(saslResult{true, err})
+				return
+			}
+			for _, out := range ircutils.EncodeSASLResponse(resp) {
+				irc.Send("AUTHENTICATE", out)
+			}
+			return
+		}
+		// built-in PLAIN/EXTERNAL (unchanged)
 		switch irc.SASLMech {
 		case "PLAIN":
 			for _, resp := range ircutils.EncodeSASLResponse(irc.composeSaslPlainResponse()) {
