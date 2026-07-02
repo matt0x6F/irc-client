@@ -95,3 +95,31 @@ func TestHandleServerError_NoParams(t *testing.T) {
 		t.Fatalf("missing bare ERROR status line; got %+v", msgs)
 	}
 }
+
+// An unsolicited server ERROR ("Closing Link") is the server telling us it is
+// dropping the connection now — most commonly a K-line, a kill, or Libera
+// regaining a nick from an unauthenticated session. The handler must drive
+// teardown off that explicit signal rather than leaving the client reporting
+// itself connected over a socket the server has already closed (which strands
+// the UI "Connected" until the ping loop eventually notices, ~KeepAlive later).
+func TestHandleServerError_TearsDownConnection(t *testing.T) {
+	c, _ := newUserMetaTestClient(t)
+	c.mu.Lock()
+	c.connected = true
+	c.mu.Unlock()
+
+	c.handleServerError(parse(t, "ERROR :Closing Link: 203.0.113.7 (Nickname regained by services)"))
+
+	if c.IsConnected() {
+		t.Fatal("after a server ERROR (link closing) the client must not still report itself connected")
+	}
+	// abandoned proves teardown went through signalQuit (which also sets the
+	// library quit flag), not an incidental connected=false write — so the
+	// orphaned Loop cannot ghost-reconnect under a fallback nick.
+	c.mu.RLock()
+	abandoned := c.abandoned
+	c.mu.RUnlock()
+	if !abandoned {
+		t.Fatal("server ERROR teardown must mark the client abandoned so its Loop cannot ghost-reconnect")
+	}
+}

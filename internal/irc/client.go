@@ -1619,13 +1619,25 @@ func (c *IRCClient) onDisconnect(e ircmsg.Message) {
 }
 
 // handleServerError handles the ERROR command a server sends just before it
-// closes the link (K-line, kill, shutdown). It is the only reason the user
-// ever gets for the disconnect that follows — onDisconnect sees a bare socket
-// close — so record it in the status window and emit an error event.
+// closes the link (K-line, kill, shutdown, or Libera regaining a nick from an
+// unauthenticated session). It records the reason — the only one the user ever
+// gets for the disconnect that follows — and then drives teardown off that
+// explicit signal.
+//
+// Driving teardown here matters: ERROR is the server telling us the socket is
+// gone NOW. Relying on the library's ping loop to notice the close instead can
+// strand the client reporting itself "Connected" over a dead socket for up to
+// KeepAlive+Timeout — and indefinitely on a half-open link the loop never reads
+// (a leaked CLOSE_WAIT). signalQuit is safe from inside this Loop callback: it
+// flips connected=false, sets the library quit flag so the orphaned Loop cannot
+// ghost-reconnect under a fallback nick, and rides onDisconnect ->
+// EventConnectionLost -> handleConnectionLost, which rebuilds a fresh client and
+// reconnects when the network is configured to.
 //
 // The server also acknowledges our own QUIT with an ERROR ("Closing Link");
 // signalQuit sets abandoned before that reply can arrive, so an abandoned
-// client stays silent — a user-initiated disconnect is not an error.
+// client stays silent — a user-initiated disconnect is not an error, and it is
+// already being torn down.
 func (c *IRCClient) handleServerError(e ircmsg.Message) {
 	c.mu.RLock()
 	abandoned := c.abandoned
@@ -1651,6 +1663,11 @@ func (c *IRCClient) handleServerError(e ircmsg.Message) {
 		Timestamp: time.Now(),
 		Source:    events.EventSourceIRC,
 	})
+
+	// Tear down on the server's explicit close signal rather than waiting for the
+	// ping loop to (maybe) detect the socket drop. This is the fix for the client
+	// showing "Connected" after the server has already dropped us.
+	c.signalQuit("Server closed the connection")
 }
 
 // setupHandlers sets up IRC event handlers
