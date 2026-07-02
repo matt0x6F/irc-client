@@ -725,16 +725,26 @@ func (a *App) GetJoinedChannels(networkID int64) ([]storage.Channel, error) {
 	return a.storage.GetJoinedChannels(networkID, network.Nickname)
 }
 
-// GetOpenChannels retrieves channels where the dialog is open or the user is joined
+// GetOpenChannels returns the channels the sidebar should show for a network:
+// exactly those whose buffer is open (is_open=1). is_open is the single source of
+// truth for buffer visibility — a self-JOIN opens it, and PART/KICK/join-error and
+// CloseChannel close it — so Close/Leave actually drop the pane even while you are
+// still a member. (Roster-based visibility is deliberately NOT used here: it would
+// keep a joined-but-closed channel pinned to the sidebar, which is the bug where
+// "Close Channel" appeared to do nothing. The roster-inclusive storage.GetOpenChannels
+// still backs the reconnect rejoin path in client.channelsToJoin.)
 func (a *App) GetOpenChannels(networkID int64) ([]storage.Channel, error) {
-	network, err := a.storage.GetNetwork(networkID)
+	all, err := a.storage.GetChannels(networkID)
 	if err != nil {
-		return nil, fmt.Errorf("network not found: %w", err)
+		return nil, err
 	}
-	if network.Nickname == "" {
-		return a.storage.GetChannels(networkID)
+	open := make([]storage.Channel, 0, len(all))
+	for _, ch := range all {
+		if ch.IsOpen {
+			open = append(open, ch)
+		}
 	}
-	return a.storage.GetOpenChannels(networkID, network.Nickname)
+	return open, nil
 }
 
 // GetChannelIDByName retrieves a channel ID by network ID and channel name
