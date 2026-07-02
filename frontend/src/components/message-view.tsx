@@ -1,5 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, useMemo, useCallback } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { storage } from '../../wailsjs/go/models';
+import { indexByMsgid, indexById } from '../lib/message-index';
 import { IRCFormattedText } from './irc-formatted-text';
 import { UserContextMenu } from './user-context-menu';
 import { useNicknameColors } from '../hooks/useNicknameColors';
@@ -12,7 +14,6 @@ import { CornerUpLeft, Hash } from 'lucide-react';
 import { buildMsgidIndex, resolveParent, quoteSnippet } from '../lib/reply';
 
 interface MessageViewProps {
-  messages: storage.Message[];
   networkId: number | null;
   selectedChannel?: string | null;
 }
@@ -28,8 +29,15 @@ type ConsolidatedMessage = storage.Message & {
 // DB row (a small autoincrement id) is loaded. Don't offer pinning on those rows.
 const OPTIMISTIC_ID_THRESHOLD = 1_000_000_000_000;
 
-export function MessageView({ messages, networkId, selectedChannel }: MessageViewProps) {
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+// A single shared time formatter (equivalent to toLocaleTimeString()'s default
+// "medium" style), reused across every row instead of re-resolving the locale
+// formatter per render.
+const TIME_FORMAT = new Intl.DateTimeFormat(undefined, { timeStyle: 'medium' });
+
+export function MessageView({ networkId, selectedChannel }: MessageViewProps) {
+  // Subscribe to the high-churn messages array here rather than in App (the root),
+  // so a new message re-renders only this component's subtree, not the whole app.
+  const messages = useNetworkStore((s) => s.messages);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [isNearBottom, setIsNearBottom] = useState(true);
   const prevMessagesLengthRef = useRef(0);
@@ -233,16 +241,34 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
   // Build a msgid→message index once per render for fast parent lookup.
   const msgidIndex = useMemo(() => buildMsgidIndex(messages), [messages]);
 
-  // Reply jump: scroll to a message row by msgid and flash it briefly.
-  // Returns true if the element was found and scrolled, false otherwise.
+  // Row indices for jumping under virtualization (off-screen rows aren't in the
+  // DOM, so we scroll the virtualizer to an index rather than querySelector-ing).
+  const rowIndexByMsgid = useMemo(() => indexByMsgid(processedMessages), [processedMessages]);
+  const rowIndexById = useMemo(() => indexById(processedMessages), [processedMessages]);
+
+  // Flash state is state-driven (not imperative classList) because a flashed row
+  // may be scrolled into existence by the virtualizer only after this fires.
+  const [flashMsgid, setFlashMsgid] = useState<string | null>(null);
+  const [flashPinId, setFlashPinId] = useState<number | null>(null);
+
+  const rowVirtualizer = useVirtualizer({
+    count: processedMessages.length,
+    getScrollElement: () => scrollContainerRef.current,
+    estimateSize: () => 44,
+    overscan: 14,
+    getItemKey: (i) => (processedMessages[i] as storage.Message).id,
+  });
+
+  // Reply jump: scroll to a message row by msgid and flash it briefly. Returns
+  // true if the row exists in the current buffer, false otherwise.
   const scrollToMsgid = useCallback((msgid: string): boolean => {
-    const el = scrollContainerRef.current?.querySelector<HTMLElement>(`[data-msgid="${CSS.escape(msgid)}"]`);
-    if (!el) return false;
-    el.scrollIntoView({ block: 'center' });
-    el.classList.add('msg-flash');
-    setTimeout(() => el.classList.remove('msg-flash'), 1200);
+    const idx = rowIndexByMsgid.get(msgid);
+    if (idx === undefined) return false;
+    rowVirtualizer.scrollToIndex(idx, { align: 'center' });
+    setFlashMsgid(msgid);
+    setTimeout(() => setFlashMsgid((cur) => (cur === msgid ? null : cur)), 1200);
     return true;
-  }, []);
+  }, [rowIndexByMsgid, rowVirtualizer]);
 
   const pendingScrollMsgid = useNetworkStore((s) => s.pendingScrollMsgid);
   const clearPendingScrollMsgid = useNetworkStore((s) => s.clearPendingScrollMsgid);
@@ -292,19 +318,18 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
   const reachedStartRef = useRef(false);
 
   const pinnedIds = useMemo(() => new Set(pinnedMessages.map((p) => p.id)), [pinnedMessages]);
-  // Map of message id -> row element, used to scroll/flash a specific message
-  // (there is no virtualization, so every row is in the DOM).
-  const messageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
 
   // Check if a message text contains the user's nickname as a whole word (case-insensitive)
+  // Build the mention matcher once per nick change, not once per message row.
+  const mentionRegex = useMemo(() => {
+    if (!currentNickname) return null;
+    const escaped = currentNickname.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(?:^|[^a-zA-Z0-9_])${escaped}(?:[^a-zA-Z0-9_]|$)`, 'i');
+  }, [currentNickname]);
+
   const isMention = useCallback(
-    (text: string): boolean => {
-      if (!currentNickname) return false;
-      const escaped = currentNickname.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const pattern = new RegExp(`(?:^|[^a-zA-Z0-9_])${escaped}(?:[^a-zA-Z0-9_]|$)`, 'i');
-      return pattern.test(text);
-    },
-    [currentNickname]
+    (text: string): boolean => mentionRegex?.test(text) ?? false,
+    [mentionRegex]
   );
 
   // Trigger color generation for users in messages by simulating message events
@@ -414,16 +439,16 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
   // Jump-to-message: scroll to the anchored message and flash it briefly.
   useEffect(() => {
     if (anchoredMessageId == null) return;
-    const el = messageRefs.current.get(anchoredMessageId);
-    if (!el) return;
-    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    el.classList.add('pin-flash');
+    const idx = rowIndexById.get(anchoredMessageId);
+    if (idx === undefined) return;
+    rowVirtualizer.scrollToIndex(idx, { align: 'center', behavior: 'smooth' });
+    setFlashPinId(anchoredMessageId);
     const timeout = setTimeout(() => {
-      el.classList.remove('pin-flash');
+      setFlashPinId((cur) => (cur === anchoredMessageId ? null : cur));
       clearAnchorFlash(); // clears the id but keeps viewMode 'anchored' (poll stays frozen)
     }, 1600);
     return () => clearTimeout(timeout);
-  }, [anchoredMessageId, messages, clearAnchorFlash]);
+  }, [anchoredMessageId, rowIndexById, rowVirtualizer, clearAnchorFlash]);
 
   // Keep the pane pinned to the latest message while "stuck to bottom".
   //
@@ -455,29 +480,26 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
       setIsNearBottom(true);
     }
 
-    if (stickToBottomRef.current) {
-      const container = scrollContainerRef.current;
-      if (container) {
-        const prevBehavior = container.style.scrollBehavior;
-        container.style.scrollBehavior = 'auto';
-        container.scrollTop = container.scrollHeight;
-        container.style.scrollBehavior = prevBehavior;
-      }
+    if (stickToBottomRef.current && processedMessages.length > 0) {
+      // Pin to the last row. scrollToIndex handles dynamic measurement (it
+      // re-scrolls as rows measure), so this lands at the true bottom regardless
+      // of the initial size estimate.
+      rowVirtualizer.scrollToIndex(processedMessages.length - 1, { align: 'end' });
     }
-  }, [selectedChannel, messages, viewMode]);
+  }, [selectedChannel, messages, viewMode, processedMessages.length, rowVirtualizer]);
 
   // Auto-scroll only if user is near bottom and there are new messages
   useEffect(() => {
     const hasNewMessages = messages.length > prevMessagesLengthRef.current;
     prevMessagesLengthRef.current = messages.length;
 
-    if (isNearBottom && hasNewMessages && viewMode !== 'anchored') {
-      // Small delay to ensure DOM is updated
+    if (isNearBottom && hasNewMessages && viewMode !== 'anchored' && processedMessages.length > 0) {
+      // Small delay to let the new row measure before scrolling to it.
       setTimeout(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        rowVirtualizer.scrollToIndex(processedMessages.length - 1, { align: 'end', behavior: 'smooth' });
       }, 50);
     }
-  }, [messages, isNearBottom, viewMode]);
+  }, [messages, isNearBottom, viewMode, processedMessages.length, rowVirtualizer]);
 
   // Scroll-to-bottom / return-to-live handler for the floating badge.
   const handleScrollToBottom = useCallback(() => {
@@ -487,7 +509,12 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
     }
     setTimeout(
       () => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        // The spacer div's height is the virtualizer's total size, so scrolling the
+        // container to its scrollHeight lands at the bottom; re-arming stickToBottom
+        // lets the layout effect refine to the exact last row as it measures.
+        const el = scrollContainerRef.current;
+        if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+        stickToBottomRef.current = true;
         setIsNearBottom(true);
       },
       wasAnchored ? 150 : 0
@@ -512,7 +539,7 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
     )}
     <div
       ref={scrollContainerRef}
-      className="h-full overflow-y-auto p-4 space-y-1"
+      className="h-full overflow-y-auto"
       onScroll={handleScroll}
       style={{ scrollBehavior: 'smooth' }}
       data-testid="message-list"
@@ -524,7 +551,10 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
           <div className="text-sm">Start chatting to see messages here!</div>
         </div>
       ) : (
-        processedMessages.map((msg, index) => {
+        <div style={{ height: `${rowVirtualizer.getTotalSize()}px`, width: '100%', position: 'relative' }}>
+        {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+          const index = virtualRow.index;
+          const msg = processedMessages[index];
           const consolidated = msg as ConsolidatedMessage;
           const isConsolidated = consolidated._consolidated === true;
           const isError = msg.message_type === 'error';
@@ -535,17 +565,28 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
           const isEven = index % 2 === 0;
           const isRegularMessage = !isError && !isWarning && !isStatus && !isCommand && !isSystemMessage;
           const hasMention = isRegularMessage && isMention(msg.message);
+          const isFlashing = !!msg.msgid && msg.msgid === flashMsgid;
+          const isPinFlashing = msg.id === flashPinId;
 
           return (
             <div
-              key={msg.id}
-              ref={(el) => {
-                if (el) messageRefs.current.set(msg.id, el);
-                else messageRefs.current.delete(msg.id);
+              key={virtualRow.key}
+              data-index={index}
+              ref={rowVirtualizer.measureElement}
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                transform: `translateY(${virtualRow.start}px)`,
+                paddingLeft: '1rem',
+                paddingRight: '1rem',
               }}
+            >
+            <div
               data-testid="message-item"
               data-msgid={msg.msgid || undefined}
-              className={`group flex flex-col py-1 px-2 rounded transition-colors ${
+              className={`group flex flex-col py-1 px-2 rounded transition-colors ${isFlashing ? 'msg-flash' : ''} ${isPinFlashing ? 'pin-flash' : ''} ${
                 hasMention
                   ? 'cc-mention border-l-2'
                   : isError
@@ -585,7 +626,7 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
                 <>
                   <span className={`text-sm font-semibold flex-shrink-0 ${isError ? 'text-destructive' : 'text-amber-500'}`}>⚠</span>
                   <span className="hidden sm:inline text-xs text-muted-foreground/70 flex-shrink-0 font-mono">
-                    {new Date(msg.timestamp).toLocaleTimeString()}
+                    {TIME_FORMAT.format(new Date(msg.timestamp))}
                   </span>
                   <span className={`text-sm flex-1 font-medium ${isError ? 'text-destructive' : 'text-amber-500'}`}>
                     {msg.message.replace(/^Error: /, '')}
@@ -594,7 +635,7 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
               ) : (
                 <>
                   <span className="hidden sm:inline text-xs text-muted-foreground/60 flex-shrink-0 font-mono">
-                    {new Date(msg.timestamp).toLocaleTimeString()}
+                    {TIME_FORMAT.format(new Date(msg.timestamp))}
                   </span>
                   {msg.user !== '*' && !isSystemMessage && (
                     <span
@@ -754,10 +795,11 @@ export function MessageView({ messages, networkId, selectedChannel }: MessageVie
               )}
               </div>
             </div>
+            </div>
           );
-        })
+        })}
+        </div>
       )}
-      <div ref={messagesEndRef} />
     </div>
 
       {showScrollBadge && (
