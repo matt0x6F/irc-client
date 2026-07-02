@@ -297,6 +297,25 @@ func (a *App) connectNetwork(config NetworkConfig, reconnect bool) error {
 		return fmt.Errorf("no servers provided")
 	}
 
+	// A reconnect is by definition for a network that already exists. If the
+	// row is gone the network was deleted mid-teardown — abort instead of
+	// falling into buildNetworkFromConfig's create-if-missing branch, which
+	// would resurrect the deleted network.
+	if reconnect {
+		found := false
+		if networks, err := a.storage.GetNetworks(); err == nil {
+			for _, n := range networks {
+				if n.Name == config.Name {
+					found = true
+					break
+				}
+			}
+		}
+		if !found {
+			return fmt.Errorf("reconnect aborted: network %q no longer exists", config.Name)
+		}
+	}
+
 	// Connecting must never mutate the stored auto_connect preference.
 	network, err := a.buildNetworkFromConfig(config, servers, false)
 	if err != nil {
@@ -1163,6 +1182,13 @@ func (a *App) DeleteNetwork(networkID int64) error {
 	client, exists := a.ircClients[networkID]
 	if exists {
 		delete(a.ircClients, networkID)
+		// Flag the teardown as deliberate, exactly like DisconnectNetwork: the
+		// Disconnect below fires EventConnectionLost, and without this marker
+		// handleConnectionLost treats it as an unexpected drop and reconnects —
+		// racing the row deletion and resurrecting the network via
+		// buildNetworkFromConfig's create-if-missing branch. A leaked marker is
+		// inert: the id is never reused (AUTOINCREMENT) once the row is gone.
+		a.intentionalDisconnect[networkID] = true
 	}
 	a.mu.Unlock()
 

@@ -3,6 +3,7 @@ package irc
 import (
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/matt0x6f/irc-client/internal/events"
 )
@@ -24,6 +25,20 @@ func (r *errorEventRecorder) count() int {
 	return len(r.events)
 }
 
+// waitForErrorCount polls for the expected event count: the bus delivers on a
+// separate dispatcher goroutine, so arrival is asynchronous.
+func waitForErrorCount(t *testing.T, r *errorEventRecorder, n int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if r.count() >= n {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("EventError emitted %d times, want %d", r.count(), n)
+}
+
 // A server-initiated ERROR (K-line, kill, link closing) is the only reason the
 // user ever gets for the disconnect that follows — surface it in the status
 // window and as an error event.
@@ -38,9 +53,7 @@ func TestHandleServerError_WritesReasonAndEmits(t *testing.T) {
 	if !hasStatusLine(msgs, "error", "Server closed the connection: Closing Link: 203.0.113.7 (K-Lined)") {
 		t.Fatalf("missing ERROR status line; got %+v", msgs)
 	}
-	if rec.count() != 1 {
-		t.Fatalf("EventError emitted %d times, want 1", rec.count())
-	}
+	waitForErrorCount(t, rec, 1)
 }
 
 // The server also answers our own QUIT with an ERROR ("Closing Link"). When we
@@ -64,6 +77,9 @@ func TestHandleServerError_SilentOnUserInitiatedQuit(t *testing.T) {
 			t.Fatalf("abandoned client wrote an ERROR line: %+v", m)
 		}
 	}
+	// Delivery is async: give a wrongly-emitted event time to arrive before
+	// declaring silence.
+	time.Sleep(100 * time.Millisecond)
 	if rec.count() != 0 {
 		t.Fatalf("EventError emitted %d times on own quit, want 0", rec.count())
 	}
