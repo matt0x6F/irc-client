@@ -94,20 +94,20 @@ type IRCClient struct {
 
 // ServerCapabilities stores parsed ISUPPORT information
 type ServerCapabilities struct {
-	Prefix       map[rune]rune // Map prefix char to mode char (e.g., '@' -> 'o', '+' -> 'v')
-	PrefixString string        // Raw PREFIX string (e.g., "(ov)@+")
-	ChanModes    string        // Raw CHANMODES string (e.g., "b,k,l,imnpst")
-	ChanModesA   map[rune]bool // Type A modes (list modes, e.g. b)
-	ChanModesB   map[rune]bool // Type B modes (always parameterized, e.g. k)
-	ChanModesC   map[rune]bool // Type C modes (parameterized only when set, e.g. l)
-	ChanModesD   map[rune]bool // Type D modes (boolean flags, e.g. imnpst)
-	ChanTypes    string        // CHANTYPES token: channel-prefix characters (e.g. "#&"); empty means use the default
-	CaseMapping  string        // CASEMAPPING token: nick/channel case-fold rule (e.g. "ascii", "rfc1459")
-	UTF8Only     bool          // UTF8ONLY token present: server accepts only UTF-8 (ratified)
-	ExtbanPrefix rune          // EXTBAN prefix char (e.g. '$'); 0 if none/unadvertised
-	ExtbanTypes  map[rune]bool // EXTBAN type letters (e.g. 'a' for account-extban)
-	Software     string        // Raw version token from RPL_MYINFO (004), e.g. "solanum-1.0"
-	BotModeChar  rune          // BOT=<letter> ISUPPORT: the user mode that marks a bot (e.g. 'B'); 0 if unadvertised
+	Prefix       map[rune]rune  // Map prefix char to mode char (e.g., '@' -> 'o', '+' -> 'v')
+	PrefixString string         // Raw PREFIX string (e.g., "(ov)@+")
+	ChanModes    string         // Raw CHANMODES string (e.g., "b,k,l,imnpst")
+	ChanModesA   map[rune]bool  // Type A modes (list modes, e.g. b)
+	ChanModesB   map[rune]bool  // Type B modes (always parameterized, e.g. k)
+	ChanModesC   map[rune]bool  // Type C modes (parameterized only when set, e.g. l)
+	ChanModesD   map[rune]bool  // Type D modes (boolean flags, e.g. imnpst)
+	ChanTypes    string         // CHANTYPES token: channel-prefix characters (e.g. "#&"); empty means use the default
+	CaseMapping  string         // CASEMAPPING token: nick/channel case-fold rule (e.g. "ascii", "rfc1459")
+	UTF8Only     bool           // UTF8ONLY token present: server accepts only UTF-8 (ratified)
+	ExtbanPrefix rune           // EXTBAN prefix char (e.g. '$'); 0 if none/unadvertised
+	ExtbanTypes  map[rune]bool  // EXTBAN type letters (e.g. 'a' for account-extban)
+	Software     string         // Raw version token from RPL_MYINFO (004), e.g. "solanum-1.0"
+	BotModeChar  rune           // BOT=<letter> ISUPPORT: the user mode that marks a bot (e.g. 'B'); 0 if unadvertised
 	LineLen      int            // LINELEN token: max outbound line length in bytes incl. CRLF; 0 = unadvertised (use the 512 default)
 	Modes        int            // MODES token: max mode changes per MODE command; 0 = unadvertised, -1 = advertised with no limit
 	StatusMsg    string         // STATUSMSG token: membership prefixes messages may target (e.g. "@+" for "@#chan")
@@ -4439,7 +4439,12 @@ func (c *IRCClient) SendMessageWithTags(target, message, replyMsgID, channelCont
 	return c.sendMessage(target, message, replyMsgID, channelContext)
 }
 
-// sendMessage is the shared core for SendMessage and SendMessageWithTags.
+// sendMessage is the shared core for SendMessage and SendMessageWithTags. A
+// message that exceeds the line budget (or contains newlines, e.g. a paste) is
+// split into multiple PRIVMSGs — see splitOutboundMessage — because the
+// library refuses to send an over-length line rather than truncating it. The
+// +draft/reply tag goes on the first chunk only (one reply, not N);
+// +draft/channel-context rides every chunk since it routes each one.
 func (c *IRCClient) sendMessage(target, message, replyMsgID, channelContext string) error {
 	c.mu.RLock()
 	if !c.connected {
@@ -4448,6 +4453,22 @@ func (c *IRCClient) sendMessage(target, message, replyMsgID, channelContext stri
 	}
 	c.mu.RUnlock()
 
+	for i, chunk := range splitOutboundMessage(message, c.maxMessageChunk(target)) {
+		chunkReply := ""
+		if i == 0 {
+			chunkReply = replyMsgID
+		}
+		if err := c.sendMessageChunk(target, chunk, chunkReply, channelContext); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// sendMessageChunk sends one wire-sized PRIVMSG: rate-limit, send, store the
+// local copy (unless echo-message will hand us the canonical one), and emit
+// the message.sent event.
+func (c *IRCClient) sendMessageChunk(target, message, replyMsgID, channelContext string) error {
 	// Wait for rate limiter before sending
 	c.rateLimiter.Wait()
 
