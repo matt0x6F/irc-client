@@ -74,6 +74,7 @@ type Querier interface {
 	UnpinMessage(ctx context.Context, messageID int64) error
 	UpdateChannelAutoJoin(ctx context.Context, arg UpdateChannelAutoJoinParams) error
 	UpdateChannelIsOpen(ctx context.Context, arg UpdateChannelIsOpenParams) error
+	UpdateChannelKey(ctx context.Context, arg UpdateChannelKeyParams) error
 	UpdateChannelModes(ctx context.Context, arg UpdateChannelModesParams) error
 	UpdateChannelTopic(ctx context.Context, arg UpdateChannelTopicParams) error
 	// OR REPLACE so a rename that collides with an existing holder of the new nick

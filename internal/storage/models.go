@@ -66,6 +66,7 @@ type Channel struct {
 	Name      string     `db:"name" json:"name"`
 	Topic     string     `db:"topic" json:"topic"`
 	Modes     string     `db:"modes" json:"modes"`
+	Key       string     `db:"key" json:"-"` // channel key (+k) for rejoin; never serialized to the webview
 	AutoJoin  bool       `db:"auto_join" json:"auto_join"`
 	IsOpen    bool       `db:"is_open" json:"is_open"` // Dialog/pane is open (OPEN or JOINED state)
 	CreatedAt time.Time  `db:"created_at" json:"created_at"`

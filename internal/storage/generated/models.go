@@ -16,6 +16,7 @@ type Channel struct {
 	Name      string         `json:"name"`
 	Topic     sql.NullString `json:"topic"`
 	Modes     sql.NullString `json:"modes"`
+	Key       string         `json:"key"`
 	AutoJoin  bool           `json:"auto_join"`
 	IsOpen    bool           `json:"is_open"`
 	CreatedAt time.Time      `json:"created_at"`

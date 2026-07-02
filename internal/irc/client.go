@@ -90,25 +90,30 @@ type IRCClient struct {
 	nickCollisionNotified bool                   // True once we've told the user (one time) that the preferred nick was unavailable (guarded by mu)
 	pendingManualNick     string                 // Nick the user explicitly asked for via /nick and is awaiting; lets us surface a failure that the library's silent background reclaims would otherwise hide (guarded by mu)
 	reconnecting          bool                   // True when this connection is an auto-reconnect after an unexpected drop (guarded by mu)
+	pendingJoinKeys       map[string]string      // Case-folded channel -> key from a user-initiated JOIN, persisted when our JOIN echo confirms it worked (guarded by mu)
 }
 
 // ServerCapabilities stores parsed ISUPPORT information
 type ServerCapabilities struct {
-	Prefix       map[rune]rune // Map prefix char to mode char (e.g., '@' -> 'o', '+' -> 'v')
-	PrefixString string        // Raw PREFIX string (e.g., "(ov)@+")
-	ChanModes    string        // Raw CHANMODES string (e.g., "b,k,l,imnpst")
-	ChanModesA   map[rune]bool // Type A modes (list modes, e.g. b)
-	ChanModesB   map[rune]bool // Type B modes (always parameterized, e.g. k)
-	ChanModesC   map[rune]bool // Type C modes (parameterized only when set, e.g. l)
-	ChanModesD   map[rune]bool // Type D modes (boolean flags, e.g. imnpst)
-	ChanTypes    string        // CHANTYPES token: channel-prefix characters (e.g. "#&"); empty means use the default
-	CaseMapping  string        // CASEMAPPING token: nick/channel case-fold rule (e.g. "ascii", "rfc1459")
-	UTF8Only     bool          // UTF8ONLY token present: server accepts only UTF-8 (ratified)
-	ExtbanPrefix rune          // EXTBAN prefix char (e.g. '$'); 0 if none/unadvertised
-	ExtbanTypes  map[rune]bool // EXTBAN type letters (e.g. 'a' for account-extban)
-	Software     string        // Raw version token from RPL_MYINFO (004), e.g. "solanum-1.0"
-	BotModeChar  rune          // BOT=<letter> ISUPPORT: the user mode that marks a bot (e.g. 'B'); 0 if unadvertised
-	mu           sync.RWMutex  // Mutex for thread-safe access
+	Prefix       map[rune]rune  // Map prefix char to mode char (e.g., '@' -> 'o', '+' -> 'v')
+	PrefixString string         // Raw PREFIX string (e.g., "(ov)@+")
+	ChanModes    string         // Raw CHANMODES string (e.g., "b,k,l,imnpst")
+	ChanModesA   map[rune]bool  // Type A modes (list modes, e.g. b)
+	ChanModesB   map[rune]bool  // Type B modes (always parameterized, e.g. k)
+	ChanModesC   map[rune]bool  // Type C modes (parameterized only when set, e.g. l)
+	ChanModesD   map[rune]bool  // Type D modes (boolean flags, e.g. imnpst)
+	ChanTypes    string         // CHANTYPES token: channel-prefix characters (e.g. "#&"); empty means use the default
+	CaseMapping  string         // CASEMAPPING token: nick/channel case-fold rule (e.g. "ascii", "rfc1459")
+	UTF8Only     bool           // UTF8ONLY token present: server accepts only UTF-8 (ratified)
+	ExtbanPrefix rune           // EXTBAN prefix char (e.g. '$'); 0 if none/unadvertised
+	ExtbanTypes  map[rune]bool  // EXTBAN type letters (e.g. 'a' for account-extban)
+	Software     string         // Raw version token from RPL_MYINFO (004), e.g. "solanum-1.0"
+	BotModeChar  rune           // BOT=<letter> ISUPPORT: the user mode that marks a bot (e.g. 'B'); 0 if unadvertised
+	LineLen      int            // LINELEN token: max outbound line length in bytes incl. CRLF; 0 = unadvertised (use the 512 default)
+	Modes        int            // MODES token: max mode changes per MODE command; 0 = unadvertised, -1 = advertised with no limit
+	StatusMsg    string         // STATUSMSG token: membership prefixes messages may target (e.g. "@+" for "@#chan")
+	TargMax      map[string]int // TARGMAX token: per-command (uppercase) max targets; -1 = advertised with no limit
+	mu           sync.RWMutex   // Mutex for thread-safe access
 }
 
 // classification builds an immutable snapshot for the mode parser, combining the
@@ -1613,6 +1618,41 @@ func (c *IRCClient) onDisconnect(e ircmsg.Message) {
 	logger.Log.Debug().Int64("network_id", c.networkID).Msg("Disconnect callback: finished processing disconnect")
 }
 
+// handleServerError handles the ERROR command a server sends just before it
+// closes the link (K-line, kill, shutdown). It is the only reason the user
+// ever gets for the disconnect that follows — onDisconnect sees a bare socket
+// close — so record it in the status window and emit an error event.
+//
+// The server also acknowledges our own QUIT with an ERROR ("Closing Link");
+// signalQuit sets abandoned before that reply can arrive, so an abandoned
+// client stays silent — a user-initiated disconnect is not an error.
+func (c *IRCClient) handleServerError(e ircmsg.Message) {
+	c.mu.RLock()
+	abandoned := c.abandoned
+	c.mu.RUnlock()
+	if abandoned {
+		return
+	}
+
+	text := "Server closed the connection"
+	if reason := strings.TrimSpace(strings.Join(e.Params, " ")); reason != "" {
+		text += ": " + reason
+	}
+	c.writeStatusLine("error", text)
+
+	c.eventBus.Emit(events.Event{
+		Type: EventError,
+		Data: map[string]interface{}{
+			"network":   c.network.Address,
+			"networkId": c.networkID,
+			"error":     text,
+			"code":      "ERROR",
+		},
+		Timestamp: time.Now(),
+		Source:    events.EventSourceIRC,
+	})
+}
+
 // setupHandlers sets up IRC event handlers
 func (c *IRCClient) setupHandlers() {
 	// Connection established
@@ -1620,6 +1660,9 @@ func (c *IRCClient) setupHandlers() {
 
 	// Connection lost
 	c.conn.AddDisconnectCallback(c.onDisconnect)
+
+	// Server-initiated disconnect reason (RFC 1459 §6.1 / RFC 2812 §3.7.4)
+	c.conn.AddCallback("ERROR", c.handleServerError)
 
 	// PRIVMSG received
 	c.conn.AddCallback("PRIVMSG", c.handlePrivmsg)
@@ -1676,6 +1719,9 @@ func (c *IRCClient) setupHandlers() {
 				c.storage.UpdateChannelIsOpen(ch.ID, true)
 				channelUpdated = true
 			}
+			// The join succeeded, so the key it was sent with (possibly none)
+			// is now the channel's truth — persist it for auto-rejoin (+k).
+			c.persistPendingJoinKey(channel, ch)
 		}
 
 		// Add user to channel user list (for all users, not just ourselves)
@@ -4223,8 +4269,16 @@ func (c *IRCClient) doAutoJoin() {
 	logger.Log.Info().Int("count", len(channels)).Bool("reconnect", reconnect).Msg("Joining channels")
 	for _, channel := range channels {
 		c.rateLimiter.Wait()
-		logger.Log.Info().Str("channel", channel.Name).Bool("reconnect", reconnect).Msg("Joining channel")
-		if err := c.conn.Join(channel.Name); err != nil {
+		logger.Log.Info().Str("channel", channel.Name).Bool("reconnect", reconnect).Bool("with_key", channel.Key != "").Msg("Joining channel")
+		// Keyed (+k) channels must be rejoined with their stored key or the
+		// server answers 475 (ERR_BADCHANNELKEY) and the session stays broken.
+		var err error
+		if channel.Key != "" {
+			err = c.conn.Send("JOIN", channel.Name, channel.Key)
+		} else {
+			err = c.conn.Join(channel.Name)
+		}
+		if err != nil {
 			logger.Log.Error().Err(err).Str("channel", channel.Name).Msg("Failed to join channel")
 		}
 	}
@@ -4435,7 +4489,12 @@ func (c *IRCClient) SendMessageWithTags(target, message, replyMsgID, channelCont
 	return c.sendMessage(target, message, replyMsgID, channelContext)
 }
 
-// sendMessage is the shared core for SendMessage and SendMessageWithTags.
+// sendMessage is the shared core for SendMessage and SendMessageWithTags. A
+// message that exceeds the line budget (or contains newlines, e.g. a paste) is
+// split into multiple PRIVMSGs — see splitOutboundMessage — because the
+// library refuses to send an over-length line rather than truncating it. The
+// +draft/reply tag goes on the first chunk only (one reply, not N);
+// +draft/channel-context rides every chunk since it routes each one.
 func (c *IRCClient) sendMessage(target, message, replyMsgID, channelContext string) error {
 	c.mu.RLock()
 	if !c.connected {
@@ -4444,6 +4503,22 @@ func (c *IRCClient) sendMessage(target, message, replyMsgID, channelContext stri
 	}
 	c.mu.RUnlock()
 
+	for i, chunk := range splitOutboundMessage(message, c.maxMessageChunk(target)) {
+		chunkReply := ""
+		if i == 0 {
+			chunkReply = replyMsgID
+		}
+		if err := c.sendMessageChunk(target, chunk, chunkReply, channelContext); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// sendMessageChunk sends one wire-sized PRIVMSG: rate-limit, send, store the
+// local copy (unless echo-message will hand us the canonical one), and emit
+// the message.sent event.
+func (c *IRCClient) sendMessageChunk(target, message, replyMsgID, channelContext string) error {
 	// Wait for rate limiter before sending
 	c.rateLimiter.Wait()
 
@@ -4616,6 +4691,15 @@ func (c *IRCClient) channelsToJoin(reconnect bool) ([]storage.Channel, error) {
 
 // JoinChannel joins an IRC channel
 func (c *IRCClient) JoinChannel(channel string) error {
+	return c.JoinChannelWithKey(channel, "")
+}
+
+// JoinChannelWithKey joins an IRC channel, supplying the channel key (+k) when
+// one is given. The key is remembered as pending and only persisted to the
+// channel row once our own JOIN echo confirms it worked (see the JOIN handler),
+// so a wrong key is never stored. An empty key is recorded too: a successful
+// keyless join means the channel no longer needs one, clearing any stale key.
+func (c *IRCClient) JoinChannelWithKey(channel, key string) error {
 	// Validate channel name
 	if err := validation.ValidateChannelName(channel); err != nil {
 		return fmt.Errorf("invalid channel name: %w", err)
@@ -4633,13 +4717,61 @@ func (c *IRCClient) JoinChannel(channel string) error {
 		Str("channel", channel).
 		Str("network", c.network.Name).
 		Str("nick", c.network.Nickname).
+		Bool("with_key", key != "").
 		Msg("Sending JOIN command for channel")
-	if err := c.conn.Join(channel); err != nil {
-		logger.Log.Error().Err(err).Msg("Error from ircevent.Join")
+	var err error
+	if key != "" {
+		err = c.conn.Send("JOIN", channel, key)
+	} else {
+		err = c.conn.Join(channel)
+	}
+	if err != nil {
+		logger.Log.Error().Err(err).Msg("Error sending JOIN")
 		return err
 	}
+	c.recordPendingJoinKey(channel, key)
 	logger.Log.Info().Str("channel", channel).Msg("JOIN command sent successfully")
 	return nil
+}
+
+// recordPendingJoinKey remembers the key a user-initiated JOIN was sent with,
+// keyed by the case-folded channel name, until the JOIN echo confirms it.
+func (c *IRCClient) recordPendingJoinKey(channel, key string) {
+	folded := c.foldKey(channel)
+	c.mu.Lock()
+	if c.pendingJoinKeys == nil {
+		c.pendingJoinKeys = make(map[string]string)
+	}
+	c.pendingJoinKeys[folded] = key
+	c.mu.Unlock()
+}
+
+// takePendingJoinKey consumes the pending key for channel, if any.
+func (c *IRCClient) takePendingJoinKey(channel string) (string, bool) {
+	folded := c.foldKey(channel)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	key, ok := c.pendingJoinKeys[folded]
+	if ok {
+		delete(c.pendingJoinKeys, folded)
+	}
+	return key, ok
+}
+
+// persistPendingJoinKey writes the pending key for channel (if one was
+// recorded by JoinChannelWithKey) to the channel row, now that our own JOIN
+// echo proves the key was accepted. Auto-rejoin JOINs record no pending entry,
+// so they never disturb the stored key. Called from the JOIN handler.
+func (c *IRCClient) persistPendingJoinKey(channel string, ch *storage.Channel) {
+	key, ok := c.takePendingJoinKey(channel)
+	if !ok || ch == nil || ch.Key == key {
+		return
+	}
+	if err := c.storage.UpdateChannelKey(ch.ID, key); err != nil {
+		logger.Log.Error().Err(err).Str("channel", channel).Msg("Failed to persist channel key")
+		return
+	}
+	ch.Key = key
 }
 
 // PartChannel leaves an IRC channel
@@ -4793,6 +4925,49 @@ func (c *IRCClient) applyISUPPORTToken(param string) {
 			c.mu.Unlock()
 		}
 
+	case strings.HasPrefix(param, "LINELEN="):
+		// LINELEN=<n> (ergo extension): the server accepts lines up to n bytes
+		// instead of the RFC 1459 512. Outbound splitting reads this to size its
+		// chunks. Malformed or non-positive values are ignored so consumers keep
+		// falling back to the default.
+		if n, err := strconv.Atoi(param[len("LINELEN="):]); err == nil && n > 0 {
+			c.mu.Lock()
+			c.serverCapabilities.LineLen = n
+			c.mu.Unlock()
+		}
+
+	case strings.HasPrefix(param, "MODES="):
+		// MODES=<n>: max mode changes per MODE command. An empty value means the
+		// server imposes no limit, recorded as -1 to distinguish it from
+		// unadvertised (0).
+		value := param[len("MODES="):]
+		if value == "" {
+			c.mu.Lock()
+			c.serverCapabilities.Modes = -1
+			c.mu.Unlock()
+		} else if n, err := strconv.Atoi(value); err == nil && n > 0 {
+			c.mu.Lock()
+			c.serverCapabilities.Modes = n
+			c.mu.Unlock()
+		}
+
+	case strings.HasPrefix(param, "STATUSMSG="):
+		// STATUSMSG=<prefixes>: messages may be addressed to a membership subset
+		// of a channel by prefixing the target (e.g. "@#chan" for ops only).
+		statusMsg := param[len("STATUSMSG="):]
+		c.mu.Lock()
+		c.serverCapabilities.StatusMsg = statusMsg
+		c.mu.Unlock()
+
+	case strings.HasPrefix(param, "TARGMAX="):
+		// TARGMAX=<cmd>:<n>,...: per-command cap on targets in one command. An
+		// entry with an empty limit means that command has no target limit (-1).
+		if targMax := parseTargMax(param[len("TARGMAX="):]); len(targMax) > 0 {
+			c.mu.Lock()
+			c.serverCapabilities.TargMax = targMax
+			c.mu.Unlock()
+		}
+
 	case strings.HasPrefix(param, "CHANMODES="):
 		chanModesValue := param[len("CHANMODES="):]
 		a, b, cc, d := classifyChanModes(chanModesValue)
@@ -4818,6 +4993,28 @@ func (c *IRCClient) applyISUPPORTToken(param string) {
 		c.monitorLimit = limit
 		c.mu.Unlock()
 	}
+}
+
+// parseTargMax parses a TARGMAX ISUPPORT value ("PRIVMSG:4,NOTICE:4,JOIN:")
+// into a per-command target cap. Commands are folded to uppercase; an empty
+// limit means the command has no target cap and is recorded as -1. Entries
+// without a colon or with a non-numeric limit are skipped.
+func parseTargMax(value string) map[string]int {
+	result := make(map[string]int)
+	for _, entry := range strings.Split(value, ",") {
+		cmd, limit, ok := strings.Cut(entry, ":")
+		if !ok || cmd == "" {
+			continue
+		}
+		if limit == "" {
+			result[strings.ToUpper(cmd)] = -1
+			continue
+		}
+		if n, err := strconv.Atoi(limit); err == nil && n > 0 {
+			result[strings.ToUpper(cmd)] = n
+		}
+	}
+	return result
 }
 
 // ExtbanInfo returns the advertised EXTBAN prefix as a string (e.g. "$", or empty
@@ -4912,6 +5109,9 @@ func (c *IRCClient) GetServerCapabilities() *ServerCapabilities {
 		UTF8Only:     c.serverCapabilities.UTF8Only,
 		ExtbanPrefix: c.serverCapabilities.ExtbanPrefix,
 		Software:     c.serverCapabilities.Software,
+		LineLen:      c.serverCapabilities.LineLen,
+		Modes:        c.serverCapabilities.Modes,
+		StatusMsg:    c.serverCapabilities.StatusMsg,
 	}
 
 	// Copy the prefix map
@@ -4924,6 +5124,14 @@ func (c *IRCClient) GetServerCapabilities() *ServerCapabilities {
 		cap.ExtbanTypes = make(map[rune]bool, len(c.serverCapabilities.ExtbanTypes))
 		for k, v := range c.serverCapabilities.ExtbanTypes {
 			cap.ExtbanTypes[k] = v
+		}
+	}
+
+	// Copy the per-command target caps
+	if c.serverCapabilities.TargMax != nil {
+		cap.TargMax = make(map[string]int, len(c.serverCapabilities.TargMax))
+		for k, v := range c.serverCapabilities.TargMax {
+			cap.TargMax[k] = v
 		}
 	}
 

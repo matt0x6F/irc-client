@@ -797,6 +797,16 @@ func (s *Storage) UpdateChannelModes(channelID int64, modes string) error {
 	return err
 }
 
+// UpdateChannelKey updates the channel key (+k) used to rejoin after a
+// reconnect. An empty key clears it.
+func (s *Storage) UpdateChannelKey(channelID int64, key string) error {
+	err := s.queries.UpdateChannelKey(context.Background(), db.UpdateChannelKeyParams{
+		Key: key,
+		ID:  channelID,
+	})
+	return err
+}
+
 // UpdateChannelAutoJoin updates the auto-join setting for a channel
 func (s *Storage) UpdateChannelAutoJoin(channelID int64, autoJoin bool) error {
 	err := s.queries.UpdateChannelAutoJoin(context.Background(), db.UpdateChannelAutoJoinParams{

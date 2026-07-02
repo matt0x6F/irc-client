@@ -55,6 +55,11 @@ func Migrate(db *sqlx.DB) error {
 		return fmt.Errorf("channel is_open migration failed: %w", err)
 	}
 
+	// Handle channel key field migration (+k rejoin support)
+	if err := migrateChannelKey(db); err != nil {
+		return fmt.Errorf("channel key migration failed: %w", err)
+	}
+
 	// Handle private message conversations table migration
 	if err := migratePrivateMessageConversations(db); err != nil {
 		return fmt.Errorf("private message conversations migration failed: %w", err)
@@ -500,6 +505,28 @@ func migrateChannelIsOpen(db *sqlx.DB) error {
 		}
 		// Set is_open=true for channels where user is currently a member (they should be open)
 		// This is a best-effort migration - we'll update based on actual join status
+	}
+
+	return nil
+}
+
+// migrateChannelKey adds the "key" column (channel key, +k) to the channels
+// table if it doesn't exist. The key is learned from our own JOIN and lets
+// auto-rejoin re-enter keyed channels after a reconnect.
+func migrateChannelKey(db *sqlx.DB) error {
+	var columnExists int
+	err := db.Get(&columnExists,
+		"SELECT COUNT(*) FROM pragma_table_info('channels') WHERE name='key'")
+	if err != nil {
+		return fmt.Errorf("failed to check for key column: %w", err)
+	}
+
+	if columnExists == 0 {
+		if _, err := db.Exec(`ALTER TABLE channels ADD COLUMN "key" TEXT NOT NULL DEFAULT ''`); err != nil {
+			if !strings.Contains(err.Error(), "duplicate column") {
+				return fmt.Errorf("failed to add key column: %w", err)
+			}
+		}
 	}
 
 	return nil

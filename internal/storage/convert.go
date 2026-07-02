@@ -152,6 +152,7 @@ func convertChannelFromDB(c db.Channel) Channel {
 		Name:      c.Name,
 		Topic:     convertNullString(c.Topic),
 		Modes:     convertNullString(c.Modes),
+		Key:       c.Key,
 		AutoJoin:  c.AutoJoin,
 		IsOpen:    c.IsOpen,
 		CreatedAt: c.CreatedAt,
@@ -166,6 +167,7 @@ func convertChannelToDBCreateParams(c *Channel) db.CreateChannelParams {
 	return db.CreateChannelParams{
 		NetworkID: c.NetworkID,
 		Name:      c.Name,
+		Key:       c.Key,
 		AutoJoin:  c.AutoJoin,
 		IsOpen:    c.IsOpen,
 		CreatedAt: c.CreatedAt,
