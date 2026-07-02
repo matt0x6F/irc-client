@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS channels (
     name TEXT NOT NULL,
     topic TEXT DEFAULT '',
     modes TEXT DEFAULT '',
+    "key" TEXT NOT NULL DEFAULT '', -- channel key (+k) learned from our own JOIN; used to rejoin after reconnect
     auto_join BOOLEAN NOT NULL DEFAULT 0,
     is_open BOOLEAN NOT NULL DEFAULT 0,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,

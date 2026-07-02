@@ -12,14 +12,15 @@ import (
 )
 
 const createChannel = `-- name: CreateChannel :one
-INSERT INTO channels (network_id, name, auto_join, is_open, created_at)
-VALUES (?, ?, ?, ?, ?)
-RETURNING id, network_id, name, topic, modes, auto_join, is_open, created_at, updated_at
+INSERT INTO channels (network_id, name, "key", auto_join, is_open, created_at)
+VALUES (?, ?, ?, ?, ?, ?)
+RETURNING id, network_id, name, topic, modes, "key", auto_join, is_open, created_at, updated_at
 `
 
 type CreateChannelParams struct {
 	NetworkID int64     `json:"network_id"`
 	Name      string    `json:"name"`
+	Key       string    `json:"key"`
 	AutoJoin  bool      `json:"auto_join"`
 	IsOpen    bool      `json:"is_open"`
 	CreatedAt time.Time `json:"created_at"`
@@ -29,6 +30,7 @@ func (q *Queries) CreateChannel(ctx context.Context, arg CreateChannelParams) (C
 	row := q.db.QueryRowContext(ctx, createChannel,
 		arg.NetworkID,
 		arg.Name,
+		arg.Key,
 		arg.AutoJoin,
 		arg.IsOpen,
 		arg.CreatedAt,
@@ -40,6 +42,7 @@ func (q *Queries) CreateChannel(ctx context.Context, arg CreateChannelParams) (C
 		&i.Name,
 		&i.Topic,
 		&i.Modes,
+		&i.Key,
 		&i.AutoJoin,
 		&i.IsOpen,
 		&i.CreatedAt,
@@ -49,7 +52,7 @@ func (q *Queries) CreateChannel(ctx context.Context, arg CreateChannelParams) (C
 }
 
 const getChannelByName = `-- name: GetChannelByName :one
-SELECT id, network_id, name, topic, modes, auto_join, is_open, created_at, updated_at FROM channels WHERE network_id = ? AND LOWER(name) = LOWER(?)
+SELECT id, network_id, name, topic, modes, "key", auto_join, is_open, created_at, updated_at FROM channels WHERE network_id = ? AND LOWER(name) = LOWER(?)
 `
 
 type GetChannelByNameParams struct {
@@ -66,6 +69,7 @@ func (q *Queries) GetChannelByName(ctx context.Context, arg GetChannelByNamePara
 		&i.Name,
 		&i.Topic,
 		&i.Modes,
+		&i.Key,
 		&i.AutoJoin,
 		&i.IsOpen,
 		&i.CreatedAt,
@@ -75,7 +79,7 @@ func (q *Queries) GetChannelByName(ctx context.Context, arg GetChannelByNamePara
 }
 
 const getChannels = `-- name: GetChannels :many
-SELECT id, network_id, name, topic, modes, auto_join, is_open, created_at, updated_at FROM channels WHERE network_id = ? ORDER BY name
+SELECT id, network_id, name, topic, modes, "key", auto_join, is_open, created_at, updated_at FROM channels WHERE network_id = ? ORDER BY name
 `
 
 func (q *Queries) GetChannels(ctx context.Context, networkID int64) ([]Channel, error) {
@@ -93,6 +97,7 @@ func (q *Queries) GetChannels(ctx context.Context, networkID int64) ([]Channel, 
 			&i.Name,
 			&i.Topic,
 			&i.Modes,
+			&i.Key,
 			&i.AutoJoin,
 			&i.IsOpen,
 			&i.CreatedAt,
@@ -112,7 +117,7 @@ func (q *Queries) GetChannels(ctx context.Context, networkID int64) ([]Channel, 
 }
 
 const getJoinedChannels = `-- name: GetJoinedChannels :many
-SELECT DISTINCT c.id, c.network_id, c.name, c.topic, c.modes, c.auto_join, c.is_open, c.created_at, c.updated_at 
+SELECT DISTINCT c.id, c.network_id, c.name, c.topic, c.modes, c."key", c.auto_join, c.is_open, c.created_at, c.updated_at 
 FROM channels c
 INNER JOIN channel_users cu ON c.id = cu.channel_id
 WHERE c.network_id = ? AND LOWER(cu.nickname) = LOWER(?)
@@ -139,6 +144,7 @@ func (q *Queries) GetJoinedChannels(ctx context.Context, arg GetJoinedChannelsPa
 			&i.Name,
 			&i.Topic,
 			&i.Modes,
+			&i.Key,
 			&i.AutoJoin,
 			&i.IsOpen,
 			&i.CreatedAt,
@@ -158,7 +164,7 @@ func (q *Queries) GetJoinedChannels(ctx context.Context, arg GetJoinedChannelsPa
 }
 
 const getOpenChannels = `-- name: GetOpenChannels :many
-SELECT DISTINCT c.id, c.network_id, c.name, c.topic, c.modes, c.auto_join, c.is_open, c.created_at, c.updated_at 
+SELECT DISTINCT c.id, c.network_id, c.name, c.topic, c.modes, c."key", c.auto_join, c.is_open, c.created_at, c.updated_at 
 FROM channels c
 LEFT JOIN channel_users cu ON c.id = cu.channel_id AND LOWER(cu.nickname) = LOWER(?)
 WHERE c.network_id = ? AND (c.is_open = 1 OR cu.nickname IS NOT NULL)
@@ -185,6 +191,7 @@ func (q *Queries) GetOpenChannels(ctx context.Context, arg GetOpenChannelsParams
 			&i.Name,
 			&i.Topic,
 			&i.Modes,
+			&i.Key,
 			&i.AutoJoin,
 			&i.IsOpen,
 			&i.CreatedAt,
@@ -228,6 +235,20 @@ type UpdateChannelIsOpenParams struct {
 
 func (q *Queries) UpdateChannelIsOpen(ctx context.Context, arg UpdateChannelIsOpenParams) error {
 	_, err := q.db.ExecContext(ctx, updateChannelIsOpen, arg.IsOpen, arg.ID)
+	return err
+}
+
+const updateChannelKey = `-- name: UpdateChannelKey :exec
+UPDATE channels SET "key" = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+`
+
+type UpdateChannelKeyParams struct {
+	Key string `json:"key"`
+	ID  int64  `json:"id"`
+}
+
+func (q *Queries) UpdateChannelKey(ctx context.Context, arg UpdateChannelKeyParams) error {
+	_, err := q.db.ExecContext(ctx, updateChannelKey, arg.Key, arg.ID)
 	return err
 }
 

@@ -1,6 +1,6 @@
 -- name: CreateChannel :one
-INSERT INTO channels (network_id, name, auto_join, is_open, created_at)
-VALUES (?, ?, ?, ?, ?)
+INSERT INTO channels (network_id, name, "key", auto_join, is_open, created_at)
+VALUES (?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: GetChannels :many
@@ -21,6 +21,9 @@ UPDATE channels SET topic = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?;
 
 -- name: UpdateChannelModes :exec
 UPDATE channels SET modes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?;
+
+-- name: UpdateChannelKey :exec
+UPDATE channels SET "key" = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?;
 
 -- name: UpdateChannelAutoJoin :exec
 UPDATE channels SET auto_join = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?;

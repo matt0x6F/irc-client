@@ -117,11 +117,14 @@ func buildBuiltinRegistry() *CommandRegistry {
 
 func cmdJoin(a *App, client *irc.IRCClient, networkID int64, args []string) error {
 	channelName := args[0]
+	// Route the key through JoinChannelWithKey (not raw passthrough) so a
+	// successful keyed join persists the key for auto-rejoin after reconnect.
+	key := ""
 	if len(args) >= 2 {
-		return client.SendRawCommand(fmt.Sprintf("JOIN %s %s", channelName, args[1]))
+		key = args[1]
 	}
 	logger.Log.Info().Str("channel", channelName).Msg("Joining channel")
-	if err := client.JoinChannel(channelName); err != nil {
+	if err := client.JoinChannelWithKey(channelName, key); err != nil {
 		logger.Log.Error().Err(err).Str("channel", channelName).Msg("Error joining channel")
 		return err
 	}

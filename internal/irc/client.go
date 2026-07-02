@@ -90,6 +90,7 @@ type IRCClient struct {
 	nickCollisionNotified bool                   // True once we've told the user (one time) that the preferred nick was unavailable (guarded by mu)
 	pendingManualNick     string                 // Nick the user explicitly asked for via /nick and is awaiting; lets us surface a failure that the library's silent background reclaims would otherwise hide (guarded by mu)
 	reconnecting          bool                   // True when this connection is an auto-reconnect after an unexpected drop (guarded by mu)
+	pendingJoinKeys       map[string]string      // Case-folded channel -> key from a user-initiated JOIN, persisted when our JOIN echo confirms it worked (guarded by mu)
 }
 
 // ServerCapabilities stores parsed ISUPPORT information
@@ -1718,6 +1719,9 @@ func (c *IRCClient) setupHandlers() {
 				c.storage.UpdateChannelIsOpen(ch.ID, true)
 				channelUpdated = true
 			}
+			// The join succeeded, so the key it was sent with (possibly none)
+			// is now the channel's truth — persist it for auto-rejoin (+k).
+			c.persistPendingJoinKey(channel, ch)
 		}
 
 		// Add user to channel user list (for all users, not just ourselves)
@@ -4265,8 +4269,16 @@ func (c *IRCClient) doAutoJoin() {
 	logger.Log.Info().Int("count", len(channels)).Bool("reconnect", reconnect).Msg("Joining channels")
 	for _, channel := range channels {
 		c.rateLimiter.Wait()
-		logger.Log.Info().Str("channel", channel.Name).Bool("reconnect", reconnect).Msg("Joining channel")
-		if err := c.conn.Join(channel.Name); err != nil {
+		logger.Log.Info().Str("channel", channel.Name).Bool("reconnect", reconnect).Bool("with_key", channel.Key != "").Msg("Joining channel")
+		// Keyed (+k) channels must be rejoined with their stored key or the
+		// server answers 475 (ERR_BADCHANNELKEY) and the session stays broken.
+		var err error
+		if channel.Key != "" {
+			err = c.conn.Send("JOIN", channel.Name, channel.Key)
+		} else {
+			err = c.conn.Join(channel.Name)
+		}
+		if err != nil {
 			logger.Log.Error().Err(err).Str("channel", channel.Name).Msg("Failed to join channel")
 		}
 	}
@@ -4679,6 +4691,15 @@ func (c *IRCClient) channelsToJoin(reconnect bool) ([]storage.Channel, error) {
 
 // JoinChannel joins an IRC channel
 func (c *IRCClient) JoinChannel(channel string) error {
+	return c.JoinChannelWithKey(channel, "")
+}
+
+// JoinChannelWithKey joins an IRC channel, supplying the channel key (+k) when
+// one is given. The key is remembered as pending and only persisted to the
+// channel row once our own JOIN echo confirms it worked (see the JOIN handler),
+// so a wrong key is never stored. An empty key is recorded too: a successful
+// keyless join means the channel no longer needs one, clearing any stale key.
+func (c *IRCClient) JoinChannelWithKey(channel, key string) error {
 	// Validate channel name
 	if err := validation.ValidateChannelName(channel); err != nil {
 		return fmt.Errorf("invalid channel name: %w", err)
@@ -4696,13 +4717,61 @@ func (c *IRCClient) JoinChannel(channel string) error {
 		Str("channel", channel).
 		Str("network", c.network.Name).
 		Str("nick", c.network.Nickname).
+		Bool("with_key", key != "").
 		Msg("Sending JOIN command for channel")
-	if err := c.conn.Join(channel); err != nil {
-		logger.Log.Error().Err(err).Msg("Error from ircevent.Join")
+	var err error
+	if key != "" {
+		err = c.conn.Send("JOIN", channel, key)
+	} else {
+		err = c.conn.Join(channel)
+	}
+	if err != nil {
+		logger.Log.Error().Err(err).Msg("Error sending JOIN")
 		return err
 	}
+	c.recordPendingJoinKey(channel, key)
 	logger.Log.Info().Str("channel", channel).Msg("JOIN command sent successfully")
 	return nil
+}
+
+// recordPendingJoinKey remembers the key a user-initiated JOIN was sent with,
+// keyed by the case-folded channel name, until the JOIN echo confirms it.
+func (c *IRCClient) recordPendingJoinKey(channel, key string) {
+	folded := c.foldKey(channel)
+	c.mu.Lock()
+	if c.pendingJoinKeys == nil {
+		c.pendingJoinKeys = make(map[string]string)
+	}
+	c.pendingJoinKeys[folded] = key
+	c.mu.Unlock()
+}
+
+// takePendingJoinKey consumes the pending key for channel, if any.
+func (c *IRCClient) takePendingJoinKey(channel string) (string, bool) {
+	folded := c.foldKey(channel)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	key, ok := c.pendingJoinKeys[folded]
+	if ok {
+		delete(c.pendingJoinKeys, folded)
+	}
+	return key, ok
+}
+
+// persistPendingJoinKey writes the pending key for channel (if one was
+// recorded by JoinChannelWithKey) to the channel row, now that our own JOIN
+// echo proves the key was accepted. Auto-rejoin JOINs record no pending entry,
+// so they never disturb the stored key. Called from the JOIN handler.
+func (c *IRCClient) persistPendingJoinKey(channel string, ch *storage.Channel) {
+	key, ok := c.takePendingJoinKey(channel)
+	if !ok || ch == nil || ch.Key == key {
+		return
+	}
+	if err := c.storage.UpdateChannelKey(ch.ID, key); err != nil {
+		logger.Log.Error().Err(err).Str("channel", channel).Msg("Failed to persist channel key")
+		return
+	}
+	ch.Key = key
 }
 
 // PartChannel leaves an IRC channel
