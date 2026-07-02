@@ -1617,6 +1617,41 @@ func (c *IRCClient) onDisconnect(e ircmsg.Message) {
 	logger.Log.Debug().Int64("network_id", c.networkID).Msg("Disconnect callback: finished processing disconnect")
 }
 
+// handleServerError handles the ERROR command a server sends just before it
+// closes the link (K-line, kill, shutdown). It is the only reason the user
+// ever gets for the disconnect that follows — onDisconnect sees a bare socket
+// close — so record it in the status window and emit an error event.
+//
+// The server also acknowledges our own QUIT with an ERROR ("Closing Link");
+// signalQuit sets abandoned before that reply can arrive, so an abandoned
+// client stays silent — a user-initiated disconnect is not an error.
+func (c *IRCClient) handleServerError(e ircmsg.Message) {
+	c.mu.RLock()
+	abandoned := c.abandoned
+	c.mu.RUnlock()
+	if abandoned {
+		return
+	}
+
+	text := "Server closed the connection"
+	if reason := strings.TrimSpace(strings.Join(e.Params, " ")); reason != "" {
+		text += ": " + reason
+	}
+	c.writeStatusLine("error", text)
+
+	c.eventBus.Emit(events.Event{
+		Type: EventError,
+		Data: map[string]interface{}{
+			"network":   c.network.Address,
+			"networkId": c.networkID,
+			"error":     text,
+			"code":      "ERROR",
+		},
+		Timestamp: time.Now(),
+		Source:    events.EventSourceIRC,
+	})
+}
+
 // setupHandlers sets up IRC event handlers
 func (c *IRCClient) setupHandlers() {
 	// Connection established
@@ -1624,6 +1659,9 @@ func (c *IRCClient) setupHandlers() {
 
 	// Connection lost
 	c.conn.AddDisconnectCallback(c.onDisconnect)
+
+	// Server-initiated disconnect reason (RFC 1459 §6.1 / RFC 2812 §3.7.4)
+	c.conn.AddCallback("ERROR", c.handleServerError)
 
 	// PRIVMSG received
 	c.conn.AddCallback("PRIVMSG", c.handlePrivmsg)
