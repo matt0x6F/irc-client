@@ -61,3 +61,77 @@ func TestCloseChannelHidesBufferWithoutClient(t *testing.T) {
 		t.Fatal("expected is_open=false after CloseChannel; channel buffer still open")
 	}
 }
+
+// Closing a channel you are still joined to must drop it from the sidebar list
+// (GetOpenChannels), not just flip is_open. A real JOIN records you in the
+// channel_users roster, so this exercises the same state the UI sees.
+func TestCloseChannelRemovesJoinedChannelFromSidebar(t *testing.T) {
+	a := newChannelCloseTestApp(t)
+	now := time.Now()
+
+	net := &storage.Network{
+		Name:      "Test",
+		Address:   "irc.example.org",
+		Port:      6697,
+		Nickname:  "tester",
+		Username:  "tester",
+		Realname:  "Tester",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := a.storage.CreateNetwork(net); err != nil {
+		t.Fatalf("CreateNetwork: %v", err)
+	}
+
+	ch := &storage.Channel{NetworkID: net.ID, Name: "#cascade", IsOpen: true, CreatedAt: now}
+	if err := a.storage.CreateChannel(ch); err != nil {
+		t.Fatalf("CreateChannel: %v", err)
+	}
+	stored, err := a.storage.GetChannelByName(net.ID, "#cascade")
+	if err != nil {
+		t.Fatalf("GetChannelByName: %v", err)
+	}
+	// A self-JOIN adds us to the roster, exactly like client.handleJoin does.
+	if err := a.storage.AddChannelUser(stored.ID, net.Nickname, ""); err != nil {
+		t.Fatalf("AddChannelUser: %v", err)
+	}
+
+	// Sanity: the channel is in the sidebar while open. GetOpenChannels is the
+	// bound method the frontend sidebar actually calls.
+	open, err := a.GetOpenChannels(net.ID)
+	if err != nil {
+		t.Fatalf("GetOpenChannels (before): %v", err)
+	}
+	if !containsChannel(open, "#cascade") {
+		t.Fatalf("expected #cascade in sidebar before close, got %v", channelNames(open))
+	}
+
+	if err := a.CloseChannel(net.ID, "#cascade"); err != nil {
+		t.Fatalf("CloseChannel: %v", err)
+	}
+
+	open, err = a.GetOpenChannels(net.ID)
+	if err != nil {
+		t.Fatalf("GetOpenChannels (after): %v", err)
+	}
+	if containsChannel(open, "#cascade") {
+		t.Fatalf("Close Channel did nothing: #cascade still in sidebar after close, got %v", channelNames(open))
+	}
+}
+
+func containsChannel(chans []storage.Channel, name string) bool {
+	for _, c := range chans {
+		if c.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func channelNames(chans []storage.Channel) []string {
+	names := make([]string, len(chans))
+	for i, c := range chans {
+		names[i] = c.Name
+	}
+	return names
+}
