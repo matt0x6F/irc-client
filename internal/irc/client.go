@@ -108,7 +108,11 @@ type ServerCapabilities struct {
 	ExtbanTypes  map[rune]bool // EXTBAN type letters (e.g. 'a' for account-extban)
 	Software     string        // Raw version token from RPL_MYINFO (004), e.g. "solanum-1.0"
 	BotModeChar  rune          // BOT=<letter> ISUPPORT: the user mode that marks a bot (e.g. 'B'); 0 if unadvertised
-	mu           sync.RWMutex  // Mutex for thread-safe access
+	LineLen      int            // LINELEN token: max outbound line length in bytes incl. CRLF; 0 = unadvertised (use the 512 default)
+	Modes        int            // MODES token: max mode changes per MODE command; 0 = unadvertised, -1 = advertised with no limit
+	StatusMsg    string         // STATUSMSG token: membership prefixes messages may target (e.g. "@+" for "@#chan")
+	TargMax      map[string]int // TARGMAX token: per-command (uppercase) max targets; -1 = advertised with no limit
+	mu           sync.RWMutex   // Mutex for thread-safe access
 }
 
 // classification builds an immutable snapshot for the mode parser, combining the
@@ -4793,6 +4797,49 @@ func (c *IRCClient) applyISUPPORTToken(param string) {
 			c.mu.Unlock()
 		}
 
+	case strings.HasPrefix(param, "LINELEN="):
+		// LINELEN=<n> (ergo extension): the server accepts lines up to n bytes
+		// instead of the RFC 1459 512. Outbound splitting reads this to size its
+		// chunks. Malformed or non-positive values are ignored so consumers keep
+		// falling back to the default.
+		if n, err := strconv.Atoi(param[len("LINELEN="):]); err == nil && n > 0 {
+			c.mu.Lock()
+			c.serverCapabilities.LineLen = n
+			c.mu.Unlock()
+		}
+
+	case strings.HasPrefix(param, "MODES="):
+		// MODES=<n>: max mode changes per MODE command. An empty value means the
+		// server imposes no limit, recorded as -1 to distinguish it from
+		// unadvertised (0).
+		value := param[len("MODES="):]
+		if value == "" {
+			c.mu.Lock()
+			c.serverCapabilities.Modes = -1
+			c.mu.Unlock()
+		} else if n, err := strconv.Atoi(value); err == nil && n > 0 {
+			c.mu.Lock()
+			c.serverCapabilities.Modes = n
+			c.mu.Unlock()
+		}
+
+	case strings.HasPrefix(param, "STATUSMSG="):
+		// STATUSMSG=<prefixes>: messages may be addressed to a membership subset
+		// of a channel by prefixing the target (e.g. "@#chan" for ops only).
+		statusMsg := param[len("STATUSMSG="):]
+		c.mu.Lock()
+		c.serverCapabilities.StatusMsg = statusMsg
+		c.mu.Unlock()
+
+	case strings.HasPrefix(param, "TARGMAX="):
+		// TARGMAX=<cmd>:<n>,...: per-command cap on targets in one command. An
+		// entry with an empty limit means that command has no target limit (-1).
+		if targMax := parseTargMax(param[len("TARGMAX="):]); len(targMax) > 0 {
+			c.mu.Lock()
+			c.serverCapabilities.TargMax = targMax
+			c.mu.Unlock()
+		}
+
 	case strings.HasPrefix(param, "CHANMODES="):
 		chanModesValue := param[len("CHANMODES="):]
 		a, b, cc, d := classifyChanModes(chanModesValue)
@@ -4818,6 +4865,28 @@ func (c *IRCClient) applyISUPPORTToken(param string) {
 		c.monitorLimit = limit
 		c.mu.Unlock()
 	}
+}
+
+// parseTargMax parses a TARGMAX ISUPPORT value ("PRIVMSG:4,NOTICE:4,JOIN:")
+// into a per-command target cap. Commands are folded to uppercase; an empty
+// limit means the command has no target cap and is recorded as -1. Entries
+// without a colon or with a non-numeric limit are skipped.
+func parseTargMax(value string) map[string]int {
+	result := make(map[string]int)
+	for _, entry := range strings.Split(value, ",") {
+		cmd, limit, ok := strings.Cut(entry, ":")
+		if !ok || cmd == "" {
+			continue
+		}
+		if limit == "" {
+			result[strings.ToUpper(cmd)] = -1
+			continue
+		}
+		if n, err := strconv.Atoi(limit); err == nil && n > 0 {
+			result[strings.ToUpper(cmd)] = n
+		}
+	}
+	return result
 }
 
 // ExtbanInfo returns the advertised EXTBAN prefix as a string (e.g. "$", or empty
@@ -4912,6 +4981,9 @@ func (c *IRCClient) GetServerCapabilities() *ServerCapabilities {
 		UTF8Only:     c.serverCapabilities.UTF8Only,
 		ExtbanPrefix: c.serverCapabilities.ExtbanPrefix,
 		Software:     c.serverCapabilities.Software,
+		LineLen:      c.serverCapabilities.LineLen,
+		Modes:        c.serverCapabilities.Modes,
+		StatusMsg:    c.serverCapabilities.StatusMsg,
 	}
 
 	// Copy the prefix map
@@ -4924,6 +4996,14 @@ func (c *IRCClient) GetServerCapabilities() *ServerCapabilities {
 		cap.ExtbanTypes = make(map[rune]bool, len(c.serverCapabilities.ExtbanTypes))
 		for k, v := range c.serverCapabilities.ExtbanTypes {
 			cap.ExtbanTypes[k] = v
+		}
+	}
+
+	// Copy the per-command target caps
+	if c.serverCapabilities.TargMax != nil {
+		cap.TargMax = make(map[string]int, len(c.serverCapabilities.TargMax))
+		for k, v := range c.serverCapabilities.TargMax {
+			cap.TargMax[k] = v
 		}
 	}
 
