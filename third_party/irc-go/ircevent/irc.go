@@ -127,6 +127,10 @@ func (irc *Connection) readLoop() {
 		case <-irc.end:
 			return
 		case msg := <-msgChan:
+			// Stamp inbound activity for the liveness watchdog. Any line counts
+			// (server PONG to our keepalive PING, or ordinary traffic); this is
+			// what keeps a healthy-but-quiet link from being force-closed.
+			irc.lastReadNano.Store(time.Now().UnixNano())
 			if irc.Debug {
 				irc.Log.Printf("<-- %s\n", strings.TrimSpace(msg))
 			}
@@ -263,6 +267,59 @@ func (irc *Connection) pingLoop() {
 		case <-ticker.C:
 			tick++
 			irc.processTick(tick)
+		}
+	}
+}
+
+// livenessWatchdog is a netpoller-independent backstop for the pingLoop.
+//
+// The pingLoop declares a dead link by observing its own unacked keepalive PING,
+// but that detection runs THROUGH the socket. On a half-open connection — the
+// network path is gone, no FIN/EOF is ever delivered, and (because the same dead
+// fd backs them) the read/write deadlines never fire — writeLoop can wedge in a
+// Write and the keepalive PING then blocks trying to enqueue onto a full write
+// queue, wedging the pingLoop goroutine itself before it can escalate. The read
+// is parked in a deadline-less ReadLine. Nothing reaches setError, `end` never
+// closes, and the connection zombies "connected" forever (observed in the field:
+// the fd held in TCP CLOSED for hours with the UI still showing Connected and no
+// DisconnectCallback ever firing).
+//
+// This watchdog shares none of that machinery. It is driven by a plain ticker (a
+// runtime timer, not the fd's netpoller) and, if no inbound line has arrived for
+// longer than KeepAlive+2*Timeout, force-closes the socket. Close() is a syscall
+// that does not depend on the netpoller, so it reliably unblocks both the parked
+// read and the stuck write, letting the normal teardown -> DisconnectCallback ->
+// reconnect path run. On a healthy link the server's PONG to our keepalive PING
+// (and any other traffic) refreshes the timestamp well within the deadline, so
+// this never fires spuriously — it only ever catches a genuinely silent socket
+// that the pingLoop failed to.
+func (irc *Connection) livenessWatchdog() {
+	defer irc.wg.Done()
+
+	// KeepAlive+2*Timeout leaves a full ping/pong round-trip of margin beyond the
+	// pingLoop's own ~KeepAlive+Timeout detection window: on a live link we read a
+	// PONG every KeepAlive, so silence this long means the socket is truly gone.
+	deadline := irc.KeepAlive + 2*irc.Timeout
+
+	ticker := time.NewTicker(irc.Timeout)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-irc.end:
+			return
+		case <-ticker.C:
+			last := irc.lastReadNano.Load()
+			if last == 0 {
+				continue // not yet seeded (shouldn't happen post-connect)
+			}
+			if time.Since(time.Unix(0, last)) > deadline {
+				// Force the socket closed from outside the wedged read/write
+				// loops; the resulting error drives setError -> end-close ->
+				// runDisconnectCallbacks, exactly as a clean drop would.
+				_ = irc.ForceClose()
+				return
+			}
 		}
 	}
 }
@@ -728,7 +785,10 @@ func (irc *Connection) Connect() (err error) {
 	irc.running = true
 	irc.end = make(chan empty)
 	irc.pwrite = make(chan []byte, writeQueueSize)
-	irc.wg.Add(3)
+	// Seed liveness now so the watchdog measures silence from connect, not from
+	// the zero time (which would make it fire immediately).
+	irc.lastReadNano.Store(time.Now().UnixNano())
+	irc.wg.Add(4)
 	irc.capsChan = make(chan capResult, len(irc.RequestCaps))
 	irc.saslChan = make(chan saslResult, 1)
 	irc.saslBuffer = nil
@@ -748,6 +808,7 @@ func (irc *Connection) Connect() (err error) {
 	go irc.readLoop()
 	go irc.writeLoop()
 	go irc.pingLoop()
+	go irc.livenessWatchdog()
 
 	// now we have an open socket and goroutines; we need to clean up
 	// if there's a layer 7 failure
