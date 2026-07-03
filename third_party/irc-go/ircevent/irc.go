@@ -342,6 +342,27 @@ func (irc *Connection) Quit() {
 	irc.Send("QUIT", quitMessage)
 }
 
+// ForceClose closes the underlying socket directly, unblocking any goroutine
+// parked in a read or write on it. Unlike Quit — which only sends a QUIT line and
+// relies on the server (or the ping loop) to notice and close the link — this is
+// the one teardown that reliably frees a read parked in a deadline-less
+// reader.ReadLine on a dead socket. That is exactly the OS-sleep case: the TCP
+// connection is gone but the netpoller never delivers EOF for the stale fd, so
+// the read would otherwise block forever and the client would stay "connected"
+// over a corpse. The resulting read error flows through setError -> end-close ->
+// the normal disconnect path (runDisconnectCallbacks). Safe to call concurrently
+// with the read/write loops and idempotent: a second close on an already-closed
+// socket just returns an error, which callers may ignore.
+func (irc *Connection) ForceClose() error {
+	irc.stateMutex.Lock()
+	socket := irc.socket
+	irc.stateMutex.Unlock()
+	if socket == nil {
+		return nil
+	}
+	return socket.Close()
+}
+
 func (irc *Connection) sendInternal(b []byte) (err error) {
 	// XXX ensure that (end, pwrite) are from the same instantiation of Connect;
 	// invocations of this function from callbacks originating in readLoop

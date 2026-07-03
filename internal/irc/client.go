@@ -263,11 +263,20 @@ func (c *IRCClient) IsConnectedDirect() bool {
 // path: conn.Quit() -> DisconnectCallback -> EventConnectionLost ->
 // handleConnectionLost -> auto-reconnect. It is used by the system-wake hook to
 // recover promptly after sleep, where the socket is usually dead but not yet
-// detected by the library's ping loop. On a live connection that survived sleep
-// this sends a clean QUIT and reconnects; on a dead one the library declares the
-// QUIT unacknowledged after ConnectionReadTimeout and tears down. Liveness is the
-// library's responsibility (its PING/PONG keepalive), not an app-side timestamp;
-// this method only nudges a teardown, it never decides a connection is dead.
+// detected by the library's ping loop.
+//
+// Quit() alone is not enough after sleep. A connection killed while the machine
+// slept is a half-open corpse: the far end is gone but no FIN/EOF is ever
+// delivered, so the read loop stays parked in a deadline-less ReadLine and
+// Quit()'s QUIT line just vanishes into the dead socket. Nothing then fires the
+// DisconnectCallback, and the client is stranded reporting "Connected" over a
+// socket the kernel has already moved to CLOSED (observed as an overnight zombie
+// with the fd still held). So after signalling quit we ForceClose the socket
+// directly: closing the fd unblocks the parked read immediately, which raises a
+// read error and drives the normal teardown -> reconnect. On a live connection
+// that genuinely survived sleep this still sends a clean QUIT first and then
+// reconnects. Liveness remains the library's responsibility (its PING/PONG
+// keepalive); this only nudges a teardown, it never decides a connection is dead.
 func (c *IRCClient) ForceReconnect() {
 	c.mu.RLock()
 	networkID := c.networkID
@@ -278,6 +287,9 @@ func (c *IRCClient) ForceReconnect() {
 	}
 	logger.Log.Info().Int64("network_id", networkID).Msg("Wake: forcing reconnect")
 	c.conn.Quit()
+	if err := c.conn.ForceClose(); err != nil {
+		logger.Log.Debug().Err(err).Int64("network_id", networkID).Msg("Wake: force-close returned an error (socket likely already closed)")
+	}
 }
 
 // preferredNick is the nick the user configured and wants to hold. It matches

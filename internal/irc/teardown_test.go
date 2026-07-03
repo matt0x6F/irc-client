@@ -13,13 +13,14 @@ import (
 	"github.com/ergochat/irc-go/ircevent"
 )
 
-// newQuitAwarePipe wires an ircevent.Connection to a net.Pipe whose stub server
-// completes registration (001 + 376) and then, like a real IRC server, CLOSES
-// the connection as soon as it receives a QUIT. Closing the socket is what ends
-// the client's read loop; whether the library's Loop() then exits or
-// auto-reconnects is governed solely by its quit flag — which is the behavior
-// under test.
-func newQuitAwarePipe(t *testing.T) *ircevent.Connection {
+// newStubServerPipe wires an ircevent.Connection to a net.Pipe whose stub server
+// completes registration (001 + 376) and then keeps draining input so the
+// client's writes never block. closeOnQuit selects the far end's behavior when it
+// receives a QUIT: true models a real IRC server that drops the link (ending the
+// client read loop), false models a connection killed by OS sleep — a corpse that
+// never delivers EOF, so the client read parks forever until the socket is closed
+// locally.
+func newStubServerPipe(t *testing.T, closeOnQuit bool) *ircevent.Connection {
 	t.Helper()
 
 	serverConn, clientConn := net.Pipe()
@@ -48,9 +49,10 @@ func newQuitAwarePipe(t *testing.T) *ircevent.Connection {
 				_, _ = serverConn.Write([]byte(":irc.test.local 376 robodan :End of MOTD\r\n"))
 				sentNick, sentUser = false, false
 			}
-			// A real server drops the link on QUIT. That ends the client read
-			// loop; the library decides reconnect-vs-exit from its quit flag.
-			if strings.HasPrefix(trimmed, "QUIT") {
+			// A real server drops the link on QUIT (ending the client read loop;
+			// the library then decides reconnect-vs-exit from its quit flag). A
+			// sleep-killed socket never does — see closeOnQuit.
+			if closeOnQuit && strings.HasPrefix(trimmed, "QUIT") {
 				_ = serverConn.Close()
 				return
 			}
@@ -77,6 +79,15 @@ func newQuitAwarePipe(t *testing.T) *ircevent.Connection {
 		t.Fatalf("ircevent.Connection.Connect(): %v", err)
 	}
 	return conn
+}
+
+// newQuitAwarePipe wires a Connection to a stub server that, like a real IRC
+// server, CLOSES the connection as soon as it receives a QUIT. Closing the socket
+// is what ends the client's read loop; whether the library's Loop() then exits or
+// auto-reconnects is governed solely by its quit flag — the behavior under test.
+func newQuitAwarePipe(t *testing.T) *ircevent.Connection {
+	t.Helper()
+	return newStubServerPipe(t, true)
 }
 
 // TestDisconnectTerminatesLoopWithoutReconnect is the regression guard for the
