@@ -5,7 +5,7 @@ go 1.25.0
 require github.com/matt0x6f/irc-client/cascade v1.1.0
 
 require (
-	github.com/ergochat/irc-go v0.4.0
+	github.com/ergochat/irc-go v0.6.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/mattn/go-sqlite3 v1.14.33
@@ -35,5 +35,7 @@ require (
 )
 
 replace github.com/matt0x6f/irc-client/cascade => ./cascade
+
+replace github.com/ergochat/irc-go => ./third_party/irc-go
 
 // replace github.com/wailsapp/wails/v2 v2.10.2 => /Users/matt/go/pkg/mod

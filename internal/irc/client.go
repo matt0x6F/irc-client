@@ -1,7 +1,7 @@
 package irc
 
 import (
-	"encoding/base64"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -13,6 +13,7 @@ import (
 	"github.com/ergochat/irc-go/ircmsg"
 	"github.com/matt0x6f/irc-client/internal/constants"
 	"github.com/matt0x6f/irc-client/internal/events"
+	"github.com/matt0x6f/irc-client/internal/irc/sasl"
 	"github.com/matt0x6f/irc-client/internal/logger"
 	"github.com/matt0x6f/irc-client/internal/storage"
 	"github.com/matt0x6f/irc-client/internal/validation"
@@ -36,6 +37,33 @@ import (
 // explicit NAMES so the roster still builds (see the JOIN handler).
 var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "multi-prefix", "cap-notify", "away-notify", "account-notify", "extended-join", "chghost", "account-tag", "userhost-in-names", "setname", "invite-notify", "standard-replies", "labeled-response", "extended-monitor", "no-implicit-names"}
 
+// requestCapsForLibrary returns the caps the library should CAP REQ. It is
+// requestedCaps minus "sts" (informational metadata, never requested) and "sasl"
+// (the fork appends "sasl" itself when UseSASL is set). requestedCaps does not
+// currently contain "sts"; the filter is defensive.
+func requestCapsForLibrary() []string {
+	out := make([]string, 0, len(requestedCaps))
+	for _, c := range requestedCaps {
+		if c == "sts" || c == "sasl" {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// saslMechName is the mechanism name handed to the library's SASLMech field. It
+// must agree with the SASLMechanism value we set (the fork rejects a mismatch).
+func saslMechName(n *storage.Network) string {
+	if !n.SASLEnabled {
+		return ""
+	}
+	if n.SASLMechanism != nil && *n.SASLMechanism != "" {
+		return *n.SASLMechanism
+	}
+	return "PLAIN"
+}
+
 // IRCClient manages IRC connections
 type IRCClient struct {
 	conn                  *ircevent.Connection
@@ -48,15 +76,9 @@ type IRCClient struct {
 	abandoned             bool          // Sticky: this IRCClient is retired and must never re-register. Set on any drop (onDisconnect) and on explicit teardown (signalQuit); a later connect from the library Loop's own reconnect is then ignored by onConnect. The app recovers every drop with a fresh IRCClient, so an abandoned one is gone for good (guarded by mu)
 	loopDone              chan struct{} // Closed when the library's Loop() goroutine fully exits; lets teardown wait for a clean stop (guarded by mu)
 	saslEnabled           bool
-	saslMechanism         string
-	saslUsername          string
-	saslPassword          string
-	saslInProgress        bool
 	saslAuthenticated     bool
-	authFailed            bool // True when SASL was enabled but did not succeed this session (guarded by mu)
-	saslCapRequested      bool
-	saslCapAcknowledged   bool
-	scramState            *SCRAMState
+	authFailed            bool                   // True when SASL was enabled but did not succeed this session (guarded by mu)
+	saslConfigErr         error                  // Mechanism-construction error from NewIRCClient (unknown mechanism); surfaced by Connect() before dialing
 	namesInProgress       map[string]bool        // Track channels currently receiving NAMES list
 	namesMu               sync.Mutex             // Mutex for namesInProgress map
 	serverCapabilities    *ServerCapabilities    // Server capabilities from ISUPPORT
@@ -80,7 +102,6 @@ type IRCClient struct {
 	autoJoinAction        func()                 // What triggerAutoJoin runs once per connection; defaults to doAutoJoin (injectable for tests)
 	enabledCaps           map[string]bool        // IRCv3 capabilities granted by the server
 	chatHistoryMaxBatch   int                    // Max messages per CHATHISTORY request, from the chathistory=N cap value (0 = unknown, use default)
-	capNegotiationDone    bool                   // Whether CAP negotiation has finished
 	channelListItems      []ChannelListItem      // Temporary storage for LIST response
 	channelListMu         sync.Mutex             // Mutex for channelListItems
 	banLists              map[string][]BanEntry  // Per-channel ban entries collected between 367 and 368
@@ -735,26 +756,20 @@ func NewIRCClient(network *storage.Network, eventBus *events.EventBus, storage *
 	}
 
 	client := &IRCClient{
-		network:             network,
-		eventBus:            eventBus,
-		storage:             storage,
-		saslEnabled:         network.SASLEnabled,
-		saslMechanism:       saslMechanism,
-		saslUsername:        saslUsername,
-		saslPassword:        saslPassword,
-		saslInProgress:      false,
-		saslAuthenticated:   false,
-		saslCapRequested:    false,
-		saslCapAcknowledged: false,
-		namesInProgress:     make(map[string]bool),
-		whoisInProgress:     make(map[string]*WhoisInfo),
-		knownBots:           make(map[string]bool),
-		userMeta:            make(map[string]*UserMeta),
-		monitorStatus:       make(map[string]bool),
-		monitorArmed:        make(map[string]bool),
-		autoJoinOnce:        &sync.Once{},
-		enabledCaps:         make(map[string]bool),
-		banLists:            make(map[string][]BanEntry),
+		network:           network,
+		eventBus:          eventBus,
+		storage:           storage,
+		saslEnabled:       network.SASLEnabled,
+		saslAuthenticated: false,
+		namesInProgress:   make(map[string]bool),
+		whoisInProgress:   make(map[string]*WhoisInfo),
+		knownBots:         make(map[string]bool),
+		userMeta:          make(map[string]*UserMeta),
+		monitorStatus:     make(map[string]bool),
+		monitorArmed:      make(map[string]bool),
+		autoJoinOnce:      &sync.Once{},
+		enabledCaps:       make(map[string]bool),
+		banLists:          make(map[string][]BanEntry),
 		serverCapabilities: &ServerCapabilities{
 			Prefix:       make(map[rune]rune),
 			PrefixString: "",
@@ -774,14 +789,35 @@ func NewIRCClient(network *storage.Network, eventBus *events.EventBus, storage *
 		logger.Log.Debug().Str("network", network.Name).Msg("SASL disabled")
 	}
 
+	// Build the SASL mechanism for the library to drive. sasl.ForNetwork only
+	// errors on an unknown mechanism (a config mistake); stash it to surface from
+	// Connect() so NewIRCClient keeps its single-return signature.
+	var saslMech ircevent.SASLMechanism
+	if network.SASLEnabled {
+		if m, err := sasl.ForNetwork(saslMechanism, saslUsername, saslPassword); err != nil {
+			client.saslConfigErr = err // surfaced by Connect()
+		} else {
+			saslMech = m
+		}
+	}
+
 	// Create ircevent connection
 	client.conn = &ircevent.Connection{
-		Server:        fmt.Sprintf("%s:%d", network.Address, network.Port),
-		Nick:          network.Nickname,
-		User:          network.Username,
-		RealName:      network.Realname,
-		UseTLS:        network.TLS,
-		Password:      network.Password,
+		Server:   fmt.Sprintf("%s:%d", network.Address, network.Port),
+		Nick:     network.Nickname,
+		User:     network.Username,
+		RealName: network.Realname,
+		UseTLS:   network.TLS,
+		Password: network.Password,
+		// CAP negotiation and SASL are owned by the library: it runs CAP LS -> REQ
+		// -> AUTHENTICATE(mech) -> CAP END -> NICK/USER, holding registration until
+		// SASL completes and failing Connect() if it does not. RequestCaps excludes
+		// "sasl" (the fork appends it when UseSASL); SASLMech must agree with
+		// SASLMechanism.Name() or the fork rejects the config.
+		RequestCaps:   requestCapsForLibrary(),
+		UseSASL:       network.SASLEnabled,
+		SASLMech:      saslMechName(network),
+		SASLMechanism: saslMech,
 		ReconnectFreq: 0, // Disable automatic reconnection - we'll handle it manually
 		// Liveness detection is owned by the library's pingLoop: it sends a
 		// keepalive PING every KeepAlive and treats an unacked PING (within
@@ -1492,8 +1528,9 @@ func (c *IRCClient) handlePrivmsg(e ircmsg.Message) {
 }
 
 // onConnect is the library connect callback: it marks the client connected,
-// records the status line, kicks off IRCv3 capability negotiation, and announces
-// EventConnectionEstablished.
+// records the status line, and announces EventConnectionEstablished. IRCv3
+// capability negotiation and SASL are owned by the library and have already
+// completed (before registration) by the time this fires.
 func (c *IRCClient) onConnect(e ircmsg.Message) {
 	c.mu.Lock()
 	abandoned := c.abandoned
@@ -1504,8 +1541,8 @@ func (c *IRCClient) onConnect(e ircmsg.Message) {
 
 	// Ghost guard: we already signalled quit on this client, but the library Loop
 	// fired one last reconnect anyway (it doesn't re-check its quit flag after the
-	// reconnect delay). Refuse to participate — don't mark connected, negotiate
-	// CAP, write status, or announce Established. Re-issue Quit so the socket the
+	// reconnect delay). Refuse to participate — don't mark connected, write
+	// status, or announce Established. Re-issue Quit so the socket the
 	// Loop just opened is torn down promptly instead of lingering until the next
 	// iteration; the Loop then sees the quit flag and exits for good.
 	if abandoned {
@@ -1526,16 +1563,9 @@ func (c *IRCClient) onConnect(e ircmsg.Message) {
 	}
 	c.storage.WriteMessage(statusMsg)
 
-	// Always start IRCv3 capability negotiation
-	c.storage.WriteMessage(storage.Message{
-		NetworkID:   c.networkID,
-		ChannelID:   nil,
-		User:        "*",
-		Message:     "Starting IRCv3 capability negotiation (CAP LS 302)",
-		MessageType: "status",
-		Timestamp:   time.Now(),
-	})
-	c.conn.SendRaw("CAP LS 302")
+	// CAP negotiation and SASL already completed before this callback fired — the
+	// library owns them now and runs them before registration, so there is no
+	// manual "CAP LS 302" to send here.
 
 	// On connection established, restore channel state after restart
 	// Clear all channel_users entries since we're not actually joined anymore
@@ -2919,53 +2949,17 @@ func (c *IRCClient) setupHandlers() {
 					Timestamp:   time.Now(),
 				})
 
-				// A CAP LS can arrive twice: the initial pre-registration handshake
-				// and a redundant re-advertisement after registration (the connect
-				// callback re-sends CAP LS 302 on RPL_ENDOFMOTD). On the re-LS,
-				// negotiation is already done — treat it like CAP NEW: request only
-				// genuinely-new wanted caps, exclude SASL, and never re-send CAP END.
-				c.mu.RLock()
-				done := c.capNegotiationDone
-				toRequest := capsToRequest(allCaps, c.enabledCaps, c.saslEnabled && !done)
-				c.mu.RUnlock()
-
-				// Required SASL not on offer: abort rather than register unauthenticated.
-				if c.saslEnabled && !done && !contains(allCaps, "sasl") {
-					c.handleCapLSMissingSASL(allCaps)
-					return
-				}
-
-				if len(toRequest) > 0 {
-					reqStr := strings.Join(toRequest, " ")
-					c.storage.WriteMessage(storage.Message{
-						NetworkID:   c.networkID,
-						ChannelID:   nil,
-						User:        "*",
-						Message:     fmt.Sprintf("Requesting capabilities: %s", reqStr),
-						MessageType: "status",
-						Timestamp:   time.Now(),
-					})
-					c.conn.SendRaw("CAP REQ :" + reqStr)
-					if !done && c.saslEnabled && contains(allCaps, "sasl") {
-						c.saslCapRequested = true
-					}
-				} else if !done {
-					// Only the initial handshake ends with CAP END when we want
-					// nothing on offer; a post-registration re-LS just no-ops.
-					c.storage.WriteMessage(storage.Message{
-						NetworkID:   c.networkID,
-						ChannelID:   nil,
-						User:        "*",
-						Message:     "No requested capabilities supported, ending CAP negotiation",
-						MessageType: "status",
-						Timestamp:   time.Now(),
-					})
-					c.endCapNegotiation()
-				}
+				// Observation only: the library owns CAP REQ / CAP END and the
+				// SASL handshake. We read STS and chathistory-max from the LS above
+				// but never send protocol here. A missing "sasl" cap is handled by
+				// the library, which fails Connect() (surfaced in Connect() below).
 			}
 		case "ACK":
 			if len(e.Params) >= 3 {
 				acked := e.Params[2]
+				// Record acked caps so a post-registration CAP NEW ACK keeps
+				// enabledCaps current. The library owns the initial handshake's
+				// CAP REQ/END and SASL, so we drive no protocol here.
 				c.mu.Lock()
 				for _, ackedCap := range strings.Fields(acked) {
 					c.enabledCaps[ackedCap] = true
@@ -2980,54 +2974,23 @@ func (c *IRCClient) setupHandlers() {
 					MessageType: "status",
 					Timestamp:   time.Now(),
 				})
-
-				// Only the initial handshake ends with CAP END / starts SASL. A
-				// post-registration ACK (the server's reply to a CAP NEW request)
-				// just records the caps above — negotiation is already complete.
-				c.mu.RLock()
-				negotiationDone := c.capNegotiationDone
-				c.mu.RUnlock()
-				if !negotiationDone {
-					if contains(acked, "sasl") && c.saslEnabled {
-						c.saslCapAcknowledged = true
-						c.startSASLAuth()
-					} else {
-						c.endCapNegotiation()
-					}
-				}
 			}
 		case "NAK":
-			// A NAK during the initial handshake ends negotiation; a NAK for a
-			// post-registration CAP NEW request just means we don't get that cap.
-			c.mu.RLock()
-			negotiationDone := c.capNegotiationDone
-			saslRequired := c.saslEnabled
-			c.mu.RUnlock()
+			// Observation only: the library owns the initial handshake, so a NAK
+			// there (including a refused "sasl") is handled by it and fails
+			// Connect(). We just record the rejection for the status window.
 			rejected := ""
 			if len(e.Params) >= 3 {
 				rejected = e.Params[2]
-			}
-			msg := fmt.Sprintf("Capability request rejected (NAK): %s", rejected)
-			if !negotiationDone {
-				msg = "Capability request rejected (NAK), ending CAP negotiation"
 			}
 			c.storage.WriteMessage(storage.Message{
 				NetworkID:   c.networkID,
 				ChannelID:   nil,
 				User:        "*",
-				Message:     msg,
+				Message:     fmt.Sprintf("Capability request rejected (NAK): %s", rejected),
 				MessageType: "status",
 				Timestamp:   time.Now(),
 			})
-			if !negotiationDone {
-				// If the server refused the sasl cap and SASL is required, abort
-				// rather than register unauthenticated.
-				if saslRequired && contains(rejected, "sasl") {
-					c.handleSASLFailure("server refused SASL")
-				} else {
-					c.endCapNegotiation()
-				}
-			}
 		case "NEW":
 			if len(e.Params) >= 3 {
 				offered := e.Params[2]
@@ -3094,51 +3057,48 @@ func (c *IRCClient) setupHandlers() {
 		}
 	})
 
-	// SASL-specific handlers (always registered; no-op if SASL isn't in use)
-	c.conn.AddCallback("AUTHENTICATE", func(e ircmsg.Message) {
-		if !c.saslEnabled {
-			return
-		}
-		c.handleAUTHENTICATE(e)
-	})
+	// SASL numerics are observation-only now: the library drives AUTHENTICATE and
+	// tears the connection down on failure (failing Connect(), which sets
+	// AuthFailed — see Connect below). These callbacks only record status, emit
+	// the SASL events, and flag auth failure; they send no protocol (no CAP END,
+	// no QUIT). No AUTHENTICATE callback is registered — the fork owns it.
 
 	c.conn.AddCallback("900", func(e ircmsg.Message) { // RPL_LOGGEDIN
 		if !c.saslEnabled {
 			return
 		}
-		c.handleSASLSuccess()
+		c.observeSASLSuccess()
 	})
 	c.conn.AddCallback("903", func(e ircmsg.Message) { // RPL_SASLSUCCESS
 		if !c.saslEnabled {
 			return
 		}
-		c.handleSASLSuccess()
+		c.observeSASLSuccess()
 	})
 
-	c.conn.AddCallback("901", func(e ircmsg.Message) { c.handleLoggedOut() }) // RPL_LOGGEDOUT
-	c.conn.AddCallback("902", func(e ircmsg.Message) {                        // ERR_NICKLOCKED
+	c.conn.AddCallback("902", func(e ircmsg.Message) { // ERR_NICKLOCKED
 		if !c.saslEnabled {
 			return
 		}
-		c.handleSASLFailure("account locked")
+		c.observeSASLFailure("account locked")
 	})
 	c.conn.AddCallback("904", func(e ircmsg.Message) { // ERR_SASLFAIL
 		if !c.saslEnabled {
 			return
 		}
-		c.handleSASLFailure("invalid credentials")
+		c.observeSASLFailure("invalid credentials")
 	})
 	c.conn.AddCallback("905", func(e ircmsg.Message) { // ERR_SASLTOOLONG
 		if !c.saslEnabled {
 			return
 		}
-		c.handleSASLFailure("credentials too long")
+		c.observeSASLFailure("credentials too long")
 	})
 	c.conn.AddCallback("906", func(e ircmsg.Message) { // ERR_SASLABORTED
 		if !c.saslEnabled {
 			return
 		}
-		c.handleSASLFailure("authentication aborted")
+		c.observeSASLFailure("authentication aborted")
 	})
 
 	// ERR_NICKNAMEINUSE (433) - nick collision handling
@@ -4067,24 +4027,6 @@ func capValue(capabilities, cap string) (value string, present bool) {
 	return "", false
 }
 
-// endCapNegotiation marks the initial CAP handshake complete and sends CAP END.
-// Setting capNegotiationDone lets the ACK handler tell a registration ACK (which
-// must be followed by CAP END) apart from a post-registration ACK triggered by a
-// CAP NEW request (which must NOT send CAP END again).
-// It is idempotent: if CAP negotiation is already done it returns without sending
-// a second CAP END. This matters because RPL_LOGGEDIN (900) and RPL_SASLSUCCESS
-// (903) commonly both arrive and both call handleSASLSuccess -> endCapNegotiation.
-func (c *IRCClient) endCapNegotiation() {
-	c.mu.Lock()
-	if c.capNegotiationDone {
-		c.mu.Unlock()
-		return
-	}
-	c.capNegotiationDone = true
-	c.mu.Unlock()
-	c.conn.SendRaw("CAP END")
-}
-
 // capsToRequest returns the subset of requestedCaps that the server has offered
 // and we don't already have enabled. sasl is included only during the initial
 // handshake (includeSASL); CAP NEW never re-runs SASL, so callers pass false
@@ -4105,101 +4047,58 @@ func capsToRequest(offered string, enabled map[string]bool, includeSASL bool) []
 	return toRequest
 }
 
-// startSASLAuth initiates SASL authentication
-func (c *IRCClient) startSASLAuth() {
-	c.mu.Lock()
-	if c.saslInProgress {
-		c.mu.Unlock()
-		return
+// isSASLFailure reports whether a Connect() error should be treated as an
+// authentication failure. The library runs SASL inside Connect(); a real 904
+// credential rejection surfaces as a *dynamic* error carrying the server's text,
+// NOT the ircevent.SASLFailed sentinel (that sentinel is only the SASL
+// timeout / cap-absent case). So we can't key on SASLFailed alone. Rule: when
+// SASL is enabled and Connect() errored with anything that is not a pure
+// transport error, it is a SASL/CAP failure — do not register unauthenticated.
+func isSASLFailure(saslEnabled bool, err error) bool {
+	if !saslEnabled || err == nil {
+		return false
 	}
-	c.saslInProgress = true
-	c.mu.Unlock()
-
-	statusMsg := storage.Message{
-		NetworkID:   c.networkID,
-		ChannelID:   nil,
-		User:        "*",
-		Message:     fmt.Sprintf("Starting SASL authentication with mechanism: %s", c.saslMechanism),
-		MessageType: "status",
-		Timestamp:   time.Now(),
-		RawLine:     "",
+	if errors.Is(err, ircevent.ServerTimedOut) ||
+		errors.Is(err, ircevent.ServerDisconnected) ||
+		errors.Is(err, ircevent.ClientDisconnected) {
+		return false
 	}
-	c.storage.WriteMessage(statusMsg)
-
-	c.eventBus.Emit(events.Event{
-		Type:      EventSASLStarted,
-		Data:      map[string]interface{}{"network": c.network.Address, "mechanism": c.saslMechanism},
-		Timestamp: time.Now(),
-		Source:    events.EventSourceIRC,
-	})
-
-	// Send AUTHENTICATE with mechanism
-	c.conn.SendRaw(fmt.Sprintf("AUTHENTICATE %s", c.saslMechanism))
+	return true
 }
 
-// handleAUTHENTICATE handles AUTHENTICATE command responses
-func (c *IRCClient) handleAUTHENTICATE(e ircmsg.Message) {
-	if len(e.Params) == 0 {
-		return
-	}
-
-	response := e.Params[0]
-
-	switch c.saslMechanism {
-	case "PLAIN":
-		c.handlePLAINAuth(response)
-	case "EXTERNAL":
-		c.handleEXTERNALAuth(response)
-	case "SCRAM-SHA-256", "SCRAM-SHA-512":
-		c.handleSCRAMAuth(response)
-	default:
-		// Unknown mechanism
-		c.conn.SendRaw("AUTHENTICATE *")
-		c.mu.Lock()
-		c.saslInProgress = false
-		c.mu.Unlock()
-	}
-}
-
-// handlePLAINAuth handles PLAIN mechanism authentication
-func (c *IRCClient) handlePLAINAuth(response string) {
-	if response == "+" {
-		// Server is ready for credentials
-		// PLAIN format: \0username\0password (base64 encoded)
-		authString := fmt.Sprintf("\x00%s\x00%s", c.saslUsername, c.saslPassword)
-		encoded := base64.StdEncoding.EncodeToString([]byte(authString))
-		c.conn.SendRaw(fmt.Sprintf("AUTHENTICATE %s", encoded))
-	} else if response == "*" {
-		// Abort
-		c.mu.Lock()
-		c.saslInProgress = false
-		c.mu.Unlock()
-		c.handleSASLFailure("PLAIN authentication aborted by server")
-	}
-}
-
-// handleEXTERNALAuth handles EXTERNAL mechanism authentication
-func (c *IRCClient) handleEXTERNALAuth(response string) {
-	if response == "+" {
-		// EXTERNAL uses TLS client certificate, send empty response
-		c.conn.SendRaw("AUTHENTICATE +")
-	} else if response == "*" {
-		// Abort
-		c.mu.Lock()
-		c.saslInProgress = false
-		c.mu.Unlock()
-		c.handleSASLFailure("EXTERNAL authentication aborted by server")
-	}
-}
-
-// handleSCRAMAuth handles SCRAM-SHA-256 and SCRAM-SHA-512 authentication
-// Implementation is in scram.go
-
-// Connect connects to the IRC server
+// Connect connects to the IRC server. The library performs CAP negotiation and
+// SASL inside conn.Connect(), before registration, and returns an error if SASL
+// fails — so a credential failure is caught here (synchronously) and flagged via
+// setAuthFailed before this returns.
 func (c *IRCClient) Connect() error {
-	// CAP LS 302 is sent after Connect() succeeds but before Loop()
+	// A bad SASL mechanism was caught at construction (NewIRCClient); fail before
+	// dialing rather than connecting unauthenticated.
+	if c.saslConfigErr != nil {
+		c.setAuthFailed(true)
+		c.eventBus.Emit(events.Event{
+			Type:      EventError,
+			Data:      map[string]interface{}{"error": c.saslConfigErr.Error()},
+			Timestamp: time.Now(),
+			Source:    events.EventSourceIRC,
+		})
+		return fmt.Errorf("failed to connect: %w", c.saslConfigErr)
+	}
 
 	if err := c.conn.Connect(); err != nil {
+		// The library ran SASL during Connect(); a non-transport error under SASL
+		// is an auth failure. Flag it (so the app suppresses auto-reconnect) and
+		// write a status line — do NOT register unauthenticated.
+		if isSASLFailure(c.saslEnabled, err) {
+			c.setAuthFailed(true)
+			c.storage.WriteMessage(storage.Message{
+				NetworkID:   c.networkID,
+				ChannelID:   nil,
+				User:        "*",
+				Message:     "Authentication failed: " + err.Error() + ". Not connecting unauthenticated.",
+				MessageType: "status",
+				Timestamp:   time.Now(),
+			})
+		}
 		c.eventBus.Emit(events.Event{
 			Type:      EventError,
 			Data:      map[string]interface{}{"error": err.Error()},
@@ -4209,25 +4108,16 @@ func (c *IRCClient) Connect() error {
 		return fmt.Errorf("failed to connect: %w", err)
 	}
 
-	// Reset capability state before negotiation so a reused client (reconnect)
-	// renegotiates from a clean slate. This runs before Loop() starts, so no CAP
-	// response can have been processed yet — unlike the post-registration connect
-	// callback (which fires on RPL_ENDOFMOTD), this point is race-free.
+	// The library negotiated caps before RPL_WELCOME; mirror the acked set into
+	// enabledCaps so server-time / echo-message / labeled-response / chathistory
+	// gating keeps working. This runs before Loop() starts (so no CAP callback has
+	// mutated enabledCaps yet) and reseeds cleanly on a reused client (reconnect).
 	c.mu.Lock()
 	c.enabledCaps = make(map[string]bool)
-	c.capNegotiationDone = false
+	for name := range c.conn.AcknowledgedCaps() {
+		c.enabledCaps[name] = true
+	}
 	c.mu.Unlock()
-
-	// Always send CAP LS 302 for IRCv3 capability negotiation
-	c.conn.SendRaw("CAP LS 302")
-	c.storage.WriteMessage(storage.Message{
-		NetworkID:   c.networkID,
-		ChannelID:   nil,
-		User:        "*",
-		Message:     "Sent CAP LS 302 for IRCv3 capability negotiation",
-		MessageType: "status",
-		Timestamp:   time.Now(),
-	})
 
 	// Start the connection loop in a goroutine
 	c.runLoop()

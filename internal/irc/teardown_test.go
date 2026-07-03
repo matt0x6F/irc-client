@@ -129,15 +129,6 @@ func loopExits(t *testing.T, teardown func(c *IRCClient)) bool {
 	}
 }
 
-// TestAbortAuthTerminatesLoop guards the auth-failure abort path: aborting on a
-// bad credential must stop the library Loop, not leave it to reconnect (which
-// would loop on the same failing credentials forever, or worse, ghost the nick).
-func TestAbortAuthTerminatesLoop(t *testing.T) {
-	if !loopExits(t, func(c *IRCClient) { c.abortAuth() }) {
-		t.Fatal("Loop() did not exit after abortAuth() — an auth-failed session will auto-reconnect as a ghost")
-	}
-}
-
 // TestStopReconnectTerminatesLoop guards the abandon-without-redial path (a drop
 // we deliberately won't reconnect, e.g. AutoConnect off): the orphaned Loop must
 // be stopped so it cannot silently reconnect minutes later.

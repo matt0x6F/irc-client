@@ -1181,7 +1181,16 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
     })),
 
   setAuthFailed: (networkId, reason) =>
-    set((state) => ({ authState: { ...state.authState, [networkId]: { reason } } })),
+    set((state) => ({
+      authState: { ...state.authState, [networkId]: { reason } },
+      // An auth failure means the session is not connected (the banner says so).
+      // Clear any stale connected flag — otherwise connectNetwork's
+      // `if (connectionStatus[id]) return` guard treats the network as still up
+      // and silently refuses to redial from the auth banner (reconnect appears to
+      // do nothing until an app restart). Since SASL now fails before registration,
+      // no connection-status:false event is emitted to reset this on its own.
+      connectionStatus: { ...state.connectionStatus, [networkId]: false },
+    })),
   clearAuthFailed: (networkId) =>
     set((state) => {
       const next = { ...state.authState };
