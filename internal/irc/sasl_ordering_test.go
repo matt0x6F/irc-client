@@ -20,6 +20,9 @@ type mockServer struct {
 	lines []string
 	// script: respond to CAP LS/REQ + AUTHENTICATE, then 903 + 001
 	failSASL bool
+	// when set, emit a post-registration RPL_LOGGEDOUT (901) right after 376, to
+	// simulate a benign account-state change (e.g. a user-issued NickServ REGAIN).
+	send901AfterReg bool
 }
 
 func newMockServer(t *testing.T, failSASL bool) *mockServer {
@@ -28,6 +31,16 @@ func newMockServer(t *testing.T, failSASL bool) *mockServer {
 		t.Fatal(err)
 	}
 	s := &mockServer{ln: ln, failSASL: failSASL}
+	go s.serve()
+	return s
+}
+
+func newMockServerRegain(t *testing.T) *mockServer {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &mockServer{ln: ln, send901AfterReg: true}
 	go s.serve()
 	return s
 }
@@ -97,6 +110,9 @@ func (s *mockServer) serve() {
 			if !s.failSASL {
 				w(":mock 001 nick :Welcome")
 				w(":mock 376 nick :End of /MOTD command")
+				if s.send901AfterReg {
+					w(":mock 901 nick :You are now logged out")
+				}
 			}
 		}
 	}
@@ -176,5 +192,44 @@ func TestSASLFailureAbortsWithAuthFailed(t *testing.T) {
 	}
 	if !c.AuthFailed() {
 		t.Fatal("AuthFailed() must be true after a SASL failure")
+	}
+}
+
+// TestPostRegistration901DoesNotDisconnect guards against reintroducing the #118
+// failure mode through the vendored fork. With UseSASL set, the fork registers a
+// RPL_LOGGEDOUT (901) handler that sends QUIT. Post-registration that numeric is a
+// benign account-state change (e.g. a user-issued NickServ REGAIN, or a
+// services-side re-bind), so it must NOT tear down a healthy connection — the fork
+// gates its SASL-abort handlers on !registered.
+func TestPostRegistration901DoesNotDisconnect(t *testing.T) {
+	srv := newMockServerRegain(t)
+	c := testClient(t, srv.addr())
+	done := make(chan error, 1)
+	go func() { done <- c.Connect() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("connect failed: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("connect timed out")
+	}
+	defer c.Disconnect()
+
+	// The mock emitted a post-registration 901 right after 376. An ungated abort
+	// handler would SendRaw("QUIT") within milliseconds. Poll for the absence of a
+	// client-sent QUIT over a bounded window (the deferred Disconnect's QUIT lands
+	// only after this loop returns).
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, l := range srv.snapshot() {
+			if strings.HasPrefix(strings.ToUpper(l), "QUIT") {
+				t.Fatalf("client sent QUIT after a benign post-registration 901: %v", srv.snapshot())
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if c.AuthFailed() {
+		t.Fatal("a benign post-registration 901 must not set AuthFailed()")
 	}
 }

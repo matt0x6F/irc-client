@@ -39,6 +39,17 @@ func (irc *Connection) composeSaslPlainResponse() []byte {
 	return buf.Bytes()
 }
 
+// isRegistered reports whether registration has completed (RPL_ENDOFMOTD /
+// ERR_NOMOTD seen). The SASL-abort numerics below are only meaningful during the
+// pre-registration SASL exchange; after registration the same numerics (notably
+// RPL_LOGGEDOUT) are benign account-state changes and must not tear down a healthy
+// connection.
+func (irc *Connection) isRegistered() bool {
+	irc.stateMutex.Lock()
+	defer irc.stateMutex.Unlock()
+	return irc.registered
+}
+
 func (irc *Connection) setupSASLCallbacks() {
 	irc.AddCallback("AUTHENTICATE", func(e ircmsg.Message) {
 		if irc.SASLMechanism != nil {
@@ -83,12 +94,21 @@ func (irc *Connection) setupSASLCallbacks() {
 	})
 
 	irc.AddCallback(RPL_LOGGEDOUT, func(e ircmsg.Message) {
+		// Post-registration, RPL_LOGGEDOUT is a normal event (e.g. a user-issued
+		// NickServ REGAIN/LOGOUT, or a services-side account re-bind), not a SASL
+		// failure — ignore it rather than quitting the connection.
+		if irc.isRegistered() {
+			return
+		}
 		irc.SendRaw("CAP END")
 		irc.SendRaw("QUIT")
 		irc.submitSASLResult(saslResult{true, errors.New(e.Params[1])})
 	})
 
 	irc.AddCallback(ERR_NICKLOCKED, func(e ircmsg.Message) {
+		if irc.isRegistered() {
+			return // only a SASL failure during the pre-registration exchange
+		}
 		irc.SendRaw("CAP END")
 		irc.SendRaw("QUIT")
 		irc.submitSASLResult(saslResult{true, errors.New(e.Params[1])})
@@ -99,6 +119,9 @@ func (irc *Connection) setupSASLCallbacks() {
 	})
 
 	irc.AddCallback(ERR_SASLFAIL, func(e ircmsg.Message) {
+		if irc.isRegistered() {
+			return // only a SASL failure during the pre-registration exchange
+		}
 		irc.SendRaw("CAP END")
 		irc.SendRaw("QUIT")
 		irc.submitSASLResult(saslResult{true, errors.New(e.Params[1])})
