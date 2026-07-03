@@ -1,7 +1,6 @@
 package irc
 
 import (
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"strconv"
@@ -77,16 +76,9 @@ type IRCClient struct {
 	abandoned             bool          // Sticky: this IRCClient is retired and must never re-register. Set on any drop (onDisconnect) and on explicit teardown (signalQuit); a later connect from the library Loop's own reconnect is then ignored by onConnect. The app recovers every drop with a fresh IRCClient, so an abandoned one is gone for good (guarded by mu)
 	loopDone              chan struct{} // Closed when the library's Loop() goroutine fully exits; lets teardown wait for a clean stop (guarded by mu)
 	saslEnabled           bool
-	saslMechanism         string
-	saslUsername          string
-	saslPassword          string
-	saslInProgress        bool
 	saslAuthenticated     bool
-	authFailed            bool  // True when SASL was enabled but did not succeed this session (guarded by mu)
-	saslConfigErr         error // Mechanism-construction error from NewIRCClient (unknown mechanism); surfaced by Connect() before dialing
-	saslCapRequested      bool
-	saslCapAcknowledged   bool
-	scramState            *SCRAMState
+	authFailed            bool                   // True when SASL was enabled but did not succeed this session (guarded by mu)
+	saslConfigErr         error                  // Mechanism-construction error from NewIRCClient (unknown mechanism); surfaced by Connect() before dialing
 	namesInProgress       map[string]bool        // Track channels currently receiving NAMES list
 	namesMu               sync.Mutex             // Mutex for namesInProgress map
 	serverCapabilities    *ServerCapabilities    // Server capabilities from ISUPPORT
@@ -110,7 +102,6 @@ type IRCClient struct {
 	autoJoinAction        func()                 // What triggerAutoJoin runs once per connection; defaults to doAutoJoin (injectable for tests)
 	enabledCaps           map[string]bool        // IRCv3 capabilities granted by the server
 	chatHistoryMaxBatch   int                    // Max messages per CHATHISTORY request, from the chathistory=N cap value (0 = unknown, use default)
-	capNegotiationDone    bool                   // Whether CAP negotiation has finished
 	channelListItems      []ChannelListItem      // Temporary storage for LIST response
 	channelListMu         sync.Mutex             // Mutex for channelListItems
 	banLists              map[string][]BanEntry  // Per-channel ban entries collected between 367 and 368
@@ -765,26 +756,20 @@ func NewIRCClient(network *storage.Network, eventBus *events.EventBus, storage *
 	}
 
 	client := &IRCClient{
-		network:             network,
-		eventBus:            eventBus,
-		storage:             storage,
-		saslEnabled:         network.SASLEnabled,
-		saslMechanism:       saslMechanism,
-		saslUsername:        saslUsername,
-		saslPassword:        saslPassword,
-		saslInProgress:      false,
-		saslAuthenticated:   false,
-		saslCapRequested:    false,
-		saslCapAcknowledged: false,
-		namesInProgress:     make(map[string]bool),
-		whoisInProgress:     make(map[string]*WhoisInfo),
-		knownBots:           make(map[string]bool),
-		userMeta:            make(map[string]*UserMeta),
-		monitorStatus:       make(map[string]bool),
-		monitorArmed:        make(map[string]bool),
-		autoJoinOnce:        &sync.Once{},
-		enabledCaps:         make(map[string]bool),
-		banLists:            make(map[string][]BanEntry),
+		network:           network,
+		eventBus:          eventBus,
+		storage:           storage,
+		saslEnabled:       network.SASLEnabled,
+		saslAuthenticated: false,
+		namesInProgress:   make(map[string]bool),
+		whoisInProgress:   make(map[string]*WhoisInfo),
+		knownBots:         make(map[string]bool),
+		userMeta:          make(map[string]*UserMeta),
+		monitorStatus:     make(map[string]bool),
+		monitorArmed:      make(map[string]bool),
+		autoJoinOnce:      &sync.Once{},
+		enabledCaps:       make(map[string]bool),
+		banLists:          make(map[string][]BanEntry),
 		serverCapabilities: &ServerCapabilities{
 			Prefix:       make(map[rune]rune),
 			PrefixString: "",
@@ -3074,8 +3059,7 @@ func (c *IRCClient) setupHandlers() {
 		c.observeSASLSuccess()
 	})
 
-	c.conn.AddCallback("901", func(e ircmsg.Message) { c.handleLoggedOut() }) // RPL_LOGGEDOUT
-	c.conn.AddCallback("902", func(e ircmsg.Message) {                        // ERR_NICKLOCKED
+	c.conn.AddCallback("902", func(e ircmsg.Message) { // ERR_NICKLOCKED
 		if !c.saslEnabled {
 			return
 		}
@@ -4026,24 +4010,6 @@ func capValue(capabilities, cap string) (value string, present bool) {
 	return "", false
 }
 
-// endCapNegotiation marks the initial CAP handshake complete and sends CAP END.
-// Setting capNegotiationDone lets the ACK handler tell a registration ACK (which
-// must be followed by CAP END) apart from a post-registration ACK triggered by a
-// CAP NEW request (which must NOT send CAP END again).
-// It is idempotent: if CAP negotiation is already done it returns without sending
-// a second CAP END. This matters because RPL_LOGGEDIN (900) and RPL_SASLSUCCESS
-// (903) commonly both arrive and both call handleSASLSuccess -> endCapNegotiation.
-func (c *IRCClient) endCapNegotiation() {
-	c.mu.Lock()
-	if c.capNegotiationDone {
-		c.mu.Unlock()
-		return
-	}
-	c.capNegotiationDone = true
-	c.mu.Unlock()
-	c.conn.SendRaw("CAP END")
-}
-
 // capsToRequest returns the subset of requestedCaps that the server has offered
 // and we don't already have enabled. sasl is included only during the initial
 // handshake (includeSASL); CAP NEW never re-runs SASL, so callers pass false
@@ -4063,96 +4029,6 @@ func capsToRequest(offered string, enabled map[string]bool, includeSASL bool) []
 	}
 	return toRequest
 }
-
-// startSASLAuth initiates SASL authentication
-func (c *IRCClient) startSASLAuth() {
-	c.mu.Lock()
-	if c.saslInProgress {
-		c.mu.Unlock()
-		return
-	}
-	c.saslInProgress = true
-	c.mu.Unlock()
-
-	statusMsg := storage.Message{
-		NetworkID:   c.networkID,
-		ChannelID:   nil,
-		User:        "*",
-		Message:     fmt.Sprintf("Starting SASL authentication with mechanism: %s", c.saslMechanism),
-		MessageType: "status",
-		Timestamp:   time.Now(),
-		RawLine:     "",
-	}
-	c.storage.WriteMessage(statusMsg)
-
-	c.eventBus.Emit(events.Event{
-		Type:      EventSASLStarted,
-		Data:      map[string]interface{}{"network": c.network.Address, "mechanism": c.saslMechanism},
-		Timestamp: time.Now(),
-		Source:    events.EventSourceIRC,
-	})
-
-	// Send AUTHENTICATE with mechanism
-	c.conn.SendRaw(fmt.Sprintf("AUTHENTICATE %s", c.saslMechanism))
-}
-
-// handleAUTHENTICATE handles AUTHENTICATE command responses
-func (c *IRCClient) handleAUTHENTICATE(e ircmsg.Message) {
-	if len(e.Params) == 0 {
-		return
-	}
-
-	response := e.Params[0]
-
-	switch c.saslMechanism {
-	case "PLAIN":
-		c.handlePLAINAuth(response)
-	case "EXTERNAL":
-		c.handleEXTERNALAuth(response)
-	case "SCRAM-SHA-256", "SCRAM-SHA-512":
-		c.handleSCRAMAuth(response)
-	default:
-		// Unknown mechanism
-		c.conn.SendRaw("AUTHENTICATE *")
-		c.mu.Lock()
-		c.saslInProgress = false
-		c.mu.Unlock()
-	}
-}
-
-// handlePLAINAuth handles PLAIN mechanism authentication
-func (c *IRCClient) handlePLAINAuth(response string) {
-	if response == "+" {
-		// Server is ready for credentials
-		// PLAIN format: \0username\0password (base64 encoded)
-		authString := fmt.Sprintf("\x00%s\x00%s", c.saslUsername, c.saslPassword)
-		encoded := base64.StdEncoding.EncodeToString([]byte(authString))
-		c.conn.SendRaw(fmt.Sprintf("AUTHENTICATE %s", encoded))
-	} else if response == "*" {
-		// Abort
-		c.mu.Lock()
-		c.saslInProgress = false
-		c.mu.Unlock()
-		c.handleSASLFailure("PLAIN authentication aborted by server")
-	}
-}
-
-// handleEXTERNALAuth handles EXTERNAL mechanism authentication
-func (c *IRCClient) handleEXTERNALAuth(response string) {
-	if response == "+" {
-		// EXTERNAL uses TLS client certificate, send empty response
-		c.conn.SendRaw("AUTHENTICATE +")
-	} else if response == "*" {
-		// Abort
-		c.mu.Lock()
-		c.saslInProgress = false
-		c.mu.Unlock()
-		c.handleSASLFailure("EXTERNAL authentication aborted by server")
-	}
-}
-
-// handleSCRAMAuth handles SCRAM-SHA-256 and SCRAM-SHA-512 authentication
-// Implementation is in scram.go
 
 // isSASLFailure reports whether a Connect() error should be treated as an
 // authentication failure. The library runs SASL inside Connect(); a real 904

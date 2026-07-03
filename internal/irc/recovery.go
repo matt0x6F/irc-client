@@ -29,74 +29,14 @@ func (c *IRCClient) setAuthFailed(v bool) {
 	c.mu.Unlock()
 }
 
-// handleSASLSuccess records a successful authentication, clears any prior
-// auth-failure marker, and completes CAP negotiation. Triggered by both
-// RPL_LOGGEDIN (900) and RPL_SASLSUCCESS (903). It is safe to call more than
-// once: endCapNegotiation is idempotent, and the flag assignments are harmless
-// when repeated.
-func (c *IRCClient) handleSASLSuccess() {
-	c.mu.Lock()
-	c.saslAuthenticated = true
-	c.saslInProgress = false
-	c.authFailed = false
-	c.mu.Unlock()
-
-	c.storage.WriteMessage(storage.Message{
-		NetworkID:   c.networkID,
-		ChannelID:   nil,
-		User:        "*",
-		Message:     "SASL authentication successful",
-		MessageType: "status",
-		Timestamp:   time.Now(),
-	})
-	c.endCapNegotiation()
-	c.eventBus.Emit(events.Event{
-		Type:      EventSASLSuccess,
-		Data:      map[string]interface{}{"network": c.network.Address, "networkId": c.networkID},
-		Timestamp: time.Now(),
-		Source:    events.EventSourceIRC,
-	})
-}
-
-// handleSASLFailure records an authentication failure and aborts the
-// connection. It deliberately does NOT call endCapNegotiation: completing CAP
-// negotiation would register the user as an unauthenticated guest, which is the
-// failure mode this whole change exists to prevent.
-func (c *IRCClient) handleSASLFailure(reason string) {
-	c.mu.Lock()
-	c.saslInProgress = false
-	c.saslAuthenticated = false
-	c.authFailed = true
-	c.mu.Unlock()
-
-	c.storage.WriteMessage(storage.Message{
-		NetworkID:   c.networkID,
-		ChannelID:   nil,
-		User:        "*",
-		Message:     "Authentication failed: " + reason + ". Not connecting unauthenticated.",
-		MessageType: "status",
-		Timestamp:   time.Now(),
-	})
-
-	c.eventBus.Emit(events.Event{
-		Type:      EventSASLFailed,
-		Data:      map[string]interface{}{"network": c.network.Address, "networkId": c.networkID, "error": reason},
-		Timestamp: time.Now(),
-		Source:    events.EventSourceIRC,
-	})
-
-	c.abortAuth()
-}
-
 // observeSASLSuccess records a successful authentication seen via RPL_LOGGEDIN
 // (900) / RPL_SASLSUCCESS (903). It is observation-only: the library owns CAP
-// negotiation and already completed it, so unlike handleSASLSuccess this does NOT
-// call endCapNegotiation. Safe to call more than once (900 and 903 usually both
-// arrive); the flag writes and status line are harmless when repeated.
+// negotiation and SASL and has already completed them, so this just records
+// state. Safe to call more than once (900 and 903 usually both arrive); the flag
+// writes and status line are harmless when repeated.
 func (c *IRCClient) observeSASLSuccess() {
 	c.mu.Lock()
 	c.saslAuthenticated = true
-	c.saslInProgress = false
 	c.authFailed = false
 	c.mu.Unlock()
 
@@ -118,12 +58,11 @@ func (c *IRCClient) observeSASLSuccess() {
 
 // observeSASLFailure records an authentication failure seen via a SASL-failure
 // numeric (902/904/905/906). It is observation-only: the library already tears
-// the connection down and fails Connect() on such a failure, so unlike
-// handleSASLFailure this does NOT send QUIT (abortAuth) — it only records status,
-// emits EventSASLFailed, and sets the AuthFailed flag.
+// the connection down and fails Connect() on such a failure, so this does NOT
+// send QUIT — it only records status, emits EventSASLFailed, and sets the
+// AuthFailed flag.
 func (c *IRCClient) observeSASLFailure(reason string) {
 	c.mu.Lock()
-	c.saslInProgress = false
 	c.saslAuthenticated = false
 	c.authFailed = true
 	c.mu.Unlock()
@@ -142,47 +81,6 @@ func (c *IRCClient) observeSASLFailure(reason string) {
 		Timestamp: time.Now(),
 		Source:    events.EventSourceIRC,
 	})
-}
-
-// handleLoggedOut processes RPL_LOGGEDOUT (901). The numeric is overloaded: during
-// the SASL handshake it means authentication failed and we must abort rather than
-// register unauthenticated; after registration it is a benign account-state change.
-// Services emit a post-registration 901 as a normal event — notably Libera during a
-// NickServ REGAIN, as it re-binds the session's account — and treating that as a
-// failure tears down a healthy connection, forcing a reconnect that wipes every
-// channel roster. So only abort while SASL is actually in progress.
-func (c *IRCClient) handleLoggedOut() {
-	c.mu.RLock()
-	authing := c.saslEnabled && c.saslInProgress
-	c.mu.RUnlock()
-	if !authing {
-		return
-	}
-	c.handleSASLFailure("logged out")
-}
-
-// handleCapLSMissingSASL aborts when SASL is required but the server's CAP LS
-// did not advertise it. Without this the handshake would proceed and register
-// the user unauthenticated. allCaps is the space-separated CAP LS token list.
-func (c *IRCClient) handleCapLSMissingSASL(allCaps string) {
-	c.mu.RLock()
-	required := c.saslEnabled && !c.capNegotiationDone
-	c.mu.RUnlock()
-	if required && !contains(allCaps, "sasl") {
-		c.handleSASLFailure("server does not support SASL")
-	}
-}
-
-// abortAuth tears the connection down after an authentication failure. It routes
-// through signalQuit so the library quit flag is set — otherwise the Loop
-// goroutine would auto-reconnect on the resulting socket close and retry the same
-// failing credentials forever (and ghost the nick). The QUIT routes through the
-// library DisconnectCallback -> EventConnectionLost, where the app layer sees
-// AuthFailed() and suppresses auto-reconnect unless the user opted in. It does
-// not wait for the Loop to exit: abortAuth runs inside a SASL callback on the
-// Loop goroutine, where waiting would deadlock.
-func (c *IRCClient) abortAuth() {
-	c.signalQuit("Authentication failed")
 }
 
 // joinErrorReasons maps the standard join-failure numerics to a short,
