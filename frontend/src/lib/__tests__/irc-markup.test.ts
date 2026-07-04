@@ -6,6 +6,7 @@ const B = '\x02' // bold
 const I = '\x1D' // italic
 const U = '\x1F' // underline
 const C = '\x03' // color
+const M = '\x11' // monospace
 
 describe('markdownToIrc — plain text', () => {
   it('leaves text without markup untouched', () => {
@@ -122,6 +123,65 @@ describe('markdownToIrc — URLs are skipped', () => {
   })
 })
 
+describe('markdownToIrc — channel protection', () => {
+  it('does not italicize underscores inside a #channel word', () => {
+    expect(markdownToIrc('#fix_your_connection')).toBe('#fix_your_connection')
+  })
+
+  it('does not bold asterisks inside a #channel word', () => {
+    expect(markdownToIrc('#a*b*c')).toBe('#a*b*c')
+  })
+
+  it('protects the channel but still formats around it', () => {
+    expect(markdownToIrc('join #fix_your_connection _now_')).toBe(
+      `join #fix_your_connection ${I}now${I}`
+    )
+  })
+
+  it('protects a channel nested inside a formatted span', () => {
+    expect(markdownToIrc('*#fix_your_connection*')).toBe(`${B}#fix_your_connection${B}`)
+  })
+
+  it('still honors #N(text) color codes (color wins over channel protection)', () => {
+    expect(markdownToIrc('#4(ship it)')).toBe(`${C}4ship it${C}`)
+  })
+
+  it('leaves issue-style #4 references untouched', () => {
+    expect(markdownToIrc('issue #4 (later)')).toBe('issue #4 (later)')
+    expect(markdownToIrc('see #4 done')).toBe('see #4 done')
+  })
+
+  it('does not treat a lone # (followed by space) as a channel', () => {
+    expect(markdownToIrc('a # _b_')).toBe(`a # ${I}b${I}`)
+  })
+})
+
+describe('markdownToIrc — backtick monospace', () => {
+  it('wraps `text` in the monospace control code', () => {
+    expect(markdownToIrc('`code`')).toBe(`${M}code${M}`)
+  })
+
+  it('does not interpret markup inside a backtick span', () => {
+    expect(markdownToIrc('`_not italic_`')).toBe(`${M}_not italic_${M}`)
+  })
+
+  it('does not interpret a channel inside a backtick span (emitted literally)', () => {
+    expect(markdownToIrc('`#fix_your_connection`')).toBe(`${M}#fix_your_connection${M}`)
+  })
+
+  it('formats around a backtick span', () => {
+    expect(markdownToIrc('run `x` *now*')).toBe(`run ${M}x${M} ${B}now${B}`)
+  })
+
+  it('leaves an unclosed backtick literal', () => {
+    expect(markdownToIrc('`hello')).toBe('`hello')
+  })
+
+  it('escapes a backtick with a backslash', () => {
+    expect(markdownToIrc('a \\` b')).toBe('a ` b')
+  })
+})
+
 describe('markdownToIrc — nesting', () => {
   it('converts formatting inside a color span (recursive)', () => {
     expect(markdownToIrc('#4(*bold red*)')).toBe(`${C}4${B}bold red${B}${C}`)
@@ -143,6 +203,10 @@ describe('stripMarkup', () => {
 
   it('resolves escapes to their literal characters', () => {
     expect(stripMarkup('\\*kept\\*')).toBe('*kept*')
+  })
+
+  it('removes monospace markup, keeping the text', () => {
+    expect(stripMarkup('`code`')).toBe('code')
   })
 })
 

@@ -1,5 +1,5 @@
 import { RefObject } from 'react';
-import { Bold, Italic, Underline, RemoveFormatting, Type } from 'lucide-react';
+import { Bold, Italic, Underline, Code, RemoveFormatting, Type } from 'lucide-react';
 import { usePreferencesStore } from '../stores/preferences';
 import { wrapSelection, insertAtCaret, applyToInput, type InsertResult } from '../lib/input-insert';
 import { stripMarkup } from '../lib/irc-markup';
@@ -60,6 +60,9 @@ export function FormattingToolbar({ inputRef, value, setValue, networkId, channe
           </button>
           <button type="button" title="Underline (Ctrl/Cmd+U)" onMouseDown={(e) => e.preventDefault()} onClick={() => wrap('__', '__')} className={BTN}>
             <Underline size={16} />
+          </button>
+          <button type="button" title="Monospace (Ctrl/Cmd+E)" onMouseDown={(e) => e.preventDefault()} onClick={() => wrap('`', '`')} className={BTN}>
+            <Code size={16} />
           </button>
           <ColorPicker onPick={(fg, bg) => wrap(`#${fg}${bg != null ? ',' + bg : ''}(`, ')')} />
           <button type="button" title="Clear formatting" onMouseDown={(e) => e.preventDefault()} onClick={clearFormatting} className={BTN}>

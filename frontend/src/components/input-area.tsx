@@ -301,14 +301,15 @@ export function InputArea({ onSendMessage, placeholder = 'Type a message...', ne
     }
   };
 
-  // Cmd/Ctrl+B / I / U wrap the selection in the matching markup, mirroring the
-  // toolbar buttons (uses the same pure helpers).
+  // Cmd/Ctrl+B / I / U / E wrap the selection in the matching markup, mirroring
+  // the toolbar buttons (uses the same pure helpers).
   const handleFormattingShortcut = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
     const delims: Record<string, [string, string]> = {
       b: ['*', '*'],
       i: ['_', '_'],
       u: ['__', '__'],
+      e: ['`', '`'],
     };
     const pair = delims[e.key.toLowerCase()];
     if (!pair) return;
