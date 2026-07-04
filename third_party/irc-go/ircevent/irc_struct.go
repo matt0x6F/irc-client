@@ -94,6 +94,12 @@ type Connection struct {
 	quit       bool      // user called Quit, do not reconnect
 	pingSent   bool      // we sent PING and are waiting for PONG
 
+	// lastReadNano is the UnixNano timestamp of the most recent inbound line,
+	// seeded at connect. It is written by readLoop and read by livenessWatchdog
+	// (both lock-free) to detect a half-open socket the pingLoop cannot — see
+	// livenessWatchdog.
+	lastReadNano atomic.Int64
+
 	// IRC protocol connection state
 	currentNick     string // nickname assigned by the server, empty before registration
 	capsAdvertised  map[string]string

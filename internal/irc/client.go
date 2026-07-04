@@ -831,12 +831,18 @@ func NewIRCClient(network *storage.Network, eventBus *events.EventBus, storage *
 		SASLMech:      saslMechName(network),
 		SASLMechanism: saslMech,
 		ReconnectFreq: 0, // Disable automatic reconnection - we'll handle it manually
-		// Liveness detection is owned by the library's pingLoop: it sends a
-		// keepalive PING every KeepAlive and treats an unacked PING (within
-		// Timeout, enforced via socket read/write deadlines) as fatal, firing
-		// the DisconnectCallback. This is the single source of truth for whether
-		// the connection is alive, including across OS sleep/wake. Constraint:
-		// KeepAlive must be >= Timeout.
+		// Liveness detection is owned by the library: its pingLoop sends a
+		// keepalive PING every KeepAlive and treats an unacked PING as fatal,
+		// firing the DisconnectCallback. Because that detection runs through the
+		// socket, it can wedge on a half-open link (the network path is gone but
+		// no FIN arrives, so writeLoop sticks and the ping can't be sent) — the
+		// class of failure that stranded connections reporting "Connected" over a
+		// dead socket. The library's livenessWatchdog is the netpoller-independent
+		// backstop: if no inbound line arrives for KeepAlive+2*Timeout it
+		// force-closes the socket, driving the same teardown. Together they are
+		// the single source of truth for whether the connection is alive,
+		// including across OS sleep/wake and awake-machine network changes.
+		// Constraint: KeepAlive must be >= Timeout.
 		Timeout:   constants.ConnectionReadTimeout,
 		KeepAlive: constants.ConnectionKeepAlive,
 	}
