@@ -24,6 +24,30 @@ describe('composer formatting toolbar', () => {
     expect(input.value).toBe('*team*')
   })
 
+  it('wraps the current selection in monospace backticks when Monospace is clicked', () => {
+    render(<InputArea onSendMessage={noop} networkId={1} channelName="#foo" />)
+    const input = screen.getByTestId('message-input') as HTMLInputElement
+
+    fireEvent.change(input, { target: { value: 'code' } })
+    input.setSelectionRange(0, 4)
+
+    fireEvent.click(screen.getByTitle('Monospace (Ctrl/Cmd+E)'))
+
+    expect(input.value).toBe('`code`')
+  })
+
+  it('wraps the current selection in backticks on Ctrl/Cmd+E', () => {
+    render(<InputArea onSendMessage={noop} networkId={1} channelName="#foo" />)
+    const input = screen.getByTestId('message-input') as HTMLInputElement
+
+    fireEvent.change(input, { target: { value: 'code' } })
+    input.setSelectionRange(0, 4)
+
+    fireEvent.keyDown(input, { key: 'e', ctrlKey: true })
+
+    expect(input.value).toBe('`code`')
+  })
+
   it('renders a live preview only once the text contains markup', () => {
     render(<InputArea onSendMessage={noop} networkId={1} channelName="#foo" />)
     const input = screen.getByTestId('message-input') as HTMLInputElement
