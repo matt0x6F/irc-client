@@ -406,7 +406,7 @@ export function ServerTree({
   return (
     <div data-testid="server-tree" className="h-full flex flex-col relative bg-card/30">
         <div className="h-14 px-4 border-b border-border bg-card/50 flex items-center gap-2.5">
-          <img src={markUrl} alt="" className="h-7 w-7 rounded-lg select-none flex-shrink-0" draggable={false} />
+          <img src={markUrl} alt="" className="h-7 w-7 rounded-lg select-none flex-shrink-0 dark:ring-1 dark:ring-inset dark:ring-white/15" draggable={false} />
           <span className="font-extrabold text-lg tracking-tight text-foreground">Cascade</span>
           <span className="font-semibold text-sm text-muted-foreground">Chat</span>
         </div>
