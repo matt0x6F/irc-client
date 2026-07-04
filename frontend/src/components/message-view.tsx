@@ -322,6 +322,10 @@ export function MessageView({ networkId, selectedChannel }: MessageViewProps) {
   const anchoredMessageId = useNetworkStore((s) => s.anchoredMessageId);
   const clearAnchorFlash = useNetworkStore((s) => s.clearAnchorFlash);
   const returnToLive = useNetworkStore((s) => s.returnToLive);
+  // Report whether the pane is following the bottom so the store knows whether to
+  // replace the latest-100 window (following) or merge new messages into the buffer
+  // (scrolled up), keeping the read position stable on a busy channel.
+  const setAtBottom = useNetworkStore((s) => s.setAtBottom);
   const newSinceAnchor = useNetworkStore((s) => s.newSinceAnchor);
   const loadOlderMessages = useNetworkStore((s) => s.loadOlderMessages);
   const loadNewerMessages = useNetworkStore((s) => s.loadNewerMessages);
@@ -376,6 +380,9 @@ export function MessageView({ networkId, selectedChannel }: MessageViewProps) {
       stickToBottomRef.current = true;
     }
     lastScrollTopRef.current = scrollTop;
+    // Mirror the follow-state to the store (no-op when unchanged) so loadMessages
+    // merges rather than replaces the buffer while the user is scrolled up.
+    setAtBottom(stickToBottomRef.current);
   };
 
   // When scrolled near the bottom while anchored (after a jump-to-pin or
@@ -491,8 +498,9 @@ export function MessageView({ networkId, selectedChannel }: MessageViewProps) {
     // the live case since the container no longer defaults to CSS smooth.
     stickToBottomRef.current = true;
     setIsNearBottom(true);
+    setAtBottom(true); // resume plain latest-100 loads (returnToLive also sets this)
     if (viewMode !== 'anchored') rowVirtualizer.scrollToEnd({ behavior: 'smooth' });
-  }, [viewMode, returnToLive, rowVirtualizer]);
+  }, [viewMode, returnToLive, rowVirtualizer, setAtBottom]);
 
   const showScrollBadge = viewMode === 'anchored' || !isNearBottom;
 

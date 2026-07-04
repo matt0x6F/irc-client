@@ -22,6 +22,7 @@ const storeState = {
   anchoredMessageId: null,
   clearAnchorFlash: vi.fn(),
   returnToLive: vi.fn(),
+  setAtBottom: vi.fn(),
   newSinceAnchor: 0,
   loadOlderMessages: vi.fn(),
   loadNewerMessages: vi.fn(),
