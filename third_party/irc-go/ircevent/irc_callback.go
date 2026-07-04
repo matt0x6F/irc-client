@@ -578,6 +578,21 @@ func (irc *Connection) handleCAP(e ircmsg.Message) {
 	}
 }
 
+// capsToRequest returns the caps we want that the server actually advertised, in
+// our configured preference order. Requesting only advertised caps keeps a single
+// combined `CAP REQ` line from being NAK'd as a whole (IRCv3 CAP REQ is atomic).
+func (irc *Connection) capsToRequest() []string {
+	irc.stateMutex.Lock()
+	defer irc.stateMutex.Unlock()
+	result := make([]string, 0, len(irc.RequestCaps))
+	for _, capab := range irc.RequestCaps {
+		if _, ok := irc.capsAdvertised[capab]; ok {
+			result = append(result, capab)
+		}
+	}
+	return result
+}
+
 func (irc *Connection) handleCAPLS(params []string) {
 	irc.stateMutex.Lock()
 	defer irc.stateMutex.Unlock()
@@ -597,6 +612,15 @@ func (irc *Connection) handleCAPLS(params []string) {
 	for _, token := range strings.Fields(params[len(params)-1]) {
 		name, value := splitCAPToken(token)
 		irc.capsAdvertised[name] = value
+	}
+
+	// The continuation form carries a lone "*" before the cap list; its absence
+	// marks the final line. Signal the handshake that the full advertisement is in
+	// so it can request the intersection of wanted-and-advertised caps in one line.
+	isContinuation := len(params) >= 2 && params[0] == "*"
+	if !isContinuation && !irc.capsLSDone {
+		irc.capsLSDone = true
+		close(irc.capsLSChan)
 	}
 }
 

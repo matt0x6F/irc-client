@@ -115,6 +115,8 @@ type Connection struct {
 	saslChan    chan saslResult // transmits the final outcome of SASL negotiation
 	saslBuffer  *ircutils.SASLBuffer
 	capsChan    chan capResult // transmits the final status of each CAP negotiated
+	capsLSChan  chan empty     // closed once the CAP LS 302 advertisement is fully received
+	capsLSDone  bool           // guards capsLSChan against a double close (guarded by stateMutex)
 	capFlags    uint32
 
 	// callback state

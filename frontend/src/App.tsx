@@ -294,6 +294,17 @@ function App() {
         }
       }
     });
+    // A connect attempt is in flight (dial + CAP/SASL handshake) or has settled.
+    // Drives the "Connecting…" UI so the network can't be told to connect again
+    // mid-handshake (a second attempt races the first and causes connect-then-drop
+    // churn). Fires for every connect source, not just the context menu.
+    const unsubscribeConnecting = EventsOn('connection-connecting', (data: any) => {
+      const networkId = Number(data?.networkId);
+      const connecting = data?.connecting;
+      if (!Number.isNaN(networkId) && typeof connecting === 'boolean') {
+        useNetworkStore.getState().setConnecting(networkId, connecting);
+      }
+    });
     const unsubscribeAuth = EventsOn('auth-failed', (data: any) => {
       const networkId = Number(data?.networkId);
       if (!Number.isNaN(networkId)) {
@@ -302,6 +313,7 @@ function App() {
     });
     return () => {
       unsubscribe();
+      unsubscribeConnecting();
       unsubscribeAuth();
     };
   }, []);

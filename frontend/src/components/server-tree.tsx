@@ -66,6 +66,10 @@ export function ServerTree({
   // Live MONITOR presence per network (lowercased nick -> online), driving the
   // DM-list dots. Seeded on expand, kept fresh by 'monitor-event' in App.tsx.
   const presence = useNetworkStore((s) => s.presence);
+  // Per-network "connect attempt in flight" flag. Gates the context menu so the
+  // network can't be told to connect again mid-handshake (which races the first
+  // attempt and causes connect-then-drop churn).
+  const connectingNetworks = useNetworkStore((s) => s.connectingNetworks);
   // CASEMAPPING per network, so DM-presence lookups fold nicks the same way the
   // store keys them (rfc1459 []\~ -> {}|^). Empty falls back to rfc1459.
   const caseMapping = useNetworkStore((s) => s.caseMapping);
@@ -626,7 +630,16 @@ export function ServerTree({
               <div className="px-2 py-1 text-xs font-semibold text-muted-foreground uppercase">
                 Network
               </div>
-              {connectionStatus[contextMenu.serverId] ? (
+              {connectingNetworks[contextMenu.serverId] ? (
+              <button
+                data-testid="network-connecting-button"
+                disabled
+                className="w-full text-left px-4 py-2 text-sm text-muted-foreground cursor-not-allowed opacity-70 "
+                style={{ transition: 'var(--transition-base)' }}
+              >
+                Connecting…
+              </button>
+              ) : connectionStatus[contextMenu.serverId] ? (
               <button
                 className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
                 style={{ transition: 'var(--transition-base)' }}
@@ -641,12 +654,14 @@ export function ServerTree({
                 <button
                   className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground disabled:opacity-50 disabled:cursor-not-allowed "
                   style={{ transition: 'var(--transition-base)' }}
-                  disabled={contextMenu.serverId !== undefined && contextMenu.serverId in connectionStatus && connectionStatus[contextMenu.serverId]}
+                  disabled={contextMenu.serverId !== undefined && (connectionStatus[contextMenu.serverId] || connectingNetworks[contextMenu.serverId])}
                   onClick={async () => {
                     if (!contextMenu.serverId) return;
-                    if (connectionStatus[contextMenu.serverId]) {
+                    // Refuse if already connected or a connect is already in flight —
+                    // a duplicate attempt races the first and causes churn.
+                    if (connectionStatus[contextMenu.serverId] || connectingNetworks[contextMenu.serverId]) {
                       setContextMenu({ x: 0, y: 0, type: null });
-                      return; // Already connected
+                      return;
                     }
                     const network = servers.find(n => n.id === contextMenu.serverId);
                     // Close menu immediately

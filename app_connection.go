@@ -272,6 +272,18 @@ func (a *App) ConnectNetwork(config NetworkConfig) error {
 	return a.connectNetwork(config, false)
 }
 
+// emitConnecting tells the frontend whether a connect attempt is in flight for a
+// network. The UI renders a disabled "Connecting…" while true so the network can't
+// be told to connect again during the (multi-second) dial + CAP/SASL handshake —
+// a second attempt races the first and causes connect-then-drop churn. Goes to the
+// Wails runtime (a.emit), not the internal IRC event bus, so it never blocks.
+func (a *App) emitConnecting(networkID int64, connecting bool) {
+	a.emit("connection-connecting", map[string]interface{}{
+		"networkId":  networkID,
+		"connecting": connecting,
+	})
+}
+
 // connectNetwork connects to an IRC network. When reconnect is true the new
 // client is flagged so its auto-join goroutine rejoins every channel we were in
 // (not just auto_join channels), restoring nick lists after the drop.
@@ -322,6 +334,19 @@ func (a *App) connectNetwork(config NetworkConfig, reconnect bool) error {
 		return err
 	}
 
+	// The UI shows a disabled "Connecting…" while an attempt is in flight so the
+	// network can't be told to connect again mid-handshake (a duplicate attempt
+	// races the first and produces connect-then-drop churn). Emit connecting=false
+	// on EVERY exit path (success, failure, panic) so that state can never get
+	// stuck. Guarded by markedConnecting so a call rejected as a duplicate below
+	// does not clear the flag owned by the attempt already in progress.
+	markedConnecting := false
+	defer func() {
+		if markedConnecting {
+			a.emitConnecting(network.ID, false)
+		}
+	}()
+
 	// Get servers from database (ordered by priority)
 	dbServers, err := a.storage.GetServers(network.ID)
 	if err != nil || len(dbServers) == 0 {
@@ -365,9 +390,13 @@ func (a *App) connectNetwork(config NetworkConfig, reconnect bool) error {
 	// Mark that we're connecting to this network BEFORE releasing the lock
 	connectDone := make(chan struct{})
 	a.connectingNetworks[networkKey] = connectDone
+	markedConnecting = true
 	logger.Log.Debug().Str("network_key", networkKey).Str("network", config.Name).Int64("id", network.ID).Msg("Marked as connecting")
 
 	a.mu.Unlock()
+
+	// Signal the UI that this network is now handshaking (emitted outside a.mu).
+	a.emitConnecting(network.ID, true)
 
 	// Deterministically stop the stale client before dialing again. Removing it
 	// from the map only drops our reference — its library Loop goroutine keeps
