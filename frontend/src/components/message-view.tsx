@@ -40,19 +40,18 @@ export function MessageView({ networkId, selectedChannel }: MessageViewProps) {
   const messages = useNetworkStore((s) => s.messages);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [isNearBottom, setIsNearBottom] = useState(true);
-  const prevMessagesLengthRef = useRef(0);
   const prevChannelRef = useRef<string | null | undefined>(selectedChannel);
   // Whether the pane should stay pinned to the latest message. Armed on every
-  // channel switch and whenever the user is at the bottom; released when the user
-  // scrolls up. While set, the pane is kept at the bottom across *all* async message
-  // updates — so a channel switch lands on the latest message regardless of how the
-  // load races the render (the original bug), and stale/out-of-order loads can't
-  // strand it part-way up.
+  // channel switch and while the user is at the bottom; released on a genuine
+  // upward scroll. While set, the layout effect re-pins to the bottom on *every*
+  // render — this is what makes a channel switch (and a fast incremental flood of
+  // new messages) land at the latest message regardless of load/measure timing.
+  // The virtualizer's anchorTo:'end' then holds that pin *between* renders as rows
+  // measure, and preserves the viewport when older history is prepended.
   const stickToBottomRef = useRef(true);
-  // Last observed scrollTop, used to detect the *direction* of a scroll. The pin is
-  // released only on a genuine upward (user) scroll — never on the transient
-  // "not at bottom" readings that our own programmatic scroll-to-bottom and
-  // content-height growth produce, which is what made a naive isNear-based pin flaky.
+  // Last observed scrollTop, to detect scroll *direction*. The pin is released only
+  // on a real upward (user) scroll — never on the transient "not at bottom" readings
+  // that our own scroll-to-bottom and content-height growth produce.
   const lastScrollTopRef = useRef(0);
 
   // Consolidate join/quit preference, sourced from the durable settings store.
@@ -257,6 +256,21 @@ export function MessageView({ networkId, selectedChannel }: MessageViewProps) {
     estimateSize: () => 44,
     overscan: 14,
     getItemKey: (i) => (processedMessages[i] as storage.Message).id,
+    // Native chat-style scroll anchoring (@tanstack/react-virtual v3): keep the
+    // viewport pinned to the newest row as dynamic row heights measure in *between*
+    // renders, and — crucially — preserve the viewport when older history is
+    // prepended on scroll-up. This replaces the manual scroll-restore-on-prepend
+    // (which double-compensated against this native adjustment and made the view
+    // jump past the load point). The stick-to-bottom pin itself is still driven by
+    // the layout effect below, because a fast incremental flood needs an
+    // unconditional per-render re-pin that followOnAppend's isAtEnd gating can't
+    // guarantee. NOTE: the container must NOT set `scroll-behavior: smooth`, or
+    // these internal (behavior:'auto') scrolls animate and race measurement — the
+    // original "switch doesn't land at bottom" bug.
+    anchorTo: 'end',
+    // Tolerance (px from the bottom) for the native at-end measurement adjustment,
+    // matching the return-to-bottom badge's near-bottom threshold used below.
+    scrollEndThreshold: 100,
   });
 
   // Reply jump: scroll to a message row by msgid and flash it briefly. Returns
@@ -264,7 +278,8 @@ export function MessageView({ networkId, selectedChannel }: MessageViewProps) {
   const scrollToMsgid = useCallback((msgid: string): boolean => {
     const idx = rowIndexByMsgid.get(msgid);
     if (idx === undefined) return false;
-    rowVirtualizer.scrollToIndex(idx, { align: 'center' });
+    // Explicit smooth: the container no longer defaults to CSS smooth scrolling.
+    rowVirtualizer.scrollToIndex(idx, { align: 'center', behavior: 'smooth' });
     setFlashMsgid(msgid);
     setTimeout(() => setFlashMsgid((cur) => (cur === msgid ? null : cur)), 1200);
     return true;
@@ -343,20 +358,18 @@ export function MessageView({ networkId, selectedChannel }: MessageViewProps) {
     // Colors will be updated via metadata-updated events
   }, [networkId, uniqueNicknames]);
 
-  // Check if user is near bottom of scroll
+  // Drive the return-to-bottom badge (isNearBottom) and maintain the bottom-pin by
+  // scroll *direction*: an upward (user) scroll releases it; reaching the bottom
+  // re-engages it. Our own scroll-to-bottom and content growth only move scrollTop
+  // down (or leave it), so they never spuriously release the pin.
   const checkIfNearBottom = () => {
-    if (!scrollContainerRef.current) return;
     const container = scrollContainerRef.current;
+    if (!container) return;
     const threshold = 100; // pixels from bottom
     const scrollTop = container.scrollTop;
     const isNear = container.scrollHeight - scrollTop - container.clientHeight < threshold;
     setIsNearBottom(isNear);
 
-    // Maintain the bottom-pin by scroll *direction*, not by raw position:
-    //  - scrolling up (the user moving away from the latest message) releases it;
-    //  - reaching the bottom re-engages it.
-    // Programmatic scroll-to-bottom and content growth only ever move scrollTop down
-    // (or leave it), so they never spuriously release the pin.
     if (scrollTop < lastScrollTopRef.current - 4) {
       stickToBottomRef.current = false;
     } else if (isNear) {
@@ -381,8 +394,12 @@ export function MessageView({ networkId, selectedChannel }: MessageViewProps) {
     });
   };
 
-  // When scrolled to the top, load an older page and preserve the viewport so the
-  // content doesn't jump. Stops once the backend reports no more history.
+  // When scrolled to the top, load an older page. The virtualizer's anchorTo:'end'
+  // preserves the viewport across the prepend — it re-anchors the row at the current
+  // scroll offset before paint, and again as the prepended rows measure — so we no
+  // longer touch scrollTop ourselves. (The old manual restore double-compensated
+  // against that native adjustment, which is what made the view jump past the load
+  // point.) Stops once the backend reports no more history.
   const maybeLoadOlder = () => {
     const container = scrollContainerRef.current;
     if (!container || loadingOlderRef.current || reachedStartRef.current) return;
@@ -393,23 +410,8 @@ export function MessageView({ networkId, selectedChannel }: MessageViewProps) {
     if (container.scrollTop > 80) return;
 
     loadingOlderRef.current = true;
-    const prevHeight = container.scrollHeight;
-    const prevTop = container.scrollTop;
     loadOlderMessages().then((added) => {
-      if (added > 0) {
-        // Keep the previously-top message visually fixed after prepending.
-        // Bypass the container's smooth scroll-behavior so this is instant.
-        requestAnimationFrame(() => {
-          const c = scrollContainerRef.current;
-          if (!c) return;
-          const prevBehavior = c.style.scrollBehavior;
-          c.style.scrollBehavior = 'auto';
-          c.scrollTop = c.scrollHeight - prevHeight + prevTop;
-          c.style.scrollBehavior = prevBehavior;
-        });
-      } else {
-        reachedStartRef.current = true;
-      }
+      if (added === 0) reachedStartRef.current = true;
       loadingOlderRef.current = false;
     });
   };
@@ -452,24 +454,18 @@ export function MessageView({ networkId, selectedChannel }: MessageViewProps) {
 
   // Keep the pane pinned to the latest message while "stuck to bottom".
   //
-  // The original bug: selectedChannel updates synchronously on a switch, but
-  // loadMessages() resolves the new channel's messages a round-trip later, so the
-  // first render after a switch still shows the *old* pane. The previous code
-  // advanced prevChannelRef and fired a single 100ms timeout on that first render,
-  // so the scroll raced (and usually lost to) the async load — leaving the pane
-  // stranded at the old scroll position, blank/short of the latest message until
-  // the user scrolled.
-  //
-  // Instead, every channel switch (re-)arms stickToBottom, and this layout effect
-  // re-pins to the bottom on *every* subsequent render while stuck. That makes the
-  // landing position independent of load timing/order: whenever the real content
-  // arrives (or a later poll/new message updates it) we are already at the bottom.
-  // The scroll is instant (behavior: auto) inside a layout effect, so the pane never
-  // paints at a stale position and there's no smooth-scroll-during-swap flicker.
-  // The user scrolling up releases the pin (see checkIfNearBottom).
+  // selectedChannel updates synchronously on a switch, but the new buffer loads a
+  // round-trip later (selectPane keeps the old rows visible meanwhile). Rather than
+  // race that load, every channel switch (re-)arms stickToBottom and this layout
+  // effect re-pins to the bottom on *every* render while stuck — so the landing is
+  // independent of load timing/order, and a fast incremental flood of new messages
+  // can't strand the pane part-way up. scrollToEnd is instant here (the container no
+  // longer forces CSS smooth) and reconciles to the true last row as it measures;
+  // anchorTo:'end' holds the pin between renders. The user scrolling up releases it.
   useLayoutEffect(() => {
     if (viewMode === 'anchored') {
-      // Anchored (jump-to-pin) view manages its own scroll; just track the channel.
+      // Anchored (jump-to-pin / scrollback) view manages its own scroll; just track
+      // the channel so a later switch back is detected.
       prevChannelRef.current = selectedChannel;
       return;
     }
@@ -481,45 +477,22 @@ export function MessageView({ networkId, selectedChannel }: MessageViewProps) {
     }
 
     if (stickToBottomRef.current && processedMessages.length > 0) {
-      // Pin to the last row. scrollToIndex handles dynamic measurement (it
-      // re-scrolls as rows measure), so this lands at the true bottom regardless
-      // of the initial size estimate.
-      rowVirtualizer.scrollToIndex(processedMessages.length - 1, { align: 'end' });
+      rowVirtualizer.scrollToEnd();
     }
   }, [selectedChannel, messages, viewMode, processedMessages.length, rowVirtualizer]);
 
-  // Auto-scroll only if user is near bottom and there are new messages
-  useEffect(() => {
-    const hasNewMessages = messages.length > prevMessagesLengthRef.current;
-    prevMessagesLengthRef.current = messages.length;
-
-    if (isNearBottom && hasNewMessages && viewMode !== 'anchored' && processedMessages.length > 0) {
-      // Small delay to let the new row measure before scrolling to it.
-      setTimeout(() => {
-        rowVirtualizer.scrollToIndex(processedMessages.length - 1, { align: 'end', behavior: 'smooth' });
-      }, 50);
-    }
-  }, [messages, isNearBottom, viewMode, processedMessages.length, rowVirtualizer]);
-
   // Scroll-to-bottom / return-to-live handler for the floating badge.
   const handleScrollToBottom = useCallback(() => {
-    const wasAnchored = viewMode === 'anchored';
-    if (wasAnchored) {
+    if (viewMode === 'anchored') {
       returnToLive(); // reloads the latest messages and flips back to live mode
     }
-    setTimeout(
-      () => {
-        // The spacer div's height is the virtualizer's total size, so scrolling the
-        // container to its scrollHeight lands at the bottom; re-arming stickToBottom
-        // lets the layout effect refine to the exact last row as it measures.
-        const el = scrollContainerRef.current;
-        if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
-        stickToBottomRef.current = true;
-        setIsNearBottom(true);
-      },
-      wasAnchored ? 150 : 0
-    );
-  }, [viewMode, returnToLive]);
+    // Re-arm the pin; the layout effect refines to the exact last row as rows
+    // measure (and once returnToLive's new buffer lands). scrollToEnd animates for
+    // the live case since the container no longer defaults to CSS smooth.
+    stickToBottomRef.current = true;
+    setIsNearBottom(true);
+    if (viewMode !== 'anchored') rowVirtualizer.scrollToEnd({ behavior: 'smooth' });
+  }, [viewMode, returnToLive, rowVirtualizer]);
 
   const showScrollBadge = viewMode === 'anchored' || !isNearBottom;
 
@@ -541,7 +514,6 @@ export function MessageView({ networkId, selectedChannel }: MessageViewProps) {
       ref={scrollContainerRef}
       className="h-full overflow-y-auto"
       onScroll={handleScroll}
-      style={{ scrollBehavior: 'smooth' }}
       data-testid="message-list"
     >
       {processedMessages.length === 0 ? (
