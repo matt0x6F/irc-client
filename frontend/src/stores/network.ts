@@ -136,6 +136,13 @@ interface NetworkState {
   networks: storage.Network[];
   connectionStatus: Record<number, boolean>;
   connectionStatusAt: Record<number, number>; // last-applied event time (ms) per network
+  // Networks with a connect attempt in flight (dial + CAP/SASL handshake), keyed
+  // by network id. Distinct from connectionStatus (a settled connected/not bool):
+  // during the multi-second handshake a network is neither connected nor idle, and
+  // the UI must not offer "Connect" again — a second attempt races the first and
+  // produces connect-then-drop churn. Driven by the backend connection-connecting
+  // event so every connect source (menu, auto-connect, reconnect) is reflected.
+  connectingNetworks: Record<number, boolean>;
   authState: Record<number, { reason: string } | undefined>;
   currentNick: Record<number, string>; // server-assigned nick per network; differs from the configured nick during a collision
   // CHANTYPES per network (from ISUPPORT, defaults applied backend-side). Cached
@@ -254,6 +261,7 @@ interface NetworkState {
 
   // Connection status
   setConnectionStatus: (networkId: number, connected: boolean, at?: number) => void;
+  setConnecting: (networkId: number, connecting: boolean) => void;
   setCurrentNick: (networkId: number, nick: string) => void;
 
   // Auth failure state
@@ -296,6 +304,7 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
   networks: [],
   connectionStatus: {},
   connectionStatusAt: {},
+  connectingNetworks: {},
   authState: {},
   currentNick: {},
   chanTypes: {},
@@ -1172,6 +1181,19 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
       }
       return {
         connectionStatus: { ...state.connectionStatus, [networkId]: connected },
+      };
+    }),
+
+  setConnecting: (networkId, connecting) =>
+    set((state) => {
+      // No timestamp/watermark here (unlike connectionStatus): the backend guards
+      // against overlapping attempts per network, so it emits connecting:true then
+      // connecting:false in order for one attempt and never starts a second until
+      // the first has released. The trailing false is emitted from a deferred exit
+      // covering every return path, so this flag can never get stuck set.
+      if (Boolean(state.connectingNetworks[networkId]) === connecting) return state;
+      return {
+        connectingNetworks: { ...state.connectingNetworks, [networkId]: connecting },
       };
     }),
 

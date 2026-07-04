@@ -30,6 +30,40 @@ describe('network store: currentNick', () => {
   });
 });
 
+// Guards the "connect attempt in flight" wiring the context menu reads to show a
+// disabled "Connecting…" (so a network can't be told to connect again mid-handshake,
+// which races the first attempt and causes connect-then-drop churn). Fed by the
+// 'connection-connecting' event; the reducer is pure.
+describe('network store: connecting state', () => {
+  beforeEach(() => {
+    useNetworkStore.setState({ connectingNetworks: {} });
+  });
+
+  it('setConnecting marks and clears a network as in-flight', () => {
+    const { setConnecting } = useNetworkStore.getState();
+    setConnecting(1, true);
+    expect(useNetworkStore.getState().connectingNetworks[1]).toBe(true);
+    setConnecting(1, false);
+    expect(useNetworkStore.getState().connectingNetworks[1]).toBe(false);
+  });
+
+  it('setConnecting is per-network and does not clobber other networks', () => {
+    const { setConnecting } = useNetworkStore.getState();
+    setConnecting(1, true);
+    setConnecting(2, true);
+    setConnecting(1, false);
+    expect(useNetworkStore.getState().connectingNetworks).toEqual({ 1: false, 2: true });
+  });
+
+  it('setConnecting is a no-op when the flag is unchanged (stable reference)', () => {
+    const { setConnecting } = useNetworkStore.getState();
+    setConnecting(1, true);
+    const before = useNetworkStore.getState().connectingNetworks;
+    setConnecting(1, true);
+    expect(useNetworkStore.getState().connectingNetworks).toBe(before);
+  });
+});
+
 // Guards the IRCv3 bot-mode wiring that the chat rows, nick list, and WHOIS
 // panel read. addBot is fed by the 'bot-event' handler; isBot is what the
 // badges query. Reducers are pure, so no Wails bindings need mocking.

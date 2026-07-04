@@ -790,6 +790,8 @@ func (irc *Connection) Connect() (err error) {
 	irc.lastReadNano.Store(time.Now().UnixNano())
 	irc.wg.Add(4)
 	irc.capsChan = make(chan capResult, len(irc.RequestCaps))
+	irc.capsLSChan = make(chan empty)
+	irc.capsLSDone = false
 	irc.saslChan = make(chan saslResult, 1)
 	irc.saslBuffer = nil
 	irc.welcomeChan = make(chan empty)
@@ -831,19 +833,17 @@ func (irc *Connection) performHandshake() error {
 		irc.Send("PASS", irc.Password)
 	}
 
-	remainingCaps := len(irc.RequestCaps)
-	capsRequested := remainingCaps != 0
-	acknowledgedCaps := make([]string, 0, remainingCaps)
+	capsRequested := len(irc.RequestCaps) != 0
+	remainingCaps := 0
+	acknowledgedCaps := make([]string, 0, len(irc.RequestCaps))
 
 	if capsRequested {
-		// get all CAP values if available
+		// Ask what the server supports; the actual REQ waits for the reply below.
 		irc.Send("CAP", "LS", "302")
-		// then blindly request all CAPs we know about
-		for _, capab := range irc.RequestCaps {
-			irc.Send("CAP", "REQ", capab)
-		}
 	}
-	// then send NICK and USER
+	// Send NICK and USER now (not after the LS reply): a server that ignores CAP
+	// never answers CAP LS and only reaches 001 once it has NICK/USER, so deferring
+	// them would deadlock the LS wait until the timeout.
 	irc.Send("NICK", irc.PreferredNick())
 	irc.Send("USER", irc.User, "s", "e", irc.RealName)
 
@@ -855,19 +855,48 @@ func (irc *Connection) performHandshake() error {
 	timer := time.NewTimer(irc.Timeout)
 	defer timer.Stop()
 
+	if capsRequested {
+		// Wait for the CAP LS advertisement, then request only the caps the server
+		// actually offers, as ONE `CAP REQ` line. Two reasons this must be a single
+		// filtered line rather than one REQ per cap:
+		//   - IRCv3 CAP REQ is atomic: a combined request naming any cap the server
+		//     did not advertise is rejected (NAK'd) as a whole, so we filter first.
+		//   - Requesting each cap on its own line trips server anti-flood throttling
+		//     (Libera released ~1 line/sec), stretching registration to ~15-20s.
+	LSWAIT:
+		for {
+			select {
+			case <-irc.capsLSChan:
+				break LSWAIT // advertisement complete
+			case <-irc.welcomeChan:
+				capsRequested = false // server ignored CAP and went straight to 001
+				break LSWAIT
+			case <-timer.C:
+				return ServerTimedOut
+			case <-irc.end:
+				return ServerDisconnected
+			}
+		}
+
+		if capsRequested {
+			toRequest := irc.capsToRequest()
+			remainingCaps = len(toRequest)
+			if remainingCaps > 0 {
+				irc.Send("CAP", "REQ", strings.Join(toRequest, " "))
+			}
+		}
+	}
+
 CAPLOOP:
-	for {
+	for remainingCaps > 0 {
 		select {
 		case result := <-irc.capsChan:
 			remainingCaps--
 			if result.ack {
 				acknowledgedCaps = append(acknowledgedCaps, result.capName)
 			}
-			if remainingCaps <= 0 {
-				break CAPLOOP // got ACK or NAK for all our CAPs
-			}
 		case <-irc.welcomeChan:
-			break CAPLOOP // server does not support CAP
+			break CAPLOOP // server ended registration early
 		case <-timer.C:
 			return ServerTimedOut
 		case <-irc.end:
