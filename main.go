@@ -2,6 +2,9 @@ package main
 
 import (
 	"embed"
+	"net/http"
+	_ "net/http/pprof" // registers /debug/pprof handlers on http.DefaultServeMux
+	"os"
 	"runtime"
 	"strings"
 
@@ -14,6 +17,19 @@ import (
 var assets embed.FS
 
 func main() {
+	// Optional pprof server for diagnosing hangs/deadlocks (e.g. a wedged send or
+	// a stuck connection read loop). Off unless CASCADE_PPROF is set, and binds
+	// loopback only so it is never network-exposed. Set it to "1" for the default
+	// 127.0.0.1:6060, or to an explicit host:port. Grab a full goroutine dump with
+	//   curl 'http://127.0.0.1:6060/debug/pprof/goroutine?debug=2'
+	if v := os.Getenv("CASCADE_PPROF"); v != "" {
+		addr := "127.0.0.1:6060"
+		if strings.Contains(v, ":") {
+			addr = v
+		}
+		go func() { _ = http.ListenAndServe(addr, nil) }()
+	}
+
 	// Create the IRC application backend (storage, event bus, plugins, …).
 	ircApp, err := NewApp()
 	if err != nil {

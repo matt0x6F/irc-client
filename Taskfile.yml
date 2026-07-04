@@ -76,6 +76,23 @@ tasks:
     cmds:
       - wails3 dev -config ./build/config.yml -port {{.VITE_PORT}}
 
+  dev:pprof:
+    desc: Run dev mode with a loopback pprof server for diagnosing hangs/deadlocks
+    summary: |
+      Same as `task dev`, but sets CASCADE_PPROF=1 so main() starts net/http/pprof
+      on 127.0.0.1:6060 (loopback only, never network-exposed). Use it to capture a
+      full goroutine dump when the app hangs — e.g. a wedged send or a stuck
+      connection read loop:
+
+        curl 'http://127.0.0.1:6060/debug/pprof/goroutine?debug=2' > goroutines.txt
+
+      pprof is off in every normal build (the env var is unset), so production
+      binaries never open the port.
+    env:
+      CASCADE_PPROF: "1"
+    cmds:
+      - wails3 dev -config ./build/config.yml -port {{.VITE_PORT}}
+
   dev:mcp:
     desc: Run dev mode with the built-in MCP server so an LLM agent can drive the live app
     summary: |
