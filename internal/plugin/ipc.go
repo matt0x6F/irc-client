@@ -26,6 +26,20 @@ type IPC struct {
 	closed       bool
 	pluginID     string
 	manager      *Manager // Reference to manager for handling notifications
+
+	// writeCh serializes all writes to the plugin's stdin through a single
+	// writer goroutine (writeLoop). This is the critical decoupling that keeps a
+	// slow or wedged plugin from blocking its callers: SendNotification is called
+	// synchronously on the shared event-bus dispatcher goroutine, and a direct
+	// stdin.Write there would park on a full pipe if the plugin stopped draining
+	// — freezing the whole event bus (and, transitively, IRC sends, connection
+	// teardown, and reconnect). Enqueueing instead means the dispatcher never
+	// touches the pipe. Buffered so brief bursts don't drop; a sustained backlog
+	// (a genuinely stuck plugin) drops best-effort notifications rather than
+	// blocking. done closes on Close to stop the writer.
+	writeCh   chan []byte
+	done      chan struct{}
+	closeOnce sync.Once
 }
 
 // NewIPC creates a new IPC connection to a plugin
@@ -84,6 +98,8 @@ func NewIPC(pluginPath string, pluginID string, manager *Manager) (*IPC, error) 
 		nextID:       1,
 		pluginID:     pluginID,
 		manager:      manager,
+		writeCh:      make(chan []byte, 256),
+		done:         make(chan struct{}),
 	}
 
 	// CRITICAL: Start reading from stdout and stderr BEFORE starting the process
@@ -123,6 +139,11 @@ func NewIPC(pluginPath string, pluginID string, manager *Manager) (*IPC, error) 
 	// Start reading stdout BEFORE starting the process
 	// This is critical to prevent the child from blocking
 	go ipc.readLoop()
+
+	// Start the sole stdin writer. All writes funnel through writeCh so a plugin
+	// that stops draining its stdin can only ever block THIS goroutine (which
+	// Close unblocks by closing the pipe), never a caller on a shared goroutine.
+	go ipc.writeLoop()
 
 	// Start the process
 	logger.Log.Info().
@@ -325,6 +346,51 @@ func (ipc *IPC) readLoop() {
 }
 
 // SendRequest sends a JSON-RPC request to the plugin
+// writeLoop is the sole writer of the plugin's stdin. It drains writeCh in FIFO
+// order (so JSON-RPC lines are never interleaved) and blocks here — and only
+// here — when a plugin stops reading its stdin. On a write error or Close (done
+// closed, which also closes stdin to unblock an in-progress Write) it exits.
+func (ipc *IPC) writeLoop() {
+	for {
+		select {
+		case data := <-ipc.writeCh:
+			if _, err := ipc.stdin.Write(data); err != nil {
+				logger.Log.Warn().Err(err).Str("plugin", ipc.pluginID).Msg("Plugin stdin write failed; stopping writer")
+				return
+			}
+		case <-ipc.done:
+			return
+		}
+	}
+}
+
+// enqueueWrite hands a pre-marshaled line to the writer goroutine. block=false
+// (notifications) makes it best-effort: if the buffer is full the line is
+// dropped rather than parking the caller — vital on the event-bus dispatcher.
+// block=true (requests) waits up to a bounded time so a wedged plugin can't
+// stall the caller indefinitely.
+func (ipc *IPC) enqueueWrite(data []byte, block bool) error {
+	if !block {
+		select {
+		case ipc.writeCh <- data:
+			return nil
+		case <-ipc.done:
+			return fmt.Errorf("IPC closed")
+		default:
+			logger.Log.Warn().Str("plugin", ipc.pluginID).Msg("Plugin write buffer full; dropping notification (plugin not draining stdin)")
+			return nil
+		}
+	}
+	select {
+	case ipc.writeCh <- data:
+		return nil
+	case <-ipc.done:
+		return fmt.Errorf("IPC closed")
+	case <-time.After(2 * time.Second):
+		return fmt.Errorf("timeout enqueuing write (plugin not draining stdin)")
+	}
+}
+
 func (ipc *IPC) SendRequest(method string, params interface{}) (*Response, error) {
 	ipc.mu.Lock()
 	if ipc.closed {
@@ -368,8 +434,10 @@ func (ipc *IPC) SendRequest(method string, params interface{}) (*Response, error
 		Str("data", string(data)).
 		Msg("Writing request to plugin stdin")
 
-	n, err := ipc.stdin.Write(data)
-	if err != nil {
+	// Hand off to the writer goroutine (bounded wait) instead of writing stdin
+	// inline, so a plugin that has stopped draining its stdin can't park this
+	// caller forever — it fails fast and the request is cleaned up.
+	if err := ipc.enqueueWrite(data, true); err != nil {
 		ipc.mu.Lock()
 		delete(ipc.requests, id)
 		ipc.mu.Unlock()
@@ -377,34 +445,15 @@ func (ipc *IPC) SendRequest(method string, params interface{}) (*Response, error
 			Err(err).
 			Str("plugin", ipc.pluginID).
 			Str("method", method).
-			Msg("Failed to write request to plugin")
+			Msg("Failed to enqueue request to plugin")
 		return nil, fmt.Errorf("failed to write request: %w", err)
-	}
-
-	// Verify we wrote all the data
-	if n != len(data) {
-		ipc.mu.Lock()
-		delete(ipc.requests, id)
-		ipc.mu.Unlock()
-		logger.Log.Error().
-			Str("plugin", ipc.pluginID).
-			Str("method", method).
-			Int("bytes_written", n).
-			Int("expected", len(data)).
-			Msg("Partial write to plugin stdin")
-		return nil, fmt.Errorf("partial write: wrote %d of %d bytes", n, len(data))
 	}
 
 	logger.Log.Info().
 		Str("plugin", ipc.pluginID).
 		Str("method", method).
-		Int("bytes_written", n).
 		Int("data_length", len(data)).
-		Msg("Successfully wrote request to plugin, waiting for response")
-
-	// Give the OS a moment to deliver the data through the pipe
-	// This helps ensure the plugin receives the data before we start waiting
-	time.Sleep(10 * time.Millisecond)
+		Msg("Enqueued request to plugin, waiting for response")
 
 	// Wait for response with timeout
 	logger.Log.Debug().
@@ -473,26 +522,12 @@ func (ipc *IPC) SendNotification(method string, params interface{}) error {
 
 	data = append(data, '\n')
 
-	logger.Log.Debug().
-		Str("plugin", ipc.pluginID).
-		Str("method", method).
-		Msg("Writing notification to plugin stdin")
-
-	if _, err := ipc.stdin.Write(data); err != nil {
-		logger.Log.Error().
-			Err(err).
-			Str("plugin", ipc.pluginID).
-			Str("method", method).
-			Msg("Failed to write notification to plugin")
-		return fmt.Errorf("failed to write notification: %w", err)
-	}
-
-	logger.Log.Debug().
-		Str("plugin", ipc.pluginID).
-		Str("method", method).
-		Msg("Successfully wrote notification to plugin")
-
-	return nil
+	// Best-effort, non-blocking hand-off to the writer goroutine. Notifications
+	// are called synchronously on the shared event-bus dispatcher; a direct pipe
+	// write here would freeze the entire bus if the plugin stopped draining its
+	// stdin (the observed deadlock). Dropping a notification a stuck plugin was
+	// never going to process is strictly preferable to that.
+	return ipc.enqueueWrite(data, false)
 }
 
 // handleNotification handles JSON-RPC notifications from plugins
@@ -565,6 +600,11 @@ func (ipc *IPC) Close() error {
 	ipc.closed = true
 	ipc.mu.Unlock()
 
+	// Stop the writer goroutine. Closing done makes it return from its select;
+	// closing stdin below additionally unblocks it if it is parked mid-Write on a
+	// plugin that stopped reading.
+	ipc.closeOnce.Do(func() { close(ipc.done) })
+
 	// Close stdin first to signal the plugin to exit (should trigger EOF)
 	// This gives the plugin a chance to exit gracefully
 	if ipc.stdin != nil {
@@ -574,7 +614,7 @@ func (ipc *IPC) Close() error {
 	// Try to kill the process if it's still running
 	// Note: We already have a goroutine running cmd.Wait() from NewIPC()
 	// so the process will be reaped even if we can't kill it here
-	if ipc.cmd.Process != nil {
+	if ipc.cmd != nil && ipc.cmd.Process != nil {
 		// Give process a moment to exit naturally after stdin close
 		time.Sleep(50 * time.Millisecond)
 
