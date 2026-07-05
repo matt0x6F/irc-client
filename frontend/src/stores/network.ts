@@ -1211,6 +1211,32 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
 
   setConnectionStatus: (networkId, connected, at) =>
     set((state) => {
+      // When a network goes (or is polled as) disconnected we can no longer see
+      // anyone on it, so drop every MONITOR-derived presence claim: the DM-list
+      // dots fall back to the neutral 'unknown' state and the Buddies panel renders
+      // neutral (see monitor-list). Without this a green dot would linger on an
+      // offline buddy for the whole time the socket is down. Reset lives here (not
+      // in the event handler) so it inherits the same out-of-order watermark guard
+      // as the status itself — a stale 'disconnected' arriving after a reconnect is
+      // dropped below and never wipes fresh presence. Idempotent: only allocates
+      // new objects when there is actually stale state to clear, so the connection
+      // poll re-reporting 'disconnected' doesn't churn references.
+      const withPresenceReset = (patch: Partial<NetworkState>): Partial<NetworkState> => {
+        if (connected) return patch;
+        const curPresence = state.presence[networkId];
+        if (curPresence && Object.keys(curPresence).length > 0) {
+          patch.presence = { ...state.presence, [networkId]: {} };
+        }
+        const list = state.monitor[networkId];
+        if (list && list.some((b) => b.online)) {
+          patch.monitor = {
+            ...state.monitor,
+            [networkId]: list.map((b) => (b.online ? { ...b, online: false } : b)),
+          };
+        }
+        return patch;
+      };
+
       // Timestamped updates (events) may arrive out of order because the Go event
       // bus dispatches subscribers on unordered goroutines. Drop an event strictly
       // older than the last one applied for this network. Untimestamped updates
@@ -1221,14 +1247,14 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
         if (lastAt !== undefined && at < lastAt) {
           return state;
         }
-        return {
+        return withPresenceReset({
           connectionStatus: { ...state.connectionStatus, [networkId]: connected },
           connectionStatusAt: { ...state.connectionStatusAt, [networkId]: at },
-        };
+        });
       }
-      return {
+      return withPresenceReset({
         connectionStatus: { ...state.connectionStatus, [networkId]: connected },
-      };
+      });
     }),
 
   setConnecting: (networkId, connecting) =>
