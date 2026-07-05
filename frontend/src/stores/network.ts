@@ -131,25 +131,24 @@ function sortByTimestamp(msgs: storage.Message[]): storage.Message[] {
   });
 }
 
-// Cap on how large the live buffer may grow while the user is scrolled up reading
-// history (see loadMessages' merge path). Generous — a single read rarely spans this
-// many new messages — and bounds the per-message merge/sort cost on a busy channel.
-const LIVE_MERGE_CAP = 1000;
-
 // Fold freshly-loaded messages into an existing buffer, de-duped by id and kept in
 // timestamp order. Used when the user is scrolled up: a plain latest-100 REPLACE
 // slides the window forward and drops the older rows they're reading, yanking the
 // viewport. Merging keeps those older rows and just appends the newer ones below.
-// Trims from the oldest end if the merged buffer would exceed LIVE_MERGE_CAP.
-function mergeMessagesById(
+//
+// Deliberately does NOT cap/trim the buffer: the user is reading the OLDEST end, so
+// trimming from the top would drop exactly what they're looking at (the "scroll up
+// and it skips an hour ahead" bug). Growth is naturally bounded — the buffer is reset
+// to the latest 100 as soon as the user returns to the bottom (atBottom → replace) or
+// switches channels, so it only grows during an active scroll-up read.
+export function mergeMessagesById(
   existing: storage.Message[],
   incoming: storage.Message[]
 ): storage.Message[] {
   const byId = new Map<number, storage.Message>();
   for (const m of existing) byId.set(m.id, m);
   for (const m of incoming) byId.set(m.id, m); // fresh copies win (e.g. optimistic → real row)
-  const merged = sortByTimestamp([...byId.values()]);
-  return merged.length > LIVE_MERGE_CAP ? merged.slice(merged.length - LIVE_MERGE_CAP) : merged;
+  return sortByTimestamp([...byId.values()]);
 }
 
 interface NetworkState {
