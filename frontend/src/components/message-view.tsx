@@ -396,8 +396,8 @@ export function MessageView({ networkId, selectedChannel }: MessageViewProps) {
     });
   };
 
-  // Always-current processedMessages, so the async scroll-restore below can map the
-  // anchor message id → its live row index after the buffer changes.
+  // Always-current processedMessages, so the async scroll-restore can map the anchor
+  // message id → its live row index after the prepend.
   const procRef = useRef(processedMessages);
   procRef.current = processedMessages;
 
@@ -414,13 +414,15 @@ export function MessageView({ networkId, selectedChannel }: MessageViewProps) {
     if (container.scrollTop > 80) return;
 
     loadingOlderRef.current = true;
-    // Preserve the reading position across the prepend. anchorTo:'end' doesn't push
-    // scrollTop down for inserted rows, and a scrollHeight-delta restore drifts as the
-    // prepended rows re-measure (estimate→real). So we anchor to the ACTUAL element:
-    // record the message id currently at the top of the viewport and its offset, then
-    // after the prepend keep correcting scrollTop until that same row sits back at the
-    // same offset — measurement-proof. A coarse height-delta pass first brings the
-    // anchor row back into the mounted window so we can measure it.
+    // Preserve the reading position across the prepend by pinning to the ACTUAL anchor
+    // ELEMENT — the row currently at the top of the viewport (by message id + its
+    // on-screen offset). After the prepend we keep putting that row back at its offset
+    // until the prepended rows stop re-measuring. Element-anchored (not a
+    // scrollHeight-delta), so the estimate→measured settling — and the windowing that
+    // reveals rows taller than estimateSize as you scroll — can't make it drift or run
+    // away. The pagination lock is held until settled, so a fast scroll can't spawn
+    // overlapping restores that fight over scrollTop. Pairs with
+    // shouldAdjustScrollPositionOnItemSizeChange:false — we own all scroll compensation.
     const prevHeight = container.scrollHeight;
     const prevTop = container.scrollTop;
     const listTop0 = container.getBoundingClientRect().top;
@@ -429,8 +431,7 @@ export function MessageView({ networkId, selectedChannel }: MessageViewProps) {
     for (const rowEl of container.querySelectorAll('[data-index]')) {
       const rect = (rowEl as HTMLElement).getBoundingClientRect();
       if (rect.bottom > listTop0 + 1) {
-        const idx = Number(rowEl.getAttribute('data-index'));
-        anchorId = (processedMessages[idx] as storage.Message)?.id ?? null;
+        anchorId = (processedMessages[Number(rowEl.getAttribute('data-index'))] as storage.Message)?.id ?? null;
         anchorOffset = rect.top - listTop0;
         break;
       }
@@ -442,12 +443,12 @@ export function MessageView({ networkId, selectedChannel }: MessageViewProps) {
         let elapsed = 0;
         const step = () => {
           const c = scrollContainerRef.current;
-          if (!c) return;
+          if (!c) { loadingOlderRef.current = false; return; }
           const prevBehavior = c.style.scrollBehavior;
           c.style.scrollBehavior = 'auto';
-          // 1. coarse: height-delta restore, to mount the anchor near its place.
+          // Coarse height-delta first, to bring the anchor row back into the mounted
+          // window; then correct to the anchor row's real on-screen offset.
           c.scrollTop = c.scrollHeight - prevHeight + prevTop;
-          // 2. fine: correct to the anchor row's real position, if it's mounted.
           const idx = procRef.current.findIndex((m) => (m as storage.Message).id === anchorId);
           const rowEl = idx >= 0 ? c.querySelector(`[data-index="${idx}"]`) : null;
           if (rowEl) {
@@ -459,12 +460,13 @@ export function MessageView({ networkId, selectedChannel }: MessageViewProps) {
           else { stableFrames = 0; lastSH = c.scrollHeight; }
           elapsed += 16;
           if (stableFrames < 5 && elapsed < 600) requestAnimationFrame(step);
+          else loadingOlderRef.current = false;
         };
         step();
-      } else if (added === 0) {
-        reachedStartRef.current = true;
+      } else {
+        if (added === 0) reachedStartRef.current = true;
+        loadingOlderRef.current = false;
       }
-      loadingOlderRef.current = false;
     });
   };
 
