@@ -194,6 +194,118 @@ test('virtualized pane: loading older history preserves the viewport (no jump pa
   }
 });
 
+test('virtualized pane: FAST scrolling up through many history pages stays monotonic', async ({
+  page,
+  runtime,
+}) => {
+  // Exercises the multi-page fast-scroll path: page in several screens of history as
+  // fast as possible and assert the top-of-view message index moves monotonically
+  // BACKWARD (older) — no gross forward lurch. This guards against a scroll-restore
+  // that over-compensates on prepend (e.g. the scrollHeight-delta approach ran away
+  // into a forward over-scroll) and against broken pagination.
+  //
+  // NOTE: this does NOT reliably reproduce the concurrent-restore *race* that the
+  // serialized pagination lock fixes — that race depends on loads resolving faster
+  // than the ~600ms restore settles, which holds for the real app's instant local-DB
+  // reads but NOT for e2e's slower HTTP-bridged reads (measured: fixed and unfixed
+  // builds both show only ~6–12 messages of rapid-scroll render noise here). That fix
+  // is verified manually against a copy of the real DB; see PR #145.
+  const run = `${Date.now()}x${execCount++}`;
+  const TARGET = `#fast${run}`;
+  const SOURCE = `#src${run}`;
+  const BATCHES = 5;
+  const PER_BATCH = 100; // > SCROLLBACK_PAGE window so scroll-up pages in batch by batch
+  const PAD = 'lorem ipsum '.repeat(30).trim(); // tall rows: 44px estimate is badly wrong
+  // Global index m-0 (oldest) .. m-(N-1) (newest). Higher index == newer == further down.
+  const topIndex = () =>
+    page.getByTestId('message-list').evaluate((el) => {
+      const lt = el.getBoundingClientRect().top;
+      const items = [...el.querySelectorAll('[data-testid="message-item"]')].filter(
+        (it) => it.getBoundingClientRect().bottom > lt + 2,
+      );
+      const t = items[0]?.textContent ?? '';
+      // textContent concatenates spans without spaces ("…flooderm-499 lorem…"), so no
+      // leading word boundary. `m-\d+ ` (trailing space) pins the label unambiguously.
+      const m = t.match(/m-(\d+) /);
+      return m ? Number(m[1]) : null;
+    });
+
+  await page.setViewportSize({ width: 1000, height: 500 });
+  await page.goto(runtime.bridgeUrl);
+  await addNetworkAndConnect(page, runtime);
+  await selectNetwork(page);
+  const list = page.getByTestId('message-list');
+
+  await joinChannel(page, TARGET);
+  await joinChannel(page, SOURCE);
+
+  const peer = new IrcPeer('localhost', runtime.ergoPort, 'flooder');
+  await peer.connect();
+  peer.join(TARGET);
+  await peer.waitForJoin(TARGET);
+
+  try {
+    // Time-separated batches so GetMessagesBeforeTime (WHERE timestamp < cursor) can
+    // page across the boundaries instead of colliding on one instant.
+    let idx = 0;
+    for (let b = 0; b < BATCHES; b++) {
+      for (let i = 0; i < PER_BATCH; i++) peer.say(TARGET, `m-${idx++} ${PAD}`);
+      await page.waitForTimeout(1300);
+    }
+    const NEWEST = idx - 1;
+
+    await page.waitForTimeout(600); // let deferred auto-focus settle
+    await openChannel(page, TARGET);
+    await expect(list.getByText(new RegExp(`^m-${NEWEST} `))).toBeAttached({ timeout: 20_000 });
+    await expect.poll(() => distanceFromBottom(page)).toBeLessThanOrEqual(8);
+
+    // Install a per-frame monitor of the top-of-view index. The concurrent-restore
+    // thrash lurches the view forward for only a frame or two before settling, so
+    // sampling between scroll steps misses it — we must watch every animation frame.
+    await page.evaluate(() => {
+      const w = window as unknown as { __wf: number; __li: number | null; __raf: number };
+      w.__wf = 0;
+      w.__li = null;
+      const listEl = document.querySelector('[data-testid="message-list"]')!;
+      const tick = () => {
+        const lt = listEl.getBoundingClientRect().top;
+        const it = [...listEl.querySelectorAll('[data-testid="message-item"]')].find(
+          (e) => e.getBoundingClientRect().bottom > lt + 2,
+        );
+        const m = (it?.textContent ?? '').match(/m-(\d+) /);
+        const idx = m ? Number(m[1]) : null;
+        if (idx != null && w.__li != null) w.__wf = Math.max(w.__wf, idx - w.__li);
+        if (idx != null) w.__li = idx;
+        w.__raf = requestAnimationFrame(tick);
+      };
+      w.__raf = requestAnimationFrame(tick);
+    });
+
+    // Scroll up as fast as possible, paging in history back-to-back.
+    for (let step = 0; step < 40; step++) {
+      await list.evaluate((el) => el.scrollBy({ top: -3000 }));
+      await page.waitForTimeout(45);
+      if ((await list.evaluate((el) => el.scrollTop)) === 0) await page.waitForTimeout(120);
+    }
+
+    const worstForward = await page.evaluate(() => {
+      const w = window as unknown as { __wf: number; __raf: number };
+      cancelAnimationFrame(w.__raf);
+      return w.__wf;
+    });
+
+    // Sanity: we must have actually paged through history (else the test is vacuous).
+    const finalTop = await topIndex();
+    expect(finalTop, 'never paged past the initial window — flood/pagination too small').toBeLessThan(NEWEST - PER_BATCH);
+    // No GROSS forward lurch. The threshold is well above the ~6–12 of rapid-scroll
+    // render noise (see the NOTE above) but far below the hundreds a runaway restore or
+    // buffer-window slide produces.
+    expect(worstForward, `top-of-view lurched forward by ${worstForward} messages during fast scroll-up`).toBeLessThan(60);
+  } finally {
+    peer.close();
+  }
+});
+
 test('virtualized pane: scrolling up on a BUSY live channel does not jump as new messages arrive', async ({
   page,
   runtime,
