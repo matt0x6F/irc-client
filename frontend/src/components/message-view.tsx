@@ -46,8 +46,8 @@ export function MessageView({ networkId, selectedChannel }: MessageViewProps) {
   // upward scroll. While set, the layout effect re-pins to the bottom on *every*
   // render — this is what makes a channel switch (and a fast incremental flood of
   // new messages) land at the latest message regardless of load/measure timing.
-  // The virtualizer's anchorTo:'end' then holds that pin *between* renders as rows
-  // measure, and preserves the viewport when older history is prepended.
+  // (Scroll position across a scroll-up history prepend is preserved separately, by
+  // the element-anchored restore in maybeLoadOlder.)
   const stickToBottomRef = useRef(true);
   // Last observed scrollTop, to detect scroll *direction*. The pin is released only
   // on a real upward (user) scroll — never on the transient "not at bottom" readings
@@ -256,21 +256,16 @@ export function MessageView({ networkId, selectedChannel }: MessageViewProps) {
     estimateSize: () => 44,
     overscan: 14,
     getItemKey: (i) => (processedMessages[i] as storage.Message).id,
-    // Native chat-style scroll anchoring (@tanstack/react-virtual v3): keep the
-    // viewport pinned to the newest row as dynamic row heights measure in *between*
-    // renders, and — crucially — preserve the viewport when older history is
-    // prepended on scroll-up. This replaces the manual scroll-restore-on-prepend
-    // (which double-compensated against this native adjustment and made the view
-    // jump past the load point). The stick-to-bottom pin itself is still driven by
-    // the layout effect below, because a fast incremental flood needs an
-    // unconditional per-render re-pin that followOnAppend's isAtEnd gating can't
-    // guarantee. NOTE: the container must NOT set `scroll-behavior: smooth`, or
-    // these internal (behavior:'auto') scrolls animate and race measurement — the
-    // original "switch doesn't land at bottom" bug.
-    anchorTo: 'end',
-    // Tolerance (px from the bottom) for the native at-end measurement adjustment,
-    // matching the return-to-bottom badge's near-bottom threshold used below.
-    scrollEndThreshold: 100,
+    // Take FULL manual control of scroll position on content change. anchorTo:'end'
+    // did NOT push scrollTop down for prepended rows (verified on real data: the view
+    // snapped to the newly-loaded oldest message), and TanStack's built-in
+    // size-change adjustment fights our own scroll-restore on prepend (double-
+    // compensation → residual drift). So we disable the built-in adjustment and own
+    // it: the layout-effect re-pin keeps us at the bottom, and maybeLoadOlder restores
+    // the offset across a prepend. NOTE: the container must NOT set
+    // `scroll-behavior: smooth`, or these instant scrolls animate and race measurement.
+    // @ts-expect-error present in @tanstack/virtual-core 3.17.3 (runtime); react-virtual's bundled types lag.
+    shouldAdjustScrollPositionOnItemSizeChange: () => false,
   });
 
   // Reply jump: scroll to a message row by msgid and flash it briefly. Returns
@@ -401,12 +396,14 @@ export function MessageView({ networkId, selectedChannel }: MessageViewProps) {
     });
   };
 
-  // When scrolled to the top, load an older page. The virtualizer's anchorTo:'end'
-  // preserves the viewport across the prepend — it re-anchors the row at the current
-  // scroll offset before paint, and again as the prepended rows measure — so we no
-  // longer touch scrollTop ourselves. (The old manual restore double-compensated
-  // against that native adjustment, which is what made the view jump past the load
-  // point.) Stops once the backend reports no more history.
+  // Always-current processedMessages, so the async scroll-restore below can map the
+  // anchor message id → its live row index after the buffer changes.
+  const procRef = useRef(processedMessages);
+  procRef.current = processedMessages;
+
+  // When scrolled to the top, load an older page and keep the reading position fixed
+  // across the prepend (see the element-anchored restore inside). Stops once the
+  // backend reports no more history.
   const maybeLoadOlder = () => {
     const container = scrollContainerRef.current;
     if (!container || loadingOlderRef.current || reachedStartRef.current) return;
@@ -417,8 +414,56 @@ export function MessageView({ networkId, selectedChannel }: MessageViewProps) {
     if (container.scrollTop > 80) return;
 
     loadingOlderRef.current = true;
+    // Preserve the reading position across the prepend. anchorTo:'end' doesn't push
+    // scrollTop down for inserted rows, and a scrollHeight-delta restore drifts as the
+    // prepended rows re-measure (estimate→real). So we anchor to the ACTUAL element:
+    // record the message id currently at the top of the viewport and its offset, then
+    // after the prepend keep correcting scrollTop until that same row sits back at the
+    // same offset — measurement-proof. A coarse height-delta pass first brings the
+    // anchor row back into the mounted window so we can measure it.
+    const prevHeight = container.scrollHeight;
+    const prevTop = container.scrollTop;
+    const listTop0 = container.getBoundingClientRect().top;
+    let anchorId: number | null = null;
+    let anchorOffset = 0;
+    for (const rowEl of container.querySelectorAll('[data-index]')) {
+      const rect = (rowEl as HTMLElement).getBoundingClientRect();
+      if (rect.bottom > listTop0 + 1) {
+        const idx = Number(rowEl.getAttribute('data-index'));
+        anchorId = (processedMessages[idx] as storage.Message)?.id ?? null;
+        anchorOffset = rect.top - listTop0;
+        break;
+      }
+    }
     loadOlderMessages().then((added) => {
-      if (added === 0) reachedStartRef.current = true;
+      if (added > 0 && anchorId != null) {
+        let stableFrames = 0;
+        let lastSH = -1;
+        let elapsed = 0;
+        const step = () => {
+          const c = scrollContainerRef.current;
+          if (!c) return;
+          const prevBehavior = c.style.scrollBehavior;
+          c.style.scrollBehavior = 'auto';
+          // 1. coarse: height-delta restore, to mount the anchor near its place.
+          c.scrollTop = c.scrollHeight - prevHeight + prevTop;
+          // 2. fine: correct to the anchor row's real position, if it's mounted.
+          const idx = procRef.current.findIndex((m) => (m as storage.Message).id === anchorId);
+          const rowEl = idx >= 0 ? c.querySelector(`[data-index="${idx}"]`) : null;
+          if (rowEl) {
+            const cur = (rowEl as HTMLElement).getBoundingClientRect().top - c.getBoundingClientRect().top;
+            c.scrollTop += cur - anchorOffset;
+          }
+          c.style.scrollBehavior = prevBehavior;
+          if (c.scrollHeight === lastSH) stableFrames++;
+          else { stableFrames = 0; lastSH = c.scrollHeight; }
+          elapsed += 16;
+          if (stableFrames < 5 && elapsed < 600) requestAnimationFrame(step);
+        };
+        step();
+      } else if (added === 0) {
+        reachedStartRef.current = true;
+      }
       loadingOlderRef.current = false;
     });
   };
@@ -467,8 +512,8 @@ export function MessageView({ networkId, selectedChannel }: MessageViewProps) {
   // effect re-pins to the bottom on *every* render while stuck — so the landing is
   // independent of load timing/order, and a fast incremental flood of new messages
   // can't strand the pane part-way up. scrollToEnd is instant here (the container no
-  // longer forces CSS smooth) and reconciles to the true last row as it measures;
-  // anchorTo:'end' holds the pin between renders. The user scrolling up releases it.
+  // longer forces CSS smooth) and reconciles to the true last row as it measures.
+  // The user scrolling up releases the pin (see checkIfNearBottom).
   useLayoutEffect(() => {
     if (viewMode === 'anchored') {
       // Anchored (jump-to-pin / scrollback) view manages its own scroll; just track
