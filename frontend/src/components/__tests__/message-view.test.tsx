@@ -22,6 +22,7 @@ const storeState = {
   anchoredMessageId: null,
   clearAnchorFlash: vi.fn(),
   returnToLive: vi.fn(),
+  setAtBottom: vi.fn(),
   newSinceAnchor: 0,
   loadOlderMessages: vi.fn(),
   loadNewerMessages: vi.fn(),
@@ -53,6 +54,7 @@ vi.mock('@tanstack/react-virtual', () => ({
     getVirtualItems: () =>
       Array.from({ length: count }, (_, index) => ({ key: index, index, start: index * 44, size: 44 })),
     scrollToIndex: () => {},
+    scrollToEnd: () => {},
     measureElement: () => {},
   }),
 }))

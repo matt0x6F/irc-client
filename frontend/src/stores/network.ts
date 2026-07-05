@@ -131,6 +131,26 @@ function sortByTimestamp(msgs: storage.Message[]): storage.Message[] {
   });
 }
 
+// Fold freshly-loaded messages into an existing buffer, de-duped by id and kept in
+// timestamp order. Used when the user is scrolled up: a plain latest-100 REPLACE
+// slides the window forward and drops the older rows they're reading, yanking the
+// viewport. Merging keeps those older rows and just appends the newer ones below.
+//
+// Deliberately does NOT cap/trim the buffer: the user is reading the OLDEST end, so
+// trimming from the top would drop exactly what they're looking at (the "scroll up
+// and it skips an hour ahead" bug). Growth is naturally bounded — the buffer is reset
+// to the latest 100 as soon as the user returns to the bottom (atBottom → replace) or
+// switches channels, so it only grows during an active scroll-up read.
+export function mergeMessagesById(
+  existing: storage.Message[],
+  incoming: storage.Message[]
+): storage.Message[] {
+  const byId = new Map<number, storage.Message>();
+  for (const m of existing) byId.set(m.id, m);
+  for (const m of incoming) byId.set(m.id, m); // fresh copies win (e.g. optimistic → real row)
+  return sortByTimestamp([...byId.values()]);
+}
+
 interface NetworkState {
   // Data
   networks: storage.Network[];
@@ -181,6 +201,11 @@ interface NetworkState {
   // Pinned messages / jump-to-message
   pinnedMessages: storage.PinnedMessage[];
   viewMode: 'live' | 'anchored'; // 'anchored' = viewing a context window, live updates paused
+  // Whether the message pane is pinned to / near the bottom (following live). Set by
+  // the message view from its scroll position. When false (user scrolled up reading),
+  // loadMessages MERGES new messages into the buffer instead of replacing the
+  // latest-100 window, so the window can't slide the read position out of view.
+  atBottom: boolean;
   anchoredMessageId: number | null; // message id to scroll to + flash
   newSinceAnchor: number; // count of messages that arrived while anchored
 
@@ -227,6 +252,7 @@ interface NetworkState {
   returnToLive: () => Promise<void>;
   clearAnchorFlash: () => void;
   noteNewWhileAnchored: () => void;
+  setAtBottom: (v: boolean) => void;
 
   // Selection actions
   setSelectedNetwork: (id: number | null) => void;
@@ -318,6 +344,7 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
   userMeta: {},
   pinnedMessages: [],
   viewMode: 'live',
+  atBottom: true,
   anchoredMessageId: null,
   newSinceAnchor: 0,
   loadingHistory: false,
@@ -374,11 +401,25 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
     const isStale = () =>
       get().selectedNetwork !== selectedNetwork || get().selectedChannel !== selectedChannel;
 
+    // Apply a freshly-loaded latest-100 window. When the user is following live (at
+    // the bottom) replace outright — the window IS what they want and this trims any
+    // buffer that grew while they were scrolled up. When they're scrolled up reading
+    // history, MERGE instead, so incoming messages append below without sliding the
+    // older rows (and the viewport) out from under them.
+    const applyLoaded = (loaded: storage.Message[]) => {
+      const sorted = sortByTimestamp(loaded || []);
+      if (get().atBottom) {
+        set({ messages: sorted });
+      } else {
+        set((state) => ({ messages: mergeMessagesById(state.messages, sorted) }));
+      }
+    };
+
     try {
       if (selectedChannel === null || selectedChannel === 'status') {
         const msgs = await GetMessages(selectedNetwork, null, 100);
         if (isStale()) return;
-        set({ messages: sortByTimestamp(msgs || []) });
+        applyLoaded(msgs);
         return;
       }
 
@@ -386,14 +427,14 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
         const user = selectedChannel.substring(3);
         const msgs = await GetPrivateMessages(selectedNetwork, user, 100);
         if (isStale()) return;
-        set({ messages: sortByTimestamp(msgs || []) });
+        applyLoaded(msgs);
         return;
       }
 
       const channelId = await GetChannelIDByName(selectedNetwork, selectedChannel);
       const msgs = await GetMessages(selectedNetwork, channelId as number, 100);
       if (isStale()) return;
-      set({ messages: sortByTimestamp(msgs || []) });
+      applyLoaded(msgs);
     } catch (error) {
       console.error('Failed to load messages:', error);
       if (isStale()) return;
@@ -778,7 +819,8 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
   },
 
   returnToLive: async () => {
-    set({ viewMode: 'live', anchoredMessageId: null, newSinceAnchor: 0 });
+    // Returning to live lands back at the bottom, so resume plain latest-100 loads.
+    set({ viewMode: 'live', anchoredMessageId: null, newSinceAnchor: 0, atBottom: true });
     await get().loadMessages();
   },
 
@@ -786,6 +828,10 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
 
   noteNewWhileAnchored: () =>
     set((state) => ({ newSinceAnchor: state.newSinceAnchor + 1 })),
+
+  setAtBottom: (v) => {
+    if (get().atBottom !== v) set({ atBottom: v });
+  },
 
   setSelectedNetwork: (id) => set({ selectedNetwork: id }),
   setSelectedChannel: (channel) => {
@@ -815,6 +861,7 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
       selectedNetwork: networkId,
       selectedChannel: channel,
       viewMode: 'live',
+      atBottom: true, // a freshly opened pane starts pinned at the latest message
       anchoredMessageId: null,
       newSinceAnchor: 0,
       loadingHistory: false,
