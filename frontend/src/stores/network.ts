@@ -650,9 +650,11 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
     if (id === null) return;
     try {
       const connected = await GetConnectionStatus(id);
-      set((state) => ({
-        connectionStatus: { ...state.connectionStatus, [id]: connected },
-      }));
+      // Route through setConnectionStatus (untimestamped = authoritative poll) rather
+      // than writing connectionStatus directly, so a disconnected poll ALSO drops the
+      // now-stale MONITOR presence. Previously this bypass left a green DM dot on a
+      // disconnected fresh launch (the state settles via the poll, not the event).
+      get().setConnectionStatus(id, connected);
     } catch (error) {
       console.error('Failed to load connection status:', error);
     }
@@ -660,8 +662,9 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
 
   refreshAllConnectionStatus: async () => {
     // Authoritative poll over every network (O(N) IPC per tick — fine for realistic
-    // network counts). Writes connectionStatus directly and intentionally does NOT
-    // update connectionStatusAt, so it never raises the out-of-order-event watermark.
+    // network counts). Applies each through setConnectionStatus (untimestamped, so it
+    // never raises the out-of-order-event watermark) — the single writer that also
+    // resets stale presence on disconnect and short-circuits when nothing changed.
     const { networks } = get();
     const results = await Promise.all(
       networks.map(async (n) => {
@@ -672,13 +675,8 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
         }
       }),
     );
-    set((state) => {
-      const next = { ...state.connectionStatus };
-      results.forEach(({ id, connected }) => {
-        next[id] = connected;
-      });
-      return { connectionStatus: next };
-    });
+    const applyStatus = get().setConnectionStatus;
+    results.forEach(({ id, connected }) => applyStatus(id, connected));
   },
 
   loadCurrentNick: async (networkId?: number) => {
@@ -1252,9 +1250,17 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
           connectionStatusAt: { ...state.connectionStatusAt, [networkId]: at },
         });
       }
-      return withPresenceReset({
-        connectionStatus: { ...state.connectionStatus, [networkId]: connected },
-      });
+      // Untimestamped (poll) path: authoritative, but idempotent. Compute any presence
+      // reset first, and if neither the status value nor the presence/monitor maps
+      // actually change, return the same state — so the periodic poll re-reporting an
+      // unchanged status doesn't churn references and trigger needless re-renders.
+      const pollPatch = withPresenceReset({});
+      const statusChanged = state.connectionStatus[networkId] !== connected;
+      if (!statusChanged && pollPatch.presence === undefined && pollPatch.monitor === undefined) {
+        return state;
+      }
+      pollPatch.connectionStatus = { ...state.connectionStatus, [networkId]: connected };
+      return pollPatch;
     }),
 
   setConnecting: (networkId, connecting) =>

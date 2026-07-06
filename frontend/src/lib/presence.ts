@@ -17,8 +17,22 @@ export type DmPresence = 'online' | 'offline' | 'unknown';
 
 // dmPresenceState maps a DM correspondent to its dot state. `online` is the live
 // MONITOR presence for the nick (true/false), or undefined when it isn't tracked.
-export function dmPresenceState(nick: string, online: boolean | undefined): DmPresence {
+// `connected` is the network's settled connection state: while it is KNOWN
+// disconnected (=== false) the server tracks no one, so any leftover presence is
+// stale and the dot falls back to neutral — the same honest gate the Buddies
+// panel applies. This is what actually enforces that fallback: the presence map
+// is cleared on the setConnectionStatus disconnect path, but the connection can
+// also settle to false via the status poll (loadConnectionStatus /
+// refreshAllConnectionStatus), which leaves the map untouched — so without this
+// gate a green dot lingers after a disconnected fresh launch. `undefined` (status
+// not yet known) intentionally leaves the live dots alone.
+export function dmPresenceState(
+  nick: string,
+  online: boolean | undefined,
+  connected?: boolean,
+): DmPresence {
   if (isServiceNick(nick)) return 'unknown';
+  if (connected === false) return 'unknown';
   if (online === undefined) return 'unknown';
   return online ? 'online' : 'offline';
 }

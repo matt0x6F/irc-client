@@ -29,6 +29,25 @@ describe('dmPresenceState', () => {
     expect(dmPresenceState('ChanServ', false)).toBe('unknown');
     expect(dmPresenceState('SaslServ', undefined)).toBe('unknown');
   });
+
+  // Presence is only meaningful while the server is actually tracking nicks. When
+  // the network is KNOWN disconnected (connected === false) a leftover presence
+  // entry is stale, so the dot must fall back to neutral — otherwise a green dot
+  // lingers after a fresh launch whose connection settled via the status poll
+  // (which bypasses the setConnectionStatus presence-clear). Mirrors the Buddies
+  // panel's connection gate. Fresh launch / disconnected-restart regression.
+  it('returns unknown when the network is disconnected, even if presence says online', () => {
+    expect(dmPresenceState('vdamewood', true, false)).toBe('unknown');
+    expect(dmPresenceState('vdamewood', false, false)).toBe('unknown');
+  });
+  it('uses the live presence value when connected', () => {
+    expect(dmPresenceState('alice', true, true)).toBe('online');
+    expect(dmPresenceState('alice', false, true)).toBe('offline');
+  });
+  it('leaves the live dots alone while connection state is still unknown (undefined)', () => {
+    expect(dmPresenceState('alice', true, undefined)).toBe('online');
+    expect(dmPresenceState('alice', false, undefined)).toBe('offline');
+  });
 });
 
 describe('buddyPresence', () => {
