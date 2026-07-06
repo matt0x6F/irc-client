@@ -11,6 +11,69 @@ import { Create as $Create } from "@wailsio/runtime";
 import * as storage$0 from "./internal/storage/models.js";
 
 /**
+ * ActivitySettings is the user's activity-source configuration (Wails-exported).
+ */
+export class ActivitySettings {
+    /**
+     * Creates a new ActivitySettings instance.
+     * @param {Partial<ActivitySettings>} [$$source = {}] - The source object to create the ActivitySettings.
+     */
+    constructor($$source = {}) {
+        if (!("highlights" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["highlights"] = false;
+        }
+        if (!("keywords" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["keywords"] = false;
+        }
+        if (!("invites" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["invites"] = false;
+        }
+        if (!("pms" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["pms"] = false;
+        }
+        if (!("keywordList" in $$source)) {
+            /**
+             * @member
+             * @type {string[]}
+             */
+            this["keywordList"] = [];
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ActivitySettings instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {ActivitySettings}
+     */
+    static createFrom($$source = {}) {
+        const $$createField4_0 = $$createType0;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("keywordList" in $$parsedSource) {
+            $$parsedSource["keywordList"] = $$createField4_0($$parsedSource["keywordList"]);
+        }
+        return new ActivitySettings(/** @type {Partial<ActivitySettings>} */($$parsedSource));
+    }
+}
+
+/**
  * BuildInfo is the build metadata exposed to the frontend. buildDate is a
  * string (ISO-8601), never time.Time: a time.Time in a Wails-bound signature
  * breaks the generated TypeScript model.
@@ -97,9 +160,9 @@ export class ChannelInfo {
      * @returns {ChannelInfo}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType1;
-        const $$createField1_0 = $$createType3;
-        const $$createField2_0 = $$createType5;
+        const $$createField0_0 = $$createType2;
+        const $$createField1_0 = $$createType4;
+        const $$createField2_0 = $$createType6;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("channel" in $$parsedSource) {
             $$parsedSource["channel"] = $$createField0_0($$parsedSource["channel"]);
@@ -155,7 +218,7 @@ export class ChannelListCacheResult {
      * @returns {ChannelListCacheResult}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType7;
+        const $$createField0_0 = $$createType8;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("channels" in $$parsedSource) {
             $$parsedSource["channels"] = $$createField0_0($$parsedSource["channels"]);
@@ -225,7 +288,7 @@ export class CommandInfo {
      * @returns {CommandInfo}
      */
     static createFrom($$source = {}) {
-        const $$createField1_0 = $$createType8;
+        const $$createField1_0 = $$createType0;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("aliases" in $$parsedSource) {
             $$parsedSource["aliases"] = $$createField1_0($$parsedSource["aliases"]);
@@ -649,7 +712,7 @@ export class PendingDeepLink {
      * @returns {PendingDeepLink}
      */
     static createFrom($$source = {}) {
-        const $$createField1_0 = $$createType6;
+        const $$createField1_0 = $$createType7;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("data" in $$parsedSource) {
             $$parsedSource["data"] = $$createField1_0($$parsedSource["data"]);
@@ -747,10 +810,10 @@ export class PluginInfo {
      * @returns {PluginInfo}
      */
     static createFrom($$source = {}) {
-        const $$createField4_0 = $$createType8;
-        const $$createField5_0 = $$createType8;
-        const $$createField6_0 = $$createType8;
-        const $$createField7_0 = $$createType6;
+        const $$createField4_0 = $$createType0;
+        const $$createField5_0 = $$createType0;
+        const $$createField6_0 = $$createType0;
+        const $$createField7_0 = $$createType7;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("events" in $$parsedSource) {
             $$parsedSource["events"] = $$createField4_0($$parsedSource["events"]);
@@ -836,7 +899,7 @@ export class ScriptInfo {
      * @returns {ScriptInfo}
      */
     static createFrom($$source = {}) {
-        const $$createField6_0 = $$createType8;
+        const $$createField6_0 = $$createType0;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("perms" in $$parsedSource) {
             $$parsedSource["perms"] = $$createField6_0($$parsedSource["perms"]);
@@ -1030,15 +1093,15 @@ export class ServerConfig {
 }
 
 // Private type creation functions
-const $$createType0 = storage$0.Channel.createFrom;
-const $$createType1 = $Create.Nullable($$createType0);
-const $$createType2 = storage$0.ChannelUser.createFrom;
-const $$createType3 = $Create.Array($$createType2);
-const $$createType4 = ServerCapabilitiesInfo.createFrom;
-const $$createType5 = $Create.Nullable($$createType4);
-const $$createType6 = $Create.Map($Create.Any, $Create.Any);
-const $$createType7 = $Create.Array($$createType6);
-const $$createType8 = $Create.Array($Create.Any);
+const $$createType0 = $Create.Array($Create.Any);
+const $$createType1 = storage$0.Channel.createFrom;
+const $$createType2 = $Create.Nullable($$createType1);
+const $$createType3 = storage$0.ChannelUser.createFrom;
+const $$createType4 = $Create.Array($$createType3);
+const $$createType5 = ServerCapabilitiesInfo.createFrom;
+const $$createType6 = $Create.Nullable($$createType5);
+const $$createType7 = $Create.Map($Create.Any, $Create.Any);
+const $$createType8 = $Create.Array($$createType7);
 const $$createType9 = ServerConfig.createFrom;
 const $$createType10 = $Create.Array($$createType9);
 const $$createType11 = $Create.Map($Create.Any, $Create.Any);

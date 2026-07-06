@@ -8,6 +8,7 @@ import (
 	"github.com/matt0x6f/irc-client/internal/events"
 	"github.com/matt0x6f/irc-client/internal/irc"
 	"github.com/matt0x6f/irc-client/internal/logger"
+	"github.com/matt0x6f/irc-client/internal/storage"
 )
 
 const activitySettingsKey = "activity.settings"
@@ -108,3 +109,23 @@ func (a *App) dispatchMessageActivity(event events.Event) {
 	}
 	a.recordMessageActivity(settings.toConfig(), currentNick, networkID, channel, sender, message, msgid, isPM, event.Timestamp)
 }
+
+const activityItemsLimit = 500
+
+// GetActivityItems returns the inbox rows, newest first.
+func (a *App) GetActivityItems() ([]storage.ActivityItem, error) {
+	items, err := a.storage.ListActivityItems(activityItemsLimit)
+	if err != nil {
+		return nil, err
+	}
+	if items == nil {
+		items = []storage.ActivityItem{}
+	}
+	return items, nil
+}
+
+func (a *App) MarkActivitySeen(id int64) error { return a.storage.MarkActivitySeen(id) }
+func (a *App) MarkAllActivitySeen() error      { return a.storage.MarkAllActivitySeen() }
+func (a *App) DismissActivity(id int64) error  { return a.storage.DismissActivity(id) }
+func (a *App) ClearSeenActivity() error        { return a.storage.ClearSeenActivity() }
+func (a *App) ClearAllActivity() error         { return a.storage.ClearAllActivity() }

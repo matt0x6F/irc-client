@@ -65,3 +65,32 @@ func TestRecordMessageActivityPM(t *testing.T) {
 		t.Fatalf("expected one pm row targeting bob, got %+v", items)
 	}
 }
+
+func TestActivityBoundMethods(t *testing.T) {
+	a := newTestApp(t)
+	net := makeAppTestNetwork(t, a.storage, "BoundNet")
+	cfg := irc.ActivityConfig{Highlights: true}
+	a.recordMessageActivity(cfg, "matt", net.ID, "#dev", "alice", "matt ping", "m1", false, time.Now())
+	a.recordMessageActivity(cfg, "matt", net.ID, "#dev", "bob", "matt again", "m2", false, time.Now())
+
+	items, err := a.GetActivityItems()
+	if err != nil || len(items) != 2 {
+		t.Fatalf("GetActivityItems = %d items, err %v", len(items), err)
+	}
+	if err := a.MarkActivitySeen(items[0].ID); err != nil {
+		t.Fatalf("MarkActivitySeen: %v", err)
+	}
+	if err := a.DismissActivity(items[1].ID); err != nil {
+		t.Fatalf("DismissActivity: %v", err)
+	}
+	remaining, _ := a.GetActivityItems()
+	if len(remaining) != 1 || !remaining[0].Seen {
+		t.Fatalf("after mark+dismiss want 1 seen item, got %+v", remaining)
+	}
+	if err := a.ClearAllActivity(); err != nil {
+		t.Fatalf("ClearAllActivity: %v", err)
+	}
+	if remaining, _ = a.GetActivityItems(); len(remaining) != 0 {
+		t.Fatalf("ClearAllActivity should empty the inbox, got %+v", remaining)
+	}
+}
