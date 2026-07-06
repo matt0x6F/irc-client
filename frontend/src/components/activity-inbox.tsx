@@ -38,7 +38,9 @@ function ActivityRow({ group }: { group: ActivityGroup }) {
 
   return (
     <div
+      role="button"
       tabIndex={0}
+      aria-label={`${group.target} — open`}
       onClick={() => void activateActivityGroup(group)}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') void activateActivityGroup(group);
