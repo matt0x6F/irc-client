@@ -42,6 +42,14 @@ export function unseenGroupCount(items: storage.ActivityItem[]): number {
   return coalesceActivity(items).filter((g) => g.hasUnseen).length;
 }
 
+export function relativeTime(iso: string): string {
+  const then = new Date(iso).getTime();
+  const mins = Math.max(0, Math.round((Date.now() - then) / 60000));
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  return `${Math.round(mins / 60)}h ago`;
+}
+
 export type Activation = { kind: 'jump' | 'openPane' | 'openChannel'; networkId: number; paneKey: string; msgid?: string };
 
 export function activationFor(g: ActivityGroup): Activation {

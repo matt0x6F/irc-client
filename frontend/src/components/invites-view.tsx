@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNetworkStore } from '../stores/network';
 import { DismissInvitesFrom, IgnoreInviteSender, DismissInvite } from '../../wailsjs/go/main/App';
 import type { main } from '../../wailsjs/go/models';
+import { relativeTime } from '../lib/activity-inbox';
 
 type InviteView = main.InviteView;
 
@@ -30,14 +31,6 @@ export function groupBySender(invites: InviteView[]): SenderGroup[] {
     trusted: channels.some((c) => c.trusted),
     collapsed: channels.length >= COLLAPSE_THRESHOLD,
   }));
-}
-
-function relativeTime(iso: string): string {
-  const then = new Date(iso).getTime();
-  const mins = Math.max(0, Math.round((Date.now() - then) / 60000));
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  return `${Math.round(mins / 60)}h ago`;
 }
 
 export function InvitesView({ networkId }: { networkId: number }) {
