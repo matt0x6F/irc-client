@@ -104,6 +104,27 @@ func TestGetInvites_MapsFromActivity(t *testing.T) {
 	}
 }
 
+func TestHandleInviteReceived_RespectsInvitesToggle(t *testing.T) {
+	a := newTestApp(t)
+	net := makeAppTestNetwork(t, a.storage, "InvToggleOff")
+	if err := a.SetActivitySettings(ActivitySettings{Highlights: true, Keywords: true, Invites: false, PMs: true, KeywordList: []string{}}); err != nil {
+		t.Fatalf("SetActivitySettings: %v", err)
+	}
+
+	a.handleInviteReceived(events.Event{
+		Type: "invite.received",
+		Data: map[string]interface{}{"networkId": net.ID, "inviter": "alice", "channel": "#chan"},
+	})
+
+	invites, err := a.storage.ListInviteActivity(net.ID, time.Now())
+	if err != nil {
+		t.Fatalf("ListInviteActivity: %v", err)
+	}
+	if len(invites) != 0 {
+		t.Fatalf("Invites source off should skip storing the invite, got %+v", invites)
+	}
+}
+
 func assertContains(t *testing.T, xs []string, want string) {
 	t.Helper()
 	for _, x := range xs {

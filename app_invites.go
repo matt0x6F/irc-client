@@ -161,6 +161,10 @@ func (a *App) handleInviteReceived(event events.Event) {
 	if a.isInviteSenderIgnored(networkID, inviter) {
 		return
 	}
+	settings, err := a.GetActivitySettings()
+	if err == nil && !settings.Invites {
+		return
+	}
 
 	trusted := a.isBuddy(networkID, inviter)
 	now := time.Now()

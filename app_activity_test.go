@@ -66,6 +66,24 @@ func TestRecordMessageActivityPM(t *testing.T) {
 	}
 }
 
+func TestRecordMessageActivityIgnoresSelfMention(t *testing.T) {
+	a := newTestApp(t)
+	net := makeAppTestNetwork(t, a.storage, "RecNetSelfMention")
+	a.recordMessageActivity(irc.ActivityConfig{Highlights: true}, "matt", net.ID, "#dev", "matt", "matt testing my own nick", "m", false, time.Now())
+	if items, _ := a.storage.ListActivityItems(50); len(items) != 0 {
+		t.Fatalf("self-echoed message must not write a row, got %+v", items)
+	}
+}
+
+func TestRecordMessageActivityIgnoresSelfPMEcho(t *testing.T) {
+	a := newTestApp(t)
+	net := makeAppTestNetwork(t, a.storage, "RecNetSelfPM")
+	a.recordMessageActivity(irc.ActivityConfig{PMs: true}, "matt", net.ID, "matt", "matt", "note to self", "m", true, time.Now())
+	if items, _ := a.storage.ListActivityItems(50); len(items) != 0 {
+		t.Fatalf("self echo-message PM must not write a row, got %+v", items)
+	}
+}
+
 func TestActivityBoundMethods(t *testing.T) {
 	a := newTestApp(t)
 	net := makeAppTestNetwork(t, a.storage, "BoundNet")

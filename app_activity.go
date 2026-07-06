@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/matt0x6f/irc-client/internal/events"
@@ -70,6 +71,9 @@ func (a *App) SetActivitySettings(s ActivitySettings) error {
 // recordMessageActivity classifies one inbound message and, on a match, writes
 // an activity row and signals the frontend.
 func (a *App) recordMessageActivity(cfg irc.ActivityConfig, currentNick string, networkID int64, channel, sender, message, msgid string, isPM bool, ts time.Time) {
+	if currentNick != "" && strings.EqualFold(sender, currentNick) {
+		return
+	}
 	src, keyword, ok := irc.ClassifyMessageActivity(cfg, currentNick, channel, sender, message, isPM)
 	if !ok {
 		return
@@ -100,13 +104,14 @@ func (a *App) dispatchMessageActivity(event events.Event) {
 	// channel messages, our own nick for PMs. Derive PM-vs-channel from that.
 	isPM := channel != "" && !irc.IsChannelName(channel)
 
-	currentNick := sender
 	a.mu.RLock()
 	client := a.ircClients[networkID]
 	a.mu.RUnlock()
-	if client != nil {
-		currentNick = client.CurrentNick()
+	if client == nil {
+		// Cannot establish identity without a live client — do not guess.
+		return
 	}
+	currentNick := client.CurrentNick()
 	a.recordMessageActivity(settings.toConfig(), currentNick, networkID, channel, sender, message, msgid, isPM, event.Timestamp)
 }
 
