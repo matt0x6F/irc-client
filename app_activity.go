@@ -3,8 +3,11 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
+	"github.com/matt0x6f/irc-client/internal/events"
 	"github.com/matt0x6f/irc-client/internal/irc"
+	"github.com/matt0x6f/irc-client/internal/logger"
 )
 
 const activitySettingsKey = "activity.settings"
@@ -61,4 +64,47 @@ func (a *App) SetActivitySettings(s ActivitySettings) error {
 		return fmt.Errorf("persist activity settings: %w", err)
 	}
 	return nil
+}
+
+// recordMessageActivity classifies one inbound message and, on a match, writes
+// an activity row and signals the frontend.
+func (a *App) recordMessageActivity(cfg irc.ActivityConfig, currentNick string, networkID int64, channel, sender, message, msgid string, isPM bool, ts time.Time) {
+	src, keyword, ok := irc.ClassifyMessageActivity(cfg, currentNick, channel, sender, message, isPM)
+	if !ok {
+		return
+	}
+	item := irc.ActivityItemFromMessage(networkID, src, keyword, channel, sender, message, msgid, isPM, ts)
+	if _, err := a.storage.WriteActivityItem(item); err != nil {
+		logger.Log.Warn().Err(err).Msg("Failed to write activity item")
+		return
+	}
+	a.emit("activity-changed")
+}
+
+// dispatchMessageActivity extracts message.received event data and records activity.
+func (a *App) dispatchMessageActivity(event events.Event) {
+	settings, err := a.GetActivitySettings()
+	if err != nil {
+		return
+	}
+	networkID, ok := a.resolveNetworkID(event.Data)
+	if !ok {
+		return
+	}
+	channel, _ := event.Data["channel"].(string)
+	sender, _ := event.Data["user"].(string)
+	message, _ := event.Data["message"].(string)
+	msgid, _ := event.Data["msgid"].(string)
+	// message.received sets Data["channel"] to e.Params[0]: a channel name for
+	// channel messages, our own nick for PMs. Derive PM-vs-channel from that.
+	isPM := channel != "" && !irc.IsChannelName(channel)
+
+	currentNick := sender
+	a.mu.RLock()
+	client := a.ircClients[networkID]
+	a.mu.RUnlock()
+	if client != nil {
+		currentNick = client.CurrentNick()
+	}
+	a.recordMessageActivity(settings.toConfig(), currentNick, networkID, channel, sender, message, msgid, isPM, event.Timestamp)
 }
