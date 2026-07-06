@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { ArrowLeft, ChevronRight } from 'lucide-react';
 import { main, storage } from '../../wailsjs/go/models';
-import { GetNetworks, SaveNetwork, ConnectNetwork, DeleteNetwork, DisconnectNetwork, GetConnectionStatus, GetServers, ListPlugins, EnablePlugin, DisablePlugin, ReloadPlugin, GetBuildInfo, CheckForUpdates, GetLogConfig, SetLogConfig, GetDefaultLogPath, GetSTSPolicies, ClearSTSPolicy, RequestNotificationPermission, GetPendingNetworkPrefill, GetSetting, SetSetting } from '../../wailsjs/go/main/App';
+import { GetNetworks, SaveNetwork, ConnectNetwork, DeleteNetwork, DisconnectNetwork, GetConnectionStatus, GetServers, ListPlugins, EnablePlugin, DisablePlugin, ReloadPlugin, GetBuildInfo, CheckForUpdates, GetLogConfig, SetLogConfig, GetDefaultLogPath, GetSTSPolicies, ClearSTSPolicy, RequestNotificationPermission, GetPendingNetworkPrefill, GetSetting, SetSetting, GetActivitySettings, SetActivitySettings } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import { PluginConfigForm } from './plugin-config-form';
 import { ScriptsPanel } from './scripts-panel';
@@ -50,13 +50,22 @@ interface SettingsPanelProps {
 }
 
 /** A small on-brand switch toggle (design system uses switches, not checkboxes). */
-function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+function Toggle({
+  checked,
+  onChange,
+  'data-testid': dataTestId,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  'data-testid'?: string;
+}) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
       onClick={() => onChange(!checked)}
+      data-testid={dataTestId}
       className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors cursor-pointer ${
         checked ? 'bg-primary' : 'bg-muted-foreground/30'
       }`}
@@ -154,6 +163,31 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
     );
   };
 
+  // Activity inbox source settings — loaded from the backend once on mount;
+  // changes written through immediately via SetActivitySettings.
+  const [activitySettings, setActivitySettings] = useState<main.ActivitySettings | null>(null);
+  const [keywordDraft, setKeywordDraft] = useState('');
+
+  const persistActivity = <K extends keyof main.ActivitySettings>(field: K, value: main.ActivitySettings[K]) => {
+    if (!activitySettings) return;
+    const next = { ...activitySettings, [field]: value };
+    setActivitySettings(next);
+    SetActivitySettings(next).catch((e) => console.error('Failed to persist activity settings:', e));
+  };
+
+  const addActivityKeyword = () => {
+    const trimmed = keywordDraft.trim();
+    if (!trimmed || !activitySettings) return;
+    const nextList = [...activitySettings.keywordList, trimmed];
+    setKeywordDraft('');
+    persistActivity('keywordList', nextList);
+  };
+
+  const removeActivityKeyword = (keyword: string) => {
+    if (!activitySettings) return;
+    persistActivity('keywordList', activitySettings.keywordList.filter((k) => k !== keyword));
+  };
+
   // Theme (appearance + accent)
   const themeMode = useThemeStore((s) => s.mode);
   const accent = useThemeStore((s) => s.accent);
@@ -231,6 +265,9 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
         if (!isNaN(n) && n >= 1) setInviteTtlHoursState(n);
       })
       .catch((e) => console.error('Failed to load invites.ttlHours:', e));
+    GetActivitySettings()
+      .then(setActivitySettings)
+      .catch((e) => console.error('Failed to load activity settings:', e));
   }, []);
 
   // Persist a log-config change and apply it live. The backend rejects an
@@ -1588,6 +1625,102 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
                   </p>
                 </div>
               </div>
+
+              {/* Activity inbox settings */}
+              {activitySettings && (
+                <div className="border border-border rounded-lg p-4 bg-card/50 shadow-[var(--shadow-sm)] space-y-4">
+                  <div className="text-sm font-semibold">Activity</div>
+                  <p className="text-xs text-muted-foreground -mt-2">
+                    Choose what shows up in the Activity inbox.
+                  </p>
+
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="text-sm font-medium">Highlights</span>
+                    <Toggle
+                      checked={activitySettings.highlights}
+                      onChange={(v) => persistActivity('highlights', v)}
+                      data-testid="activity-toggle-highlights"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="text-sm font-medium">Keywords</span>
+                    <Toggle
+                      checked={activitySettings.keywords}
+                      onChange={(v) => persistActivity('keywords', v)}
+                      data-testid="activity-toggle-keywords"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="text-sm font-medium">Invites</span>
+                    <Toggle
+                      checked={activitySettings.invites}
+                      onChange={(v) => persistActivity('invites', v)}
+                      data-testid="activity-toggle-invites"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="text-sm font-medium">Direct messages</span>
+                    <Toggle
+                      checked={activitySettings.pms}
+                      onChange={(v) => persistActivity('pms', v)}
+                      data-testid="activity-toggle-pms"
+                    />
+                  </div>
+
+                  <div className="pt-2 border-t border-border">
+                    <span className="text-sm font-medium">Keywords to watch for</span>
+                    <div className="flex items-center gap-2 mt-2">
+                      <input
+                        type="text"
+                        value={keywordDraft}
+                        onChange={(e) => setKeywordDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            addActivityKeyword();
+                          }
+                        }}
+                        placeholder="Add a keyword…"
+                        className="flex-1 px-2 py-1 text-sm border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all shadow-[var(--shadow-sm)] focus:shadow-[var(--shadow-md)]"
+                        style={{ transition: 'var(--transition-base)' }}
+                        data-testid="activity-keyword-input"
+                      />
+                      <button
+                        type="button"
+                        onClick={addActivityKeyword}
+                        data-testid="activity-keyword-add"
+                        className="px-3 py-1 text-sm border border-border rounded-lg hover:bg-accent transition-all shadow-[var(--shadow-sm)] hover:shadow-[var(--shadow-md)]"
+                        style={{ transition: 'var(--transition-base)' }}
+                      >
+                        Add
+                      </button>
+                    </div>
+                    {activitySettings.keywordList.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 mt-2">
+                        {activitySettings.keywordList.map((keyword) => (
+                          <span
+                            key={keyword}
+                            className="inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full bg-primary/15 text-primary"
+                          >
+                            {keyword}
+                            <button
+                              type="button"
+                              onClick={() => removeActivityKeyword(keyword)}
+                              aria-label={`Remove keyword ${keyword}`}
+                              className="ml-0.5 hover:opacity-70 cursor-pointer"
+                            >
+                              ✕
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    <p className="text-xs text-muted-foreground mt-2">
+                      Messages containing any of these words are flagged as activity, even outside your highlight words.
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         );

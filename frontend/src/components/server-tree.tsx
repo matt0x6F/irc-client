@@ -77,9 +77,6 @@ export function ServerTree({
   const caseMapping = useNetworkStore((s) => s.caseMapping);
   const loadPresence = useNetworkStore((s) => s.loadPresence);
 
-  // Reactive invite counts — subscribed so the badge re-renders when invites change.
-  const invitesByNetwork = useNetworkStore((s) => s.invitesByNetwork);
-
   // Load channels and PM conversations for expanded networks
   useEffect(() => {
     expandedServers.forEach(async (networkId) => {
@@ -140,9 +137,6 @@ export function ServerTree({
       // correspondents plus durable buddies). Live updates arrive via
       // 'monitor-event'.
       void loadPresence(networkId);
-
-      // Populate the invite badge without waiting for an invite event.
-      void useNetworkStore.getState().loadInvites(networkId);
     });
   }, [expandedServers, servers, loadPresence]);
 
@@ -499,33 +493,6 @@ export function ServerTree({
                         <Terminal className="w-3.5 h-3.5 flex-shrink-0 opacity-85" />
                         <span className="text-sm">Server log</span>
                       </div>
-                      {/* Invites pane */}
-                      {(() => {
-                        const inviteCount = (invitesByNetwork[network.id] ?? []).length;
-                        return (
-                          <div
-                            className={`px-2 py-1.5 mr-1 rounded-md cursor-pointer select-none transition-all flex items-center justify-between ${
-                              isSelected && selectedChannel === 'invites'
-                                ? 'cc-active-pane'
-                                : 'hover:bg-accent/70'
-                            }`}
-                            style={{ transition: 'var(--transition-base)' }}
-                            onClick={() => onSelectChannel(network.id, 'invites')}
-                            onMouseDown={(e) => {
-                              if (e.button === 2) {
-                                e.preventDefault();
-                              }
-                            }}
-                          >
-                            <span className="text-sm">Invites</span>
-                            {inviteCount > 0 && (
-                              <span className="bg-primary text-primary-foreground text-xs px-1.5 min-w-[1.25rem] text-center rounded-full ml-2" title="Pending invites">
-                                {inviteCount > 99 ? '99+' : inviteCount}
-                              </span>
-                            )}
-                          </div>
-                        );
-                      })()}
                       {/* Regular channels */}
                       {networkChannels.map((channel) => {
                         const activityKey = `${network.id}:${channel}`;

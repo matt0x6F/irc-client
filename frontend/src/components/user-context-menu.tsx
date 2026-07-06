@@ -7,7 +7,7 @@ import { useUIStore } from '../stores/ui';
 interface UserContextMenuProps {
   networkId: number;
   // The pane the menu was opened from. Only real IRC channels (# / &) carry the
-  // membership + capabilities needed for moderation; PMs, the status/invites panes,
+  // membership + capabilities needed for moderation; PMs, the status pane,
   // and a null pane fall back to the always-available Whois/Monitor/CTCP entries.
   channelName: string | null;
   targetNick: string;
@@ -22,7 +22,7 @@ interface UserContextMenuProps {
 }
 
 function isRealChannel(name: string | null): name is string {
-  return !!name && name !== 'status' && name !== 'invites' && !name.startsWith('pm:');
+  return !!name && name !== 'status' && !name.startsWith('pm:');
 }
 
 /**

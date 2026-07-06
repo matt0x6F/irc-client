@@ -26,7 +26,6 @@ import { HelpDialog } from './components/help-dialog';
 import { UpdateAvailableDialog } from './components/update-available-dialog';
 import { AuthBanner } from './components/AuthBanner';
 import { DeepLinkDisambiguation } from './components/deeplink-disambiguation';
-import { InvitesView } from './components/invites-view';
 import { InviteToChannelModal } from './components/invite-to-channel-modal';
 import { ActivityInbox } from './components/activity-inbox';
 import { unseenGroupCount } from './lib/activity-inbox';
@@ -385,19 +384,6 @@ function App() {
       }
     });
     return () => unsubscribe();
-  }, []);
-
-  // Invites events: reload the invites list for the affected network whenever
-  // an invite arrives or the backend flushes expired ones.
-  useEffect(() => {
-    const offInvites = EventsOn('invites.changed', (data: { networkId: number }) => {
-      if (typeof data?.networkId === 'number') {
-        void useNetworkStore.getState().loadInvites(data.networkId);
-      }
-    });
-    return () => {
-      offInvites();
-    };
   }, []);
 
   // Activity inbox: load once on mount, then live-refresh whenever the
@@ -829,7 +815,7 @@ function App() {
                   )}
                   {selectedChannel &&
                     selectedChannel !== 'status' &&
-                    selectedChannel !== 'invites' &&
+                    selectedChannel !== 'activity' &&
                     !selectedChannel.startsWith('pm:') && (
                       <>
                         <span className="text-muted-foreground/50">/</span>
@@ -860,12 +846,6 @@ function App() {
                     <>
                       <span className="text-muted-foreground/50">/</span>
                       <span className="text-muted-foreground font-medium">Status</span>
-                    </>
-                  )}
-                  {selectedChannel === 'invites' && (
-                    <>
-                      <span className="text-muted-foreground/50">/</span>
-                      <span className="text-muted-foreground font-medium">Invites</span>
                     </>
                   )}
                 </>
@@ -936,7 +916,7 @@ function App() {
                 <Settings size={18} />
               </button>
               {/* Right sidebar toggle — show for channels and PMs */}
-              {selectedChannel && selectedChannel !== 'status' && selectedChannel !== 'invites' && (
+              {selectedChannel && selectedChannel !== 'status' && selectedChannel !== 'activity' && (
                 <button
                   onClick={toggleRightSidebar}
                   data-testid="toggle-right-sidebar"
@@ -953,7 +933,7 @@ function App() {
           </div>
           {selectedChannel &&
             selectedChannel !== 'status' &&
-            selectedChannel !== 'invites' &&
+            selectedChannel !== 'activity' &&
             !selectedChannel.startsWith('pm:') &&
             channelInfo?.channel && (
               <div className="px-5 pb-3 flex items-center gap-4 text-sm border-t border-border/50 pt-2">
@@ -990,8 +970,6 @@ function App() {
           <div className="flex-1 overflow-y-auto">
             {selectedChannel === 'activity' ? (
               <ActivityInbox />
-            ) : selectedChannel === 'invites' && selectedNetwork !== null ? (
-              <InvitesView networkId={selectedNetwork} />
             ) : selectedNetwork !== null ? (
               <MessageView
                 networkId={selectedNetwork}
@@ -1012,7 +990,7 @@ function App() {
           {/* Right Sidebar — Users (channels only) + Pinned messages */}
           {selectedChannel &&
             selectedChannel !== 'status' &&
-            selectedChannel !== 'invites' &&
+            selectedChannel !== 'activity' &&
             (() => {
               const isPM = selectedChannel.startsWith('pm:');
               // PMs have no user list, so the pinned tab is the only option there.
@@ -1101,7 +1079,7 @@ function App() {
         </div>
 
         {/* Input Area */}
-        {selectedNetwork !== null && selectedChannel !== null && selectedChannel !== 'invites' && (
+        {selectedNetwork !== null && selectedChannel !== null && selectedChannel !== 'activity' && (
           <InputArea
             onSendMessage={handleSendMessage}
             placeholder={
@@ -1120,7 +1098,7 @@ function App() {
         selectedNetwork !== null &&
         selectedChannel !== null &&
         selectedChannel !== 'status' &&
-        selectedChannel !== 'invites' &&
+        selectedChannel !== 'activity' &&
         channelInfo?.channel && (
           <TopicEditModal
             networkId={selectedNetwork}
@@ -1135,7 +1113,7 @@ function App() {
         selectedNetwork !== null &&
         selectedChannel !== null &&
         selectedChannel !== 'status' &&
-        selectedChannel !== 'invites' &&
+        selectedChannel !== 'activity' &&
         channelInfo?.channel && (
           <ChannelModeEditor
             networkId={selectedNetwork}

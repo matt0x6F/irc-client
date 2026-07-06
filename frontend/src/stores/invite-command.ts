@@ -1,6 +1,6 @@
 // expandInvite normalizes "/invite <user>" against the active pane.
 // - returns the expanded command string when the pane is a channel,
-// - returns { error } when it can't resolve a channel (status / PM / invites pane),
+// - returns { error } when it can't resolve a channel (status / PM / activity pane),
 // - returns null when the command isn't an /invite needing expansion.
 export function expandInvite(
   command: string,
@@ -14,7 +14,7 @@ export function expandInvite(
   const isChannelPane =
     !!selectedChannel &&
     selectedChannel !== 'status' &&
-    selectedChannel !== 'invites' &&
+    selectedChannel !== 'activity' &&
     !selectedChannel.startsWith('pm:');
   if (!isChannelPane) {
     return { error: 'Open a channel, or use /invite <user> #channel' };

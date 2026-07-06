@@ -43,7 +43,6 @@ import {
   SendMessageWithContext,
   GetMessageByMsgID,
   GetChannels,
-  GetInvites,
   GetActivityItems,
   MarkActivitySeen,
   MarkAllActivitySeen,
@@ -329,10 +328,6 @@ interface NetworkState {
   // DM / query
   openQuery: (networkId: number, nick: string) => Promise<void>;
 
-  // Invites (INVITE command — received invites, per network)
-  invitesByNetwork: Record<number, main.InviteView[]>;
-  loadInvites: (networkId: number) => Promise<void>;
-
   // Activity inbox (highlights, keywords, invites, PMs) — global across networks.
   activityItems: storage.ActivityItem[];
   loadActivityItems: () => Promise<void>;
@@ -373,7 +368,6 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
   pendingScrollMsgid: null,
   selectedNetwork: null,
   selectedChannel: null,
-  invitesByNetwork: {},
   activityItems: [],
 
   loadNetworks: async () => {
@@ -866,14 +860,6 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
 
     // A pending scrollback history request belongs to the pane we're leaving.
     clearHistoryWaiter();
-
-    // The invites pseudo-pane has no message history or channel to join.
-    // Just update selection and load the invite list, then bail.
-    if (channel === 'invites') {
-      set({ selectedNetwork: networkId, selectedChannel: 'invites' });
-      await get().loadInvites(networkId);
-      return;
-    }
 
     // Switching panes always returns to the live view and clears any anchor, and
     // resets CHATHISTORY pagination state for the freshly-selected buffer.
@@ -1473,15 +1459,6 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
       console.error('Failed to open query:', error);
     }
     await get().selectPane(networkId, `pm:${nick}`);
-  },
-
-  loadInvites: async (networkId) => {
-    try {
-      const invites = await GetInvites(networkId);
-      set((s) => ({ invitesByNetwork: { ...s.invitesByNetwork, [networkId]: invites ?? [] } }));
-    } catch (e) {
-      console.error('Failed to load invites:', e);
-    }
   },
 
   loadActivityItems: async () => {
