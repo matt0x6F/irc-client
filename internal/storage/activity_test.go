@@ -135,3 +135,41 @@ func TestInviteActivityColumnsAndQueries(t *testing.T) {
 		t.Fatalf("delete should remove the invite, got %+v", live)
 	}
 }
+
+func TestInviteActivityCaseInsensitiveMatch(t *testing.T) {
+	s := newTestStorage(t)
+	net := makeNetwork("InvCaseNet")
+	if err := s.CreateNetwork(net); err != nil {
+		t.Fatalf("CreateNetwork: %v", err)
+	}
+	now := time.Now().Truncate(time.Second)
+
+	// DeleteInviteActivity must match actor/target case-insensitively.
+	if _, err := s.WriteActivityItem(ActivityItem{NetworkID: net.ID, SourceType: "invite", Target: "#Ops", Actor: "Alice", Timestamp: now}); err != nil {
+		t.Fatalf("write invite: %v", err)
+	}
+	if err := s.DeleteInviteActivity(net.ID, "alice", "#ops"); err != nil {
+		t.Fatalf("DeleteInviteActivity: %v", err)
+	}
+	if live, err := s.ListInviteActivity(net.ID, now); err != nil {
+		t.Fatalf("ListInviteActivity: %v", err)
+	} else if len(live) != 0 {
+		t.Fatalf("expected case-insensitive delete to remove the invite, got %+v", live)
+	}
+
+	// DeleteInviteActivityFromSender must match actor case-insensitively across rows.
+	if _, err := s.WriteActivityItem(ActivityItem{NetworkID: net.ID, SourceType: "invite", Target: "#x", Actor: "Bob", Timestamp: now}); err != nil {
+		t.Fatalf("write invite (Bob/#x): %v", err)
+	}
+	if _, err := s.WriteActivityItem(ActivityItem{NetworkID: net.ID, SourceType: "invite", Target: "#y", Actor: "BOB", Timestamp: now}); err != nil {
+		t.Fatalf("write invite (BOB/#y): %v", err)
+	}
+	if err := s.DeleteInviteActivityFromSender(net.ID, "bob"); err != nil {
+		t.Fatalf("DeleteInviteActivityFromSender: %v", err)
+	}
+	if live, err := s.ListInviteActivity(net.ID, now); err != nil {
+		t.Fatalf("ListInviteActivity: %v", err)
+	} else if len(live) != 0 {
+		t.Fatalf("expected case-insensitive DeleteInviteActivityFromSender to remove both rows, got %+v", live)
+	}
+}

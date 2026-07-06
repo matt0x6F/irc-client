@@ -93,7 +93,7 @@ func (q *Queries) DeleteExpiredInviteActivity(ctx context.Context, expiresAt sql
 
 const deleteInviteActivity = `-- name: DeleteInviteActivity :exec
 DELETE FROM activity_items
-WHERE source_type = 'invite' AND network_id = ? AND actor = ? AND target = ?
+WHERE source_type = 'invite' AND network_id = ? AND LOWER(actor) = LOWER(?2) AND LOWER(target) = LOWER(?3)
 `
 
 type DeleteInviteActivityParams struct {
@@ -109,7 +109,7 @@ func (q *Queries) DeleteInviteActivity(ctx context.Context, arg DeleteInviteActi
 
 const deleteInviteActivityFromSender = `-- name: DeleteInviteActivityFromSender :exec
 DELETE FROM activity_items
-WHERE source_type = 'invite' AND network_id = ? AND actor = ?
+WHERE source_type = 'invite' AND network_id = ? AND LOWER(actor) = LOWER(?2)
 `
 
 type DeleteInviteActivityFromSenderParams struct {

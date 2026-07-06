@@ -29,11 +29,11 @@ ORDER BY timestamp DESC, id DESC;
 
 -- name: DeleteInviteActivity :exec
 DELETE FROM activity_items
-WHERE source_type = 'invite' AND network_id = ? AND actor = ? AND target = ?;
+WHERE source_type = 'invite' AND network_id = ? AND LOWER(actor) = LOWER(sqlc.arg(actor)) AND LOWER(target) = LOWER(sqlc.arg(target));
 
 -- name: DeleteInviteActivityFromSender :exec
 DELETE FROM activity_items
-WHERE source_type = 'invite' AND network_id = ? AND actor = ?;
+WHERE source_type = 'invite' AND network_id = ? AND LOWER(actor) = LOWER(sqlc.arg(actor));
 
 -- name: NetworksWithExpiredInvites :many
 SELECT DISTINCT network_id FROM activity_items
