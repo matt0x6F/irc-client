@@ -44,6 +44,12 @@ import {
   GetMessageByMsgID,
   GetChannels,
   GetInvites,
+  GetActivityItems,
+  MarkActivitySeen,
+  MarkAllActivitySeen,
+  DismissActivity,
+  ClearSeenActivity,
+  ClearAllActivity,
 } from '../../wailsjs/go/main/App';
 import { useCommandsStore, lookupCommand } from './commands';
 import { usePreferencesStore } from './preferences';
@@ -324,6 +330,15 @@ interface NetworkState {
   // Invites (INVITE command — received invites, per network)
   invitesByNetwork: Record<number, main.InviteView[]>;
   loadInvites: (networkId: number) => Promise<void>;
+
+  // Activity inbox (highlights, keywords, invites, PMs) — global across networks.
+  activityItems: storage.ActivityItem[];
+  loadActivityItems: () => Promise<void>;
+  markActivitySeenMany: (ids: number[]) => Promise<void>;
+  markAllActivitySeen: () => Promise<void>;
+  dismissActivity: (id: number) => Promise<void>;
+  clearSeenActivity: () => Promise<void>;
+  clearAllActivity: () => Promise<void>;
 }
 
 export const useNetworkStore = create<NetworkState>((set, get) => ({
@@ -355,6 +370,7 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
   selectedNetwork: null,
   selectedChannel: null,
   invitesByNetwork: {},
+  activityItems: [],
 
   loadNetworks: async () => {
     try {
@@ -1462,6 +1478,37 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
     } catch (e) {
       console.error('Failed to load invites:', e);
     }
+  },
+
+  loadActivityItems: async () => {
+    try {
+      const items = (await GetActivityItems()) ?? [];
+      items.sort((a, b) => (a.timestamp < b.timestamp ? 1 : a.timestamp > b.timestamp ? -1 : b.id - a.id));
+      set({ activityItems: items });
+    } catch (e) {
+      console.error('Failed to load activity items:', e);
+    }
+  },
+  markActivitySeenMany: async (ids) => {
+    const idset = new Set(ids);
+    set((s) => ({ activityItems: s.activityItems.map((i) => (idset.has(i.id) ? { ...i, seen: true } : i)) }));
+    await Promise.all(ids.map((id) => MarkActivitySeen(id))).catch((e) => console.error('markActivitySeen:', e));
+  },
+  markAllActivitySeen: async () => {
+    set((s) => ({ activityItems: s.activityItems.map((i) => ({ ...i, seen: true })) }));
+    await MarkAllActivitySeen().catch((e) => console.error('markAllActivitySeen:', e));
+  },
+  dismissActivity: async (id) => {
+    set((s) => ({ activityItems: s.activityItems.filter((i) => i.id !== id) }));
+    await DismissActivity(id).catch((e) => console.error('dismissActivity:', e));
+  },
+  clearSeenActivity: async () => {
+    set((s) => ({ activityItems: s.activityItems.filter((i) => !i.seen) }));
+    await ClearSeenActivity().catch((e) => console.error('clearSeenActivity:', e));
+  },
+  clearAllActivity: async () => {
+    set({ activityItems: [] });
+    await ClearAllActivity().catch((e) => console.error('clearAllActivity:', e));
   },
 
   restoreLastPane: async () => {
