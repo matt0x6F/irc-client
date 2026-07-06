@@ -50,12 +50,14 @@ import {
   DismissActivity,
   ClearSeenActivity,
   ClearAllActivity,
+  GetMessageIDByMsgID,
 } from '../../wailsjs/go/main/App';
 import { useCommandsStore, lookupCommand } from './commands';
 import { usePreferencesStore } from './preferences';
 import { useUIStore } from './ui';
 import { formatCommandHelp, formatHelpList } from '../lib/help-format';
 import { expandInvite } from './invite-command';
+import { activationFor, type ActivityGroup } from '../lib/activity-inbox';
 
 // UserMetaT mirrors the Go irc.UserMeta JSON shape: the live, session-local
 // roster attributes Cascade tracks per nick via away-notify / account-notify /
@@ -339,6 +341,8 @@ interface NetworkState {
   dismissActivity: (id: number) => Promise<void>;
   clearSeenActivity: () => Promise<void>;
   clearAllActivity: () => Promise<void>;
+  selectActivityInbox: () => Promise<void>;
+  activateActivityGroup: (group: ActivityGroup) => Promise<void>;
 }
 
 export const useNetworkStore = create<NetworkState>((set, get) => ({
@@ -1509,6 +1513,24 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
   clearAllActivity: async () => {
     set({ activityItems: [] });
     await ClearAllActivity().catch((e) => console.error('clearAllActivity:', e));
+  },
+  selectActivityInbox: async () => {
+    set({ selectedNetwork: null, selectedChannel: 'activity' });
+    await get().loadActivityItems();
+  },
+  activateActivityGroup: async (group) => {
+    const ids = group.items.filter((i) => !i.seen).map((i) => i.id);
+    if (ids.length) void get().markActivitySeenMany(ids);
+    const act = activationFor(group);
+    await get().selectPane(act.networkId, act.paneKey);
+    if (act.kind === 'jump' && act.msgid) {
+      try {
+        const id = await GetMessageIDByMsgID(act.networkId, act.msgid);
+        if (id > 0) await get().jumpToMessage(id);
+      } catch (e) {
+        console.error('activate jump:', e);
+      }
+    }
   },
 
   restoreLastPane: async () => {

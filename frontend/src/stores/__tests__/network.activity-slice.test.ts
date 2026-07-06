@@ -10,6 +10,7 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   DismissActivity: vi.fn().mockResolvedValue(undefined),
   ClearSeenActivity: vi.fn().mockResolvedValue(undefined),
   ClearAllActivity: vi.fn().mockResolvedValue(undefined),
+  GetMessageIDByMsgID: vi.fn().mockResolvedValue(42),
 }));
 
 import { useNetworkStore } from '../network';
@@ -41,5 +42,23 @@ describe('activity slice', () => {
     await useNetworkStore.getState().dismissActivity(1);
     expect(DismissActivity).toHaveBeenCalledWith(1);
     expect(useNetworkStore.getState().activityItems.map((i) => i.id)).toEqual([2]);
+  });
+
+  it('selectActivityInbox sets the global selection', async () => {
+    await useNetworkStore.getState().selectActivityInbox();
+    expect(useNetworkStore.getState().selectedChannel).toBe('activity');
+    expect(useNetworkStore.getState().selectedNetwork).toBeNull();
+  });
+
+  it('activateActivityGroup for a highlight marks seen, selects the pane, and jumps', async () => {
+    const spySelect = vi.spyOn(useNetworkStore.getState(), 'selectPane').mockResolvedValue(undefined as any);
+    const spyJump = vi.spyOn(useNetworkStore.getState(), 'jumpToMessage').mockResolvedValue(undefined as any);
+    useNetworkStore.setState({ activityItems: [{ id: 7, network_id: 1, source_type: 'highlight', target: '#dev', msgid: 'm9', seen: false, timestamp: 't', actor: 'a', preview: 'p', keyword: '', trusted: false, expires_at: null } as any] });
+    const { coalesceActivity } = await import('../../lib/activity-inbox');
+    const g = coalesceActivity(useNetworkStore.getState().activityItems)[0];
+    await useNetworkStore.getState().activateActivityGroup(g);
+    expect(useNetworkStore.getState().activityItems.find((i) => i.id === 7)!.seen).toBe(true);
+    expect(spySelect).toHaveBeenCalledWith(1, '#dev');
+    expect(spyJump).toHaveBeenCalledWith(42);
   });
 });
