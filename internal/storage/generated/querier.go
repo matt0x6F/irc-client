@@ -14,14 +14,18 @@ type Querier interface {
 	AddMonitoredNick(ctx context.Context, arg AddMonitoredNickParams) error
 	ClearChannelUsers(ctx context.Context, channelID int64) error
 	ClearNetworkChannelUsers(ctx context.Context, networkID int64) error
+	CreateActivityItem(ctx context.Context, arg CreateActivityItemParams) (ActivityItem, error)
 	CreateChannel(ctx context.Context, arg CreateChannelParams) (Channel, error)
 	CreateMessage(ctx context.Context, arg CreateMessageParams) (Message, error)
 	CreateNetwork(ctx context.Context, arg CreateNetworkParams) (Network, error)
 	CreatePMConversation(ctx context.Context, arg CreatePMConversationParams) (PrivateMessageConversation, error)
 	CreateServer(ctx context.Context, arg CreateServerParams) (Server, error)
+	DeleteActivityItem(ctx context.Context, id int64) error
+	DeleteAllActivityItems(ctx context.Context) error
 	DeleteAllServers(ctx context.Context, networkID int64) error
 	DeleteNetwork(ctx context.Context, id int64) error
 	DeleteSTSPolicy(ctx context.Context, hostname string) error
+	DeleteSeenActivityItems(ctx context.Context) error
 	DeleteServer(ctx context.Context, id int64) error
 	GetAllPluginConfigs(ctx context.Context) ([]PluginConfig, error)
 	GetChannelByName(ctx context.Context, arg GetChannelByNameParams) (Channel, error)
@@ -62,7 +66,10 @@ type Querier interface {
 	GetSTSPolicy(ctx context.Context, hostname string) (StsPolicy, error)
 	GetServers(ctx context.Context, networkID int64) ([]Server, error)
 	GetSetting(ctx context.Context, key string) (string, error)
+	ListActivityItems(ctx context.Context, limit int64) ([]ActivityItem, error)
 	ListDisabledScripts(ctx context.Context) ([]string, error)
+	MarkActivityItemSeen(ctx context.Context, id int64) error
+	MarkAllActivityItemsSeen(ctx context.Context) error
 	PinMessage(ctx context.Context, arg PinMessageParams) error
 	PruneLinkPreviewsToLimit(ctx context.Context, offset int64) error
 	RemoveChannelUser(ctx context.Context, arg RemoveChannelUserParams) error

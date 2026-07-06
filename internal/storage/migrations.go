@@ -131,6 +131,11 @@ func Migrate(db *sqlx.DB) error {
 		return fmt.Errorf("link previews migration failed: %w", err)
 	}
 
+	// Handle activity items table migration (cross-network attention inbox)
+	if err := migrateActivityItems(db); err != nil {
+		return fmt.Errorf("activity items migration failed: %w", err)
+	}
+
 	return nil
 }
 
@@ -944,6 +949,40 @@ CREATE TABLE IF NOT EXISTS link_previews (
 func migrateLinkPreviews(db *sqlx.DB) error {
 	if _, err := db.Exec(createLinkPreviewsTable); err != nil {
 		return fmt.Errorf("failed to create link_previews table: %w", err)
+	}
+	return nil
+}
+
+const createActivityItemsTable = `
+CREATE TABLE IF NOT EXISTS activity_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    network_id INTEGER NOT NULL,
+    source_type TEXT NOT NULL,
+    target TEXT NOT NULL,
+    actor TEXT NOT NULL DEFAULT '',
+    preview TEXT NOT NULL DEFAULT '',
+    msgid TEXT,
+    keyword TEXT,
+    seen INTEGER NOT NULL DEFAULT 0,
+    timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (network_id) REFERENCES networks(id) ON DELETE CASCADE
+);
+`
+
+const createActivityItemsIndexes = `
+CREATE INDEX IF NOT EXISTS idx_activity_items_seen_time ON activity_items(seen, timestamp);
+CREATE INDEX IF NOT EXISTS idx_activity_items_network ON activity_items(network_id);
+`
+
+// migrateActivityItems creates the activity_items table (and its indexes) if
+// they don't exist. This is the cross-network attention inbox: highlights,
+// keyword matches, invites, and PMs, all in one durable, prunable feed.
+func migrateActivityItems(db *sqlx.DB) error {
+	if _, err := db.Exec(createActivityItemsTable); err != nil {
+		return fmt.Errorf("failed to create activity_items table: %w", err)
+	}
+	if _, err := db.Exec(createActivityItemsIndexes); err != nil {
+		return fmt.Errorf("failed to create activity_items indexes: %w", err)
 	}
 	return nil
 }

@@ -10,6 +10,19 @@ import (
 	"time"
 )
 
+type ActivityItem struct {
+	ID         int64          `json:"id"`
+	NetworkID  int64          `json:"network_id"`
+	SourceType string         `json:"source_type"`
+	Target     string         `json:"target"`
+	Actor      string         `json:"actor"`
+	Preview    string         `json:"preview"`
+	Msgid      sql.NullString `json:"msgid"`
+	Keyword    sql.NullString `json:"keyword"`
+	Seen       int64          `json:"seen"`
+	Timestamp  time.Time      `json:"timestamp"`
+}
+
 type Channel struct {
 	ID        int64          `json:"id"`
 	NetworkID int64          `json:"network_id"`
