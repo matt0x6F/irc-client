@@ -119,4 +119,23 @@ describe('SettingsPanel Activity settings', () => {
       })
     })
   })
+
+  it('does not add a duplicate keyword already in the list', async () => {
+    getActivitySettingsMock.mockResolvedValue({
+      highlights: true,
+      keywords: true,
+      invites: true,
+      pms: true,
+      keywordList: ['urgent'],
+    })
+    render(<SettingsPanel section="notifications" onSectionChange={() => {}} />)
+    const input = await screen.findByTestId('activity-keyword-input')
+    fireEvent.change(input, { target: { value: 'urgent' } })
+    const addButton = await screen.findByTestId('activity-keyword-add')
+    fireEvent.click(addButton)
+
+    // Give any (incorrect) async persist a chance to fire before asserting it didn't.
+    await new Promise((r) => setTimeout(r, 0))
+    expect(setActivitySettingsMock).not.toHaveBeenCalled()
+  })
 })

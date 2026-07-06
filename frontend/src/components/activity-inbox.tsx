@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { Bell, AtSign, Tag, MessageSquare, Mail, Eye, X, UserX } from 'lucide-react';
 import { useNetworkStore } from '../stores/network';
 import { coalesceActivity, relativeTime, type ActivityGroup } from '../lib/activity-inbox';
-import { SendCommand, IgnoreInviteSender } from '../../wailsjs/go/main/App';
+import { IgnoreInviteSender } from '../../wailsjs/go/main/App';
 
 // One glyph per source type, matched to the rest of the app's iconography
 // (role icons in channel-info.tsx, buddy dots in monitor-list.tsx).
@@ -27,6 +27,7 @@ function ActivityRow({ group }: { group: ActivityGroup }) {
   const activateActivityGroup = useNetworkStore((s) => s.activateActivityGroup);
   const markActivitySeenMany = useNetworkStore((s) => s.markActivitySeenMany);
   const dismissActivity = useNetworkStore((s) => s.dismissActivity);
+  const openOrJoinChannel = useNetworkStore((s) => s.openOrJoinChannel);
 
   const Icon = SOURCE_ICON[group.sourceType] ?? Bell;
   const isInvite = group.sourceType === 'invite';
@@ -71,7 +72,7 @@ function ActivityRow({ group }: { group: ActivityGroup }) {
                 className="text-xs text-primary underline hover:opacity-80 transition-opacity"
                 onClick={(e) => {
                   e.stopPropagation();
-                  void SendCommand(group.networkId, `/join ${group.target}`);
+                  void openOrJoinChannel(group.networkId, group.target);
                   dismissGroup();
                 }}
               >

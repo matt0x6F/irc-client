@@ -178,6 +178,10 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
   const addActivityKeyword = () => {
     const trimmed = keywordDraft.trim();
     if (!trimmed || !activitySettings) return;
+    if (activitySettings.keywordList.includes(trimmed)) {
+      setKeywordDraft('');
+      return;
+    }
     const nextList = [...activitySettings.keywordList, trimmed];
     setKeywordDraft('');
     persistActivity('keywordList', nextList);

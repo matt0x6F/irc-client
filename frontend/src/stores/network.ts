@@ -1499,7 +1499,13 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
     const ids = group.items.filter((i) => !i.seen).map((i) => i.id);
     if (ids.length) void get().markActivitySeenMany(ids);
     const act = activationFor(group);
-    await get().selectPane(act.networkId, act.paneKey);
+    if (act.kind === 'openChannel') {
+      await get().openOrJoinChannel(act.networkId, act.paneKey);
+    } else if (act.kind === 'openPane') {
+      await get().openQuery(act.networkId, group.target);
+    } else {
+      await get().selectPane(act.networkId, act.paneKey);
+    }
     if (act.kind === 'jump' && act.msgid) {
       try {
         const id = await GetMessageIDByMsgID(act.networkId, act.msgid);
