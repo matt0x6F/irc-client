@@ -136,6 +136,11 @@ func Migrate(db *sqlx.DB) error {
 		return fmt.Errorf("activity items migration failed: %w", err)
 	}
 
+	// Handle activity item invite columns migration (trusted, expires_at)
+	if err := migrateActivityItemInviteColumns(db); err != nil {
+		return fmt.Errorf("activity item invite columns migration failed: %w", err)
+	}
+
 	return nil
 }
 
@@ -985,4 +990,43 @@ func migrateActivityItems(db *sqlx.DB) error {
 		return fmt.Errorf("failed to create activity_items indexes: %w", err)
 	}
 	return nil
+}
+
+// migrateActivityItemInviteColumns adds the invite-only columns (trusted,
+// expires_at) to activity_items. Idempotent: safe on DBs that already have them.
+func migrateActivityItemInviteColumns(db *sqlx.DB) error {
+	cols, err := activityItemColumns(db)
+	if err != nil {
+		return fmt.Errorf("inspect activity_items columns: %w", err)
+	}
+	if _, ok := cols["trusted"]; !ok {
+		if _, err := db.Exec(`ALTER TABLE activity_items ADD COLUMN trusted INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return fmt.Errorf("add activity_items.trusted: %w", err)
+		}
+	}
+	if _, ok := cols["expires_at"]; !ok {
+		if _, err := db.Exec(`ALTER TABLE activity_items ADD COLUMN expires_at TIMESTAMP`); err != nil {
+			return fmt.Errorf("add activity_items.expires_at: %w", err)
+		}
+	}
+	return nil
+}
+
+func activityItemColumns(db *sqlx.DB) (map[string]struct{}, error) {
+	rows, err := db.Query(`PRAGMA table_info(activity_items)`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	cols := map[string]struct{}{}
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, ctype string
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return nil, err
+		}
+		cols[name] = struct{}{}
+	}
+	return cols, rows.Err()
 }

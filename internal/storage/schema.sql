@@ -87,6 +87,8 @@ CREATE TABLE IF NOT EXISTS activity_items (
     keyword TEXT,              -- matched keyword when source_type='keyword'; NULL otherwise
     seen INTEGER NOT NULL DEFAULT 0, -- 0 = unseen, 1 = seen
     timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    trusted INTEGER NOT NULL DEFAULT 0, -- invite rows: inviter is a buddy
+    expires_at TIMESTAMP,               -- invite rows only: TTL; NULL = never
     FOREIGN KEY (network_id) REFERENCES networks(id) ON DELETE CASCADE
 );
 

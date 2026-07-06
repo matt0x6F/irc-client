@@ -89,3 +89,49 @@ func TestActivityItemOrderingAndState(t *testing.T) {
 		t.Fatalf("expected empty after dismiss, got %+v", items)
 	}
 }
+
+func TestInviteActivityColumnsAndQueries(t *testing.T) {
+	s := newTestStorage(t)
+	net := makeNetwork("InvNet")
+	if err := s.CreateNetwork(net); err != nil {
+		t.Fatalf("CreateNetwork: %v", err)
+	}
+	now := time.Now().Truncate(time.Second)
+	future := now.Add(time.Hour)
+	past := now.Add(-time.Hour)
+
+	// live invite (expires in the future) + expired invite from same sender
+	if _, err := s.WriteActivityItem(ActivityItem{NetworkID: net.ID, SourceType: "invite", Target: "#ops", Actor: "carol", Trusted: true, ExpiresAt: &future, Timestamp: now}); err != nil {
+		t.Fatalf("write live invite: %v", err)
+	}
+	if _, err := s.WriteActivityItem(ActivityItem{NetworkID: net.ID, SourceType: "invite", Target: "#old", Actor: "carol", ExpiresAt: &past, Timestamp: past}); err != nil {
+		t.Fatalf("write expired invite: %v", err)
+	}
+
+	live, err := s.ListInviteActivity(net.ID, now)
+	if err != nil {
+		t.Fatalf("ListInviteActivity: %v", err)
+	}
+	if len(live) != 1 || live[0].Target != "#ops" || !live[0].Trusted {
+		t.Fatalf("expected one live trusted invite, got %+v", live)
+	}
+
+	nets, err := s.SweepExpiredInvites(now)
+	if err != nil {
+		t.Fatalf("SweepExpiredInvites: %v", err)
+	}
+	if len(nets) != 1 || nets[0] != net.ID {
+		t.Fatalf("sweep should report net %d, got %v", net.ID, nets)
+	}
+	// only the expired one is gone; the live one remains
+	if live, _ = s.ListInviteActivity(net.ID, now); len(live) != 1 {
+		t.Fatalf("sweep should keep the live invite, got %+v", live)
+	}
+
+	if err := s.DeleteInviteActivity(net.ID, "carol", "#ops"); err != nil {
+		t.Fatalf("DeleteInviteActivity: %v", err)
+	}
+	if live, _ = s.ListInviteActivity(net.ID, now); len(live) != 0 {
+		t.Fatalf("delete should remove the invite, got %+v", live)
+	}
+}

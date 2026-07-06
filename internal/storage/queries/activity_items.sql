@@ -1,6 +1,6 @@
 -- name: CreateActivityItem :one
-INSERT INTO activity_items (network_id, source_type, target, actor, preview, msgid, keyword, seen, timestamp)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO activity_items (network_id, source_type, target, actor, preview, msgid, keyword, seen, timestamp, trusted, expires_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: ListActivityItems :many
@@ -20,3 +20,25 @@ DELETE FROM activity_items WHERE seen = 1;
 
 -- name: DeleteAllActivityItems :exec
 DELETE FROM activity_items;
+
+-- name: ListInviteActivity :many
+SELECT * FROM activity_items
+WHERE source_type = 'invite' AND network_id = ?
+  AND (expires_at IS NULL OR expires_at > ?)
+ORDER BY timestamp DESC, id DESC;
+
+-- name: DeleteInviteActivity :exec
+DELETE FROM activity_items
+WHERE source_type = 'invite' AND network_id = ? AND actor = ? AND target = ?;
+
+-- name: DeleteInviteActivityFromSender :exec
+DELETE FROM activity_items
+WHERE source_type = 'invite' AND network_id = ? AND actor = ?;
+
+-- name: NetworksWithExpiredInvites :many
+SELECT DISTINCT network_id FROM activity_items
+WHERE source_type = 'invite' AND expires_at IS NOT NULL AND expires_at <= ?;
+
+-- name: DeleteExpiredInviteActivity :exec
+DELETE FROM activity_items
+WHERE source_type = 'invite' AND expires_at IS NOT NULL AND expires_at <= ?;

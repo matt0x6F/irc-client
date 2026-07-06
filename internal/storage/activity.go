@@ -2,7 +2,11 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"time"
+
+	db "github.com/matt0x6f/irc-client/internal/storage/generated"
 )
 
 // WriteActivityItem inserts one activity row and returns it with its assigned ID.
@@ -67,4 +71,54 @@ func (s *Storage) ClearAllActivity() error {
 		return fmt.Errorf("clear all activity: %w", err)
 	}
 	return nil
+}
+
+// ListInviteActivity returns non-expired invite rows for a network, newest first.
+func (s *Storage) ListInviteActivity(networkID int64, now time.Time) ([]ActivityItem, error) {
+	rows, err := s.queries.ListInviteActivity(context.Background(), db.ListInviteActivityParams{
+		NetworkID: networkID,
+		ExpiresAt: sql.NullTime{Time: now.UTC(), Valid: true},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list invite activity: %w", err)
+	}
+	out := make([]ActivityItem, len(rows))
+	for i, r := range rows {
+		out[i] = convertActivityItemFromDB(r)
+	}
+	return out, nil
+}
+
+// DeleteInviteActivity removes a single invite row (e.g. once the invite is acted on).
+func (s *Storage) DeleteInviteActivity(networkID int64, inviter, channel string) error {
+	if err := s.queries.DeleteInviteActivity(context.Background(), db.DeleteInviteActivityParams{
+		NetworkID: networkID, Actor: inviter, Target: channel,
+	}); err != nil {
+		return fmt.Errorf("delete invite activity: %w", err)
+	}
+	return nil
+}
+
+// DeleteInviteActivityFromSender removes all invite rows from a given inviter on a network.
+func (s *Storage) DeleteInviteActivityFromSender(networkID int64, inviter string) error {
+	if err := s.queries.DeleteInviteActivityFromSender(context.Background(), db.DeleteInviteActivityFromSenderParams{
+		NetworkID: networkID, Actor: inviter,
+	}); err != nil {
+		return fmt.Errorf("delete invites from sender: %w", err)
+	}
+	return nil
+}
+
+// SweepExpiredInvites deletes expired invite rows and returns affected network IDs.
+func (s *Storage) SweepExpiredInvites(now time.Time) ([]int64, error) {
+	cutoff := sql.NullTime{Time: now.UTC(), Valid: true}
+	ctx := context.Background()
+	nets, err := s.queries.NetworksWithExpiredInvites(ctx, cutoff)
+	if err != nil {
+		return nil, fmt.Errorf("find expired invite networks: %w", err)
+	}
+	if err := s.queries.DeleteExpiredInviteActivity(ctx, cutoff); err != nil {
+		return nil, fmt.Errorf("delete expired invites: %w", err)
+	}
+	return nets, nil
 }

@@ -226,7 +226,7 @@ func convertMessageToDBCreateParams(m Message) db.CreateMessageParams {
 }
 
 func convertActivityItemFromDB(a db.ActivityItem) ActivityItem {
-	return ActivityItem{
+	result := ActivityItem{
 		ID:         a.ID,
 		NetworkID:  a.NetworkID,
 		SourceType: a.SourceType,
@@ -237,13 +237,27 @@ func convertActivityItemFromDB(a db.ActivityItem) ActivityItem {
 		Keyword:    convertNullString(a.Keyword),
 		Seen:       a.Seen != 0,
 		Timestamp:  a.Timestamp,
+		Trusted:    a.Trusted != 0,
 	}
+	if a.ExpiresAt.Valid {
+		t := a.ExpiresAt.Time
+		result.ExpiresAt = &t
+	}
+	return result
 }
 
 func convertActivityItemToCreateParams(a ActivityItem) db.CreateActivityItemParams {
 	var seen int64
 	if a.Seen {
 		seen = 1
+	}
+	var trusted int64
+	if a.Trusted {
+		trusted = 1
+	}
+	var expiresAt sql.NullTime
+	if a.ExpiresAt != nil {
+		expiresAt = sql.NullTime{Time: a.ExpiresAt.UTC(), Valid: true}
 	}
 	return db.CreateActivityItemParams{
 		NetworkID:  a.NetworkID,
@@ -255,6 +269,8 @@ func convertActivityItemToCreateParams(a ActivityItem) db.CreateActivityItemPara
 		Keyword:    convertToNullString(a.Keyword),
 		Seen:       seen,
 		Timestamp:  a.Timestamp.UTC(),
+		Trusted:    trusted,
+		ExpiresAt:  expiresAt,
 	}
 }
 

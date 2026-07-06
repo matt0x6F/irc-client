@@ -12,9 +12,9 @@ import (
 )
 
 const createActivityItem = `-- name: CreateActivityItem :one
-INSERT INTO activity_items (network_id, source_type, target, actor, preview, msgid, keyword, seen, timestamp)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, network_id, source_type, target, actor, preview, msgid, keyword, seen, timestamp
+INSERT INTO activity_items (network_id, source_type, target, actor, preview, msgid, keyword, seen, timestamp, trusted, expires_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, network_id, source_type, target, actor, preview, msgid, keyword, seen, timestamp, trusted, expires_at
 `
 
 type CreateActivityItemParams struct {
@@ -27,6 +27,8 @@ type CreateActivityItemParams struct {
 	Keyword    sql.NullString `json:"keyword"`
 	Seen       int64          `json:"seen"`
 	Timestamp  time.Time      `json:"timestamp"`
+	Trusted    int64          `json:"trusted"`
+	ExpiresAt  sql.NullTime   `json:"expires_at"`
 }
 
 func (q *Queries) CreateActivityItem(ctx context.Context, arg CreateActivityItemParams) (ActivityItem, error) {
@@ -40,6 +42,8 @@ func (q *Queries) CreateActivityItem(ctx context.Context, arg CreateActivityItem
 		arg.Keyword,
 		arg.Seen,
 		arg.Timestamp,
+		arg.Trusted,
+		arg.ExpiresAt,
 	)
 	var i ActivityItem
 	err := row.Scan(
@@ -53,6 +57,8 @@ func (q *Queries) CreateActivityItem(ctx context.Context, arg CreateActivityItem
 		&i.Keyword,
 		&i.Seen,
 		&i.Timestamp,
+		&i.Trusted,
+		&i.ExpiresAt,
 	)
 	return i, err
 }
@@ -75,6 +81,47 @@ func (q *Queries) DeleteAllActivityItems(ctx context.Context) error {
 	return err
 }
 
+const deleteExpiredInviteActivity = `-- name: DeleteExpiredInviteActivity :exec
+DELETE FROM activity_items
+WHERE source_type = 'invite' AND expires_at IS NOT NULL AND expires_at <= ?
+`
+
+func (q *Queries) DeleteExpiredInviteActivity(ctx context.Context, expiresAt sql.NullTime) error {
+	_, err := q.db.ExecContext(ctx, deleteExpiredInviteActivity, expiresAt)
+	return err
+}
+
+const deleteInviteActivity = `-- name: DeleteInviteActivity :exec
+DELETE FROM activity_items
+WHERE source_type = 'invite' AND network_id = ? AND actor = ? AND target = ?
+`
+
+type DeleteInviteActivityParams struct {
+	NetworkID int64  `json:"network_id"`
+	Actor     string `json:"actor"`
+	Target    string `json:"target"`
+}
+
+func (q *Queries) DeleteInviteActivity(ctx context.Context, arg DeleteInviteActivityParams) error {
+	_, err := q.db.ExecContext(ctx, deleteInviteActivity, arg.NetworkID, arg.Actor, arg.Target)
+	return err
+}
+
+const deleteInviteActivityFromSender = `-- name: DeleteInviteActivityFromSender :exec
+DELETE FROM activity_items
+WHERE source_type = 'invite' AND network_id = ? AND actor = ?
+`
+
+type DeleteInviteActivityFromSenderParams struct {
+	NetworkID int64  `json:"network_id"`
+	Actor     string `json:"actor"`
+}
+
+func (q *Queries) DeleteInviteActivityFromSender(ctx context.Context, arg DeleteInviteActivityFromSenderParams) error {
+	_, err := q.db.ExecContext(ctx, deleteInviteActivityFromSender, arg.NetworkID, arg.Actor)
+	return err
+}
+
 const deleteSeenActivityItems = `-- name: DeleteSeenActivityItems :exec
 DELETE FROM activity_items WHERE seen = 1
 `
@@ -85,7 +132,7 @@ func (q *Queries) DeleteSeenActivityItems(ctx context.Context) error {
 }
 
 const listActivityItems = `-- name: ListActivityItems :many
-SELECT id, network_id, source_type, target, actor, preview, msgid, keyword, seen, timestamp FROM activity_items ORDER BY timestamp DESC, id DESC LIMIT ?
+SELECT id, network_id, source_type, target, actor, preview, msgid, keyword, seen, timestamp, trusted, expires_at FROM activity_items ORDER BY timestamp DESC, id DESC LIMIT ?
 `
 
 func (q *Queries) ListActivityItems(ctx context.Context, limit int64) ([]ActivityItem, error) {
@@ -108,6 +155,56 @@ func (q *Queries) ListActivityItems(ctx context.Context, limit int64) ([]Activit
 			&i.Keyword,
 			&i.Seen,
 			&i.Timestamp,
+			&i.Trusted,
+			&i.ExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listInviteActivity = `-- name: ListInviteActivity :many
+SELECT id, network_id, source_type, target, actor, preview, msgid, keyword, seen, timestamp, trusted, expires_at FROM activity_items
+WHERE source_type = 'invite' AND network_id = ?
+  AND (expires_at IS NULL OR expires_at > ?)
+ORDER BY timestamp DESC, id DESC
+`
+
+type ListInviteActivityParams struct {
+	NetworkID int64        `json:"network_id"`
+	ExpiresAt sql.NullTime `json:"expires_at"`
+}
+
+func (q *Queries) ListInviteActivity(ctx context.Context, arg ListInviteActivityParams) ([]ActivityItem, error) {
+	rows, err := q.db.QueryContext(ctx, listInviteActivity, arg.NetworkID, arg.ExpiresAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ActivityItem
+	for rows.Next() {
+		var i ActivityItem
+		if err := rows.Scan(
+			&i.ID,
+			&i.NetworkID,
+			&i.SourceType,
+			&i.Target,
+			&i.Actor,
+			&i.Preview,
+			&i.Msgid,
+			&i.Keyword,
+			&i.Seen,
+			&i.Timestamp,
+			&i.Trusted,
+			&i.ExpiresAt,
 		); err != nil {
 			return nil, err
 		}
@@ -138,4 +235,32 @@ UPDATE activity_items SET seen = 1 WHERE seen = 0
 func (q *Queries) MarkAllActivityItemsSeen(ctx context.Context) error {
 	_, err := q.db.ExecContext(ctx, markAllActivityItemsSeen)
 	return err
+}
+
+const networksWithExpiredInvites = `-- name: NetworksWithExpiredInvites :many
+SELECT DISTINCT network_id FROM activity_items
+WHERE source_type = 'invite' AND expires_at IS NOT NULL AND expires_at <= ?
+`
+
+func (q *Queries) NetworksWithExpiredInvites(ctx context.Context, expiresAt sql.NullTime) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, networksWithExpiredInvites, expiresAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var network_id int64
+		if err := rows.Scan(&network_id); err != nil {
+			return nil, err
+		}
+		items = append(items, network_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

@@ -21,6 +21,8 @@ type ActivityItem struct {
 	Keyword    sql.NullString `json:"keyword"`
 	Seen       int64          `json:"seen"`
 	Timestamp  time.Time      `json:"timestamp"`
+	Trusted    int64          `json:"trusted"`
+	ExpiresAt  sql.NullTime   `json:"expires_at"`
 }
 
 type Channel struct {

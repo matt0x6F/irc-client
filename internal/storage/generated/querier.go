@@ -23,6 +23,9 @@ type Querier interface {
 	DeleteActivityItem(ctx context.Context, id int64) error
 	DeleteAllActivityItems(ctx context.Context) error
 	DeleteAllServers(ctx context.Context, networkID int64) error
+	DeleteExpiredInviteActivity(ctx context.Context, expiresAt sql.NullTime) error
+	DeleteInviteActivity(ctx context.Context, arg DeleteInviteActivityParams) error
+	DeleteInviteActivityFromSender(ctx context.Context, arg DeleteInviteActivityFromSenderParams) error
 	DeleteNetwork(ctx context.Context, id int64) error
 	DeleteSTSPolicy(ctx context.Context, hostname string) error
 	DeleteSeenActivityItems(ctx context.Context) error
@@ -68,8 +71,10 @@ type Querier interface {
 	GetSetting(ctx context.Context, key string) (string, error)
 	ListActivityItems(ctx context.Context, limit int64) ([]ActivityItem, error)
 	ListDisabledScripts(ctx context.Context) ([]string, error)
+	ListInviteActivity(ctx context.Context, arg ListInviteActivityParams) ([]ActivityItem, error)
 	MarkActivityItemSeen(ctx context.Context, id int64) error
 	MarkAllActivityItemsSeen(ctx context.Context) error
+	NetworksWithExpiredInvites(ctx context.Context, expiresAt sql.NullTime) ([]int64, error)
 	PinMessage(ctx context.Context, arg PinMessageParams) error
 	PruneLinkPreviewsToLimit(ctx context.Context, offset int64) error
 	RemoveChannelUser(ctx context.Context, arg RemoveChannelUserParams) error
