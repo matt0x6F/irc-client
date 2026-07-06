@@ -1,17 +1,17 @@
 /**
- * e2e integration test for the Invites pane.
+ * e2e integration test for received invites in the Activity inbox.
  *
  * Seeds one invite by having a throwaway IrcPeer send INVITE to the app user,
- * then asserts the full path works: the Invites tree node badges, and the
- * Invites pane renders the inviter. Deterministic and cross-platform — no
- * screenshot (Playwright snapshots are per-OS; the visual is covered by the
- * invites-view render unit test).
+ * then asserts the full path works: the invite is absorbed into activity_items
+ * and rendered in the global Activity inbox (which subsumed the old standalone
+ * invites pane). Deterministic and cross-platform — no screenshot (Playwright
+ * snapshots are per-OS; the visual is covered by the activity-inbox render unit test).
  */
 import { test, expect } from '../lib/fixtures';
 import { addNetworkAndConnect, selectNetwork } from '../lib/actions';
 import { IrcPeer } from '../lib/irc-peer';
 
-test('invites pane renders a received invite', async ({ page, runtime }) => {
+test('activity inbox renders a received invite', async ({ page, runtime }) => {
   await page.goto(runtime.bridgeUrl);
   await addNetworkAndConnect(page, runtime);
   await selectNetwork(page);
@@ -27,19 +27,17 @@ test('invites pane renders a received invite', async ({ page, runtime }) => {
     // INVITE the app user to the channel the peer is in.
     peer.sendRaw('INVITE e2euser #invite-target');
 
-    // Wait for the invite badge to appear on the Invites tree node.
-    // The badge is a rounded pill next to the "Invites" label.
-    const inviteBadge = page
-      .getByTestId('server-tree')
-      .locator('[title="Pending invites"]');
-    await inviteBadge.waitFor({ state: 'visible', timeout: 15_000 });
+    // Open the global Activity destination (top of the tree). The inbox
+    // subscribes to the activity-changed event, so it updates live when the
+    // invite lands as an activity_items row.
+    await page.getByTestId('server-tree').getByText('Activity', { exact: true }).click();
 
-    // Click the Invites pane.
-    await page.getByTestId('server-tree').getByText('Invites', { exact: true }).click();
-
-    // The invite should be visible in the pane — "invitebot" sent it.
+    // The invite should render in the inbox — "invitebot" sent it to #invite-target.
     await expect(
       page.getByText('invitebot', { exact: false }),
+    ).toBeVisible({ timeout: 15_000 });
+    await expect(
+      page.getByText('#invite-target', { exact: false }),
     ).toBeVisible({ timeout: 10_000 });
   } finally {
     peer.close();
