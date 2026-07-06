@@ -94,6 +94,22 @@ func (q *Queries) GetMessageByMsgID(ctx context.Context, arg GetMessageByMsgIDPa
 	return i, err
 }
 
+const getMessageIDByMsgID = `-- name: GetMessageIDByMsgID :one
+SELECT id FROM messages WHERE network_id = ? AND msgid = ? LIMIT 1
+`
+
+type GetMessageIDByMsgIDParams struct {
+	NetworkID int64          `json:"network_id"`
+	Msgid     sql.NullString `json:"msgid"`
+}
+
+func (q *Queries) GetMessageIDByMsgID(ctx context.Context, arg GetMessageIDByMsgIDParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getMessageIDByMsgID, arg.NetworkID, arg.Msgid)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
 const getMessagesWithChannel = `-- name: GetMessagesWithChannel :many
 SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, msgid, reply_msgid, channel_context FROM messages 
 WHERE network_id = ? AND channel_id = ? 

@@ -40,6 +40,7 @@ type Querier interface {
 	GetLastOpenPM(ctx context.Context) (GetLastOpenPMRow, error)
 	GetLinkPreview(ctx context.Context, url string) (LinkPreview, error)
 	GetMessageByMsgID(ctx context.Context, arg GetMessageByMsgIDParams) (Message, error)
+	GetMessageIDByMsgID(ctx context.Context, arg GetMessageIDByMsgIDParams) (int64, error)
 	GetMessagesAfterWithChannel(ctx context.Context, arg GetMessagesAfterWithChannelParams) ([]Message, error)
 	GetMessagesAfterWithoutChannel(ctx context.Context, arg GetMessagesAfterWithoutChannelParams) ([]Message, error)
 	GetMessagesBeforeTimePM(ctx context.Context, arg GetMessagesBeforeTimePMParams) ([]Message, error)

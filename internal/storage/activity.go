@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -121,4 +122,22 @@ func (s *Storage) SweepExpiredInvites(now time.Time) ([]int64, error) {
 		return nil, fmt.Errorf("delete expired invites: %w", err)
 	}
 	return nets, nil
+}
+
+// MessageIDByMsgID resolves an IRCv3 msgid to its numeric row id, or 0 if absent.
+func (s *Storage) MessageIDByMsgID(networkID int64, msgid string) (int64, error) {
+	if msgid == "" {
+		return 0, nil
+	}
+	id, err := s.queries.GetMessageIDByMsgID(context.Background(), db.GetMessageIDByMsgIDParams{
+		NetworkID: networkID,
+		Msgid:     sql.NullString{String: msgid, Valid: true},
+	})
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("resolve msgid: %w", err)
+	}
+	return id, nil
 }

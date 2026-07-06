@@ -173,3 +173,22 @@ func TestInviteActivityCaseInsensitiveMatch(t *testing.T) {
 		t.Fatalf("expected case-insensitive DeleteInviteActivityFromSender to remove both rows, got %+v", live)
 	}
 }
+
+func TestMessageIDByMsgID(t *testing.T) {
+	s := newTestStorage(t)
+	net := makeNetwork("MidNet")
+	if err := s.CreateNetwork(net); err != nil {
+		t.Fatalf("CreateNetwork: %v", err)
+	}
+	if err := s.WriteMessageSync(Message{NetworkID: net.ID, User: "alice", Message: "hi matt", MessageType: "privmsg", Timestamp: time.Now(), MsgID: "abc123"}); err != nil {
+		t.Fatalf("WriteMessageSync: %v", err)
+	}
+	id, err := s.MessageIDByMsgID(net.ID, "abc123")
+	if err != nil || id == 0 {
+		t.Fatalf("expected a real id, got %d err %v", id, err)
+	}
+	missing, err := s.MessageIDByMsgID(net.ID, "nope")
+	if err != nil || missing != 0 {
+		t.Fatalf("expected 0 for missing, got %d err %v", missing, err)
+	}
+}

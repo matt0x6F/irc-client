@@ -20,6 +20,9 @@ SELECT * FROM messages
 WHERE network_id = ? AND msgid = ?
 LIMIT 1;
 
+-- name: GetMessageIDByMsgID :one
+SELECT id FROM messages WHERE network_id = ? AND msgid = ? LIMIT 1;
+
 -- name: GetPrivateMessages :many
 SELECT * FROM messages
 WHERE network_id = ? AND channel_id IS NULL AND message_type IN ('privmsg', 'action', 'notice', 'marker')

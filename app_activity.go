@@ -134,3 +134,8 @@ func (a *App) MarkAllActivitySeen() error      { return a.storage.MarkAllActivit
 func (a *App) DismissActivity(id int64) error  { return a.storage.DismissActivity(id) }
 func (a *App) ClearSeenActivity() error        { return a.storage.ClearSeenActivity() }
 func (a *App) ClearAllActivity() error         { return a.storage.ClearAllActivity() }
+
+// GetMessageIDByMsgID resolves an IRCv3 msgid to its numeric message id (0 if not found).
+func (a *App) GetMessageIDByMsgID(networkID int64, msgid string) (int64, error) {
+	return a.storage.MessageIDByMsgID(networkID, msgid)
+}

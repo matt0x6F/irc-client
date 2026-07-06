@@ -424,6 +424,16 @@ export function GetMessageByMsgID(networkID, msgid) {
 }
 
 /**
+ * GetMessageIDByMsgID resolves an IRCv3 msgid to its numeric message id (0 if not found).
+ * @param {number} networkID
+ * @param {string} msgid
+ * @returns {$CancellablePromise<number>}
+ */
+export function GetMessageIDByMsgID(networkID, msgid) {
+    return $Call.ByID(3202657846, networkID, msgid);
+}
+
+/**
  * GetMessages retrieves messages for a network and channel
  * @param {number} networkID
  * @param {number | null} channelID
