@@ -556,7 +556,8 @@ export function ServerTree({
                             const unreadCount = unreadCounts.get(activityKey) || 0;
                             const dotState = dmPresenceState(
                               user,
-                              presence[network.id]?.[casefold(caseMapping?.[network.id] ?? '', user)]
+                              presence[network.id]?.[casefold(caseMapping?.[network.id] ?? '', user)],
+                              connectionStatus[network.id]
                             );
                             return (
                               <div
