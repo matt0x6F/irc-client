@@ -32,10 +32,10 @@ export function coalesceActivity(items: storage.ActivityItem[]): ActivityGroup[]
       g.items.push(i);
       g.count += 1;
       g.hasUnseen = g.hasUnseen || !i.seen;
-      if (i.timestamp > g.latest) { g.latest = i.timestamp; g.actor = i.actor; }
+      if (i.timestamp >= g.latest) { g.latest = i.timestamp; g.actor = i.actor; g.target = i.target; }
     }
   }
-  return [...map.values()].sort((a, b) => (a.latest < b.latest ? 1 : a.latest > b.latest ? -1 : 0));
+  return [...map.values()].sort((a, b) => (a.latest < b.latest ? 1 : a.latest > b.latest ? -1 : (a.key < b.key ? -1 : a.key > b.key ? 1 : 0)));
 }
 
 export function unseenGroupCount(items: storage.ActivityItem[]): number {

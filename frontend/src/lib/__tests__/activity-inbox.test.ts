@@ -26,6 +26,26 @@ describe('coalesceActivity', () => {
     ]);
     expect(groups).toHaveLength(2);
   });
+
+  it('returns groups in deterministic order when latest timestamps tie', () => {
+    const input = [
+      item({ id: 1, source_type: 'highlight', target: '#a', timestamp: '2026-07-06T12:00:00Z' }),
+      item({ id: 2, source_type: 'highlight', target: '#b', timestamp: '2026-07-06T12:00:00Z' }),
+    ];
+    const first = coalesceActivity(input).map((g) => g.key);
+    const second = coalesceActivity(input).map((g) => g.key);
+    expect(first).toEqual(second);
+    expect(first).toEqual([...first].sort());
+  });
+
+  it('coalesces mixed-case targets into one group', () => {
+    const groups = coalesceActivity([
+      item({ id: 1, source_type: 'highlight', target: '#Dev', timestamp: '2026-07-06T12:00:00Z' }),
+      item({ id: 2, source_type: 'highlight', target: '#dev', timestamp: '2026-07-06T12:01:00Z' }),
+    ]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].count).toBe(2);
+  });
 });
 
 describe('unseenGroupCount', () => {
@@ -35,6 +55,13 @@ describe('unseenGroupCount', () => {
       item({ id: 2, target: '#dev', seen: false }),
       item({ id: 3, source_type: 'pm', target: 'bob', seen: true }),
     ])).toBe(1);
+  });
+
+  it('returns 0 when every item is seen', () => {
+    expect(unseenGroupCount([
+      item({ id: 1, target: '#dev', seen: true }),
+      item({ id: 2, source_type: 'pm', target: 'bob', seen: true }),
+    ])).toBe(0);
   });
 });
 
