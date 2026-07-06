@@ -7,7 +7,10 @@ import (
 	"time"
 
 	"github.com/matt0x6f/irc-client/internal/events"
+	"github.com/matt0x6f/irc-client/internal/irc"
+	"github.com/matt0x6f/irc-client/internal/logger"
 	"github.com/matt0x6f/irc-client/internal/notification"
+	"github.com/matt0x6f/irc-client/internal/storage"
 )
 
 // InviteView is one pending invite as seen by the frontend. ReceivedAt is an
@@ -34,13 +37,17 @@ func (a *App) inviteTTL() time.Duration {
 
 // GetInvites returns the network's non-expired pending invites, newest-first.
 func (a *App) GetInvites(networkID int64) ([]InviteView, error) {
-	out := []InviteView{}
-	for _, p := range a.invites.list(networkID) {
+	rows, err := a.storage.ListInviteActivity(networkID, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	out := make([]InviteView, 0, len(rows))
+	for _, r := range rows {
 		out = append(out, InviteView{
-			Inviter:    p.Inviter,
-			Channel:    p.Channel,
-			Trusted:    p.Trusted,
-			ReceivedAt: p.ReceivedAt.Format(time.RFC3339),
+			Inviter:    r.Actor,
+			Channel:    r.Target,
+			Trusted:    r.Trusted,
+			ReceivedAt: r.Timestamp.Format(time.RFC3339),
 		})
 	}
 	return out, nil
@@ -48,24 +55,54 @@ func (a *App) GetInvites(networkID int64) ([]InviteView, error) {
 
 // DismissInvite removes a single (sender, channel) invite.
 func (a *App) DismissInvite(networkID int64, inviter, channel string) error {
-	a.invites.dismissOne(networkID, inviter, channel)
+	if err := a.storage.DeleteInviteActivity(networkID, inviter, channel); err != nil {
+		return err
+	}
 	a.emitInvitesChanged(networkID)
+	a.emit("activity-changed")
 	return nil
 }
 
 // DismissInvitesFrom removes all invites from a sender (without blocking them).
 func (a *App) DismissInvitesFrom(networkID int64, inviter string) error {
-	a.invites.dismissFrom(networkID, inviter)
+	if err := a.storage.DeleteInviteActivityFromSender(networkID, inviter); err != nil {
+		return err
+	}
 	a.emitInvitesChanged(networkID)
+	a.emit("activity-changed")
 	return nil
 }
 
 // IgnoreInviteSender blocks a sender's invites for the session and removes any
 // already pending. Session-only and invite-scoped (not a global /ignore).
 func (a *App) IgnoreInviteSender(networkID int64, inviter string) error {
-	a.invites.ignoreSender(networkID, inviter)
+	a.ignoredInvitersMu.Lock()
+	if a.ignoredInviters == nil {
+		a.ignoredInviters = map[int64]map[string]struct{}{}
+	}
+	if a.ignoredInviters[networkID] == nil {
+		a.ignoredInviters[networkID] = map[string]struct{}{}
+	}
+	a.ignoredInviters[networkID][strings.ToLower(inviter)] = struct{}{}
+	a.ignoredInvitersMu.Unlock()
+	if err := a.storage.DeleteInviteActivityFromSender(networkID, inviter); err != nil {
+		return err
+	}
 	a.emitInvitesChanged(networkID)
+	a.emit("activity-changed")
 	return nil
+}
+
+// isInviteSenderIgnored reports whether inviter has been session-ignored on networkID.
+func (a *App) isInviteSenderIgnored(networkID int64, inviter string) bool {
+	a.ignoredInvitersMu.Lock()
+	defer a.ignoredInvitersMu.Unlock()
+	set := a.ignoredInviters[networkID]
+	if set == nil {
+		return false
+	}
+	_, ok := set[strings.ToLower(inviter)]
+	return ok
 }
 
 // emitInvitesChanged tells the frontend to reload a network's invites + badge.
@@ -73,11 +110,19 @@ func (a *App) emitInvitesChanged(networkID int64) {
 	a.emit("invites.changed", map[string]any{"networkId": networkID})
 }
 
-// sweepInvitesOnce drops expired invites and notifies the frontend for each
+// sweepInvitesOnce drops expired invite rows and notifies the frontend for each
 // affected network. Extracted from the ticker loop so it is unit-testable.
 func (a *App) sweepInvitesOnce() {
-	for _, net := range a.invites.sweep() {
+	nets, err := a.storage.SweepExpiredInvites(time.Now())
+	if err != nil {
+		logger.Log.Warn().Err(err).Msg("invite sweep failed")
+		return
+	}
+	for _, net := range nets {
 		a.emitInvitesChanged(net)
+	}
+	if len(nets) > 0 {
+		a.emit("activity-changed")
 	}
 }
 
@@ -100,8 +145,9 @@ func (a *App) startInviteSweeper() {
 	}()
 }
 
-// handleInviteReceived stores an inbound invite, classifies trust against the
-// buddy list, emits the change, and fires a desktop notification when warranted.
+// handleInviteReceived stores an inbound invite as a durable activity_items row,
+// classifies trust against the buddy list, emits the change, and fires a
+// desktop notification when warranted.
 func (a *App) handleInviteReceived(event events.Event) {
 	networkID, found := a.resolveNetworkID(event.Data)
 	if !found {
@@ -112,12 +158,33 @@ func (a *App) handleInviteReceived(event events.Event) {
 	if inviter == "" || channel == "" {
 		return
 	}
+	if a.isInviteSenderIgnored(networkID, inviter) {
+		return
+	}
 
 	trusted := a.isBuddy(networkID, inviter)
-	if !a.invites.add(networkID, inviter, channel, trusted) {
-		return // blocked sender
+	now := time.Now()
+	item := storage.ActivityItem{
+		NetworkID:  networkID,
+		SourceType: string(irc.ActivityInvite),
+		Target:     channel,
+		Actor:      inviter,
+		Preview:    fmt.Sprintf("%s invited you to %s", inviter, channel),
+		Trusted:    trusted,
+		Timestamp:  now,
+	}
+	if ttl := a.inviteTTL(); ttl > 0 {
+		exp := now.Add(ttl)
+		item.ExpiresAt = &exp
+	}
+	// dedup: drop any existing invite for the same (inviter, channel) first
+	_ = a.storage.DeleteInviteActivity(networkID, inviter, channel)
+	if _, err := a.storage.WriteActivityItem(item); err != nil {
+		logger.Log.Warn().Err(err).Msg("failed to write invite activity")
+		return
 	}
 	a.emitInvitesChanged(networkID)
+	a.emit("activity-changed")
 
 	if a.shouldNotifyInvite(trusted) {
 		a.sendNotification(notification.Notification{

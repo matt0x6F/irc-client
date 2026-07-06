@@ -22,33 +22,29 @@ func newTestApp(t *testing.T) *App {
 	return &App{storage: s}
 }
 
-func TestApp_HandleInviteReceived_StoresAndEmits(t *testing.T) {
+func TestHandleInviteReceived_WritesActivityRow(t *testing.T) {
 	a := newTestApp(t)
-	a.invites = newInviteStore(time.Now, func() time.Duration { return 24 * time.Hour })
-
-	var emitted string
-	a.emitFn = func(name string, data ...any) { emitted = name }
+	net := makeAppTestNetwork(t, a.storage, "InvApp")
+	var emitted []string
+	a.emitFn = func(name string, data ...any) { emitted = append(emitted, name) }
 
 	a.handleInviteReceived(events.Event{
 		Type: "invite.received",
-		Data: map[string]interface{}{
-			"networkId":  int64(1),
-			"inviter":    "alice",
-			"channel":    "#chan",
-			"receivedAt": time.Now().Format(time.RFC3339),
-		},
+		Data: map[string]interface{}{"networkId": net.ID, "inviter": "alice", "channel": "#chan"},
 	})
 
-	got, err := a.GetInvites(1)
+	invites, err := a.storage.ListInviteActivity(net.ID, time.Now())
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("ListInviteActivity: %v", err)
 	}
-	if len(got) != 1 || got[0].Channel != "#chan" {
-		t.Fatalf("expected stored invite, got %+v", got)
+	if len(invites) != 1 || invites[0].Actor != "alice" || invites[0].Target != "#chan" {
+		t.Fatalf("expected one invite row, got %+v", invites)
 	}
-	if emitted != "invites.changed" {
-		t.Fatalf("expected invites.changed emit, got %q", emitted)
+	if invites[0].ExpiresAt == nil {
+		t.Fatalf("invite should carry a TTL expiry")
 	}
+	assertContains(t, emitted, "activity-changed")
+	assertContains(t, emitted, "invites.changed")
 }
 
 func TestInviteNotifyDecision(t *testing.T) {
@@ -76,40 +72,44 @@ func TestInviteNotifyDecision(t *testing.T) {
 	}
 }
 
-func TestApp_SweepEmitsForExpired(t *testing.T) {
+func TestIgnoreInviteSender_BlocksAndRemoves(t *testing.T) {
 	a := newTestApp(t)
-	now := time.Now()
-	clock := &now
-	a.invites = newInviteStore(func() time.Time { return *clock }, func() time.Duration { return time.Hour })
-	a.invites.add(7, "alice", "#a", false)
+	net := makeAppTestNetwork(t, a.storage, "InvIgn")
+	a.handleInviteReceived(events.Event{Type: "invite.received", Data: map[string]interface{}{"networkId": net.ID, "inviter": "spammer", "channel": "#x"}})
 
-	var emittedNet int64 = -1
-	a.emitFn = func(name string, data ...any) {
-		if name == "invites.changed" {
-			if m, ok := data[0].(map[string]any); ok {
-				emittedNet, _ = m["networkId"].(int64)
-			}
-		}
+	if err := a.IgnoreInviteSender(net.ID, "spammer"); err != nil {
+		t.Fatalf("IgnoreInviteSender: %v", err)
 	}
-
-	*clock = now.Add(2 * time.Hour) // past TTL
-	a.sweepInvitesOnce()            // the single-pass helper the ticker calls
-
-	if emittedNet != 7 {
-		t.Fatalf("expected invites.changed for net 7, got %d", emittedNet)
+	if inv, _ := a.storage.ListInviteActivity(net.ID, time.Now()); len(inv) != 0 {
+		t.Fatalf("ignore should remove existing invites, got %+v", inv)
+	}
+	// a subsequent invite from the ignored sender must not be stored
+	a.handleInviteReceived(events.Event{Type: "invite.received", Data: map[string]interface{}{"networkId": net.ID, "inviter": "spammer", "channel": "#y"}})
+	if inv, _ := a.storage.ListInviteActivity(net.ID, time.Now()); len(inv) != 0 {
+		t.Fatalf("ignored sender's future invites must be dropped, got %+v", inv)
 	}
 }
 
-func TestApp_IgnoreInviteSender_DropsAndBlocks(t *testing.T) {
+func TestGetInvites_MapsFromActivity(t *testing.T) {
 	a := newTestApp(t)
-	a.invites = newInviteStore(time.Now, func() time.Duration { return 24 * time.Hour })
-	a.invites.add(1, "troll", "#x", false)
+	net := makeAppTestNetwork(t, a.storage, "InvGet")
+	a.handleInviteReceived(events.Event{Type: "invite.received", Data: map[string]interface{}{"networkId": net.ID, "inviter": "carol", "channel": "#ops"}})
 
-	if err := a.IgnoreInviteSender(1, "troll"); err != nil {
-		t.Fatal(err)
+	views, err := a.GetInvites(net.ID)
+	if err != nil {
+		t.Fatalf("GetInvites: %v", err)
 	}
-	got, _ := a.GetInvites(1)
-	if len(got) != 0 {
-		t.Fatalf("expected sender's invites removed, got %+v", got)
+	if len(views) != 1 || views[0].Inviter != "carol" || views[0].Channel != "#ops" {
+		t.Fatalf("GetInvites mapping wrong: %+v", views)
 	}
+}
+
+func assertContains(t *testing.T, xs []string, want string) {
+	t.Helper()
+	for _, x := range xs {
+		if x == want {
+			return
+		}
+	}
+	t.Fatalf("expected %q in %v", want, xs)
 }
