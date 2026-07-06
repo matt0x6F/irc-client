@@ -9,7 +9,8 @@ import { dmPresenceState } from '../lib/presence';
 import { isChannelName } from '../lib/channel-name';
 import { casefold } from '../lib/casefold';
 import markUrl from '../assets/brand/cascade-mark.svg';
-import { Terminal } from 'lucide-react';
+import { Terminal, Bell } from 'lucide-react';
+import { unseenGroupCount } from '../lib/activity-inbox';
 
 type Channel = storage.Channel;
 
@@ -51,6 +52,7 @@ export function ServerTree({
   onShowUserInfo,
   onNetworkUpdate,
 }: ServerTreeProps) {
+  const activityItems = useNetworkStore((s) => s.activityItems);
   const [expandedServers, setExpandedServers] = useState<Set<number>>(new Set());
   const [channels, setChannels] = useState<Record<number, string[]>>({});
   const [channelData, setChannelData] = useState<Record<number, Record<string, Channel>>>({});
@@ -418,6 +420,27 @@ export function ServerTree({
         </div>
 
       <div className="flex-1 overflow-y-auto">
+        <div className="px-2 pt-2">
+          {(() => {
+            const unseen = unseenGroupCount(activityItems);
+            const selected = selectedChannel === 'activity';
+            return (
+              <button
+                type="button"
+                onClick={() => void useNetworkStore.getState().selectActivityInbox()}
+                className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm ${selected ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50 text-muted-foreground'}`}
+              >
+                <Bell size={16} />
+                <span className="flex-1 text-left">Activity</span>
+                {unseen > 0 && (
+                  <span className="bg-primary text-primary-foreground text-xs px-1.5 min-w-[1.25rem] text-center rounded-full">
+                    {unseen > 99 ? '99+' : unseen}
+                  </span>
+                )}
+              </button>
+            );
+          })()}
+        </div>
         {servers && servers.length > 0 ? (
           <div className="py-2">
             <div className="px-3 pt-1 pb-2 text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground/80">

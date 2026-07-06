@@ -28,7 +28,9 @@ import { AuthBanner } from './components/AuthBanner';
 import { DeepLinkDisambiguation } from './components/deeplink-disambiguation';
 import { InvitesView } from './components/invites-view';
 import { InviteToChannelModal } from './components/invite-to-channel-modal';
-import { List, Settings } from 'lucide-react';
+import { ActivityInbox } from './components/activity-inbox';
+import { unseenGroupCount } from './lib/activity-inbox';
+import { List, Settings, Bell } from 'lucide-react';
 
 function App() {
   // Network store
@@ -62,6 +64,8 @@ function App() {
   const loadNetworkUserMeta = useNetworkStore((s) => s.loadNetworkUserMeta);
   const setUserMeta = useNetworkStore((s) => s.setUserMeta);
   const markActivity = useNetworkStore((s) => s.markActivity);
+  const activityItems = useNetworkStore((s) => s.activityItems);
+  const unseenActivity = unseenGroupCount(activityItems);
   const restoreLastPane = useNetworkStore((s) => s.restoreLastPane);
 
   useNotificationRouting();
@@ -394,6 +398,16 @@ function App() {
     return () => {
       offInvites();
     };
+  }, []);
+
+  // Activity inbox: load once on mount, then live-refresh whenever the
+  // backend reports a change (new highlight/PM/invite, seen/dismiss, etc.).
+  useEffect(() => {
+    void useNetworkStore.getState().loadActivityItems();
+    const off = EventsOn('activity-changed', () => {
+      void useNetworkStore.getState().loadActivityItems();
+    });
+    return () => off();
   }, []);
 
   // Message events for real-time updates and activity tracking
@@ -897,6 +911,21 @@ function App() {
                   <List size={18} />
                 </button>
               )}
+              {/* Activity inbox */}
+              <div className="relative">
+                <button
+                  onClick={() => void useNetworkStore.getState().selectActivityInbox()}
+                  className="p-1.5 rounded-md hover:bg-accent/50 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                  aria-label="Activity"
+                >
+                  <Bell size={18} />
+                </button>
+                {unseenActivity > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 bg-primary text-primary-foreground text-[10px] leading-none px-1 py-0.5 rounded-full">
+                    {unseenActivity > 99 ? '99+' : unseenActivity}
+                  </span>
+                )}
+              </div>
               {/* Settings */}
               <button
                 onClick={() => void OpenSettings()}
@@ -959,7 +988,9 @@ function App() {
         {/* Content Area */}
         <div className="flex-1 flex overflow-hidden">
           <div className="flex-1 overflow-y-auto">
-            {selectedChannel === 'invites' && selectedNetwork !== null ? (
+            {selectedChannel === 'activity' ? (
+              <ActivityInbox />
+            ) : selectedChannel === 'invites' && selectedNetwork !== null ? (
               <InvitesView networkId={selectedNetwork} />
             ) : selectedNetwork !== null ? (
               <MessageView
