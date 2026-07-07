@@ -181,4 +181,16 @@ describe('SettingsPanel Activity settings', () => {
       expect(unignoreActivitySenderMock).toHaveBeenCalledWith(1, 'ChanServ'),
     )
   })
+
+  it('adds an ignored sender using the displayed (default) network without touching the select', async () => {
+    render(<SettingsPanel section="notifications" onSectionChange={() => {}} />)
+    const input = await screen.findByTestId('ignore-nick-input')
+    fireEvent.change(input, { target: { value: 'Spammer' } })
+    const addButton = await screen.findByTestId('ignore-nick-add')
+    fireEvent.click(addButton)
+
+    await waitFor(() =>
+      expect(ignoreActivitySenderMock).toHaveBeenCalledWith(1, 'Spammer'),
+    )
+  })
 })

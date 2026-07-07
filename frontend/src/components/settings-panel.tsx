@@ -205,8 +205,12 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
 
   const addIgnoredSender = () => {
     const nick = ignoreNickDraft.trim();
-    if (!nick || ignoreNetworkId == null) return;
-    IgnoreActivitySender(ignoreNetworkId, nick)
+    // Mirror the network <select>'s displayed value= expression so the
+    // handler never silently no-ops when a network is visibly selected but
+    // the user never touched the dropdown (e.g. the common single-network case).
+    const netId = ignoreNetworkId ?? networks[0]?.id;
+    if (!nick || netId == null) return;
+    IgnoreActivitySender(netId, nick)
       .then(() => { setIgnoreNickDraft(''); reloadIgnoredSenders(); })
       .catch((e) => console.error('Failed to ignore sender:', e));
   };
