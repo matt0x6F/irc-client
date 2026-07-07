@@ -23,8 +23,14 @@ import (
 // ratified "chathistory" and the older "draft/chathistory" names; the contains()
 // filter only requests whichever the server actually advertises. "batch" is
 // required for CHATHISTORY (replays arrive wrapped in a BATCH that the underlying
-// ergochat/irc-go library collects for us). "multi-prefix" makes the server send
-// every membership prefix a user holds (e.g. "@+") in NAMES/WHO, not just the
+// ergochat/irc-go library collects for us). "draft/event-playback" makes the
+// server replay JOIN/PART/QUIT/KICK/MODE as real structured lines inside that
+// batch (instead of narrating them as HistServ PRIVMSG text) — each replayed
+// line carries the original @msgid, so it collides with and is skipped against
+// the live row already stored by the JOIN/PART/QUIT/KICK/MODE handlers via the
+// per-conversation (network_id, conversation, msgid) unique index; see
+// buildHistoryMessage and handleChatHistoryBatch. "multi-prefix" makes the server
+// send every membership prefix a user holds (e.g. "@+") in NAMES/WHO, not just the
 // highest; the 353 parser already accumulates all of them into the stored modes.
 // "cap-notify" lets the server announce runtime capability changes via CAP NEW /
 // CAP DEL; it is implicitly enabled by CAP LS 302, but we request it explicitly
@@ -35,7 +41,7 @@ import (
 // with, so the Buddies pane / DM dots can reflect their away state. "no-implicit-names"
 // suppresses the automatic NAMES reply after our JOIN; when it is ACKed we send an
 // explicit NAMES so the roster still builds (see the JOIN handler).
-var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "multi-prefix", "cap-notify", "away-notify", "account-notify", "extended-join", "chghost", "account-tag", "userhost-in-names", "setname", "invite-notify", "standard-replies", "labeled-response", "extended-monitor", "no-implicit-names"}
+var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "draft/event-playback", "multi-prefix", "cap-notify", "away-notify", "account-notify", "extended-join", "chghost", "account-tag", "userhost-in-names", "setname", "invite-notify", "standard-replies", "labeled-response", "extended-monitor", "no-implicit-names"}
 
 // requestCapsForLibrary returns the caps the library should CAP REQ. It is
 // requestedCaps minus "sts" (informational metadata, never requested) and "sasl"
@@ -582,6 +588,11 @@ func (c *IRCClient) handleJoin(e ircmsg.Message) {
 		// said while we were away is backfilled. No-op when the server didn't
 		// grant CHATHISTORY. Replays arrive via handleChatHistoryBatch and are
 		// deduped by msgid, so re-joining a channel won't duplicate messages.
+		// This now also holds for membership events (JOIN/PART/QUIT/KICK/MODE)
+		// replayed under draft/event-playback: the live handlers persist @msgid
+		// on those rows too, and the dedup index is per-conversation, so a
+		// replayed JOIN/PART/QUIT that already happened live collapses onto the
+		// same row instead of duplicating it.
 		if c.chatHistoryEnabled() {
 			if err := c.RequestChatHistoryLatest(channel, defaultChatHistoryLimit); err != nil {
 				logger.Log.Debug().Err(err).Str("channel", channel).Msg("CHATHISTORY LATEST request skipped")

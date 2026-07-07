@@ -242,3 +242,79 @@ func TestBuildHistoryMessageMode(t *testing.T) {
 		t.Fatalf("expected msgid md1, got %q", msg.MsgID)
 	}
 }
+
+// countMessagesOfType returns how many stored messages of the given
+// message_type exist for the named channel.
+func countMessagesOfType(t *testing.T, c *IRCClient, channelName, messageType string) int {
+	t.Helper()
+	ch, err := c.storage.GetChannelByName(c.networkID, channelName)
+	if err != nil {
+		t.Fatalf("GetChannelByName(%q): %v", channelName, err)
+	}
+	msgs, err := c.storage.GetMessages(c.networkID, &ch.ID, 100)
+	if err != nil {
+		t.Fatalf("GetMessages: %v", err)
+	}
+	n := 0
+	for _, m := range msgs {
+		if m.MessageType == messageType {
+			n++
+		}
+	}
+	return n
+}
+
+// TestReplayedEventDedupsAgainstLive locks in the end-to-end contract that
+// draft/event-playback exists to enable: a live membership event (handled by
+// the live QUIT/PART/JOIN/KICK/MODE handlers, which now persist @msgid) and
+// its later CHATHISTORY replay (built by buildHistoryMessage using the same
+// original msgid) must collapse to a single row via the per-conversation
+// (network_id, conversation, msgid) unique index — not one row per source.
+//
+// This is non-tautological: if the live handler failed to set MsgID, or the
+// dedup index were coarser (e.g. global instead of per-conversation, or
+// keyed only on channel_id without msgid), the replay would insert a second
+// "quit" row and the assertions below would fail.
+func TestReplayedEventDedupsAgainstLive(t *testing.T) {
+	c := newHistoryTestClient(t)
+
+	ch, err := c.storage.GetChannelByName(c.networkID, "#hist")
+	if err != nil {
+		t.Fatalf("GetChannelByName: %v", err)
+	}
+	// bob must be a member of #hist for the live QUIT handler to record a
+	// quit row there (it only writes to channels the quitting user was in).
+	if err := c.storage.AddChannelUser(ch.ID, "bob", ""); err != nil {
+		t.Fatalf("AddChannelUser: %v", err)
+	}
+
+	// Live QUIT arrives first and is stored via the real handler.
+	live := ircmsg.MakeMessage(map[string]string{"msgid": "q9"}, "bob!u@h", "QUIT", "bye")
+	c.handleQuit(live)
+
+	if got := countMessagesOfType(t, c, "#hist", "quit"); got != 1 {
+		t.Fatalf("expected 1 quit row after live QUIT, got %d", got)
+	}
+
+	// Server later replays the same QUIT (same original msgid) inside a
+	// CHATHISTORY batch targeting #hist; the builder must route it there.
+	replayEvent := ircmsg.MakeMessage(map[string]string{"msgid": "q9"}, "bob!u@h", "QUIT", "bye")
+	replay, ok := c.buildHistoryMessage(replayEvent, "#hist")
+	if !ok {
+		t.Fatal("builder rejected replayed quit")
+	}
+	if replay.MsgID != "q9" {
+		t.Fatalf("expected replay to carry original msgid q9, got %q", replay.MsgID)
+	}
+
+	n, err := c.storage.WriteHistoryMessages([]storage.Message{replay})
+	if err != nil {
+		t.Fatalf("WriteHistoryMessages: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("replay should dedup against the live row (0 new rows), got %d", n)
+	}
+	if got := countMessagesOfType(t, c, "#hist", "quit"); got != 1 {
+		t.Fatalf("want exactly 1 quit row after replay, got %d", got)
+	}
+}
