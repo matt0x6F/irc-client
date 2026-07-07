@@ -185,7 +185,7 @@ func (s *Storage) flushBuffer() {
 			// index — e.g. an echo and a CHATHISTORY replay of the same line.
 			query := `INSERT INTO messages (network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, msgid, reply_msgid, channel_context)
 			          VALUES (:network_id, :channel_id, :user, :message, :message_type, :timestamp, :raw_line, NULLIF(:pm_target, ''), NULLIF(:msgid, ''), NULLIF(:reply_msgid, ''), NULLIF(:channel_context, ''))
-			          ON CONFLICT(network_id, msgid) WHERE msgid IS NOT NULL DO NOTHING`
+			          ON CONFLICT(network_id, COALESCE(channel_id,0), COALESCE(pm_target,''), msgid) WHERE msgid IS NOT NULL DO NOTHING`
 
 			_, err := s.db.NamedExec(query, messages)
 			if err != nil {
@@ -296,8 +296,9 @@ func (s *Storage) WriteMessageDirect(msg Message) error {
 }
 
 // WriteHistoryMessages bulk-inserts replayed CHATHISTORY messages, deduplicating
-// against existing rows by IRCv3 msgid (the partial unique index on
-// (network_id, msgid)). It returns the number of genuinely-new rows inserted —
+// against existing rows by IRCv3 msgid within the same conversation (the partial
+// unique index on (network_id, channel_id/pm_target, msgid) — see
+// idx_messages_conv_msgid). It returns the number of genuinely-new rows inserted —
 // the caller uses a zero count to detect that the start of available history has
 // been reached and stop paging. This is synchronous and bypasses the write buffer
 // so the inserted rows are immediately queryable for the scrollback re-fetch.
@@ -318,7 +319,7 @@ func (s *Storage) WriteHistoryMessages(msgs []Message) (int, error) {
 	// (and excluded from RowsAffected, so the returned count is new rows only).
 	query := `INSERT INTO messages (network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, msgid, reply_msgid, channel_context)
 	          VALUES (:network_id, :channel_id, :user, :message, :message_type, :timestamp, :raw_line, NULLIF(:pm_target, ''), NULLIF(:msgid, ''), NULLIF(:reply_msgid, ''), NULLIF(:channel_context, ''))
-	          ON CONFLICT(network_id, msgid) WHERE msgid IS NOT NULL DO NOTHING`
+	          ON CONFLICT(network_id, COALESCE(channel_id,0), COALESCE(pm_target,''), msgid) WHERE msgid IS NOT NULL DO NOTHING`
 
 	normalized := make([]Message, len(msgs))
 	for i := range msgs {

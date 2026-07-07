@@ -28,3 +28,33 @@ func TestMigrateReplyAndContextAddsColumns(t *testing.T) {
 		t.Fatalf("second run failed: %v", err)
 	}
 }
+
+// TestMigrateEventDedupIndex verifies that migrateEventDedupIndex replaces the
+// legacy coarse (network_id, msgid) unique index with the per-conversation
+// idx_messages_conv_msgid index, and that it is idempotent (a second call must
+// not error and must leave the new index in place).
+func TestMigrateEventDedupIndex(t *testing.T) {
+	s := newTestStorage(t)
+	// Simulate a legacy DB: drop the new index, recreate the old coarse one.
+	_, _ = s.db.Exec(`DROP INDEX IF EXISTS idx_messages_conv_msgid`)
+	_, _ = s.db.Exec(`CREATE UNIQUE INDEX idx_messages_network_msgid ON messages(network_id, msgid) WHERE msgid IS NOT NULL`)
+
+	if err := migrateEventDedupIndex(s.db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	// Idempotent second run.
+	if err := migrateEventDedupIndex(s.db); err != nil {
+		t.Fatalf("migrate (2nd): %v", err)
+	}
+
+	var name string
+	err := s.db.Get(&name, `SELECT name FROM sqlite_master WHERE type='index' AND name='idx_messages_conv_msgid'`)
+	if err != nil {
+		t.Fatalf("new index missing: %v", err)
+	}
+	var old int
+	_ = s.db.Get(&old, `SELECT count(*) FROM sqlite_master WHERE type='index' AND name='idx_messages_network_msgid'`)
+	if old != 0 {
+		t.Fatalf("old index should be dropped")
+	}
+}

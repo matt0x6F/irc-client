@@ -95,6 +95,13 @@ func Migrate(db *sqlx.DB) error {
 		return fmt.Errorf("msgid migration failed: %w", err)
 	}
 
+	// Handle event dedup index migration (replaces the coarse network+msgid index
+	// with a per-conversation one so broadcast events like QUIT keep one row per
+	// shared channel while still deduping replayed-vs-live copies)
+	if err := migrateEventDedupIndex(db); err != nil {
+		return fmt.Errorf("event dedup index migration failed: %w", err)
+	}
+
 	// Handle IRCv3 reply/context column migration (adds reply_msgid + channel_context)
 	if err := migrateReplyAndContext(db); err != nil {
 		return fmt.Errorf("reply/context migration failed: %w", err)
@@ -217,6 +224,24 @@ func migrateMsgID(db *sqlx.DB) error {
 		return fmt.Errorf("failed to create msgid unique index: %w", err)
 	}
 
+	return nil
+}
+
+// migrateEventDedupIndex replaces the coarse (network_id, msgid) unique index
+// with a per-conversation one so broadcast events (QUIT) keep one row per shared
+// channel while still deduping replayed-vs-live copies. Idempotent.
+func migrateEventDedupIndex(db *sqlx.DB) error {
+	stmts := []string{
+		`DROP INDEX IF EXISTS idx_messages_network_msgid`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_conv_msgid
+		   ON messages(network_id, COALESCE(channel_id, 0), COALESCE(pm_target, ''), msgid)
+		   WHERE msgid IS NOT NULL`,
+	}
+	for _, s := range stmts {
+		if _, err := db.Exec(s); err != nil {
+			return fmt.Errorf("migrateEventDedupIndex: %w", err)
+		}
+	}
 	return nil
 }
 
