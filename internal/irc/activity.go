@@ -26,6 +26,8 @@ type ActivityConfig struct {
 	Keywords    bool
 	Invites     bool
 	PMs         bool
+	Notices     bool // include NOTICE-type messages in Activity
+	Privmsgs    bool // include PRIVMSG-type messages in Activity
 	KeywordList []string
 }
 
@@ -59,8 +61,15 @@ func matchKeyword(text string, keywords []string) (string, bool) {
 }
 
 // ClassifyMessageActivity decides which activity (if any) an inbound message
-// produces. channel is "" for PMs; isPM marks a direct message.
-func ClassifyMessageActivity(cfg ActivityConfig, currentNick, channel, sender, text string, isPM bool) (ActivitySource, string, bool) {
+// produces. channel is "" for PMs; isPM marks a direct message. messageType is
+// the IRC message type ("privmsg"/"notice"); the per-type toggles veto it here.
+func ClassifyMessageActivity(cfg ActivityConfig, currentNick, channel, sender, text, messageType string, isPM bool) (ActivitySource, string, bool) {
+	if messageType == "notice" && !cfg.Notices {
+		return "", "", false
+	}
+	if messageType == "privmsg" && !cfg.Privmsgs {
+		return "", "", false
+	}
 	if isPM {
 		if cfg.PMs {
 			return ActivityPM, "", true

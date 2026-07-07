@@ -43,26 +43,56 @@ func TestMatchKeyword(t *testing.T) {
 }
 
 func TestClassifyMessageActivity(t *testing.T) {
-	all := ActivityConfig{Highlights: true, Keywords: true, Invites: true, PMs: true, KeywordList: []string{"deploy"}}
+	all := ActivityConfig{Highlights: true, Keywords: true, Invites: true, PMs: true, Notices: true, Privmsgs: true, KeywordList: []string{"deploy"}}
 
-	if src, _, ok := ClassifyMessageActivity(all, "matt", "matt", "bob", "hi", true); !ok || src != ActivityPM {
+	if src, _, ok := ClassifyMessageActivity(all, "matt", "matt", "bob", "hi", "privmsg", true); !ok || src != ActivityPM {
 		t.Errorf("PM should classify as pm, got (%v, %v)", src, ok)
 	}
-	if _, _, ok := ClassifyMessageActivity(ActivityConfig{PMs: false}, "matt", "matt", "bob", "hi", true); ok {
+	if _, _, ok := ClassifyMessageActivity(ActivityConfig{PMs: false, Notices: true, Privmsgs: true}, "matt", "matt", "bob", "hi", "privmsg", true); ok {
 		t.Error("PM source disabled should not match")
 	}
-	if src, _, ok := ClassifyMessageActivity(all, "matt", "#dev", "bob", "hey matt", false); !ok || src != ActivityHighlight {
+	if src, _, ok := ClassifyMessageActivity(all, "matt", "#dev", "bob", "hey matt", "privmsg", false); !ok || src != ActivityHighlight {
 		t.Errorf("nick mention should classify as highlight, got (%v, %v)", src, ok)
 	}
-	if src, kw, ok := ClassifyMessageActivity(all, "matt", "#dev", "bob", "deploy is green", false); !ok || src != ActivityKeyword || kw != "deploy" {
+	if src, kw, ok := ClassifyMessageActivity(all, "matt", "#dev", "bob", "deploy is green", "privmsg", false); !ok || src != ActivityKeyword || kw != "deploy" {
 		t.Errorf("keyword should classify as keyword, got (%v, %q, %v)", src, kw, ok)
 	}
 	// highlight wins over keyword when both present
-	if src, _, _ := ClassifyMessageActivity(all, "matt", "#dev", "bob", "matt deploy now", false); src != ActivityHighlight {
+	if src, _, _ := ClassifyMessageActivity(all, "matt", "#dev", "bob", "matt deploy now", "privmsg", false); src != ActivityHighlight {
 		t.Errorf("highlight should take precedence, got %v", src)
 	}
-	if _, _, ok := ClassifyMessageActivity(all, "matt", "#dev", "bob", "just chatter", false); ok {
+	if _, _, ok := ClassifyMessageActivity(all, "matt", "#dev", "bob", "just chatter", "privmsg", false); ok {
 		t.Error("plain chatter should not match")
+	}
+}
+
+func TestClassifyMessageActivity_TypeVeto(t *testing.T) {
+	base := ActivityConfig{Highlights: true, Keywords: true, Invites: true, PMs: true, Notices: true, Privmsgs: true}
+
+	// Notices off: a service NOTICE PM produces nothing.
+	cfg := base
+	cfg.Notices = false
+	if _, _, ok := ClassifyMessageActivity(cfg, "me", "", "ChanServ", "hello", "notice", true); ok {
+		t.Fatalf("notice should be vetoed when Notices=false")
+	}
+	// ...but a PRIVMSG PM still classifies.
+	if _, _, ok := ClassifyMessageActivity(cfg, "me", "", "alice", "hi", "privmsg", true); !ok {
+		t.Fatalf("privmsg PM should classify when Privmsgs=true")
+	}
+
+	// Privmsgs off: a PRIVMSG PM produces nothing; a NOTICE PM still classifies.
+	cfg = base
+	cfg.Privmsgs = false
+	if _, _, ok := ClassifyMessageActivity(cfg, "me", "", "alice", "hi", "privmsg", true); ok {
+		t.Fatalf("privmsg should be vetoed when Privmsgs=false")
+	}
+	if _, _, ok := ClassifyMessageActivity(cfg, "me", "", "ChanServ", "hello", "notice", true); !ok {
+		t.Fatalf("notice PM should classify when Notices=true")
+	}
+
+	// Both on: unchanged behavior — a channel highlight classifies.
+	if src, _, ok := ClassifyMessageActivity(base, "me", "#chan", "alice", "hey me!", "privmsg", false); !ok || src != ActivityHighlight {
+		t.Fatalf("highlight expected, got src=%v ok=%v", src, ok)
 	}
 }
 
