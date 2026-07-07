@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { Bell, AtSign, Tag, MessageSquare, Mail, Eye, X, UserX } from 'lucide-react';
 import { useNetworkStore } from '../stores/network';
 import { coalesceActivity, relativeTime, type ActivityGroup } from '../lib/activity-inbox';
+import { stripIRCFormatting } from './irc-formatted-text';
 import { IgnoreInviteSender } from '../../wailsjs/go/main/App';
 
 // One glyph per source type, matched to the rest of the app's iconography
@@ -120,7 +121,7 @@ function ActivityRow({ group }: { group: ActivityGroup }) {
 
       <div className={`truncate text-xs pl-5 ${group.hasUnseen ? 'text-foreground/80' : 'text-muted-foreground'}`}>
         <span className="font-medium">{newest.actor}</span>
-        {newest.preview ? `: ${newest.preview}` : null}
+        {newest.preview ? `: ${stripIRCFormatting(newest.preview)}` : null}
       </div>
     </div>
   );

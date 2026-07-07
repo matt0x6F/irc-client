@@ -188,16 +188,25 @@ func (a *App) buildNetworkFromConfig(config NetworkConfig, servers []ServerConfi
 // network.ID to be set.
 func (a *App) secureNetworkSecrets(n *storage.Network, password, saslPassword string) error {
 	store := func(field, value string, clear func(), keep func(string)) {
+		// An empty value here means "preserve", never "delete". It arises either
+		// from a masked field the user left untouched, or — critically — from a
+		// resolve that failed to read the existing secret back (a locked/denied
+		// keychain, or an unsigned dev build whose signature changed). Writing it
+		// through would make Store("") delete the entry, so a single transient
+		// read failure would permanently wipe the password. Leave the keychain
+		// entry (and any fallback column) exactly as they are; intentional
+		// removal happens via CredentialStore.Delete on network deletion.
+		if value == "" {
+			return
+		}
 		used, err := a.creds.Store(n.ID, field, value)
 		if used {
 			clear()
 			return
 		}
 		keep(value)
-		if value != "" {
-			logger.Log.Warn().Err(err).Int64("network_id", n.ID).Str("field", field).
-				Msg("Keychain unavailable; storing IRC secret in plaintext database column (fallback)")
-		}
+		logger.Log.Warn().Err(err).Int64("network_id", n.ID).Str("field", field).
+			Msg("Keychain unavailable; storing IRC secret in plaintext database column (fallback)")
 	}
 
 	store(security.FieldPassword, password,

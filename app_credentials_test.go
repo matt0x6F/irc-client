@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -10,6 +11,44 @@ import (
 	"github.com/matt0x6f/irc-client/internal/storage"
 	"github.com/zalando/go-keyring"
 )
+
+// flakyBackend is an in-memory SecretBackend whose reads can be made to fail,
+// modeling a keychain that is momentarily unreadable (an unsigned dev build
+// whose code signature changed, a locked keychain, a denied access prompt).
+// A missing key still returns ("", nil) per the SecretBackend contract; only a
+// genuine backend failure returns an error.
+type flakyBackend struct {
+	data    map[string]string
+	failGet bool
+}
+
+func newFlakyBackend() *flakyBackend { return &flakyBackend{data: map[string]string{}} }
+
+func (f *flakyBackend) Set(key, value string) error { f.data[key] = value; return nil }
+
+func (f *flakyBackend) Get(key string) (string, error) {
+	if f.failGet {
+		return "", errors.New("keychain temporarily unreadable")
+	}
+	return f.data[key], nil
+}
+
+func (f *flakyBackend) Delete(key string) error { delete(f.data, key); return nil }
+
+func newCredsTestAppWithBackend(t *testing.T, backend security.SecretBackend) *App {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	s, err := storage.NewStorage(dbPath, 100, 50*time.Millisecond)
+	if err != nil {
+		t.Fatalf("NewStorage: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	return &App{
+		storage:  s,
+		eventBus: events.NewEventBus(),
+		creds:    security.NewCredentialStore(backend),
+	}
+}
 
 func newCredsTestApp(t *testing.T) *App {
 	t.Helper()
@@ -95,6 +134,47 @@ func TestSaveNetworkEmptyPasswordPreservesExisting(t *testing.T) {
 	raw, _ := a.storage.GetNetworks()
 	if got := a.creds.Resolve(raw[0].ID, security.FieldPassword, raw[0].Password); got != "serverpw" {
 		t.Errorf("empty re-save wiped the password; got %q want serverpw", got)
+	}
+}
+
+// A transient keychain read failure during a re-save (or connect, which runs
+// the same buildNetworkFromConfig path) must NOT destroy the stored secret.
+// The "empty means unchanged" preserve logic reads the current secret back from
+// the keychain; if that read fails it must fail SAFE (leave the secret alone),
+// never fail destructive (delete it). Regression test for SASL passwords being
+// silently wiped, especially on unsigned dev builds where keychain reads are
+// unreliable across rebuilds.
+func TestSaveNetworkKeychainReadFailurePreservesSecret(t *testing.T) {
+	backend := newFlakyBackend()
+	a := newCredsTestAppWithBackend(t, backend)
+
+	cfg := NetworkConfig{
+		Name: "libera", Nickname: "me", Username: "me", Realname: "Me",
+		Address: "irc.libera.chat", Port: 6697, TLS: true,
+		SASLEnabled: true, SASLMechanism: "PLAIN", SASLUsername: "me", SASLPassword: "saslpw",
+	}
+	if err := a.SaveNetwork(cfg); err != nil {
+		t.Fatalf("initial SaveNetwork: %v", err)
+	}
+
+	// The keychain becomes momentarily unreadable, then the app re-saves/connects
+	// with a masked (empty) SASL password field meaning "unchanged".
+	backend.failGet = true
+	cfg.Realname = "New Name"
+	cfg.SASLPassword = ""
+	if err := a.SaveNetwork(cfg); err != nil {
+		t.Fatalf("re-save during keychain read failure: %v", err)
+	}
+
+	// Keychain reads recover. The secret must still be there.
+	backend.failGet = false
+	raw, _ := a.storage.GetNetworks()
+	saslCol := ""
+	if raw[0].SASLPassword != nil {
+		saslCol = *raw[0].SASLPassword
+	}
+	if got := a.creds.Resolve(raw[0].ID, security.FieldSASLPassword, saslCol); got != "saslpw" {
+		t.Errorf("keychain read failure wiped the SASL password; got %q want saslpw", got)
 	}
 }
 

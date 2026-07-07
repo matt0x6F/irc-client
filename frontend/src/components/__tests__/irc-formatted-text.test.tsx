@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
-import { IRCFormattedText, tokenizeText } from '../irc-formatted-text'
+import { IRCFormattedText, tokenizeText, stripIRCFormatting } from '../irc-formatted-text'
 import { useNetworkStore } from '../../stores/network'
 
 describe('IRCFormattedText', () => {
@@ -299,5 +299,38 @@ describe('tokenizeText', () => {
       { type: 'text', value: 'join ' },
       { type: 'channel', value: '#FooBar', trailing: '' },
     ])
+  })
+})
+
+describe('stripIRCFormatting', () => {
+  it('returns plain text unchanged', () => {
+    expect(stripIRCFormatting('Hello, world!')).toBe('Hello, world!')
+  })
+
+  it('strips bold, italic, underline, strikethrough, monospace, reverse, reset', () => {
+    expect(stripIRCFormatting('\x02bold\x02 \x1Dit\x1D \x1Fund\x1F \x1Estrk\x1E \x11mono\x11 \x16rev\x16 \x0Freset'))
+      .toBe('bold it und strk mono rev reset')
+  })
+
+  it('strips indexed color codes with optional background', () => {
+    expect(stripIRCFormatting('\x0304red\x03 and \x0304,01onblack\x03 done')).toBe('red and onblack done')
+  })
+
+  it('strips a bare color reset', () => {
+    expect(stripIRCFormatting('a\x03b')).toBe('ab')
+  })
+
+  it('strips hex color codes (0x04) with optional background', () => {
+    expect(stripIRCFormatting('\x04FF0000red\x04 \x04FF0000,0000FFpair\x04')).toBe('red pair')
+  })
+
+  it('leaves ordinary digits after stripped text intact', () => {
+    // The hostname-style payload from the screenshot: services wrap it in bold.
+    expect(stripIRCFormatting('Last login from: \x02~matt0x6f@75.164.85.141\x02 on Jul 06'))
+      .toBe('Last login from: ~matt0x6f@75.164.85.141 on Jul 06')
+  })
+
+  it('covers 0x04 and 0x1E that the outbound markup stripper omits', () => {
+    expect(stripIRCFormatting('\x1Egone\x1E \x04ABCDEFhex')).toBe('gone hex')
   })
 })
