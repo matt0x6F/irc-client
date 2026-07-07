@@ -96,6 +96,23 @@ func TestClassifyMessageActivity_TypeVeto(t *testing.T) {
 	}
 }
 
+func TestClassifyMessageActivity_ActionVeto(t *testing.T) {
+	base := ActivityConfig{Highlights: true, Keywords: true, Invites: true, PMs: true, Notices: true, Privmsgs: true}
+
+	// Privmsgs off: a channel /me (messageType "action") that mentions the nick
+	// must be vetoed just like a plain PRIVMSG would be.
+	cfg := base
+	cfg.Privmsgs = false
+	if _, _, ok := ClassifyMessageActivity(cfg, "me", "#chan", "alice", "waves at me", "action", false); ok {
+		t.Fatalf("action should be vetoed when Privmsgs=false")
+	}
+
+	// Privmsgs on: the same /me still classifies as a highlight.
+	if src, _, ok := ClassifyMessageActivity(base, "me", "#chan", "alice", "waves at me", "action", false); !ok || src != ActivityHighlight {
+		t.Fatalf("action highlight expected when Privmsgs=true, got src=%v ok=%v", src, ok)
+	}
+}
+
 func TestActivityItemFromMessage(t *testing.T) {
 	ts := time.Now()
 	pm := ActivityItemFromMessage(7, ActivityPM, "", "matt", "bob", "ping you around?", "mid1", true, ts)

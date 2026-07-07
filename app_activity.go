@@ -78,7 +78,9 @@ func (a *App) recordMessageActivity(cfg irc.ActivityConfig, currentNick string, 
 	if currentNick != "" && strings.EqualFold(sender, currentNick) {
 		return
 	}
-	if ignored, err := a.storage.IsSenderIgnored(networkID, sender); err == nil && ignored {
+	if ignored, err := a.storage.IsSenderIgnored(networkID, sender); err != nil {
+		logger.Log.Warn().Err(err).Msg("Failed to check ignored sender; not filtering activity")
+	} else if ignored {
 		return
 	}
 	src, keyword, ok := irc.ClassifyMessageActivity(cfg, currentNick, channel, sender, message, messageType, isPM)

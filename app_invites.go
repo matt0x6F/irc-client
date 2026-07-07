@@ -126,7 +126,9 @@ func (a *App) handleInviteReceived(event events.Event) {
 	if inviter == "" || channel == "" {
 		return
 	}
-	if ignored, err := a.storage.IsSenderIgnored(networkID, inviter); err == nil && ignored {
+	if ignored, err := a.storage.IsSenderIgnored(networkID, inviter); err != nil {
+		logger.Log.Warn().Err(err).Msg("Failed to check ignored sender; not filtering invite")
+	} else if ignored {
 		return
 	}
 	settings, err := a.GetActivitySettings()

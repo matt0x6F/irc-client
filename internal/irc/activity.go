@@ -67,7 +67,9 @@ func ClassifyMessageActivity(cfg ActivityConfig, currentNick, channel, sender, t
 	if messageType == "notice" && !cfg.Notices {
 		return "", "", false
 	}
-	if messageType == "privmsg" && !cfg.Privmsgs {
+	// A CTCP action (/me) is a PRIVMSG on the wire (messageType "action"), so the
+	// "Regular messages" toggle governs it too.
+	if (messageType == "privmsg" || messageType == "action") && !cfg.Privmsgs {
 		return "", "", false
 	}
 	if isPM {
