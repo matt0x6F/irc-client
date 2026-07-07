@@ -3844,7 +3844,7 @@ func (c *IRCClient) handleChatHistoryBatch(b *ircevent.Batch) bool {
 		if item == nil {
 			continue
 		}
-		if msg, ok := c.buildHistoryMessage(item.Message); ok {
+		if msg, ok := c.buildHistoryMessage(item.Message, target); ok {
 			msgs = append(msgs, msg)
 		}
 	}
@@ -3875,11 +3875,90 @@ func (c *IRCClient) handleChatHistoryBatch(b *ircevent.Batch) bool {
 	return true
 }
 
-// buildHistoryMessage converts a single replayed PRIVMSG/NOTICE line from a
-// CHATHISTORY batch into a storage.Message, applying the same channel-vs-PM
-// routing as the live handlers. ok=false for lines we don't persist (malformed,
-// or non-ACTION CTCP).
-func (c *IRCClient) buildHistoryMessage(e ircmsg.Message) (storage.Message, bool) {
+// buildHistoryMessage converts a single replayed line from a CHATHISTORY batch
+// into a storage.Message. PRIVMSG/NOTICE (including CTCP ACTION) apply the same
+// channel-vs-PM routing as the live handlers. JOIN/PART/QUIT/KICK/MODE — replayed
+// under draft/event-playback — are built to mirror the live handlers' phrasing and
+// message_type so they dedup against the live rows via the (conversation, msgid)
+// unique index. QUIT carries no channel param on the wire, so it routes to
+// batchTarget (the channel this batch is replaying). ok=false for lines we don't
+// persist (malformed, non-ACTION CTCP, or an unrecognized command).
+func (c *IRCClient) buildHistoryMessage(e ircmsg.Message, batchTarget string) (storage.Message, bool) {
+	switch e.Command {
+	case "PRIVMSG", "NOTICE":
+		return c.buildHistoryChatMessage(e)
+	}
+
+	user := e.Nick()
+	var messageType, text, channelName string
+
+	switch e.Command {
+	case "JOIN":
+		if len(e.Params) < 1 {
+			return storage.Message{}, false
+		}
+		messageType, channelName = "join", e.Params[0]
+		text = fmt.Sprintf("%s joined the channel", user)
+	case "PART":
+		if len(e.Params) < 1 {
+			return storage.Message{}, false
+		}
+		messageType, channelName = "part", e.Params[0]
+		reason := ""
+		if len(e.Params) > 1 && e.Params[1] != "" {
+			reason = fmt.Sprintf(" (%s)", e.Params[1])
+		}
+		text = fmt.Sprintf("%s left the channel%s", user, reason)
+	case "QUIT":
+		// QUIT has no channel param; route it to the batch target.
+		messageType, channelName = "quit", batchTarget
+		reason := ""
+		if len(e.Params) > 0 && e.Params[0] != "" {
+			reason = fmt.Sprintf(" (%s)", e.Params[0])
+		}
+		text = fmt.Sprintf("%s quit%s", user, reason)
+	case "KICK":
+		if len(e.Params) < 2 {
+			return storage.Message{}, false
+		}
+		messageType, channelName = "kick", e.Params[0]
+		reason := ""
+		if len(e.Params) > 2 && e.Params[2] != "" {
+			reason = fmt.Sprintf(" (%s)", e.Params[2])
+		}
+		text = fmt.Sprintf("%s kicked %s%s", user, e.Params[1], reason)
+	case "MODE":
+		if len(e.Params) < 2 {
+			return storage.Message{}, false
+		}
+		messageType, channelName = "mode", e.Params[0]
+		text = fmt.Sprintf("%s sets mode: %s", user, strings.Join(e.Params[1:], " "))
+	default:
+		return storage.Message{}, false
+	}
+
+	var channelID *int64
+	if ch, err := c.storage.GetChannelByName(c.networkID, channelName); err == nil {
+		channelID = &ch.ID
+	}
+
+	rawLine, _ := e.Line()
+	return storage.Message{
+		NetworkID:   c.networkID,
+		ChannelID:   channelID,
+		User:        user,
+		Message:     text,
+		MessageType: messageType,
+		Timestamp:   c.getHistoryTime(e),
+		RawLine:     rawLine,
+		MsgID:       c.getMsgID(e),
+	}, true
+}
+
+// buildHistoryChatMessage handles the PRIVMSG/NOTICE (incl. CTCP ACTION) branch
+// of buildHistoryMessage, applying the same channel-vs-PM routing as the live
+// handlers. ok=false for malformed lines or non-ACTION CTCP.
+func (c *IRCClient) buildHistoryChatMessage(e ircmsg.Message) (storage.Message, bool) {
 	if len(e.Params) < 2 {
 		return storage.Message{}, false
 	}
@@ -3902,8 +3981,6 @@ func (c *IRCClient) buildHistoryMessage(e ircmsg.Message) (storage.Message, bool
 		}
 	case "NOTICE":
 		messageType = "notice"
-	default:
-		return storage.Message{}, false
 	}
 
 	var channelID *int64

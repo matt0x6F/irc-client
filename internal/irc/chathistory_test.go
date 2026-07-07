@@ -171,3 +171,74 @@ func TestHandleChatHistoryBatchIgnoresOtherTypes(t *testing.T) {
 		t.Fatal("expected handler to ignore a non-chathistory batch (return false)")
 	}
 }
+
+// TestBuildHistoryMessageJoin verifies a replayed JOIN in a CHATHISTORY batch is
+// accepted and stored as a "join" row carrying the original msgid.
+func TestBuildHistoryMessageJoin(t *testing.T) {
+	c := newHistoryTestClient(t)
+	e := ircmsg.MakeMessage(map[string]string{"msgid": "j1", "time": "2026-07-07T00:00:00Z"}, "alice!u@h", "JOIN", "#hist")
+	msg, ok := c.buildHistoryMessage(e, "#hist")
+	if !ok {
+		t.Fatal("expected JOIN to be accepted")
+	}
+	if msg.MessageType != "join" || msg.MsgID != "j1" {
+		t.Fatalf("got type=%q msgid=%q", msg.MessageType, msg.MsgID)
+	}
+	if msg.ChannelID == nil {
+		t.Fatal("expected JOIN to resolve a channel id")
+	}
+}
+
+// TestBuildHistoryMessageQuitUsesBatchTarget verifies a replayed QUIT — which
+// carries no channel param on the wire — is routed to the batch's target channel.
+func TestBuildHistoryMessageQuitUsesBatchTarget(t *testing.T) {
+	c := newHistoryTestClient(t)
+	// QUIT has no channel param; the builder must route it to the batch target.
+	e := ircmsg.MakeMessage(map[string]string{"msgid": "q1"}, "bob!u@h", "QUIT", "connection closed")
+	msg, ok := c.buildHistoryMessage(e, "#hist")
+	if !ok || msg.MessageType != "quit" || msg.ChannelID == nil {
+		t.Fatalf("quit not routed to batch target: ok=%v type=%q ch=%v", ok, msg.MessageType, msg.ChannelID)
+	}
+	if msg.MsgID != "q1" {
+		t.Fatalf("expected msgid q1, got %q", msg.MsgID)
+	}
+}
+
+// TestBuildHistoryMessagePart verifies a replayed PART becomes a "part" row.
+func TestBuildHistoryMessagePart(t *testing.T) {
+	c := newHistoryTestClient(t)
+	e := ircmsg.MakeMessage(map[string]string{"msgid": "p1"}, "alice!u@h", "PART", "#hist", "bye")
+	msg, ok := c.buildHistoryMessage(e, "#hist")
+	if !ok || msg.MessageType != "part" || msg.ChannelID == nil {
+		t.Fatalf("part not accepted: ok=%v type=%q ch=%v", ok, msg.MessageType, msg.ChannelID)
+	}
+	if msg.MsgID != "p1" {
+		t.Fatalf("expected msgid p1, got %q", msg.MsgID)
+	}
+}
+
+// TestBuildHistoryMessageKick verifies a replayed KICK becomes a "kick" row.
+func TestBuildHistoryMessageKick(t *testing.T) {
+	c := newHistoryTestClient(t)
+	e := ircmsg.MakeMessage(map[string]string{"msgid": "k1"}, "op!u@h", "KICK", "#hist", "alice", "spamming")
+	msg, ok := c.buildHistoryMessage(e, "#hist")
+	if !ok || msg.MessageType != "kick" || msg.ChannelID == nil {
+		t.Fatalf("kick not accepted: ok=%v type=%q ch=%v", ok, msg.MessageType, msg.ChannelID)
+	}
+	if msg.MsgID != "k1" {
+		t.Fatalf("expected msgid k1, got %q", msg.MsgID)
+	}
+}
+
+// TestBuildHistoryMessageMode verifies a replayed MODE becomes a "mode" row.
+func TestBuildHistoryMessageMode(t *testing.T) {
+	c := newHistoryTestClient(t)
+	e := ircmsg.MakeMessage(map[string]string{"msgid": "md1"}, "op!u@h", "MODE", "#hist", "+o", "alice")
+	msg, ok := c.buildHistoryMessage(e, "#hist")
+	if !ok || msg.MessageType != "mode" || msg.ChannelID == nil {
+		t.Fatalf("mode not accepted: ok=%v type=%q ch=%v", ok, msg.MessageType, msg.ChannelID)
+	}
+	if msg.MsgID != "md1" {
+		t.Fatalf("expected msgid md1, got %q", msg.MsgID)
+	}
+}
