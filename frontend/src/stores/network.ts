@@ -1526,6 +1526,13 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
     const { networks } = get();
     if (networks.length === 0) return;
 
+    // Startup-only restore: it runs on a 200ms defer (App.tsx), so the user may
+    // have already opened a pane — the Activity inbox, a channel, a deep link — in
+    // that window. selectedChannel starts null and only a selection sets it, so a
+    // non-null value means "already navigated": defer to it rather than clobbering
+    // it back to the persisted/status pane (which stranded a just-opened inbox).
+    if (get().selectedChannel !== null) return;
+
     try {
       const lastPane = await GetLastOpenPane();
       if (!lastPane) {
