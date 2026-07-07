@@ -370,6 +370,76 @@ test('virtualized pane: scrolling up on a BUSY live channel does not jump as new
   }
 });
 
+test('virtualized pane: a peer typing indicator does not clip the last message', async ({
+  page,
+  runtime,
+}) => {
+  // REGRESSION: the "…is typing" line lives in the input area, a flex SIBLING of the
+  // message pane. When it appears the flex column shortens the scroll viewport, but the
+  // message list does NOT re-render (typing state lives in a store only the input area
+  // subscribes to), so the per-render bottom-pin never fires. Before the fix the last
+  // message slid under the input area (clipped). A ResizeObserver on the scroll
+  // container now re-pins when it shrinks while stuck to the bottom. jsdom does no
+  // layout, so this can only be verified in a real browser.
+  const run = `${Date.now()}x${execCount++}`;
+  const CH = `#typing${run}`;
+  const LINES = 120; // overflow the pane so the bottom-pin is non-trivial
+
+  await page.setViewportSize({ width: 1000, height: 500 });
+  await page.goto(runtime.bridgeUrl);
+  await addNetworkAndConnect(page, runtime);
+  await selectNetwork(page);
+  await joinChannel(page, CH);
+
+  // message-tags so Ergo relays the peer's client-only +typing tag to the app (which
+  // also negotiates message-tags); without it Ergo silently drops the tag. Unique nick
+  // per run so a re-run can't race the previous peer's QUIT for a fixed nick (the CAP
+  // handshake makes registration slow enough to collide otherwise).
+  const peer = new IrcPeer('localhost', runtime.ergoPort, `typer${run.replace(/\D/g, '').slice(-9)}`);
+  await peer.connect(30_000, ['message-tags']);
+  peer.join(CH);
+  await peer.waitForJoin(CH);
+  for (let i = 0; i < LINES; i++) peer.say(CH, `line-${i}`);
+
+  let refresh: ReturnType<typeof setInterval> | undefined;
+  try {
+    const list = page.getByTestId('message-list');
+    const lastLine = list.getByText(`line-${LINES - 1}`, { exact: true });
+
+    // Pinned to the bottom, latest line in view.
+    await expect(lastLine).toBeInViewport({ timeout: 20_000 });
+    await expect.poll(() => distanceFromBottom(page)).toBeLessThanOrEqual(8);
+    // The pane must overflow, else "clipping" is vacuous.
+    await expect
+      .poll(() => list.evaluate((el) => el.scrollHeight - el.clientHeight))
+      .toBeGreaterThan(0);
+
+    const heightBefore = await list.evaluate((el) => el.clientHeight);
+
+    // The peer starts typing. Refresh every 2s so the tag doesn't self-expire
+    // (EXPIRE_MS = 6s) while the assertions below run.
+    const sendTyping = () => peer.sendRaw(`@+typing=active TAGMSG ${CH}`);
+    sendTyping();
+    refresh = setInterval(sendTyping, 2000);
+
+    // The indicator is up and the viewport genuinely shrank — the resize we must react
+    // to. (A non-shrinking viewport would make the regression assertion vacuous.)
+    await expect(page.getByTestId('typing-indicator')).toBeVisible({ timeout: 10_000 });
+    await expect
+      .poll(() => list.evaluate((el) => el.clientHeight))
+      .toBeLessThan(heightBefore);
+
+    // The pane must re-pin: the last message stays at the bottom rather than being
+    // clipped under the grown input area. Without the ResizeObserver, distanceFromBottom
+    // jumps by the indicator's height (~20px) and this fails.
+    await expect.poll(() => distanceFromBottom(page)).toBeLessThanOrEqual(8);
+    await expect(lastLine).toBeInViewport();
+  } finally {
+    if (refresh) clearInterval(refresh);
+    peer.close();
+  }
+});
+
 test('virtualized pane: only a windowed subset of rows is mounted in the DOM', async ({
   page,
   runtime,

@@ -492,6 +492,30 @@ export function MessageView({ networkId, selectedChannel }: MessageViewProps) {
     return () => container.removeEventListener('scroll', handleScroll);
   }, []);
 
+  // Re-pin to the bottom when the scroll container itself shrinks.
+  //
+  // The bottom-pin above only fires on *this* component's re-renders (channel
+  // switch, new messages). But the input area is a flex sibling: when it grows —
+  // a peer's "…is typing" line, the reply strip, the channel-context strip, or the
+  // formatting toolbar toggling — the flex column shortens our scroll viewport
+  // WITHOUT re-rendering us, so scrollToEnd never runs and the last message ends up
+  // clipped below the fold. A ResizeObserver reacts to our own geometry regardless
+  // of what upstream caused it. Guarded on stickToBottomRef so a resize while the
+  // user is scrolled up reading history preserves their position rather than yanking
+  // them down. Instant scroll (no smooth) so it can't animate/race measurement, per
+  // the same rule that keeps CSS smooth off the container.
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container || viewMode === 'anchored') return;
+    const observer = new ResizeObserver(() => {
+      if (stickToBottomRef.current && procRef.current.length > 0) {
+        rowVirtualizer.scrollToEnd();
+      }
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [viewMode, rowVirtualizer]);
+
   // Jump-to-message: scroll to the anchored message and flash it briefly.
   useEffect(() => {
     if (anchoredMessageId == null) return;
