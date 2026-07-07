@@ -10,6 +10,13 @@ import (
 	"time"
 )
 
+type ActivityIgnoredSender struct {
+	ID        int64     `json:"id"`
+	NetworkID int64     `json:"network_id"`
+	Nick      string    `json:"nick"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type ActivityItem struct {
 	ID         int64          `json:"id"`
 	NetworkID  int64          `json:"network_id"`

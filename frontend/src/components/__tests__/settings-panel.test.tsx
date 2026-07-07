@@ -55,9 +55,14 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
     keywords: true,
     invites: true,
     pms: true,
+    notices: true,
+    privmsgs: true,
     keywordList: [],
   }),
   SetActivitySettings: vi.fn().mockResolvedValue(undefined),
+  ListIgnoredActivitySenders: vi.fn().mockResolvedValue([]),
+  IgnoreActivitySender: vi.fn().mockResolvedValue(undefined),
+  UnignoreActivitySender: vi.fn().mockResolvedValue(undefined),
 }))
 
 // Mock scripts-panel to avoid pulling Wails bindings + scripts store into this test.

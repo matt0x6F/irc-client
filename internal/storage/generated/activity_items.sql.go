@@ -63,6 +63,21 @@ func (q *Queries) CreateActivityItem(ctx context.Context, arg CreateActivityItem
 	return i, err
 }
 
+const deleteActivityFromSender = `-- name: DeleteActivityFromSender :exec
+DELETE FROM activity_items
+WHERE network_id = ? AND LOWER(actor) = LOWER(?2)
+`
+
+type DeleteActivityFromSenderParams struct {
+	NetworkID int64  `json:"network_id"`
+	Actor     string `json:"actor"`
+}
+
+func (q *Queries) DeleteActivityFromSender(ctx context.Context, arg DeleteActivityFromSenderParams) error {
+	_, err := q.db.ExecContext(ctx, deleteActivityFromSender, arg.NetworkID, arg.Actor)
+	return err
+}
+
 const deleteActivityItem = `-- name: DeleteActivityItem :exec
 DELETE FROM activity_items WHERE id = ?
 `

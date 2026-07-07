@@ -177,6 +177,18 @@ CREATE TABLE IF NOT EXISTS monitored_nicks (
     UNIQUE(network_id, nickname)
 );
 
+-- Per-network Activity ignore list: senders (service or user nicks) whose
+-- messages and invites never enter the Activity inbox. Durable; matches the
+-- monitored_nicks shape. Case-insensitive nick comparison at query time.
+CREATE TABLE IF NOT EXISTS activity_ignored_senders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    network_id INTEGER NOT NULL,
+    nick TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (network_id) REFERENCES networks(id) ON DELETE CASCADE,
+    UNIQUE(network_id, nick)
+);
+
 CREATE INDEX IF NOT EXISTS idx_messages_network_channel_time ON messages(network_id, channel_id, timestamp);
 CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
 -- Partial unique index: dedup CHATHISTORY replays by IRCv3 msgid, while leaving

@@ -3,7 +3,7 @@ import { Bell, AtSign, Tag, MessageSquare, Mail, Eye, X, UserX } from 'lucide-re
 import { useNetworkStore } from '../stores/network';
 import { coalesceActivity, relativeTime, type ActivityGroup } from '../lib/activity-inbox';
 import { stripIRCFormatting } from './irc-formatted-text';
-import { IgnoreInviteSender } from '../../wailsjs/go/main/App';
+import { IgnoreActivitySender } from '../../wailsjs/go/main/App';
 
 // One glyph per source type, matched to the rest of the app's iconography
 // (role icons in channel-info.tsx, buddy dots in monitor-list.tsx).
@@ -66,32 +66,30 @@ function ActivityRow({ group }: { group: ActivityGroup }) {
         {/* Hover/inline actions */}
         <div className="flex items-center gap-1 flex-shrink-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
           {isInvite && (
-            <>
-              <button
-                aria-label="Join"
-                title="Join"
-                className="text-xs text-primary underline hover:opacity-80 transition-opacity"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  void openOrJoinChannel(group.networkId, group.target);
-                  dismissGroup();
-                }}
-              >
-                Join
-              </button>
-              <button
-                aria-label="Ignore sender"
-                title="Ignore sender"
-                className="text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  void IgnoreInviteSender(group.networkId, group.actor);
-                }}
-              >
-                <UserX className="w-3.5 h-3.5" />
-              </button>
-            </>
+            <button
+              aria-label="Join"
+              title="Join"
+              className="text-xs text-primary underline hover:opacity-80 transition-opacity"
+              onClick={(e) => {
+                e.stopPropagation();
+                void openOrJoinChannel(group.networkId, group.target);
+                dismissGroup();
+              }}
+            >
+              Join
+            </button>
           )}
+          <button
+            aria-label="Ignore sender"
+            title="Ignore sender"
+            className="text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
+            onClick={(e) => {
+              e.stopPropagation();
+              void IgnoreActivitySender(group.networkId, group.actor);
+            }}
+          >
+            <UserX className="w-3.5 h-3.5" />
+          </button>
           {group.hasUnseen && (
             <button
               aria-label="Mark seen"

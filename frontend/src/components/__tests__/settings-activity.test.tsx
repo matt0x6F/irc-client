@@ -16,6 +16,9 @@ const {
   getDefaultLogPathMock,
   getActivitySettingsMock,
   setActivitySettingsMock,
+  listIgnoredActivitySendersMock,
+  ignoreActivitySenderMock,
+  unignoreActivitySenderMock,
 } = vi.hoisted(() => ({
   getNetworksMock: vi.fn(),
   listPluginsMock: vi.fn(),
@@ -26,6 +29,9 @@ const {
   getDefaultLogPathMock: vi.fn(),
   getActivitySettingsMock: vi.fn(),
   setActivitySettingsMock: vi.fn(),
+  listIgnoredActivitySendersMock: vi.fn(),
+  ignoreActivitySenderMock: vi.fn(),
+  unignoreActivitySenderMock: vi.fn(),
 }))
 
 vi.mock('../../../wailsjs/go/main/App', () => ({
@@ -53,6 +59,9 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   SetSetting: vi.fn().mockResolvedValue(undefined),
   GetActivitySettings: getActivitySettingsMock,
   SetActivitySettings: setActivitySettingsMock,
+  ListIgnoredActivitySenders: listIgnoredActivitySendersMock,
+  IgnoreActivitySender: ignoreActivitySenderMock,
+  UnignoreActivitySender: unignoreActivitySenderMock,
 }))
 
 // Mock scripts-panel to avoid pulling Wails bindings + scripts store into this test.
@@ -61,7 +70,7 @@ vi.mock('../scripts-panel', () => ({ ScriptsPanel: () => <button>Open scripts fo
 describe('SettingsPanel Activity settings', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    getNetworksMock.mockResolvedValue([])
+    getNetworksMock.mockResolvedValue([{ id: 1, name: 'Libera.Chat' }])
     listPluginsMock.mockResolvedValue([])
     getConnectionStatusMock.mockResolvedValue({})
     getServersMock.mockResolvedValue([])
@@ -73,9 +82,16 @@ describe('SettingsPanel Activity settings', () => {
       keywords: true,
       invites: true,
       pms: true,
+      notices: true,
+      privmsgs: true,
       keywordList: [],
     })
     setActivitySettingsMock.mockResolvedValue(undefined)
+    listIgnoredActivitySendersMock.mockResolvedValue([
+      { networkId: 1, networkName: 'Libera.Chat', nick: 'ChanServ' },
+    ])
+    ignoreActivitySenderMock.mockResolvedValue(undefined)
+    unignoreActivitySenderMock.mockResolvedValue(undefined)
   })
 
   it('renders the activity toggles on the notifications section', async () => {
@@ -97,6 +113,8 @@ describe('SettingsPanel Activity settings', () => {
         keywords: true,
         invites: true,
         pms: true,
+        notices: true,
+        privmsgs: true,
         keywordList: [],
       })
     })
@@ -115,6 +133,8 @@ describe('SettingsPanel Activity settings', () => {
         keywords: true,
         invites: true,
         pms: true,
+        notices: true,
+        privmsgs: true,
         keywordList: ['urgent'],
       })
     })
@@ -126,6 +146,8 @@ describe('SettingsPanel Activity settings', () => {
       keywords: true,
       invites: true,
       pms: true,
+      notices: true,
+      privmsgs: true,
       keywordList: ['urgent'],
     })
     render(<SettingsPanel section="notifications" onSectionChange={() => {}} />)
@@ -137,5 +159,38 @@ describe('SettingsPanel Activity settings', () => {
     // Give any (incorrect) async persist a chance to fire before asserting it didn't.
     await new Promise((r) => setTimeout(r, 0))
     expect(setActivitySettingsMock).not.toHaveBeenCalled()
+  })
+
+  it('toggles the notices message-type setting', async () => {
+    render(<SettingsPanel section="notifications" onSectionChange={() => {}} />)
+    const toggle = await screen.findByTestId('activity-toggle-notices')
+    fireEvent.click(toggle)
+    await waitFor(() =>
+      expect(setActivitySettingsMock).toHaveBeenCalledWith(
+        expect.objectContaining({ notices: false }),
+      ),
+    )
+  })
+
+  it('lists ignored senders and un-ignores one', async () => {
+    render(<SettingsPanel section="notifications" onSectionChange={() => {}} />)
+    const chip = await screen.findByText('ChanServ')
+    expect(chip).toBeInTheDocument()
+    fireEvent.click(screen.getByLabelText('Un-ignore ChanServ'))
+    await waitFor(() =>
+      expect(unignoreActivitySenderMock).toHaveBeenCalledWith(1, 'ChanServ'),
+    )
+  })
+
+  it('adds an ignored sender using the displayed (default) network without touching the select', async () => {
+    render(<SettingsPanel section="notifications" onSectionChange={() => {}} />)
+    const input = await screen.findByTestId('ignore-nick-input')
+    fireEvent.change(input, { target: { value: 'Spammer' } })
+    const addButton = await screen.findByTestId('ignore-nick-add')
+    fireEvent.click(addButton)
+
+    await waitFor(() =>
+      expect(ignoreActivitySenderMock).toHaveBeenCalledWith(1, 'Spammer'),
+    )
   })
 })

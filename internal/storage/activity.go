@@ -110,6 +110,18 @@ func (s *Storage) DeleteInviteActivityFromSender(networkID int64, inviter string
 	return nil
 }
 
+// DeleteActivityFromSender removes all activity rows (any source type) from a
+// given sender on a network. Used when a sender is added to the ignore list.
+func (s *Storage) DeleteActivityFromSender(networkID int64, actor string) error {
+	if err := s.queries.DeleteActivityFromSender(context.Background(), db.DeleteActivityFromSenderParams{
+		NetworkID: networkID,
+		Actor:     actor,
+	}); err != nil {
+		return fmt.Errorf("failed to delete activity from sender %q: %w", actor, err)
+	}
+	return nil
+}
+
 // SweepExpiredInvites deletes expired invite rows and returns affected network IDs.
 func (s *Storage) SweepExpiredInvites(now time.Time) ([]int64, error) {
 	cutoff := sql.NullTime{Time: now.UTC(), Valid: true}

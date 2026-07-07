@@ -747,14 +747,14 @@ export function Greet(name) {
 }
 
 /**
- * IgnoreInviteSender blocks a sender's invites for the session and removes any
- * already pending. Session-only and invite-scoped (not a global /ignore).
+ * IgnoreActivitySender adds a sender to a network's persistent Activity ignore
+ * list and clears any existing activity (messages + invites) from that sender.
  * @param {number} networkID
- * @param {string} inviter
+ * @param {string} nick
  * @returns {$CancellablePromise<void>}
  */
-export function IgnoreInviteSender(networkID, inviter) {
-    return $Call.ByID(181327979, networkID, inviter);
+export function IgnoreActivitySender(networkID, nick) {
+    return $Call.ByID(993663303, networkID, nick);
 }
 
 /**
@@ -773,12 +773,23 @@ export function LeaveChannel(networkID, channelName) {
 }
 
 /**
+ * ListIgnoredActivitySenders returns every ignored sender annotated with its
+ * network name, for the settings UI.
+ * @returns {$CancellablePromise<storage$0.IgnoredSenderRow[]>}
+ */
+export function ListIgnoredActivitySenders() {
+    return $Call.ByID(1121506630).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType41($result);
+    }));
+}
+
+/**
  * ListPlugins returns information about all plugins
  * @returns {$CancellablePromise<$models.PluginInfo[]>}
  */
 export function ListPlugins() {
     return $Call.ByID(3314730135).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType41($result);
+        return $$createType43($result);
     }));
 }
 
@@ -788,7 +799,7 @@ export function ListPlugins() {
  */
 export function ListScripts() {
     return $Call.ByID(3467580111).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType43($result);
+        return $$createType45($result);
     }));
 }
 
@@ -1007,7 +1018,7 @@ export function SaveNetwork(config) {
  */
 export function SearchMessages(query, networkID, limit) {
     return $Call.ByID(3203246577, query, networkID, limit).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType45($result);
+        return $$createType47($result);
     }));
 }
 
@@ -1186,8 +1197,18 @@ export function ToggleNetworkAutoConnect(networkID) {
  */
 export function UnfurlURL(rawURL) {
     return $Call.ByID(2006376526, rawURL).then(/** @type {($result: any) => any} */(($result) => {
-        return $$createType47($result);
+        return $$createType49($result);
     }));
+}
+
+/**
+ * UnignoreActivitySender removes a sender from a network's Activity ignore list.
+ * @param {number} networkID
+ * @param {string} nick
+ * @returns {$CancellablePromise<void>}
+ */
+export function UnignoreActivitySender(networkID, nick) {
+    return $Call.ByID(1176933944, networkID, nick);
 }
 
 /**
@@ -1240,11 +1261,13 @@ const $$createType36 = $models.ServerCapabilitiesInfo.createFrom;
 const $$createType37 = $Create.Nullable($$createType36);
 const $$createType38 = storage$0.Server.createFrom;
 const $$createType39 = $Create.Array($$createType38);
-const $$createType40 = $models.PluginInfo.createFrom;
+const $$createType40 = storage$0.IgnoredSenderRow.createFrom;
 const $$createType41 = $Create.Array($$createType40);
-const $$createType42 = $models.ScriptInfo.createFrom;
+const $$createType42 = $models.PluginInfo.createFrom;
 const $$createType43 = $Create.Array($$createType42);
-const $$createType44 = storage$0.SearchResult.createFrom;
+const $$createType44 = $models.ScriptInfo.createFrom;
 const $$createType45 = $Create.Array($$createType44);
-const $$createType46 = unfurl$0.LinkPreview.createFrom;
-const $$createType47 = $Create.Nullable($$createType46);
+const $$createType46 = storage$0.SearchResult.createFrom;
+const $$createType47 = $Create.Array($$createType46);
+const $$createType48 = unfurl$0.LinkPreview.createFrom;
+const $$createType49 = $Create.Nullable($$createType48);

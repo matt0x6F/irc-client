@@ -6,6 +6,7 @@ export {
     ActivityItem,
     Channel,
     ChannelUser,
+    IgnoredSenderRow,
     Message,
     Network,
     PinnedMessage,

@@ -73,38 +73,6 @@ func (a *App) DismissInvitesFrom(networkID int64, inviter string) error {
 	return nil
 }
 
-// IgnoreInviteSender blocks a sender's invites for the session and removes any
-// already pending. Session-only and invite-scoped (not a global /ignore).
-func (a *App) IgnoreInviteSender(networkID int64, inviter string) error {
-	a.ignoredInvitersMu.Lock()
-	if a.ignoredInviters == nil {
-		a.ignoredInviters = map[int64]map[string]struct{}{}
-	}
-	if a.ignoredInviters[networkID] == nil {
-		a.ignoredInviters[networkID] = map[string]struct{}{}
-	}
-	a.ignoredInviters[networkID][strings.ToLower(inviter)] = struct{}{}
-	a.ignoredInvitersMu.Unlock()
-	if err := a.storage.DeleteInviteActivityFromSender(networkID, inviter); err != nil {
-		return err
-	}
-	a.emitInvitesChanged(networkID)
-	a.emit("activity-changed")
-	return nil
-}
-
-// isInviteSenderIgnored reports whether inviter has been session-ignored on networkID.
-func (a *App) isInviteSenderIgnored(networkID int64, inviter string) bool {
-	a.ignoredInvitersMu.Lock()
-	defer a.ignoredInvitersMu.Unlock()
-	set := a.ignoredInviters[networkID]
-	if set == nil {
-		return false
-	}
-	_, ok := set[strings.ToLower(inviter)]
-	return ok
-}
-
 // emitInvitesChanged tells the frontend to reload a network's invites + badge.
 func (a *App) emitInvitesChanged(networkID int64) {
 	a.emit("invites.changed", map[string]any{"networkId": networkID})
@@ -158,7 +126,9 @@ func (a *App) handleInviteReceived(event events.Event) {
 	if inviter == "" || channel == "" {
 		return
 	}
-	if a.isInviteSenderIgnored(networkID, inviter) {
+	if ignored, err := a.storage.IsSenderIgnored(networkID, inviter); err != nil {
+		logger.Log.Warn().Err(err).Msg("Failed to check ignored sender; not filtering invite")
+	} else if ignored {
 		return
 	}
 	settings, err := a.GetActivitySettings()

@@ -20,11 +20,13 @@ type ActivitySettings struct {
 	Keywords    bool     `json:"keywords"`
 	Invites     bool     `json:"invites"`
 	PMs         bool     `json:"pms"`
+	Notices     bool     `json:"notices"`
+	Privmsgs    bool     `json:"privmsgs"`
 	KeywordList []string `json:"keywordList"`
 }
 
 func defaultActivitySettings() ActivitySettings {
-	return ActivitySettings{Highlights: true, Keywords: true, Invites: true, PMs: true, KeywordList: []string{}}
+	return ActivitySettings{Highlights: true, Keywords: true, Invites: true, PMs: true, Notices: true, Privmsgs: true, KeywordList: []string{}}
 }
 
 func (s ActivitySettings) toConfig() irc.ActivityConfig {
@@ -33,6 +35,8 @@ func (s ActivitySettings) toConfig() irc.ActivityConfig {
 		Keywords:    s.Keywords,
 		Invites:     s.Invites,
 		PMs:         s.PMs,
+		Notices:     s.Notices,
+		Privmsgs:    s.Privmsgs,
 		KeywordList: s.KeywordList,
 	}
 }
@@ -43,7 +47,7 @@ func (a *App) GetActivitySettings() (ActivitySettings, error) {
 	if err != nil || raw == "" {
 		return defaultActivitySettings(), nil
 	}
-	var s ActivitySettings
+	s := defaultActivitySettings()
 	if err := json.Unmarshal([]byte(raw), &s); err != nil {
 		return defaultActivitySettings(), fmt.Errorf("decode activity settings: %w", err)
 	}
@@ -70,11 +74,16 @@ func (a *App) SetActivitySettings(s ActivitySettings) error {
 
 // recordMessageActivity classifies one inbound message and, on a match, writes
 // an activity row and signals the frontend.
-func (a *App) recordMessageActivity(cfg irc.ActivityConfig, currentNick string, networkID int64, channel, sender, message, msgid string, isPM bool, ts time.Time) {
+func (a *App) recordMessageActivity(cfg irc.ActivityConfig, currentNick string, networkID int64, channel, sender, message, msgid, messageType string, isPM bool, ts time.Time) {
 	if currentNick != "" && strings.EqualFold(sender, currentNick) {
 		return
 	}
-	src, keyword, ok := irc.ClassifyMessageActivity(cfg, currentNick, channel, sender, message, isPM)
+	if ignored, err := a.storage.IsSenderIgnored(networkID, sender); err != nil {
+		logger.Log.Warn().Err(err).Msg("Failed to check ignored sender; not filtering activity")
+	} else if ignored {
+		return
+	}
+	src, keyword, ok := irc.ClassifyMessageActivity(cfg, currentNick, channel, sender, message, messageType, isPM)
 	if !ok {
 		return
 	}
@@ -100,6 +109,7 @@ func (a *App) dispatchMessageActivity(event events.Event) {
 	sender, _ := event.Data["user"].(string)
 	message, _ := event.Data["message"].(string)
 	msgid, _ := event.Data["msgid"].(string)
+	messageType, _ := event.Data["messageType"].(string)
 	// message.received sets Data["channel"] to e.Params[0]: a channel name for
 	// channel messages, our own nick for PMs. Derive PM-vs-channel from that.
 	isPM := channel != "" && !irc.IsChannelName(channel)
@@ -112,7 +122,7 @@ func (a *App) dispatchMessageActivity(event events.Event) {
 		return
 	}
 	currentNick := client.CurrentNick()
-	a.recordMessageActivity(settings.toConfig(), currentNick, networkID, channel, sender, message, msgid, isPM, event.Timestamp)
+	a.recordMessageActivity(settings.toConfig(), currentNick, networkID, channel, sender, message, msgid, messageType, isPM, event.Timestamp)
 }
 
 const activityItemsLimit = 500
@@ -138,4 +148,40 @@ func (a *App) ClearAllActivity() error         { return a.storage.ClearAllActivi
 // GetMessageIDByMsgID resolves an IRCv3 msgid to its numeric message id (0 if not found).
 func (a *App) GetMessageIDByMsgID(networkID int64, msgid string) (int64, error) {
 	return a.storage.MessageIDByMsgID(networkID, msgid)
+}
+
+// IgnoreActivitySender adds a sender to a network's persistent Activity ignore
+// list and clears any existing activity (messages + invites) from that sender.
+func (a *App) IgnoreActivitySender(networkID int64, nick string) error {
+	if err := a.storage.AddIgnoredSender(networkID, nick); err != nil {
+		return err
+	}
+	if err := a.storage.DeleteActivityFromSender(networkID, nick); err != nil {
+		return err
+	}
+	a.emitInvitesChanged(networkID)
+	a.emit("activity-changed")
+	return nil
+}
+
+// UnignoreActivitySender removes a sender from a network's Activity ignore list.
+func (a *App) UnignoreActivitySender(networkID int64, nick string) error {
+	if err := a.storage.RemoveIgnoredSender(networkID, nick); err != nil {
+		return err
+	}
+	a.emit("activity-changed")
+	return nil
+}
+
+// ListIgnoredActivitySenders returns every ignored sender annotated with its
+// network name, for the settings UI.
+func (a *App) ListIgnoredActivitySenders() ([]storage.IgnoredSenderRow, error) {
+	rows, err := a.storage.ListAllIgnoredSenders()
+	if err != nil {
+		return nil, err
+	}
+	if rows == nil {
+		rows = []storage.IgnoredSenderRow{}
+	}
+	return rows, nil
 }

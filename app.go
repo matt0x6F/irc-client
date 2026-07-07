@@ -46,8 +46,6 @@ type App struct {
 	mu                    sync.RWMutex
 	channelListCache      map[int64]channelListCacheEntry // Cached LIST results keyed by network ID
 	channelListCacheMu    sync.RWMutex                    // Guards channelListCache; separate from mu to avoid contention
-	ignoredInviters       map[int64]map[string]struct{}   // networkID -> lowercased inviter set (session-only)
-	ignoredInvitersMu     sync.Mutex
 	startupCtx            context.Context
 	startupCancel         context.CancelFunc
 	startupWg             sync.WaitGroup
@@ -127,7 +125,6 @@ func NewApp() (*App, error) {
 		stsUpgrading:          make(map[int64]bool),
 		intentionalDisconnect: make(map[int64]bool),
 		channelListCache:      make(map[int64]channelListCacheEntry),
-		ignoredInviters:       make(map[int64]map[string]struct{}),
 	}
 
 	scriptDir := filepath.Join(baseDir, "scripts")

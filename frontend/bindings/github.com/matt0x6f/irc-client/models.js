@@ -47,6 +47,20 @@ export class ActivitySettings {
              */
             this["pms"] = false;
         }
+        if (!("notices" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["notices"] = false;
+        }
+        if (!("privmsgs" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["privmsgs"] = false;
+        }
         if (!("keywordList" in $$source)) {
             /**
              * @member
@@ -64,10 +78,10 @@ export class ActivitySettings {
      * @returns {ActivitySettings}
      */
     static createFrom($$source = {}) {
-        const $$createField4_0 = $$createType0;
+        const $$createField6_0 = $$createType0;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("keywordList" in $$parsedSource) {
-            $$parsedSource["keywordList"] = $$createField4_0($$parsedSource["keywordList"]);
+            $$parsedSource["keywordList"] = $$createField6_0($$parsedSource["keywordList"]);
         }
         return new ActivitySettings(/** @type {Partial<ActivitySettings>} */($$parsedSource));
     }
