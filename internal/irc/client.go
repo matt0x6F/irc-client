@@ -824,6 +824,219 @@ func (c *IRCClient) handleQuit(e ircmsg.Message) {
 	})
 }
 
+// handleKick processes a KICK: removes the kicked user from the channel's
+// member list, marks the channel closed if we were the one kicked, and
+// stores a "kick" row (carrying the original @msgid, so a later CHATHISTORY
+// replay of the same kick dedups against this live row instead of doubling).
+func (c *IRCClient) handleKick(e ircmsg.Message) {
+	if len(e.Params) < 2 {
+		return
+	}
+	channel := e.Params[0]
+	kickedUser := e.Params[1]
+	kicker := e.Nick()
+	reason := ""
+	if len(e.Params) > 2 {
+		reason = e.Params[2]
+	}
+
+	// Get channel from database
+	ch, err := c.storage.GetChannelByName(c.networkID, channel)
+	channelUpdated := false
+	if err == nil {
+		// Remove kicked user from channel user list
+		if err := c.storage.RemoveChannelUser(ch.ID, kickedUser); err != nil {
+			logger.Log.Error().Err(err).Str("user", kickedUser).Str("channel", channel).Msg("Failed to remove kicked user from channel user list")
+		} else {
+			logger.Log.Debug().Str("user", kickedUser).Str("channel", channel).Msg("Removed kicked user from channel user list")
+			// Verify the write is committed by reading it back (forces WAL sync)
+			// This ensures the user is immediately removed when the frontend queries
+			_, _ = c.storage.GetChannelUsers(ch.ID)
+		}
+
+		// If we were kicked, mark channel as closed
+		if c.isMe(kickedUser) {
+			c.storage.UpdateChannelIsOpen(ch.ID, false)
+			channelUpdated = true
+		}
+
+		// Store kick message in the channel (use sync write so it appears immediately)
+		rawLine, _ := e.Line()
+		kickMsg := storage.Message{
+			NetworkID: c.networkID,
+			ChannelID: &ch.ID,
+			User:      kicker,
+			Message: fmt.Sprintf("%s kicked %s%s", kicker, kickedUser, func() string {
+				if reason != "" {
+					return fmt.Sprintf(" (%s)", reason)
+				}
+				return ""
+			}()),
+			MessageType: "kick",
+			Timestamp:   time.Now(),
+			RawLine:     rawLine,
+			MsgID:       c.getMsgID(e),
+		}
+		if err := c.storage.WriteMessageSync(kickMsg); err != nil {
+			// During shutdown, storage may be closed - this is expected
+			if err.Error() == "storage is closed" {
+				logger.Log.Debug().Msg("Skipping kick message storage (storage closed during shutdown)")
+			} else {
+				logger.Log.Error().Err(err).Msg("Failed to store kick message")
+			}
+		}
+	}
+
+	// Emit event
+	c.eventBus.Emit(events.Event{
+		Type: EventUserKicked,
+		Data: map[string]interface{}{
+			"network":   c.network.Address,
+			"networkId": c.networkID,
+			"channel":   channel,
+			"kicker":    kicker,
+			"user":      kickedUser,
+			"reason":    reason,
+		},
+		Timestamp: time.Now(),
+		Source:    events.EventSourceIRC,
+	})
+
+	// Emit channels changed event if we were kicked
+	if channelUpdated {
+		c.eventBus.Emit(events.Event{
+			Type: EventChannelsChanged,
+			Data: map[string]interface{}{
+				"network":   c.network.Address,
+				"networkId": c.networkID,
+			},
+			Timestamp: time.Now(),
+			Source:    events.EventSourceIRC,
+		})
+	}
+}
+
+// handleMode processes a channel MODE change: records a "sets mode" row
+// (carrying the original @msgid, so a later CHATHISTORY replay of the same
+// mode change dedups against this live row instead of doubling), folds
+// channel-level changes into the canonical mode string, and applies
+// per-user prefix changes individually. Non-channel targets are user modes;
+// only our own +<botletter> echo is handled there.
+func (c *IRCClient) handleMode(e ircmsg.Message) {
+	if len(e.Params) < 2 {
+		return
+	}
+	target := e.Params[0]
+	// Channel modes start with # or &. A non-channel target is a user mode;
+	// we only care about our own +<botletter> echo (so our own nick carries the
+	// bot badge consistently), then return — other user modes are still ignored.
+	if len(target) == 0 || (target[0] != '#' && target[0] != '&') {
+		c.markSelfBotFromUserMode(target, e.Params[1])
+		return
+	}
+
+	ch, err := c.storage.GetChannelByName(c.networkID, target)
+	if err != nil {
+		return
+	}
+
+	// Snapshot the server's mode grammar once under lock, then parse lock-free.
+	c.mu.RLock()
+	cls := c.serverCapabilities.classification()
+	c.mu.RUnlock()
+
+	changes := ParseModeChanges(e.Params[1], e.Params[2:], cls)
+
+	// Surface the change in the channel itself (like join/part/kick), faithfully
+	// mirroring what the server applied: "<actor> sets mode: +o-v+k a b key".
+	// Bare list-mode *queries* (e.g. ban-list fetches) never reach here — the
+	// server answers those with 367/368, not a MODE echo — so this won't fire for them.
+	if len(changes) > 0 {
+		actor := e.Nick()
+		if actor == "" {
+			actor = e.Source
+		}
+		rawLine, _ := e.Line()
+		c.storage.WriteMessageSync(storage.Message{
+			NetworkID:   c.networkID,
+			ChannelID:   &ch.ID,
+			User:        actor,
+			Message:     fmt.Sprintf("%s sets mode: %s", actor, strings.Join(e.Params[1:], " ")),
+			MessageType: "mode",
+			Timestamp:   time.Now(),
+			RawLine:     rawLine,
+			MsgID:       c.getMsgID(e),
+		})
+	}
+
+	// Fold channel-level changes (D flags + B/C params) into the canonical mode
+	// string, persisting only when it actually changed.
+	newModes := applyChannelModes(ch.Modes, changes, cls)
+	if newModes != ch.Modes {
+		if err := c.storage.UpdateChannelModes(ch.ID, newModes); err != nil {
+			logger.Log.Warn().Err(err).Str("channel", target).Msg("Failed to persist channel modes")
+		}
+	}
+	// Always announce the mode change so the UI reloads the channel — both the modes
+	// header and the "sets mode" line written above. This fires even for list-mode
+	// changes (e.g. +b) where the canonical string is unchanged, which would otherwise
+	// leave the new line invisible until the next poll.
+	c.eventBus.Emit(events.Event{
+		Type: EventChannelMode,
+		Data: map[string]interface{}{
+			"network":   c.network.Address,
+			"networkId": c.networkID,
+			"channel":   target,
+			"modes":     newModes,
+		},
+		Timestamp: time.Now(),
+		Source:    events.EventSourceIRC,
+	})
+
+	// Apply per-user membership (prefix) changes individually, emitting a granular
+	// event per affected user so the member list re-groups live.
+	for _, mc := range changes {
+		if mc.Kind != ModeKindPrefix || mc.Param == "" {
+			continue
+		}
+		current, gerr := c.storage.GetChannelUserModes(ch.ID, mc.Param)
+		if gerr != nil {
+			// User not tracked yet (e.g. NAMES not complete) — skip.
+			continue
+		}
+		c.mu.RLock()
+		updated := c.serverCapabilities.applyUserPrefix(current, mc.Mode, mc.Add)
+		c.mu.RUnlock()
+		if updated == current {
+			continue
+		}
+		if err := c.storage.AddChannelUser(ch.ID, mc.Param, updated); err != nil {
+			logger.Log.Warn().Err(err).Str("nick", mc.Param).Str("channel", target).Msg("Failed to update user modes")
+			continue
+		}
+		added, removed := "", ""
+		if mc.Add {
+			added = string(mc.Mode)
+		} else {
+			removed = string(mc.Mode)
+		}
+		c.eventBus.Emit(events.Event{
+			Type: EventChannelUserMode,
+			Data: map[string]interface{}{
+				"network":   c.network.Address,
+				"networkId": c.networkID,
+				"channel":   target,
+				"nick":      mc.Param,
+				"modes":     updated,
+				"added":     added,
+				"removed":   removed,
+			},
+			Timestamp: time.Now(),
+			Source:    events.EventSourceIRC,
+		})
+	}
+}
+
 // handleForwardedJoin processes ERR_LINKCHANNEL (470): the server redirected a
 // JOIN from one channel to another (Libera's +f channel forwarding, e.g. when we
 // are banned or quieted on the requested channel). The requested channel was
@@ -1937,92 +2150,7 @@ func (c *IRCClient) setupHandlers() {
 	c.conn.AddCallback("QUIT", c.handleQuit)
 
 	// User kicked from channel
-	c.conn.AddCallback("KICK", func(e ircmsg.Message) {
-		if len(e.Params) < 2 {
-			return
-		}
-		channel := e.Params[0]
-		kickedUser := e.Params[1]
-		kicker := e.Nick()
-		reason := ""
-		if len(e.Params) > 2 {
-			reason = e.Params[2]
-		}
-
-		// Get channel from database
-		ch, err := c.storage.GetChannelByName(c.networkID, channel)
-		channelUpdated := false
-		if err == nil {
-			// Remove kicked user from channel user list
-			if err := c.storage.RemoveChannelUser(ch.ID, kickedUser); err != nil {
-				logger.Log.Error().Err(err).Str("user", kickedUser).Str("channel", channel).Msg("Failed to remove kicked user from channel user list")
-			} else {
-				logger.Log.Debug().Str("user", kickedUser).Str("channel", channel).Msg("Removed kicked user from channel user list")
-				// Verify the write is committed by reading it back (forces WAL sync)
-				// This ensures the user is immediately removed when the frontend queries
-				_, _ = c.storage.GetChannelUsers(ch.ID)
-			}
-
-			// If we were kicked, mark channel as closed
-			if c.isMe(kickedUser) {
-				c.storage.UpdateChannelIsOpen(ch.ID, false)
-				channelUpdated = true
-			}
-
-			// Store kick message in the channel (use sync write so it appears immediately)
-			rawLine, _ := e.Line()
-			kickMsg := storage.Message{
-				NetworkID: c.networkID,
-				ChannelID: &ch.ID,
-				User:      kicker,
-				Message: fmt.Sprintf("%s kicked %s%s", kicker, kickedUser, func() string {
-					if reason != "" {
-						return fmt.Sprintf(" (%s)", reason)
-					}
-					return ""
-				}()),
-				MessageType: "kick",
-				Timestamp:   time.Now(),
-				RawLine:     rawLine,
-			}
-			if err := c.storage.WriteMessageSync(kickMsg); err != nil {
-				// During shutdown, storage may be closed - this is expected
-				if err.Error() == "storage is closed" {
-					logger.Log.Debug().Msg("Skipping kick message storage (storage closed during shutdown)")
-				} else {
-					logger.Log.Error().Err(err).Msg("Failed to store kick message")
-				}
-			}
-		}
-
-		// Emit event
-		c.eventBus.Emit(events.Event{
-			Type: EventUserKicked,
-			Data: map[string]interface{}{
-				"network":   c.network.Address,
-				"networkId": c.networkID,
-				"channel":   channel,
-				"kicker":    kicker,
-				"user":      kickedUser,
-				"reason":    reason,
-			},
-			Timestamp: time.Now(),
-			Source:    events.EventSourceIRC,
-		})
-
-		// Emit channels changed event if we were kicked
-		if channelUpdated {
-			c.eventBus.Emit(events.Event{
-				Type: EventChannelsChanged,
-				Data: map[string]interface{}{
-					"network":   c.network.Address,
-					"networkId": c.networkID,
-				},
-				Timestamp: time.Now(),
-				Source:    events.EventSourceIRC,
-			})
-		}
-	})
+	c.conn.AddCallback("KICK", c.handleKick)
 
 	// Nick change
 	// Inbound NICK changes for everyone, with self-tracking. See handleNickMessage.
@@ -2388,119 +2516,7 @@ func (c *IRCClient) setupHandlers() {
 	})
 
 	// Channel MODE changes
-	c.conn.AddCallback("MODE", func(e ircmsg.Message) {
-		if len(e.Params) < 2 {
-			return
-		}
-		target := e.Params[0]
-		// Channel modes start with # or &. A non-channel target is a user mode;
-		// we only care about our own +<botletter> echo (so our own nick carries the
-		// bot badge consistently), then return — other user modes are still ignored.
-		if len(target) == 0 || (target[0] != '#' && target[0] != '&') {
-			c.markSelfBotFromUserMode(target, e.Params[1])
-			return
-		}
-
-		ch, err := c.storage.GetChannelByName(c.networkID, target)
-		if err != nil {
-			return
-		}
-
-		// Snapshot the server's mode grammar once under lock, then parse lock-free.
-		c.mu.RLock()
-		cls := c.serverCapabilities.classification()
-		c.mu.RUnlock()
-
-		changes := ParseModeChanges(e.Params[1], e.Params[2:], cls)
-
-		// Surface the change in the channel itself (like join/part/kick), faithfully
-		// mirroring what the server applied: "<actor> sets mode: +o-v+k a b key".
-		// Bare list-mode *queries* (e.g. ban-list fetches) never reach here — the
-		// server answers those with 367/368, not a MODE echo — so this won't fire for them.
-		if len(changes) > 0 {
-			actor := e.Nick()
-			if actor == "" {
-				actor = e.Source
-			}
-			rawLine, _ := e.Line()
-			c.storage.WriteMessageSync(storage.Message{
-				NetworkID:   c.networkID,
-				ChannelID:   &ch.ID,
-				User:        actor,
-				Message:     fmt.Sprintf("%s sets mode: %s", actor, strings.Join(e.Params[1:], " ")),
-				MessageType: "mode",
-				Timestamp:   time.Now(),
-				RawLine:     rawLine,
-			})
-		}
-
-		// Fold channel-level changes (D flags + B/C params) into the canonical mode
-		// string, persisting only when it actually changed.
-		newModes := applyChannelModes(ch.Modes, changes, cls)
-		if newModes != ch.Modes {
-			if err := c.storage.UpdateChannelModes(ch.ID, newModes); err != nil {
-				logger.Log.Warn().Err(err).Str("channel", target).Msg("Failed to persist channel modes")
-			}
-		}
-		// Always announce the mode change so the UI reloads the channel — both the modes
-		// header and the "sets mode" line written above. This fires even for list-mode
-		// changes (e.g. +b) where the canonical string is unchanged, which would otherwise
-		// leave the new line invisible until the next poll.
-		c.eventBus.Emit(events.Event{
-			Type: EventChannelMode,
-			Data: map[string]interface{}{
-				"network":   c.network.Address,
-				"networkId": c.networkID,
-				"channel":   target,
-				"modes":     newModes,
-			},
-			Timestamp: time.Now(),
-			Source:    events.EventSourceIRC,
-		})
-
-		// Apply per-user membership (prefix) changes individually, emitting a granular
-		// event per affected user so the member list re-groups live.
-		for _, mc := range changes {
-			if mc.Kind != ModeKindPrefix || mc.Param == "" {
-				continue
-			}
-			current, gerr := c.storage.GetChannelUserModes(ch.ID, mc.Param)
-			if gerr != nil {
-				// User not tracked yet (e.g. NAMES not complete) — skip.
-				continue
-			}
-			c.mu.RLock()
-			updated := c.serverCapabilities.applyUserPrefix(current, mc.Mode, mc.Add)
-			c.mu.RUnlock()
-			if updated == current {
-				continue
-			}
-			if err := c.storage.AddChannelUser(ch.ID, mc.Param, updated); err != nil {
-				logger.Log.Warn().Err(err).Str("nick", mc.Param).Str("channel", target).Msg("Failed to update user modes")
-				continue
-			}
-			added, removed := "", ""
-			if mc.Add {
-				added = string(mc.Mode)
-			} else {
-				removed = string(mc.Mode)
-			}
-			c.eventBus.Emit(events.Event{
-				Type: EventChannelUserMode,
-				Data: map[string]interface{}{
-					"network":   c.network.Address,
-					"networkId": c.networkID,
-					"channel":   target,
-					"nick":      mc.Param,
-					"modes":     updated,
-					"added":     added,
-					"removed":   removed,
-				},
-				Timestamp: time.Now(),
-				Source:    events.EventSourceIRC,
-			})
-		}
-	})
+	c.conn.AddCallback("MODE", c.handleMode)
 
 	// RPL_CHANNELMODEIS (324) - authoritative channel modes, typically on join or
 	// in response to a "MODE #channel" query. Replaces the stored canonical string.

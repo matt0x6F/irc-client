@@ -30,11 +30,12 @@ func newHistoryTestClient(t *testing.T) *IRCClient {
 		t.Fatalf("CreateChannel: %v", err)
 	}
 	return &IRCClient{
-		eventBus:    events.NewEventBus(),
-		storage:     s,
-		networkID:   net.ID,
-		network:     net,
-		enabledCaps: map[string]bool{"chathistory": true, "batch": true, "server-time": true, "message-tags": true},
+		eventBus:           events.NewEventBus(),
+		storage:            s,
+		networkID:          net.ID,
+		network:            net,
+		enabledCaps:        map[string]bool{"chathistory": true, "batch": true, "server-time": true, "message-tags": true},
+		serverCapabilities: &ServerCapabilities{},
 	}
 }
 
@@ -316,5 +317,103 @@ func TestReplayedEventDedupsAgainstLive(t *testing.T) {
 	}
 	if got := countMessagesOfType(t, c, "#hist", "quit"); got != 1 {
 		t.Fatalf("want exactly 1 quit row after replay, got %d", got)
+	}
+}
+
+// TestReplayedKickDedupsAgainstLive mirrors TestReplayedEventDedupsAgainstLive
+// for KICK: the live KICK handler must persist @msgid so a later CHATHISTORY
+// replay of the same kick (same original msgid) collapses to a single row via
+// the per-conversation dedup index instead of inserting a second "kick" row.
+func TestReplayedKickDedupsAgainstLive(t *testing.T) {
+	c := newHistoryTestClient(t)
+
+	ch, err := c.storage.GetChannelByName(c.networkID, "#hist")
+	if err != nil {
+		t.Fatalf("GetChannelByName: %v", err)
+	}
+	// alice must be a member of #hist for the kicked-user removal path (and
+	// realistic fixture) even though the kick row is written regardless.
+	if err := c.storage.AddChannelUser(ch.ID, "alice", ""); err != nil {
+		t.Fatalf("AddChannelUser: %v", err)
+	}
+
+	// Live KICK arrives first and is stored via the real handler.
+	live := ircmsg.MakeMessage(map[string]string{"msgid": "k9"}, "op!u@h", "KICK", "#hist", "alice", "spamming")
+	c.handleKick(live)
+
+	if got := countMessagesOfType(t, c, "#hist", "kick"); got != 1 {
+		t.Fatalf("expected 1 kick row after live KICK, got %d", got)
+	}
+
+	// Server later replays the same KICK (same original msgid) inside a
+	// CHATHISTORY batch targeting #hist; the builder must route it there.
+	replayEvent := ircmsg.MakeMessage(map[string]string{"msgid": "k9"}, "op!u@h", "KICK", "#hist", "alice", "spamming")
+	replay, ok := c.buildHistoryMessage(replayEvent, "#hist")
+	if !ok {
+		t.Fatal("builder rejected replayed kick")
+	}
+	if replay.MsgID != "k9" {
+		t.Fatalf("expected replay to carry original msgid k9, got %q", replay.MsgID)
+	}
+
+	n, err := c.storage.WriteHistoryMessages([]storage.Message{replay})
+	if err != nil {
+		t.Fatalf("WriteHistoryMessages: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("replay should dedup against the live row (0 new rows), got %d", n)
+	}
+	if got := countMessagesOfType(t, c, "#hist", "kick"); got != 1 {
+		t.Fatalf("want exactly 1 kick row after replay, got %d", got)
+	}
+}
+
+// TestReplayedModeDedupsAgainstLive mirrors TestReplayedEventDedupsAgainstLive
+// for MODE: the live MODE handler must persist @msgid so a later CHATHISTORY
+// replay of the same mode change (same original msgid) collapses to a single
+// row via the per-conversation dedup index instead of inserting a second
+// "mode" row.
+func TestReplayedModeDedupsAgainstLive(t *testing.T) {
+	c := newHistoryTestClient(t)
+
+	ch, err := c.storage.GetChannelByName(c.networkID, "#hist")
+	if err != nil {
+		t.Fatalf("GetChannelByName: %v", err)
+	}
+	// alice must already be tracked as a channel member for the per-user
+	// prefix-change branch to find her current modes (not required for the
+	// "sets mode" row itself, but keeps the fixture realistic).
+	if err := c.storage.AddChannelUser(ch.ID, "alice", ""); err != nil {
+		t.Fatalf("AddChannelUser: %v", err)
+	}
+
+	// Live MODE arrives first and is stored via the real handler.
+	live := ircmsg.MakeMessage(map[string]string{"msgid": "m9"}, "op!u@h", "MODE", "#hist", "+o", "alice")
+	c.handleMode(live)
+
+	if got := countMessagesOfType(t, c, "#hist", "mode"); got != 1 {
+		t.Fatalf("expected 1 mode row after live MODE, got %d", got)
+	}
+
+	// Server later replays the same MODE (same original msgid) inside a
+	// CHATHISTORY batch targeting #hist; the builder must route it there.
+	replayEvent := ircmsg.MakeMessage(map[string]string{"msgid": "m9"}, "op!u@h", "MODE", "#hist", "+o", "alice")
+	replay, ok := c.buildHistoryMessage(replayEvent, "#hist")
+	if !ok {
+		t.Fatal("builder rejected replayed mode")
+	}
+	if replay.MsgID != "m9" {
+		t.Fatalf("expected replay to carry original msgid m9, got %q", replay.MsgID)
+	}
+
+	n, err := c.storage.WriteHistoryMessages([]storage.Message{replay})
+	if err != nil {
+		t.Fatalf("WriteHistoryMessages: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("replay should dedup against the live row (0 new rows), got %d", n)
+	}
+	if got := countMessagesOfType(t, c, "#hist", "mode"); got != 1 {
+		t.Fatalf("want exactly 1 mode row after replay, got %d", got)
 	}
 }

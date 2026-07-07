@@ -197,10 +197,12 @@ func migrateNormalizeMessageTimestamps(db *sqlx.DB) error {
 	return nil
 }
 
-// migrateMsgID adds the nullable msgid column to the messages table (if missing)
-// and creates the partial unique index used to deduplicate CHATHISTORY replays by
-// IRCv3 message id. Legacy rows (msgid IS NULL) are exempt from the index, so they
-// never collide; only rows that carry a real msgid are deduplicated.
+// migrateMsgID adds the nullable msgid column to the messages table (if missing).
+// The dedup unique index itself is owned exclusively by migrateEventDedupIndex,
+// which runs immediately after this and creates the per-conversation index (this
+// function used to also create a coarser (network_id, msgid) index here, but that
+// was redundant — migrateEventDedupIndex drops it on every run — so it no longer
+// creates any index).
 func migrateMsgID(db *sqlx.DB) error {
 	var columnExists int
 	err := db.Get(&columnExists,
@@ -216,12 +218,6 @@ func migrateMsgID(db *sqlx.DB) error {
 				return fmt.Errorf("failed to add msgid column: %w", err)
 			}
 		}
-	}
-
-	// Create the partial unique index (idempotent via IF NOT EXISTS).
-	if _, err := db.Exec(
-		"CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_network_msgid ON messages(network_id, msgid) WHERE msgid IS NOT NULL"); err != nil {
-		return fmt.Errorf("failed to create msgid unique index: %w", err)
 	}
 
 	return nil
