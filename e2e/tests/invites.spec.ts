@@ -27,15 +27,22 @@ test('activity inbox renders a received invite', async ({ page, runtime }) => {
     // INVITE the app user to the channel the peer is in.
     peer.sendRaw('INVITE e2euser #invite-target');
 
-    // Open the global Activity destination (top of the tree). The inbox
-    // subscribes to the activity-changed event, so it updates live when the
-    // invite lands as an activity_items row.
-    await page.getByTestId('server-tree').getByText('Activity', { exact: true }).click();
+    // Wait for the unread-activity badge on the Activity node BEFORE navigating.
+    // The badge only appears once the invite has been absorbed as an activity_items
+    // row and the tree has re-rendered, so this removes the race between "click the
+    // node" and "the invite arrives" — we don't open the inbox until the item exists.
+    await page
+      .getByTestId('server-tree')
+      .locator('[title="Unread activity"]')
+      .waitFor({ state: 'visible', timeout: 15_000 });
+
+    // Open the global Activity destination (top of the tree).
+    await page.getByTestId('activity-node').click();
 
     // The invite should render in the inbox — "invitebot" sent it to #invite-target.
     await expect(
       page.getByText('invitebot', { exact: false }),
-    ).toBeVisible({ timeout: 15_000 });
+    ).toBeVisible({ timeout: 10_000 });
     await expect(
       page.getByText('#invite-target', { exact: false }),
     ).toBeVisible({ timeout: 10_000 });

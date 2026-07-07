@@ -421,13 +421,17 @@ export function ServerTree({
             return (
               <button
                 type="button"
+                data-testid="activity-node"
                 onClick={() => void useNetworkStore.getState().selectActivityInbox()}
                 className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm ${selected ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50 text-muted-foreground'}`}
               >
                 <Bell size={16} />
                 <span className="flex-1 text-left">Activity</span>
                 {unseen > 0 && (
-                  <span className="bg-primary text-primary-foreground text-xs px-1.5 min-w-[1.25rem] text-center rounded-full">
+                  <span
+                    title="Unread activity"
+                    className="bg-primary text-primary-foreground text-xs px-1.5 min-w-[1.25rem] text-center rounded-full"
+                  >
                     {unseen > 99 ? '99+' : unseen}
                   </span>
                 )}
