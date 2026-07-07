@@ -1,6 +1,19 @@
 import { vi } from 'vitest'
 import '@testing-library/jest-dom/vitest'
 
+// jsdom does not implement ResizeObserver, but components observe their scroll
+// container with it (e.g. message-view re-pins to the bottom when the input area
+// resizes the viewport). The real Wails WKWebView provides it natively; here a
+// no-op stub keeps those effects from throwing on mount. jsdom does no layout, so
+// the callback would never fire with meaningful sizes anyway.
+if (typeof globalThis.ResizeObserver === 'undefined') {
+  globalThis.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+}
+
 // Neutralize the Wails transport globally for tests.
 //
 // The generated bindings (frontend/bindings/**) call `@wailsio/runtime`'s
