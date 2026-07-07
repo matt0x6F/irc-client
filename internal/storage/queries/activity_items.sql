@@ -35,6 +35,10 @@ WHERE source_type = 'invite' AND network_id = ? AND LOWER(actor) = LOWER(sqlc.ar
 DELETE FROM activity_items
 WHERE source_type = 'invite' AND network_id = ? AND LOWER(actor) = LOWER(sqlc.arg(actor));
 
+-- name: DeleteActivityFromSender :exec
+DELETE FROM activity_items
+WHERE network_id = ? AND LOWER(actor) = LOWER(sqlc.arg(actor));
+
 -- name: NetworksWithExpiredInvites :many
 SELECT DISTINCT network_id FROM activity_items
 WHERE source_type = 'invite' AND expires_at IS NOT NULL AND expires_at <= ?;

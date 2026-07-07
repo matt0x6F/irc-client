@@ -141,6 +141,11 @@ func Migrate(db *sqlx.DB) error {
 		return fmt.Errorf("activity item invite columns migration failed: %w", err)
 	}
 
+	// Handle activity ignored senders table migration (per-network Activity ignore list)
+	if err := migrateActivityIgnoredSenders(db); err != nil {
+		return fmt.Errorf("activity ignored senders migration failed: %w", err)
+	}
+
 	return nil
 }
 
@@ -903,6 +908,26 @@ CREATE TABLE IF NOT EXISTS monitored_nicks (
 func migrateMonitoredNicks(db *sqlx.DB) error {
 	if _, err := db.Exec(createMonitoredNicksTable); err != nil {
 		return fmt.Errorf("failed to create monitored_nicks table: %w", err)
+	}
+	return nil
+}
+
+const createActivityIgnoredSendersTable = `
+CREATE TABLE IF NOT EXISTS activity_ignored_senders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    network_id INTEGER NOT NULL,
+    nick TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (network_id) REFERENCES networks(id) ON DELETE CASCADE,
+    UNIQUE(network_id, nick)
+);
+`
+
+// migrateActivityIgnoredSenders creates the activity_ignored_senders table if it
+// doesn't exist — the durable per-network Activity ignore list.
+func migrateActivityIgnoredSenders(db *sqlx.DB) error {
+	if _, err := db.Exec(createActivityIgnoredSendersTable); err != nil {
+		return fmt.Errorf("failed to create activity_ignored_senders table: %w", err)
 	}
 	return nil
 }
