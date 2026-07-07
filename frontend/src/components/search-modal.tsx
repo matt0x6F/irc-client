@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { SearchMessages } from '../../wailsjs/go/main/App';
 import { useNetworkStore } from '../stores/network';
+import { stripIRCFormatting } from './irc-formatted-text';
 
 interface SearchModalProps {
   onClose: () => void;
@@ -212,7 +213,7 @@ export function SearchModal({ onClose }: SearchModalProps) {
                 </span>
               </div>
               <div className="text-sm text-muted-foreground truncate">
-                {result.message}
+                {stripIRCFormatting(result.message)}
               </div>
             </button>
           ))}

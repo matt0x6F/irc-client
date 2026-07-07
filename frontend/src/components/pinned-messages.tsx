@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { X } from 'lucide-react';
 import { useNetworkStore } from '../stores/network';
 import { useNicknameColors } from '../hooks/useNicknameColors';
+import { stripIRCFormatting } from './irc-formatted-text';
 
 interface PinnedMessagesProps {
   networkId: number | null;
@@ -48,7 +49,7 @@ export function PinnedMessages({ networkId }: PinnedMessagesProps) {
                 {new Date(pin.timestamp).toLocaleString()}
               </span>
             </div>
-            <div className="text-sm text-muted-foreground truncate">{pin.message}</div>
+            <div className="text-sm text-muted-foreground truncate">{stripIRCFormatting(pin.message)}</div>
           </div>
           <button
             onClick={(e) => {

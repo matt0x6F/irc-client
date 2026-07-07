@@ -254,6 +254,22 @@ function parseIRCFormatting(text: string): FormattedSegment[] {
   return segments;
 }
 
+// Every control code parseIRCFormatting() recognizes, with the same optional
+// arguments it consumes: 0x03 color (up to 2 fg digits, optional comma + 2 bg
+// digits) and 0x04 hex color (6 hex digits, optional comma + 6 more). Kept in
+// lockstep with the switch above — notably 0x04 and 0x1E, which the outbound
+// markup stripper in irc-markup.ts omits.
+const IRC_CONTROL_CODES = /\x03\d{0,2}(?:,\d{0,2})?|\x04(?:[0-9A-Fa-f]{6}(?:,[0-9A-Fa-f]{6})?)?|[\x02\x0F\x11\x16\x1D\x1E\x1F]/g;
+
+/**
+ * Strip IRC formatting control codes, returning plain text. Use where styled
+ * spans aren't wanted — compact previews, notification bodies — so raw control
+ * bytes don't surface as replacement boxes (⌷).
+ */
+export function stripIRCFormatting(text: string): string {
+  return text.replace(IRC_CONTROL_CODES, '');
+}
+
 // URL regex pattern to detect http and https URLs in text.
 // The source is exported so other modules (e.g. irc-markup) can build their own
 // anchored matcher from the same pattern without sharing mutable lastIndex state.
