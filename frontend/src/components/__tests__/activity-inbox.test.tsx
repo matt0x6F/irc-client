@@ -10,12 +10,12 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   ClearAllActivity: vi.fn().mockResolvedValue(undefined),
   GetMessageIDByMsgID: vi.fn().mockResolvedValue(0),
   SendCommand: vi.fn().mockResolvedValue(undefined),
-  IgnoreInviteSender: vi.fn().mockResolvedValue(undefined),
+  IgnoreActivitySender: vi.fn().mockResolvedValue(undefined),
 }));
 
 import { useNetworkStore } from '../../stores/network';
 import { ActivityInbox } from '../activity-inbox';
-import { DismissActivity } from '../../../wailsjs/go/main/App';
+import { DismissActivity, IgnoreActivitySender } from '../../../wailsjs/go/main/App';
 
 const item = (o: Partial<any>) => ({ id: 1, network_id: 1, source_type: 'highlight', target: '#dev', actor: 'alice', preview: 'matt look here', msgid: 'm1', keyword: '', seen: false, timestamp: '2026-07-06T12:00:00Z', trusted: false, expires_at: null, ...o });
 
@@ -40,5 +40,13 @@ describe('ActivityInbox', () => {
     useNetworkStore.setState({ activityItems: [item({ id: 3, source_type: 'invite', target: '#ops', msgid: '' })] });
     render(<ActivityInbox />);
     expect(screen.getByRole('button', { name: /join/i })).toBeInTheDocument();
+  });
+
+  it('ignores the sender from a pm row', () => {
+    useNetworkStore.setState({ activityItems: [item({ id: 4, source_type: 'pm', network_id: 1, target: 'ChanServ', actor: 'ChanServ', msgid: '' })] });
+    render(<ActivityInbox />);
+    const btn = screen.getByLabelText('Ignore sender');
+    fireEvent.click(btn);
+    expect(IgnoreActivitySender).toHaveBeenCalledWith(1, 'ChanServ');
   });
 });
