@@ -169,3 +169,27 @@ func TestRecordMessageActivity_TypeAndSenderVeto(t *testing.T) {
 		t.Fatalf("expected one row from alice, got %+v", items)
 	}
 }
+
+func TestIgnoreActivitySender_RoundTrip(t *testing.T) {
+	a := newTestApp(t)
+	net := makeAppTestNetwork(t, a.storage, "IgnRT")
+
+	if err := a.IgnoreActivitySender(net.ID, "ChanServ"); err != nil {
+		t.Fatalf("ignore: %v", err)
+	}
+	list, err := a.ListIgnoredActivitySenders()
+	if err != nil || len(list) != 1 || list[0].Nick != "ChanServ" {
+		t.Fatalf("list = %+v, %v", list, err)
+	}
+	ig, _ := a.storage.IsSenderIgnored(net.ID, "chanserv")
+	if !ig {
+		t.Fatalf("expected persisted ignore")
+	}
+	if err := a.UnignoreActivitySender(net.ID, "ChanServ"); err != nil {
+		t.Fatalf("unignore: %v", err)
+	}
+	list2, _ := a.ListIgnoredActivitySenders()
+	if len(list2) != 0 {
+		t.Fatalf("expected empty after unignore, got %+v", list2)
+	}
+}

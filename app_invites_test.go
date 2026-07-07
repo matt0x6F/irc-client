@@ -72,13 +72,13 @@ func TestInviteNotifyDecision(t *testing.T) {
 	}
 }
 
-func TestIgnoreInviteSender_BlocksAndRemoves(t *testing.T) {
+func TestIgnoreActivitySender_BlocksAndRemoves(t *testing.T) {
 	a := newTestApp(t)
 	net := makeAppTestNetwork(t, a.storage, "InvIgn")
 	a.handleInviteReceived(events.Event{Type: "invite.received", Data: map[string]interface{}{"networkId": net.ID, "inviter": "spammer", "channel": "#x"}})
 
-	if err := a.IgnoreInviteSender(net.ID, "spammer"); err != nil {
-		t.Fatalf("IgnoreInviteSender: %v", err)
+	if err := a.IgnoreActivitySender(net.ID, "spammer"); err != nil {
+		t.Fatalf("IgnoreActivitySender: %v", err)
 	}
 	if inv, _ := a.storage.ListInviteActivity(net.ID, time.Now()); len(inv) != 0 {
 		t.Fatalf("ignore should remove existing invites, got %+v", inv)

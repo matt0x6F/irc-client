@@ -147,3 +147,39 @@ func (a *App) ClearAllActivity() error         { return a.storage.ClearAllActivi
 func (a *App) GetMessageIDByMsgID(networkID int64, msgid string) (int64, error) {
 	return a.storage.MessageIDByMsgID(networkID, msgid)
 }
+
+// IgnoreActivitySender adds a sender to a network's persistent Activity ignore
+// list and clears any existing activity (messages + invites) from that sender.
+func (a *App) IgnoreActivitySender(networkID int64, nick string) error {
+	if err := a.storage.AddIgnoredSender(networkID, nick); err != nil {
+		return err
+	}
+	if err := a.storage.DeleteActivityFromSender(networkID, nick); err != nil {
+		return err
+	}
+	a.emitInvitesChanged(networkID)
+	a.emit("activity-changed")
+	return nil
+}
+
+// UnignoreActivitySender removes a sender from a network's Activity ignore list.
+func (a *App) UnignoreActivitySender(networkID int64, nick string) error {
+	if err := a.storage.RemoveIgnoredSender(networkID, nick); err != nil {
+		return err
+	}
+	a.emit("activity-changed")
+	return nil
+}
+
+// ListIgnoredActivitySenders returns every ignored sender annotated with its
+// network name, for the settings UI.
+func (a *App) ListIgnoredActivitySenders() ([]storage.IgnoredSenderRow, error) {
+	rows, err := a.storage.ListAllIgnoredSenders()
+	if err != nil {
+		return nil, err
+	}
+	if rows == nil {
+		rows = []storage.IgnoredSenderRow{}
+	}
+	return rows, nil
+}
