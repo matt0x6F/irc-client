@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { ArrowLeft, ChevronRight } from 'lucide-react';
 import { main, storage } from '../../wailsjs/go/models';
-import { GetNetworks, SaveNetwork, ConnectNetwork, DeleteNetwork, DisconnectNetwork, GetConnectionStatus, GetServers, ListPlugins, EnablePlugin, DisablePlugin, ReloadPlugin, GetBuildInfo, CheckForUpdates, GetLogConfig, SetLogConfig, GetDefaultLogPath, GetSTSPolicies, ClearSTSPolicy, RequestNotificationPermission, GetPendingNetworkPrefill, GetSetting, SetSetting, GetActivitySettings, SetActivitySettings } from '../../wailsjs/go/main/App';
+import { GetNetworks, SaveNetwork, ConnectNetwork, DeleteNetwork, DisconnectNetwork, GetConnectionStatus, GetServers, ListPlugins, EnablePlugin, DisablePlugin, ReloadPlugin, GetBuildInfo, CheckForUpdates, GetLogConfig, SetLogConfig, GetDefaultLogPath, GetSTSPolicies, ClearSTSPolicy, RequestNotificationPermission, GetPendingNetworkPrefill, GetSetting, SetSetting, GetActivitySettings, SetActivitySettings, ListIgnoredActivitySenders, IgnoreActivitySender, UnignoreActivitySender } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import { PluginConfigForm } from './plugin-config-form';
 import { ScriptsPanel } from './scripts-panel';
@@ -192,6 +192,31 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
     persistActivity('keywordList', activitySettings.keywordList.filter((k) => k !== keyword));
   };
 
+  // Per-network ignored-senders list for Activity.
+  const [ignoredSenders, setIgnoredSenders] = useState<storage.IgnoredSenderRow[]>([]);
+  const [ignoreNickDraft, setIgnoreNickDraft] = useState('');
+  const [ignoreNetworkId, setIgnoreNetworkId] = useState<number | null>(null);
+
+  const reloadIgnoredSenders = () => {
+    ListIgnoredActivitySenders()
+      .then((rows) => setIgnoredSenders(rows ?? []))
+      .catch((e) => console.error('Failed to load ignored senders:', e));
+  };
+
+  const addIgnoredSender = () => {
+    const nick = ignoreNickDraft.trim();
+    if (!nick || ignoreNetworkId == null) return;
+    IgnoreActivitySender(ignoreNetworkId, nick)
+      .then(() => { setIgnoreNickDraft(''); reloadIgnoredSenders(); })
+      .catch((e) => console.error('Failed to ignore sender:', e));
+  };
+
+  const removeIgnoredSender = (networkId: number, nick: string) => {
+    UnignoreActivitySender(networkId, nick)
+      .then(reloadIgnoredSenders)
+      .catch((e) => console.error('Failed to un-ignore sender:', e));
+  };
+
   // Theme (appearance + accent)
   const themeMode = useThemeStore((s) => s.mode);
   const accent = useThemeStore((s) => s.accent);
@@ -272,6 +297,7 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
     GetActivitySettings()
       .then(setActivitySettings)
       .catch((e) => console.error('Failed to load activity settings:', e));
+    reloadIgnoredSenders();
   }, []);
 
   // Persist a log-config change and apply it live. The backend rejects an
@@ -1669,6 +1695,107 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
                       onChange={(v) => persistActivity('pms', v)}
                       data-testid="activity-toggle-pms"
                     />
+                  </div>
+
+                  <div className="pt-2 border-t border-border space-y-3">
+                    <span className="text-sm font-medium">Message types</span>
+                    <p className="text-xs text-muted-foreground -mt-1">
+                      Which kinds of messages can create activity.
+                    </p>
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <div className="text-sm font-medium">Notices</div>
+                        <div className="text-xs text-muted-foreground">NOTICE — ChanServ, NickServ, and other services</div>
+                      </div>
+                      <Toggle
+                        checked={activitySettings.notices}
+                        onChange={(v) => persistActivity('notices', v)}
+                        data-testid="activity-toggle-notices"
+                      />
+                    </div>
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <div className="text-sm font-medium">Regular messages</div>
+                        <div className="text-xs text-muted-foreground">PRIVMSG — normal chat and PMs</div>
+                      </div>
+                      <Toggle
+                        checked={activitySettings.privmsgs}
+                        onChange={(v) => persistActivity('privmsgs', v)}
+                        data-testid="activity-toggle-privmsgs"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="pt-2 border-t border-border space-y-2">
+                    <span className="text-sm font-medium">Ignored senders</span>
+                    <p className="text-xs text-muted-foreground -mt-1">
+                      These never appear in Activity, per network.
+                    </p>
+                    {networks.length === 0 ? (
+                      <p className="text-xs text-muted-foreground italic">Add a network first.</p>
+                    ) : (
+                      <>
+                        {networks.map((net) => {
+                          const rows = ignoredSenders.filter((r) => r.networkId === net.id);
+                          return (
+                            <div key={net.id} className="space-y-1">
+                              <div className="text-xs text-muted-foreground">{net.name}</div>
+                              {rows.length === 0 ? (
+                                <div className="text-xs text-muted-foreground italic">No ignored senders.</div>
+                              ) : (
+                                <div className="flex flex-wrap gap-1.5">
+                                  {rows.map((r) => (
+                                    <span
+                                      key={`${r.networkId}:${r.nick}`}
+                                      className="inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full bg-muted text-foreground"
+                                    >
+                                      {r.nick}
+                                      <button
+                                        type="button"
+                                        onClick={() => removeIgnoredSender(r.networkId, r.nick)}
+                                        aria-label={`Un-ignore ${r.nick}`}
+                                        className="ml-0.5 hover:opacity-70 cursor-pointer"
+                                      >
+                                        ✕
+                                      </button>
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                        <div className="flex items-center gap-2 pt-1">
+                          <select
+                            value={ignoreNetworkId ?? networks[0]?.id ?? ''}
+                            onChange={(e) => setIgnoreNetworkId(Number(e.target.value))}
+                            className="px-2 py-1 text-sm border border-border rounded-lg bg-background"
+                            data-testid="ignore-network-select"
+                          >
+                            {networks.map((net) => (
+                              <option key={net.id} value={net.id}>{net.name}</option>
+                            ))}
+                          </select>
+                          <input
+                            type="text"
+                            value={ignoreNickDraft}
+                            onChange={(e) => setIgnoreNickDraft(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addIgnoredSender(); } }}
+                            placeholder="Add nick…"
+                            className="flex-1 px-2 py-1 text-sm border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary"
+                            data-testid="ignore-nick-input"
+                          />
+                          <button
+                            type="button"
+                            onClick={addIgnoredSender}
+                            data-testid="ignore-nick-add"
+                            className="px-3 py-1 text-sm border border-border rounded-lg hover:bg-accent"
+                          >
+                            Add
+                          </button>
+                        </div>
+                      </>
+                    )}
                   </div>
 
                   <div className="pt-2 border-t border-border">
