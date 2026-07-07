@@ -50,6 +50,14 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   GetPendingNetworkPrefill: vi.fn().mockResolvedValue(null),
   GetSetting: vi.fn().mockResolvedValue(''),
   SetSetting: vi.fn().mockResolvedValue(undefined),
+  GetActivitySettings: vi.fn().mockResolvedValue({
+    highlights: true,
+    keywords: true,
+    invites: true,
+    pms: true,
+    keywordList: [],
+  }),
+  SetActivitySettings: vi.fn().mockResolvedValue(undefined),
 }))
 
 // Mock scripts-panel to avoid pulling Wails bindings + scripts store into this test.

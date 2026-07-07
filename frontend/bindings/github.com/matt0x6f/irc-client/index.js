@@ -8,6 +8,7 @@ export {
 };
 
 export {
+    ActivitySettings,
     BuildInfo,
     ChannelInfo,
     ChannelListCacheResult,

@@ -225,6 +225,55 @@ func convertMessageToDBCreateParams(m Message) db.CreateMessageParams {
 	}
 }
 
+func convertActivityItemFromDB(a db.ActivityItem) ActivityItem {
+	result := ActivityItem{
+		ID:         a.ID,
+		NetworkID:  a.NetworkID,
+		SourceType: a.SourceType,
+		Target:     a.Target,
+		Actor:      a.Actor,
+		Preview:    a.Preview,
+		MsgID:      convertNullString(a.Msgid),
+		Keyword:    convertNullString(a.Keyword),
+		Seen:       a.Seen != 0,
+		Timestamp:  a.Timestamp,
+		Trusted:    a.Trusted != 0,
+	}
+	if a.ExpiresAt.Valid {
+		t := a.ExpiresAt.Time
+		result.ExpiresAt = &t
+	}
+	return result
+}
+
+func convertActivityItemToCreateParams(a ActivityItem) db.CreateActivityItemParams {
+	var seen int64
+	if a.Seen {
+		seen = 1
+	}
+	var trusted int64
+	if a.Trusted {
+		trusted = 1
+	}
+	var expiresAt sql.NullTime
+	if a.ExpiresAt != nil {
+		expiresAt = sql.NullTime{Time: a.ExpiresAt.UTC(), Valid: true}
+	}
+	return db.CreateActivityItemParams{
+		NetworkID:  a.NetworkID,
+		SourceType: a.SourceType,
+		Target:     a.Target,
+		Actor:      a.Actor,
+		Preview:    a.Preview,
+		Msgid:      convertToNullString(a.MsgID),
+		Keyword:    convertToNullString(a.Keyword),
+		Seen:       seen,
+		Timestamp:  a.Timestamp.UTC(),
+		Trusted:    trusted,
+		ExpiresAt:  expiresAt,
+	}
+}
+
 func convertPinnedMessageWithChannelFromDB(p db.GetPinnedMessagesWithChannelRow) PinnedMessage {
 	result := PinnedMessage{
 		Message: Message{

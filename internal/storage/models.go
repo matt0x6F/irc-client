@@ -99,6 +99,22 @@ type Message struct {
 	ChannelContext string    `db:"channel_context" json:"channel_context"` // IRCv3 +draft/channel-context: channel a PM is about ("" otherwise)
 }
 
+// ActivityItem is one attention-inbox row (highlight, keyword, invite, or PM).
+type ActivityItem struct {
+	ID         int64      `db:"id" json:"id"`
+	NetworkID  int64      `db:"network_id" json:"network_id"`
+	SourceType string     `db:"source_type" json:"source_type"` // highlight|keyword|invite|pm
+	Target     string     `db:"target" json:"target"`           // channel name or PM peer nick
+	Actor      string     `db:"actor" json:"actor"`             // nick that caused it
+	Preview    string     `db:"preview" json:"preview"`         // short snippet
+	MsgID      string     `db:"msgid" json:"msgid"`             // "" when no line to anchor to
+	Keyword    string     `db:"keyword" json:"keyword"`         // "" unless source_type=keyword
+	Seen       bool       `db:"seen" json:"seen"`
+	Timestamp  time.Time  `db:"timestamp" json:"timestamp"`
+	Trusted    bool       `db:"trusted" json:"trusted"`
+	ExpiresAt  *time.Time `db:"expires_at" json:"expires_at"` // nullable; set only on invite rows
+}
+
 // PinnedMessage represents a message that has been pinned, with pin metadata
 type PinnedMessage struct {
 	Message

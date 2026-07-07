@@ -43,13 +43,20 @@ import {
   SendMessageWithContext,
   GetMessageByMsgID,
   GetChannels,
-  GetInvites,
+  GetActivityItems,
+  MarkActivitySeen,
+  MarkAllActivitySeen,
+  DismissActivity,
+  ClearSeenActivity,
+  ClearAllActivity,
+  GetMessageIDByMsgID,
 } from '../../wailsjs/go/main/App';
 import { useCommandsStore, lookupCommand } from './commands';
 import { usePreferencesStore } from './preferences';
 import { useUIStore } from './ui';
 import { formatCommandHelp, formatHelpList } from '../lib/help-format';
 import { expandInvite } from './invite-command';
+import { activationFor, type ActivityGroup } from '../lib/activity-inbox';
 
 // UserMetaT mirrors the Go irc.UserMeta JSON shape: the live, session-local
 // roster attributes Cascade tracks per nick via away-notify / account-notify /
@@ -321,9 +328,16 @@ interface NetworkState {
   // DM / query
   openQuery: (networkId: number, nick: string) => Promise<void>;
 
-  // Invites (INVITE command — received invites, per network)
-  invitesByNetwork: Record<number, main.InviteView[]>;
-  loadInvites: (networkId: number) => Promise<void>;
+  // Activity inbox (highlights, keywords, invites, PMs) — global across networks.
+  activityItems: storage.ActivityItem[];
+  loadActivityItems: () => Promise<void>;
+  markActivitySeenMany: (ids: number[]) => Promise<void>;
+  markAllActivitySeen: () => Promise<void>;
+  dismissActivity: (id: number) => Promise<void>;
+  clearSeenActivity: () => Promise<void>;
+  clearAllActivity: () => Promise<void>;
+  selectActivityInbox: () => Promise<void>;
+  activateActivityGroup: (group: ActivityGroup) => Promise<void>;
 }
 
 export const useNetworkStore = create<NetworkState>((set, get) => ({
@@ -354,7 +368,7 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
   pendingScrollMsgid: null,
   selectedNetwork: null,
   selectedChannel: null,
-  invitesByNetwork: {},
+  activityItems: [],
 
   loadNetworks: async () => {
     try {
@@ -844,14 +858,6 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
 
     // A pending scrollback history request belongs to the pane we're leaving.
     clearHistoryWaiter();
-
-    // The invites pseudo-pane has no message history or channel to join.
-    // Just update selection and load the invite list, then bail.
-    if (channel === 'invites') {
-      set({ selectedNetwork: networkId, selectedChannel: 'invites' });
-      await get().loadInvites(networkId);
-      return;
-    }
 
     // Switching panes always returns to the live view and clears any anchor, and
     // resets CHATHISTORY pagination state for the freshly-selected buffer.
@@ -1461,12 +1467,58 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
     await get().selectPane(networkId, `pm:${nick}`);
   },
 
-  loadInvites: async (networkId) => {
+  loadActivityItems: async () => {
     try {
-      const invites = await GetInvites(networkId);
-      set((s) => ({ invitesByNetwork: { ...s.invitesByNetwork, [networkId]: invites ?? [] } }));
+      const items = (await GetActivityItems()) ?? [];
+      items.sort((a, b) => (a.timestamp < b.timestamp ? 1 : a.timestamp > b.timestamp ? -1 : b.id - a.id));
+      set({ activityItems: items });
     } catch (e) {
-      console.error('Failed to load invites:', e);
+      console.error('Failed to load activity items:', e);
+    }
+  },
+  markActivitySeenMany: async (ids) => {
+    const idset = new Set(ids);
+    set((s) => ({ activityItems: s.activityItems.map((i) => (idset.has(i.id) ? { ...i, seen: true } : i)) }));
+    await Promise.all(ids.map((id) => MarkActivitySeen(id))).catch((e) => console.error('markActivitySeen:', e));
+  },
+  markAllActivitySeen: async () => {
+    set((s) => ({ activityItems: s.activityItems.map((i) => ({ ...i, seen: true })) }));
+    await MarkAllActivitySeen().catch((e) => console.error('markAllActivitySeen:', e));
+  },
+  dismissActivity: async (id) => {
+    set((s) => ({ activityItems: s.activityItems.filter((i) => i.id !== id) }));
+    await DismissActivity(id).catch((e) => console.error('dismissActivity:', e));
+  },
+  clearSeenActivity: async () => {
+    set((s) => ({ activityItems: s.activityItems.filter((i) => !i.seen) }));
+    await ClearSeenActivity().catch((e) => console.error('clearSeenActivity:', e));
+  },
+  clearAllActivity: async () => {
+    set({ activityItems: [] });
+    await ClearAllActivity().catch((e) => console.error('clearAllActivity:', e));
+  },
+  selectActivityInbox: async () => {
+    set({ selectedNetwork: null, selectedChannel: 'activity' });
+    await get().loadActivityItems();
+  },
+  activateActivityGroup: async (group) => {
+    const ids = group.items.filter((i) => !i.seen).map((i) => i.id);
+    if (ids.length) void get().markActivitySeenMany(ids);
+    const act = activationFor(group);
+    if (act.kind === 'openChannel') {
+      await get().openOrJoinChannel(act.networkId, act.paneKey);
+    } else if (act.kind === 'openPane') {
+      await get().openQuery(act.networkId, group.target);
+    } else {
+      await get().selectPane(act.networkId, act.paneKey);
+    }
+    if (act.kind === 'jump' && act.msgid) {
+      try {
+        const id = await GetMessageIDByMsgID(act.networkId, act.msgid);
+        if (id > 0) await get().jumpToMessage(id);
+      } catch (e) {
+        console.error('activate jump:', e);
+      }
     }
   },
 

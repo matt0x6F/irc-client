@@ -13,7 +13,7 @@ describe('expandInvite', () => {
   it('returns an error sentinel in a non-channel pane with one arg', () => {
     expect(expandInvite('/invite bob', 'status')).toEqual({ error: expect.any(String) });
     expect(expandInvite('/invite bob', 'pm:carol')).toEqual({ error: expect.any(String) });
-    expect(expandInvite('/invite bob', 'invites')).toEqual({ error: expect.any(String) });
+    expect(expandInvite('/invite bob', 'activity')).toEqual({ error: expect.any(String) });
   });
   it('ignores non-invite commands', () => {
     expect(expandInvite('/join #x', '#dev')).toBeNull();

@@ -154,6 +154,11 @@ func (a *App) OnEvent(event events.Event) {
 		})
 	}
 
+	// Classify inbound messages for the activity inbox (highlight/keyword/PM).
+	if event.Type == irc.EventMessageReceived {
+		a.dispatchMessageActivity(event)
+	}
+
 	// Forward CHATHISTORY completion to the frontend so it can re-query the local
 	// store (now backfilled) and decide whether to stop paging. Carries the target
 	// and the count of newly-inserted rows.

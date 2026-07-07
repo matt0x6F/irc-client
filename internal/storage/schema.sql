@@ -76,6 +76,22 @@ CREATE TABLE IF NOT EXISTS messages (
     FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS activity_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    network_id INTEGER NOT NULL,
+    source_type TEXT NOT NULL, -- 'highlight' | 'keyword' | 'invite' | 'pm'
+    target TEXT NOT NULL,      -- channel name, or PM peer nick
+    actor TEXT NOT NULL DEFAULT '', -- nick that caused the item
+    preview TEXT NOT NULL DEFAULT '', -- short snippet; self-sufficient if the message is pruned
+    msgid TEXT,                -- IRCv3 msgid for line-anchored activation; NULL for invites/PMs
+    keyword TEXT,              -- matched keyword when source_type='keyword'; NULL otherwise
+    seen INTEGER NOT NULL DEFAULT 0, -- 0 = unseen, 1 = seen
+    timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    trusted INTEGER NOT NULL DEFAULT 0, -- invite rows: inviter is a buddy
+    expires_at TIMESTAMP,               -- invite rows only: TTL; NULL = never
+    FOREIGN KEY (network_id) REFERENCES networks(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS private_message_conversations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     network_id INTEGER NOT NULL,
@@ -168,6 +184,8 @@ CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_network_msgid ON messages(network_id, msgid) WHERE msgid IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_servers_network_order ON servers(network_id, "order");
 CREATE INDEX IF NOT EXISTS idx_pinned_network_channel ON pinned_messages(network_id, channel_id);
+CREATE INDEX IF NOT EXISTS idx_activity_items_seen_time ON activity_items(seen, timestamp);
+CREATE INDEX IF NOT EXISTS idx_activity_items_network ON activity_items(network_id);
 
 -- FTS5 full-text search index for messages
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(

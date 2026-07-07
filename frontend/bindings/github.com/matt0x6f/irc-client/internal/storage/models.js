@@ -11,6 +11,121 @@ import { Create as $Create } from "@wailsio/runtime";
 import * as time$0 from "../../../../../time/models.js";
 
 /**
+ * ActivityItem is one attention-inbox row (highlight, keyword, invite, or PM).
+ */
+export class ActivityItem {
+    /**
+     * Creates a new ActivityItem instance.
+     * @param {Partial<ActivityItem>} [$$source = {}] - The source object to create the ActivityItem.
+     */
+    constructor($$source = {}) {
+        if (!("id" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["id"] = 0;
+        }
+        if (!("network_id" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["network_id"] = 0;
+        }
+        if (!("source_type" in $$source)) {
+            /**
+             * highlight|keyword|invite|pm
+             * @member
+             * @type {string}
+             */
+            this["source_type"] = "";
+        }
+        if (!("target" in $$source)) {
+            /**
+             * channel name or PM peer nick
+             * @member
+             * @type {string}
+             */
+            this["target"] = "";
+        }
+        if (!("actor" in $$source)) {
+            /**
+             * nick that caused it
+             * @member
+             * @type {string}
+             */
+            this["actor"] = "";
+        }
+        if (!("preview" in $$source)) {
+            /**
+             * short snippet
+             * @member
+             * @type {string}
+             */
+            this["preview"] = "";
+        }
+        if (!("msgid" in $$source)) {
+            /**
+             * "" when no line to anchor to
+             * @member
+             * @type {string}
+             */
+            this["msgid"] = "";
+        }
+        if (!("keyword" in $$source)) {
+            /**
+             * "" unless source_type=keyword
+             * @member
+             * @type {string}
+             */
+            this["keyword"] = "";
+        }
+        if (!("seen" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["seen"] = false;
+        }
+        if (!("timestamp" in $$source)) {
+            /**
+             * @member
+             * @type {time$0.Time}
+             */
+            this["timestamp"] = null;
+        }
+        if (!("trusted" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["trusted"] = false;
+        }
+        if (!("expires_at" in $$source)) {
+            /**
+             * nullable; set only on invite rows
+             * @member
+             * @type {time$0.Time | null}
+             */
+            this["expires_at"] = null;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ActivityItem instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {ActivityItem}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new ActivityItem(/** @type {Partial<ActivityItem>} */($$parsedSource));
+    }
+}
+
+/**
  * Channel represents an IRC channel
  * State: OPEN (dialog open, may or may not be joined), JOINED (dialog open and joined), CLOSED (dialog closed, not joined)
  */

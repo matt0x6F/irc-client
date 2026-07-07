@@ -131,6 +131,16 @@ func Migrate(db *sqlx.DB) error {
 		return fmt.Errorf("link previews migration failed: %w", err)
 	}
 
+	// Handle activity items table migration (cross-network attention inbox)
+	if err := migrateActivityItems(db); err != nil {
+		return fmt.Errorf("activity items migration failed: %w", err)
+	}
+
+	// Handle activity item invite columns migration (trusted, expires_at)
+	if err := migrateActivityItemInviteColumns(db); err != nil {
+		return fmt.Errorf("activity item invite columns migration failed: %w", err)
+	}
+
 	return nil
 }
 
@@ -946,4 +956,77 @@ func migrateLinkPreviews(db *sqlx.DB) error {
 		return fmt.Errorf("failed to create link_previews table: %w", err)
 	}
 	return nil
+}
+
+const createActivityItemsTable = `
+CREATE TABLE IF NOT EXISTS activity_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    network_id INTEGER NOT NULL,
+    source_type TEXT NOT NULL,
+    target TEXT NOT NULL,
+    actor TEXT NOT NULL DEFAULT '',
+    preview TEXT NOT NULL DEFAULT '',
+    msgid TEXT,
+    keyword TEXT,
+    seen INTEGER NOT NULL DEFAULT 0,
+    timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (network_id) REFERENCES networks(id) ON DELETE CASCADE
+);
+`
+
+const createActivityItemsIndexes = `
+CREATE INDEX IF NOT EXISTS idx_activity_items_seen_time ON activity_items(seen, timestamp);
+CREATE INDEX IF NOT EXISTS idx_activity_items_network ON activity_items(network_id);
+`
+
+// migrateActivityItems creates the activity_items table (and its indexes) if
+// they don't exist. This is the cross-network attention inbox: highlights,
+// keyword matches, invites, and PMs, all in one durable, prunable feed.
+func migrateActivityItems(db *sqlx.DB) error {
+	if _, err := db.Exec(createActivityItemsTable); err != nil {
+		return fmt.Errorf("failed to create activity_items table: %w", err)
+	}
+	if _, err := db.Exec(createActivityItemsIndexes); err != nil {
+		return fmt.Errorf("failed to create activity_items indexes: %w", err)
+	}
+	return nil
+}
+
+// migrateActivityItemInviteColumns adds the invite-only columns (trusted,
+// expires_at) to activity_items. Idempotent: safe on DBs that already have them.
+func migrateActivityItemInviteColumns(db *sqlx.DB) error {
+	cols, err := activityItemColumns(db)
+	if err != nil {
+		return fmt.Errorf("inspect activity_items columns: %w", err)
+	}
+	if _, ok := cols["trusted"]; !ok {
+		if _, err := db.Exec(`ALTER TABLE activity_items ADD COLUMN trusted INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return fmt.Errorf("add activity_items.trusted: %w", err)
+		}
+	}
+	if _, ok := cols["expires_at"]; !ok {
+		if _, err := db.Exec(`ALTER TABLE activity_items ADD COLUMN expires_at TIMESTAMP`); err != nil {
+			return fmt.Errorf("add activity_items.expires_at: %w", err)
+		}
+	}
+	return nil
+}
+
+func activityItemColumns(db *sqlx.DB) (map[string]struct{}, error) {
+	rows, err := db.Query(`PRAGMA table_info(activity_items)`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	cols := map[string]struct{}{}
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, ctype string
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return nil, err
+		}
+		cols[name] = struct{}{}
+	}
+	return cols, rows.Err()
 }

@@ -9,7 +9,8 @@ import { dmPresenceState } from '../lib/presence';
 import { isChannelName } from '../lib/channel-name';
 import { casefold } from '../lib/casefold';
 import markUrl from '../assets/brand/cascade-mark.svg';
-import { Terminal } from 'lucide-react';
+import { Terminal, Bell } from 'lucide-react';
+import { unseenGroupCount } from '../lib/activity-inbox';
 
 type Channel = storage.Channel;
 
@@ -51,6 +52,7 @@ export function ServerTree({
   onShowUserInfo,
   onNetworkUpdate,
 }: ServerTreeProps) {
+  const activityItems = useNetworkStore((s) => s.activityItems);
   const [expandedServers, setExpandedServers] = useState<Set<number>>(new Set());
   const [channels, setChannels] = useState<Record<number, string[]>>({});
   const [channelData, setChannelData] = useState<Record<number, Record<string, Channel>>>({});
@@ -74,9 +76,6 @@ export function ServerTree({
   // store keys them (rfc1459 []\~ -> {}|^). Empty falls back to rfc1459.
   const caseMapping = useNetworkStore((s) => s.caseMapping);
   const loadPresence = useNetworkStore((s) => s.loadPresence);
-
-  // Reactive invite counts — subscribed so the badge re-renders when invites change.
-  const invitesByNetwork = useNetworkStore((s) => s.invitesByNetwork);
 
   // Load channels and PM conversations for expanded networks
   useEffect(() => {
@@ -138,9 +137,6 @@ export function ServerTree({
       // correspondents plus durable buddies). Live updates arrive via
       // 'monitor-event'.
       void loadPresence(networkId);
-
-      // Populate the invite badge without waiting for an invite event.
-      void useNetworkStore.getState().loadInvites(networkId);
     });
   }, [expandedServers, servers, loadPresence]);
 
@@ -418,6 +414,31 @@ export function ServerTree({
         </div>
 
       <div className="flex-1 overflow-y-auto">
+        <div className="px-2 pt-2">
+          {(() => {
+            const unseen = unseenGroupCount(activityItems);
+            const selected = selectedChannel === 'activity';
+            return (
+              <button
+                type="button"
+                data-testid="activity-node"
+                onClick={() => void useNetworkStore.getState().selectActivityInbox()}
+                className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm ${selected ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50 text-muted-foreground'}`}
+              >
+                <Bell size={16} />
+                <span className="flex-1 text-left">Activity</span>
+                {unseen > 0 && (
+                  <span
+                    title="Unread activity"
+                    className="bg-primary text-primary-foreground text-xs px-1.5 min-w-[1.25rem] text-center rounded-full"
+                  >
+                    {unseen > 99 ? '99+' : unseen}
+                  </span>
+                )}
+              </button>
+            );
+          })()}
+        </div>
         {servers && servers.length > 0 ? (
           <div className="py-2">
             <div className="px-3 pt-1 pb-2 text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground/80">
@@ -476,33 +497,6 @@ export function ServerTree({
                         <Terminal className="w-3.5 h-3.5 flex-shrink-0 opacity-85" />
                         <span className="text-sm">Server log</span>
                       </div>
-                      {/* Invites pane */}
-                      {(() => {
-                        const inviteCount = (invitesByNetwork[network.id] ?? []).length;
-                        return (
-                          <div
-                            className={`px-2 py-1.5 mr-1 rounded-md cursor-pointer select-none transition-all flex items-center justify-between ${
-                              isSelected && selectedChannel === 'invites'
-                                ? 'cc-active-pane'
-                                : 'hover:bg-accent/70'
-                            }`}
-                            style={{ transition: 'var(--transition-base)' }}
-                            onClick={() => onSelectChannel(network.id, 'invites')}
-                            onMouseDown={(e) => {
-                              if (e.button === 2) {
-                                e.preventDefault();
-                              }
-                            }}
-                          >
-                            <span className="text-sm">Invites</span>
-                            {inviteCount > 0 && (
-                              <span className="bg-primary text-primary-foreground text-xs px-1.5 min-w-[1.25rem] text-center rounded-full ml-2" title="Pending invites">
-                                {inviteCount > 99 ? '99+' : inviteCount}
-                              </span>
-                            )}
-                          </div>
-                        );
-                      })()}
                       {/* Regular channels */}
                       {networkChannels.map((channel) => {
                         const activityKey = `${network.id}:${channel}`;
