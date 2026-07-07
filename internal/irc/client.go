@@ -23,8 +23,14 @@ import (
 // ratified "chathistory" and the older "draft/chathistory" names; the contains()
 // filter only requests whichever the server actually advertises. "batch" is
 // required for CHATHISTORY (replays arrive wrapped in a BATCH that the underlying
-// ergochat/irc-go library collects for us). "multi-prefix" makes the server send
-// every membership prefix a user holds (e.g. "@+") in NAMES/WHO, not just the
+// ergochat/irc-go library collects for us). "draft/event-playback" makes the
+// server replay JOIN/PART/QUIT/KICK/MODE as real structured lines inside that
+// batch (instead of narrating them as HistServ PRIVMSG text) — each replayed
+// line carries the original @msgid, so it collides with and is skipped against
+// the live row already stored by the JOIN/PART/QUIT/KICK/MODE handlers via the
+// per-conversation (network_id, conversation, msgid) unique index; see
+// buildHistoryMessage and handleChatHistoryBatch. "multi-prefix" makes the server
+// send every membership prefix a user holds (e.g. "@+") in NAMES/WHO, not just the
 // highest; the 353 parser already accumulates all of them into the stored modes.
 // "cap-notify" lets the server announce runtime capability changes via CAP NEW /
 // CAP DEL; it is implicitly enabled by CAP LS 302, but we request it explicitly
@@ -35,7 +41,7 @@ import (
 // with, so the Buddies pane / DM dots can reflect their away state. "no-implicit-names"
 // suppresses the automatic NAMES reply after our JOIN; when it is ACKed we send an
 // explicit NAMES so the roster still builds (see the JOIN handler).
-var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "multi-prefix", "cap-notify", "away-notify", "account-notify", "extended-join", "chghost", "account-tag", "userhost-in-names", "setname", "invite-notify", "standard-replies", "labeled-response", "extended-monitor", "no-implicit-names"}
+var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "draft/event-playback", "multi-prefix", "cap-notify", "away-notify", "account-notify", "extended-join", "chghost", "account-tag", "userhost-in-names", "setname", "invite-notify", "standard-replies", "labeled-response", "extended-monitor", "no-implicit-names"}
 
 // requestCapsForLibrary returns the caps the library should CAP REQ. It is
 // requestedCaps minus "sts" (informational metadata, never requested) and "sasl"
@@ -484,6 +490,174 @@ func (c *IRCClient) handleWelcome(e ircmsg.Message) {
 	}
 }
 
+// handleJoin processes an inbound JOIN: it creates the channel record if this is
+// the first we've seen it, adds the joiner to the channel's user list, and — when
+// WE are the one joining — marks the channel open and kicks off NAMES/CHATHISTORY
+// catch-up/WHOX seeding. It is extracted from setupHandlers so tests can drive the
+// real production path without a live connection.
+func (c *IRCClient) handleJoin(e ircmsg.Message) {
+	channel := e.Params[0]
+	user := e.Nick()
+
+	// IRCv3 bot mode: a bot's JOIN carries the `bot` tag too, so we can
+	// recognize it before it speaks.
+	c.maybeMarkBotFromTag(e)
+	// account-tag: a JOIN may also carry the `@account` tag.
+	c.maybeApplyAccountTag(e)
+	// extended-join: when negotiated, JOIN carries the joiner's account.
+	c.maybeApplyExtendedJoin(e)
+
+	logger.Log.Debug().
+		Str("user", user).
+		Str("channel", channel).
+		Str("network", c.network.Name).
+		Str("our_nick", c.network.Nickname).
+		Msg("User joined channel")
+
+	// Get or create channel in database
+	ch, err := c.storage.GetChannelByName(c.networkID, channel)
+	channelCreated := false
+	if err != nil {
+		// Channel doesn't exist, create it
+		logger.Log.Debug().Str("channel", channel).Msg("Channel doesn't exist, creating it")
+		now := time.Now()
+		newChannel := &storage.Channel{
+			NetworkID: c.networkID,
+			Name:      channel,
+			AutoJoin:  false,
+			IsOpen:    false, // Dialog not open yet - will be opened when user selects it
+			CreatedAt: time.Now(),
+			UpdatedAt: &now,
+		}
+		if err := c.storage.CreateChannel(newChannel); err != nil {
+			logger.Log.Error().Err(err).Str("channel", channel).Msg("Failed to create channel")
+			// Still try to continue with the rest
+		} else {
+			logger.Log.Debug().Str("channel", channel).Msg("Successfully created channel in database")
+			ch = newChannel
+			channelCreated = true
+		}
+	}
+
+	// If the current user joined, mark channel as open (JOINED state)
+	channelUpdated := false
+	if c.isMe(user) && ch != nil {
+		if !ch.IsOpen {
+			c.storage.UpdateChannelIsOpen(ch.ID, true)
+			channelUpdated = true
+		}
+		// The join succeeded, so the key it was sent with (possibly none)
+		// is now the channel's truth — persist it for auto-rejoin (+k).
+		c.persistPendingJoinKey(channel, ch)
+	}
+
+	// Add user to channel user list (for all users, not just ourselves)
+	if ch != nil {
+		if err := c.storage.AddChannelUser(ch.ID, user, ""); err != nil {
+			logger.Log.Error().Err(err).Str("user", user).Str("channel", channel).Msg("Failed to add user to channel user list")
+		} else {
+			logger.Log.Debug().Str("user", user).Str("channel", channel).Msg("Added user to channel user list")
+			// Verify the write is committed by reading it back (forces WAL sync)
+			// This ensures the user is immediately visible when the frontend queries
+			_, _ = c.storage.GetChannelUsers(ch.ID)
+		}
+	}
+
+	// If the current user joined, the server automatically sends the NAMES
+	// list (RPL_NAMREPLY 353 / RPL_ENDOFNAMES 366) as part of the JOIN
+	// response; those handlers clear and repopulate channel_users and emit
+	// channel.names.complete. We deliberately do NOT send an explicit NAMES
+	// here — it's redundant with the server's automatic reply and doubles the
+	// outgoing burst when rejoining a whole session after a reconnect.
+	if c.isMe(user) {
+		logger.Log.Info().
+			Str("channel", channel).
+			Int64("network_id", c.networkID).
+			Msg("Our user joined; awaiting server NAMES reply to populate user list")
+
+		// With no-implicit-names the server won't send the automatic NAMES
+		// reply, so request it explicitly — otherwise the roster stays empty
+		// (WHOX seeds attributes but not membership prefixes).
+		if cmd := c.namesOnSelfJoin(channel); cmd != "" {
+			if err := c.conn.SendRaw(cmd); err != nil {
+				logger.Log.Debug().Err(err).Str("channel", channel).Msg("explicit NAMES request failed")
+			}
+		}
+
+		// Catch-up: pull recent server-side history for the channel so anything
+		// said while we were away is backfilled. No-op when the server didn't
+		// grant CHATHISTORY. Replays arrive via handleChatHistoryBatch and are
+		// deduped by msgid, so re-joining a channel won't duplicate messages.
+		// This now also holds for membership events (JOIN/PART/QUIT/KICK/MODE)
+		// replayed under draft/event-playback: the live handlers persist @msgid
+		// on those rows too, and the dedup index is per-conversation, so a
+		// replayed JOIN/PART/QUIT that already happened live collapses onto the
+		// same row instead of duplicating it.
+		if c.chatHistoryEnabled() {
+			if err := c.RequestChatHistoryLatest(channel, defaultChatHistoryLimit); err != nil {
+				logger.Log.Debug().Err(err).Str("channel", channel).Msg("CHATHISTORY LATEST request skipped")
+			}
+		}
+
+		// Bulk-seed the roster (account/host/away/realname) with one extended
+		// WHO when the server supports WHOX, instead of waiting for live churn.
+		if c.whoxSupported() {
+			if err := c.requestWHOX(channel); err != nil {
+				logger.Log.Debug().Err(err).Str("channel", channel).Msg("WHOX request skipped")
+			}
+		}
+	}
+
+	// Store join message in the channel (use sync write so it appears immediately)
+	if ch != nil {
+		rawLine, _ := e.Line()
+		joinMsg := storage.Message{
+			NetworkID:   c.networkID,
+			ChannelID:   &ch.ID,
+			User:        user,
+			Message:     fmt.Sprintf("%s joined the channel", user),
+			MessageType: "join",
+			Timestamp:   time.Now(),
+			RawLine:     rawLine,
+			MsgID:       c.getMsgID(e),
+		}
+		if err := c.storage.WriteMessageSync(joinMsg); err != nil {
+			// During shutdown, storage may be closed - this is expected
+			if err.Error() == "storage is closed" {
+				logger.Log.Debug().Msg("Skipping join message storage (storage closed during shutdown)")
+			} else {
+				logger.Log.Error().Err(err).Msg("Failed to store join message")
+			}
+		}
+	}
+
+	// Emit event
+	c.eventBus.Emit(events.Event{
+		Type: EventUserJoined,
+		Data: map[string]interface{}{
+			"network":   c.network.Address,
+			"networkId": c.networkID,
+			"channel":   channel,
+			"user":      user,
+		},
+		Timestamp: time.Now(),
+		Source:    events.EventSourceIRC,
+	})
+
+	// Emit channels changed event if channel was created or updated
+	if channelCreated || (channelUpdated && c.isMe(user)) {
+		c.eventBus.Emit(events.Event{
+			Type: EventChannelsChanged,
+			Data: map[string]interface{}{
+				"network":   c.network.Address,
+				"networkId": c.networkID,
+			},
+			Timestamp: time.Now(),
+			Source:    events.EventSourceIRC,
+		})
+	}
+}
+
 // handlePart processes an inbound PART: it removes the user from the channel's
 // user list and, when WE are the one leaving, marks the channel closed so it
 // drops out of the sidebar. Self-detection uses the live nick (isMe), so a PART
@@ -530,6 +704,7 @@ func (c *IRCClient) handlePart(e ircmsg.Message) {
 			MessageType: "part",
 			Timestamp:   time.Now(),
 			RawLine:     rawLine,
+			MsgID:       c.getMsgID(e),
 		}
 		if err := c.storage.WriteMessageSync(partMsg); err != nil {
 			// During shutdown, storage may be closed - this is expected
@@ -619,6 +794,7 @@ func (c *IRCClient) handleQuit(e ircmsg.Message) {
 							MessageType: "quit",
 							Timestamp:   time.Now(),
 							RawLine:     rawLine,
+							MsgID:       c.getMsgID(e),
 						}
 						if err := c.storage.WriteMessageSync(quitMsg); err != nil {
 							// During shutdown, storage may be closed - this is expected
@@ -646,6 +822,219 @@ func (c *IRCClient) handleQuit(e ircmsg.Message) {
 		Timestamp: time.Now(),
 		Source:    events.EventSourceIRC,
 	})
+}
+
+// handleKick processes a KICK: removes the kicked user from the channel's
+// member list, marks the channel closed if we were the one kicked, and
+// stores a "kick" row (carrying the original @msgid, so a later CHATHISTORY
+// replay of the same kick dedups against this live row instead of doubling).
+func (c *IRCClient) handleKick(e ircmsg.Message) {
+	if len(e.Params) < 2 {
+		return
+	}
+	channel := e.Params[0]
+	kickedUser := e.Params[1]
+	kicker := e.Nick()
+	reason := ""
+	if len(e.Params) > 2 {
+		reason = e.Params[2]
+	}
+
+	// Get channel from database
+	ch, err := c.storage.GetChannelByName(c.networkID, channel)
+	channelUpdated := false
+	if err == nil {
+		// Remove kicked user from channel user list
+		if err := c.storage.RemoveChannelUser(ch.ID, kickedUser); err != nil {
+			logger.Log.Error().Err(err).Str("user", kickedUser).Str("channel", channel).Msg("Failed to remove kicked user from channel user list")
+		} else {
+			logger.Log.Debug().Str("user", kickedUser).Str("channel", channel).Msg("Removed kicked user from channel user list")
+			// Verify the write is committed by reading it back (forces WAL sync)
+			// This ensures the user is immediately removed when the frontend queries
+			_, _ = c.storage.GetChannelUsers(ch.ID)
+		}
+
+		// If we were kicked, mark channel as closed
+		if c.isMe(kickedUser) {
+			c.storage.UpdateChannelIsOpen(ch.ID, false)
+			channelUpdated = true
+		}
+
+		// Store kick message in the channel (use sync write so it appears immediately)
+		rawLine, _ := e.Line()
+		kickMsg := storage.Message{
+			NetworkID: c.networkID,
+			ChannelID: &ch.ID,
+			User:      kicker,
+			Message: fmt.Sprintf("%s kicked %s%s", kicker, kickedUser, func() string {
+				if reason != "" {
+					return fmt.Sprintf(" (%s)", reason)
+				}
+				return ""
+			}()),
+			MessageType: "kick",
+			Timestamp:   time.Now(),
+			RawLine:     rawLine,
+			MsgID:       c.getMsgID(e),
+		}
+		if err := c.storage.WriteMessageSync(kickMsg); err != nil {
+			// During shutdown, storage may be closed - this is expected
+			if err.Error() == "storage is closed" {
+				logger.Log.Debug().Msg("Skipping kick message storage (storage closed during shutdown)")
+			} else {
+				logger.Log.Error().Err(err).Msg("Failed to store kick message")
+			}
+		}
+	}
+
+	// Emit event
+	c.eventBus.Emit(events.Event{
+		Type: EventUserKicked,
+		Data: map[string]interface{}{
+			"network":   c.network.Address,
+			"networkId": c.networkID,
+			"channel":   channel,
+			"kicker":    kicker,
+			"user":      kickedUser,
+			"reason":    reason,
+		},
+		Timestamp: time.Now(),
+		Source:    events.EventSourceIRC,
+	})
+
+	// Emit channels changed event if we were kicked
+	if channelUpdated {
+		c.eventBus.Emit(events.Event{
+			Type: EventChannelsChanged,
+			Data: map[string]interface{}{
+				"network":   c.network.Address,
+				"networkId": c.networkID,
+			},
+			Timestamp: time.Now(),
+			Source:    events.EventSourceIRC,
+		})
+	}
+}
+
+// handleMode processes a channel MODE change: records a "sets mode" row
+// (carrying the original @msgid, so a later CHATHISTORY replay of the same
+// mode change dedups against this live row instead of doubling), folds
+// channel-level changes into the canonical mode string, and applies
+// per-user prefix changes individually. Non-channel targets are user modes;
+// only our own +<botletter> echo is handled there.
+func (c *IRCClient) handleMode(e ircmsg.Message) {
+	if len(e.Params) < 2 {
+		return
+	}
+	target := e.Params[0]
+	// Channel modes start with # or &. A non-channel target is a user mode;
+	// we only care about our own +<botletter> echo (so our own nick carries the
+	// bot badge consistently), then return — other user modes are still ignored.
+	if len(target) == 0 || (target[0] != '#' && target[0] != '&') {
+		c.markSelfBotFromUserMode(target, e.Params[1])
+		return
+	}
+
+	ch, err := c.storage.GetChannelByName(c.networkID, target)
+	if err != nil {
+		return
+	}
+
+	// Snapshot the server's mode grammar once under lock, then parse lock-free.
+	c.mu.RLock()
+	cls := c.serverCapabilities.classification()
+	c.mu.RUnlock()
+
+	changes := ParseModeChanges(e.Params[1], e.Params[2:], cls)
+
+	// Surface the change in the channel itself (like join/part/kick), faithfully
+	// mirroring what the server applied: "<actor> sets mode: +o-v+k a b key".
+	// Bare list-mode *queries* (e.g. ban-list fetches) never reach here — the
+	// server answers those with 367/368, not a MODE echo — so this won't fire for them.
+	if len(changes) > 0 {
+		actor := e.Nick()
+		if actor == "" {
+			actor = e.Source
+		}
+		rawLine, _ := e.Line()
+		c.storage.WriteMessageSync(storage.Message{
+			NetworkID:   c.networkID,
+			ChannelID:   &ch.ID,
+			User:        actor,
+			Message:     fmt.Sprintf("%s sets mode: %s", actor, strings.Join(e.Params[1:], " ")),
+			MessageType: "mode",
+			Timestamp:   time.Now(),
+			RawLine:     rawLine,
+			MsgID:       c.getMsgID(e),
+		})
+	}
+
+	// Fold channel-level changes (D flags + B/C params) into the canonical mode
+	// string, persisting only when it actually changed.
+	newModes := applyChannelModes(ch.Modes, changes, cls)
+	if newModes != ch.Modes {
+		if err := c.storage.UpdateChannelModes(ch.ID, newModes); err != nil {
+			logger.Log.Warn().Err(err).Str("channel", target).Msg("Failed to persist channel modes")
+		}
+	}
+	// Always announce the mode change so the UI reloads the channel — both the modes
+	// header and the "sets mode" line written above. This fires even for list-mode
+	// changes (e.g. +b) where the canonical string is unchanged, which would otherwise
+	// leave the new line invisible until the next poll.
+	c.eventBus.Emit(events.Event{
+		Type: EventChannelMode,
+		Data: map[string]interface{}{
+			"network":   c.network.Address,
+			"networkId": c.networkID,
+			"channel":   target,
+			"modes":     newModes,
+		},
+		Timestamp: time.Now(),
+		Source:    events.EventSourceIRC,
+	})
+
+	// Apply per-user membership (prefix) changes individually, emitting a granular
+	// event per affected user so the member list re-groups live.
+	for _, mc := range changes {
+		if mc.Kind != ModeKindPrefix || mc.Param == "" {
+			continue
+		}
+		current, gerr := c.storage.GetChannelUserModes(ch.ID, mc.Param)
+		if gerr != nil {
+			// User not tracked yet (e.g. NAMES not complete) — skip.
+			continue
+		}
+		c.mu.RLock()
+		updated := c.serverCapabilities.applyUserPrefix(current, mc.Mode, mc.Add)
+		c.mu.RUnlock()
+		if updated == current {
+			continue
+		}
+		if err := c.storage.AddChannelUser(ch.ID, mc.Param, updated); err != nil {
+			logger.Log.Warn().Err(err).Str("nick", mc.Param).Str("channel", target).Msg("Failed to update user modes")
+			continue
+		}
+		added, removed := "", ""
+		if mc.Add {
+			added = string(mc.Mode)
+		} else {
+			removed = string(mc.Mode)
+		}
+		c.eventBus.Emit(events.Event{
+			Type: EventChannelUserMode,
+			Data: map[string]interface{}{
+				"network":   c.network.Address,
+				"networkId": c.networkID,
+				"channel":   target,
+				"nick":      mc.Param,
+				"modes":     updated,
+				"added":     added,
+				"removed":   removed,
+			},
+			Timestamp: time.Now(),
+			Source:    events.EventSourceIRC,
+		})
+	}
 }
 
 // handleForwardedJoin processes ERR_LINKCHANNEL (470): the server redirected a
@@ -1733,162 +2122,7 @@ func (c *IRCClient) setupHandlers() {
 	c.conn.AddCallback("PRIVMSG", c.handlePrivmsg)
 
 	// User joined channel
-	c.conn.AddCallback("JOIN", func(e ircmsg.Message) {
-		channel := e.Params[0]
-		user := e.Nick()
-
-		// IRCv3 bot mode: a bot's JOIN carries the `bot` tag too, so we can
-		// recognize it before it speaks.
-		c.maybeMarkBotFromTag(e)
-		// account-tag: a JOIN may also carry the `@account` tag.
-		c.maybeApplyAccountTag(e)
-		// extended-join: when negotiated, JOIN carries the joiner's account.
-		c.maybeApplyExtendedJoin(e)
-
-		logger.Log.Debug().
-			Str("user", user).
-			Str("channel", channel).
-			Str("network", c.network.Name).
-			Str("our_nick", c.network.Nickname).
-			Msg("User joined channel")
-
-		// Get or create channel in database
-		ch, err := c.storage.GetChannelByName(c.networkID, channel)
-		channelCreated := false
-		if err != nil {
-			// Channel doesn't exist, create it
-			logger.Log.Debug().Str("channel", channel).Msg("Channel doesn't exist, creating it")
-			now := time.Now()
-			newChannel := &storage.Channel{
-				NetworkID: c.networkID,
-				Name:      channel,
-				AutoJoin:  false,
-				IsOpen:    false, // Dialog not open yet - will be opened when user selects it
-				CreatedAt: time.Now(),
-				UpdatedAt: &now,
-			}
-			if err := c.storage.CreateChannel(newChannel); err != nil {
-				logger.Log.Error().Err(err).Str("channel", channel).Msg("Failed to create channel")
-				// Still try to continue with the rest
-			} else {
-				logger.Log.Debug().Str("channel", channel).Msg("Successfully created channel in database")
-				ch = newChannel
-				channelCreated = true
-			}
-		}
-
-		// If the current user joined, mark channel as open (JOINED state)
-		channelUpdated := false
-		if c.isMe(user) && ch != nil {
-			if !ch.IsOpen {
-				c.storage.UpdateChannelIsOpen(ch.ID, true)
-				channelUpdated = true
-			}
-			// The join succeeded, so the key it was sent with (possibly none)
-			// is now the channel's truth — persist it for auto-rejoin (+k).
-			c.persistPendingJoinKey(channel, ch)
-		}
-
-		// Add user to channel user list (for all users, not just ourselves)
-		if ch != nil {
-			if err := c.storage.AddChannelUser(ch.ID, user, ""); err != nil {
-				logger.Log.Error().Err(err).Str("user", user).Str("channel", channel).Msg("Failed to add user to channel user list")
-			} else {
-				logger.Log.Debug().Str("user", user).Str("channel", channel).Msg("Added user to channel user list")
-				// Verify the write is committed by reading it back (forces WAL sync)
-				// This ensures the user is immediately visible when the frontend queries
-				_, _ = c.storage.GetChannelUsers(ch.ID)
-			}
-		}
-
-		// If the current user joined, the server automatically sends the NAMES
-		// list (RPL_NAMREPLY 353 / RPL_ENDOFNAMES 366) as part of the JOIN
-		// response; those handlers clear and repopulate channel_users and emit
-		// channel.names.complete. We deliberately do NOT send an explicit NAMES
-		// here — it's redundant with the server's automatic reply and doubles the
-		// outgoing burst when rejoining a whole session after a reconnect.
-		if c.isMe(user) {
-			logger.Log.Info().
-				Str("channel", channel).
-				Int64("network_id", c.networkID).
-				Msg("Our user joined; awaiting server NAMES reply to populate user list")
-
-			// With no-implicit-names the server won't send the automatic NAMES
-			// reply, so request it explicitly — otherwise the roster stays empty
-			// (WHOX seeds attributes but not membership prefixes).
-			if cmd := c.namesOnSelfJoin(channel); cmd != "" {
-				if err := c.conn.SendRaw(cmd); err != nil {
-					logger.Log.Debug().Err(err).Str("channel", channel).Msg("explicit NAMES request failed")
-				}
-			}
-
-			// Catch-up: pull recent server-side history for the channel so anything
-			// said while we were away is backfilled. No-op when the server didn't
-			// grant CHATHISTORY. Replays arrive via handleChatHistoryBatch and are
-			// deduped by msgid, so re-joining a channel won't duplicate messages.
-			if c.chatHistoryEnabled() {
-				if err := c.RequestChatHistoryLatest(channel, defaultChatHistoryLimit); err != nil {
-					logger.Log.Debug().Err(err).Str("channel", channel).Msg("CHATHISTORY LATEST request skipped")
-				}
-			}
-
-			// Bulk-seed the roster (account/host/away/realname) with one extended
-			// WHO when the server supports WHOX, instead of waiting for live churn.
-			if c.whoxSupported() {
-				if err := c.requestWHOX(channel); err != nil {
-					logger.Log.Debug().Err(err).Str("channel", channel).Msg("WHOX request skipped")
-				}
-			}
-		}
-
-		// Store join message in the channel (use sync write so it appears immediately)
-		if ch != nil {
-			rawLine, _ := e.Line()
-			joinMsg := storage.Message{
-				NetworkID:   c.networkID,
-				ChannelID:   &ch.ID,
-				User:        user,
-				Message:     fmt.Sprintf("%s joined the channel", user),
-				MessageType: "join",
-				Timestamp:   time.Now(),
-				RawLine:     rawLine,
-			}
-			if err := c.storage.WriteMessageSync(joinMsg); err != nil {
-				// During shutdown, storage may be closed - this is expected
-				if err.Error() == "storage is closed" {
-					logger.Log.Debug().Msg("Skipping join message storage (storage closed during shutdown)")
-				} else {
-					logger.Log.Error().Err(err).Msg("Failed to store join message")
-				}
-			}
-		}
-
-		// Emit event
-		c.eventBus.Emit(events.Event{
-			Type: EventUserJoined,
-			Data: map[string]interface{}{
-				"network":   c.network.Address,
-				"networkId": c.networkID,
-				"channel":   channel,
-				"user":      user,
-			},
-			Timestamp: time.Now(),
-			Source:    events.EventSourceIRC,
-		})
-
-		// Emit channels changed event if channel was created or updated
-		if channelCreated || (channelUpdated && c.isMe(user)) {
-			c.eventBus.Emit(events.Event{
-				Type: EventChannelsChanged,
-				Data: map[string]interface{}{
-					"network":   c.network.Address,
-					"networkId": c.networkID,
-				},
-				Timestamp: time.Now(),
-				Source:    events.EventSourceIRC,
-			})
-		}
-	})
+	c.conn.AddCallback("JOIN", c.handleJoin)
 
 	// User parted channel
 	c.conn.AddCallback("PART", c.handlePart)
@@ -1916,92 +2150,7 @@ func (c *IRCClient) setupHandlers() {
 	c.conn.AddCallback("QUIT", c.handleQuit)
 
 	// User kicked from channel
-	c.conn.AddCallback("KICK", func(e ircmsg.Message) {
-		if len(e.Params) < 2 {
-			return
-		}
-		channel := e.Params[0]
-		kickedUser := e.Params[1]
-		kicker := e.Nick()
-		reason := ""
-		if len(e.Params) > 2 {
-			reason = e.Params[2]
-		}
-
-		// Get channel from database
-		ch, err := c.storage.GetChannelByName(c.networkID, channel)
-		channelUpdated := false
-		if err == nil {
-			// Remove kicked user from channel user list
-			if err := c.storage.RemoveChannelUser(ch.ID, kickedUser); err != nil {
-				logger.Log.Error().Err(err).Str("user", kickedUser).Str("channel", channel).Msg("Failed to remove kicked user from channel user list")
-			} else {
-				logger.Log.Debug().Str("user", kickedUser).Str("channel", channel).Msg("Removed kicked user from channel user list")
-				// Verify the write is committed by reading it back (forces WAL sync)
-				// This ensures the user is immediately removed when the frontend queries
-				_, _ = c.storage.GetChannelUsers(ch.ID)
-			}
-
-			// If we were kicked, mark channel as closed
-			if c.isMe(kickedUser) {
-				c.storage.UpdateChannelIsOpen(ch.ID, false)
-				channelUpdated = true
-			}
-
-			// Store kick message in the channel (use sync write so it appears immediately)
-			rawLine, _ := e.Line()
-			kickMsg := storage.Message{
-				NetworkID: c.networkID,
-				ChannelID: &ch.ID,
-				User:      kicker,
-				Message: fmt.Sprintf("%s kicked %s%s", kicker, kickedUser, func() string {
-					if reason != "" {
-						return fmt.Sprintf(" (%s)", reason)
-					}
-					return ""
-				}()),
-				MessageType: "kick",
-				Timestamp:   time.Now(),
-				RawLine:     rawLine,
-			}
-			if err := c.storage.WriteMessageSync(kickMsg); err != nil {
-				// During shutdown, storage may be closed - this is expected
-				if err.Error() == "storage is closed" {
-					logger.Log.Debug().Msg("Skipping kick message storage (storage closed during shutdown)")
-				} else {
-					logger.Log.Error().Err(err).Msg("Failed to store kick message")
-				}
-			}
-		}
-
-		// Emit event
-		c.eventBus.Emit(events.Event{
-			Type: EventUserKicked,
-			Data: map[string]interface{}{
-				"network":   c.network.Address,
-				"networkId": c.networkID,
-				"channel":   channel,
-				"kicker":    kicker,
-				"user":      kickedUser,
-				"reason":    reason,
-			},
-			Timestamp: time.Now(),
-			Source:    events.EventSourceIRC,
-		})
-
-		// Emit channels changed event if we were kicked
-		if channelUpdated {
-			c.eventBus.Emit(events.Event{
-				Type: EventChannelsChanged,
-				Data: map[string]interface{}{
-					"network":   c.network.Address,
-					"networkId": c.networkID,
-				},
-				Timestamp: time.Now(),
-				Source:    events.EventSourceIRC,
-			})
-		}
-	})
+	c.conn.AddCallback("KICK", c.handleKick)
 
 	// Nick change
 	// Inbound NICK changes for everyone, with self-tracking. See handleNickMessage.
@@ -2367,119 +2516,7 @@ func (c *IRCClient) setupHandlers() {
 	})
 
 	// Channel MODE changes
-	c.conn.AddCallback("MODE", func(e ircmsg.Message) {
-		if len(e.Params) < 2 {
-			return
-		}
-		target := e.Params[0]
-		// Channel modes start with # or &. A non-channel target is a user mode;
-		// we only care about our own +<botletter> echo (so our own nick carries the
-		// bot badge consistently), then return — other user modes are still ignored.
-		if len(target) == 0 || (target[0] != '#' && target[0] != '&') {
-			c.markSelfBotFromUserMode(target, e.Params[1])
-			return
-		}
-
-		ch, err := c.storage.GetChannelByName(c.networkID, target)
-		if err != nil {
-			return
-		}
-
-		// Snapshot the server's mode grammar once under lock, then parse lock-free.
-		c.mu.RLock()
-		cls := c.serverCapabilities.classification()
-		c.mu.RUnlock()
-
-		changes := ParseModeChanges(e.Params[1], e.Params[2:], cls)
-
-		// Surface the change in the channel itself (like join/part/kick), faithfully
-		// mirroring what the server applied: "<actor> sets mode: +o-v+k a b key".
-		// Bare list-mode *queries* (e.g. ban-list fetches) never reach here — the
-		// server answers those with 367/368, not a MODE echo — so this won't fire for them.
-		if len(changes) > 0 {
-			actor := e.Nick()
-			if actor == "" {
-				actor = e.Source
-			}
-			rawLine, _ := e.Line()
-			c.storage.WriteMessageSync(storage.Message{
-				NetworkID:   c.networkID,
-				ChannelID:   &ch.ID,
-				User:        actor,
-				Message:     fmt.Sprintf("%s sets mode: %s", actor, strings.Join(e.Params[1:], " ")),
-				MessageType: "mode",
-				Timestamp:   time.Now(),
-				RawLine:     rawLine,
-			})
-		}
-
-		// Fold channel-level changes (D flags + B/C params) into the canonical mode
-		// string, persisting only when it actually changed.
-		newModes := applyChannelModes(ch.Modes, changes, cls)
-		if newModes != ch.Modes {
-			if err := c.storage.UpdateChannelModes(ch.ID, newModes); err != nil {
-				logger.Log.Warn().Err(err).Str("channel", target).Msg("Failed to persist channel modes")
-			}
-		}
-		// Always announce the mode change so the UI reloads the channel — both the modes
-		// header and the "sets mode" line written above. This fires even for list-mode
-		// changes (e.g. +b) where the canonical string is unchanged, which would otherwise
-		// leave the new line invisible until the next poll.
-		c.eventBus.Emit(events.Event{
-			Type: EventChannelMode,
-			Data: map[string]interface{}{
-				"network":   c.network.Address,
-				"networkId": c.networkID,
-				"channel":   target,
-				"modes":     newModes,
-			},
-			Timestamp: time.Now(),
-			Source:    events.EventSourceIRC,
-		})
-
-		// Apply per-user membership (prefix) changes individually, emitting a granular
-		// event per affected user so the member list re-groups live.
-		for _, mc := range changes {
-			if mc.Kind != ModeKindPrefix || mc.Param == "" {
-				continue
-			}
-			current, gerr := c.storage.GetChannelUserModes(ch.ID, mc.Param)
-			if gerr != nil {
-				// User not tracked yet (e.g. NAMES not complete) — skip.
-				continue
-			}
-			c.mu.RLock()
-			updated := c.serverCapabilities.applyUserPrefix(current, mc.Mode, mc.Add)
-			c.mu.RUnlock()
-			if updated == current {
-				continue
-			}
-			if err := c.storage.AddChannelUser(ch.ID, mc.Param, updated); err != nil {
-				logger.Log.Warn().Err(err).Str("nick", mc.Param).Str("channel", target).Msg("Failed to update user modes")
-				continue
-			}
-			added, removed := "", ""
-			if mc.Add {
-				added = string(mc.Mode)
-			} else {
-				removed = string(mc.Mode)
-			}
-			c.eventBus.Emit(events.Event{
-				Type: EventChannelUserMode,
-				Data: map[string]interface{}{
-					"network":   c.network.Address,
-					"networkId": c.networkID,
-					"channel":   target,
-					"nick":      mc.Param,
-					"modes":     updated,
-					"added":     added,
-					"removed":   removed,
-				},
-				Timestamp: time.Now(),
-				Source:    events.EventSourceIRC,
-			})
-		}
-	})
+	c.conn.AddCallback("MODE", c.handleMode)
 
 	// RPL_CHANNELMODEIS (324) - authoritative channel modes, typically on join or
 	// in response to a "MODE #channel" query. Replaces the stored canonical string.
@@ -3834,7 +3871,7 @@ func (c *IRCClient) handleChatHistoryBatch(b *ircevent.Batch) bool {
 		if item == nil {
 			continue
 		}
-		if msg, ok := c.buildHistoryMessage(item.Message); ok {
+		if msg, ok := c.buildHistoryMessage(item.Message, target); ok {
 			msgs = append(msgs, msg)
 		}
 	}
@@ -3865,11 +3902,90 @@ func (c *IRCClient) handleChatHistoryBatch(b *ircevent.Batch) bool {
 	return true
 }
 
-// buildHistoryMessage converts a single replayed PRIVMSG/NOTICE line from a
-// CHATHISTORY batch into a storage.Message, applying the same channel-vs-PM
-// routing as the live handlers. ok=false for lines we don't persist (malformed,
-// or non-ACTION CTCP).
-func (c *IRCClient) buildHistoryMessage(e ircmsg.Message) (storage.Message, bool) {
+// buildHistoryMessage converts a single replayed line from a CHATHISTORY batch
+// into a storage.Message. PRIVMSG/NOTICE (including CTCP ACTION) apply the same
+// channel-vs-PM routing as the live handlers. JOIN/PART/QUIT/KICK/MODE — replayed
+// under draft/event-playback — are built to mirror the live handlers' phrasing and
+// message_type so they dedup against the live rows via the (conversation, msgid)
+// unique index. QUIT carries no channel param on the wire, so it routes to
+// batchTarget (the channel this batch is replaying). ok=false for lines we don't
+// persist (malformed, non-ACTION CTCP, or an unrecognized command).
+func (c *IRCClient) buildHistoryMessage(e ircmsg.Message, batchTarget string) (storage.Message, bool) {
+	switch e.Command {
+	case "PRIVMSG", "NOTICE":
+		return c.buildHistoryChatMessage(e)
+	}
+
+	user := e.Nick()
+	var messageType, text, channelName string
+
+	switch e.Command {
+	case "JOIN":
+		if len(e.Params) < 1 {
+			return storage.Message{}, false
+		}
+		messageType, channelName = "join", e.Params[0]
+		text = fmt.Sprintf("%s joined the channel", user)
+	case "PART":
+		if len(e.Params) < 1 {
+			return storage.Message{}, false
+		}
+		messageType, channelName = "part", e.Params[0]
+		reason := ""
+		if len(e.Params) > 1 && e.Params[1] != "" {
+			reason = fmt.Sprintf(" (%s)", e.Params[1])
+		}
+		text = fmt.Sprintf("%s left the channel%s", user, reason)
+	case "QUIT":
+		// QUIT has no channel param; route it to the batch target.
+		messageType, channelName = "quit", batchTarget
+		reason := ""
+		if len(e.Params) > 0 && e.Params[0] != "" {
+			reason = fmt.Sprintf(" (%s)", e.Params[0])
+		}
+		text = fmt.Sprintf("%s quit%s", user, reason)
+	case "KICK":
+		if len(e.Params) < 2 {
+			return storage.Message{}, false
+		}
+		messageType, channelName = "kick", e.Params[0]
+		reason := ""
+		if len(e.Params) > 2 && e.Params[2] != "" {
+			reason = fmt.Sprintf(" (%s)", e.Params[2])
+		}
+		text = fmt.Sprintf("%s kicked %s%s", user, e.Params[1], reason)
+	case "MODE":
+		if len(e.Params) < 2 {
+			return storage.Message{}, false
+		}
+		messageType, channelName = "mode", e.Params[0]
+		text = fmt.Sprintf("%s sets mode: %s", user, strings.Join(e.Params[1:], " "))
+	default:
+		return storage.Message{}, false
+	}
+
+	var channelID *int64
+	if ch, err := c.storage.GetChannelByName(c.networkID, channelName); err == nil {
+		channelID = &ch.ID
+	}
+
+	rawLine, _ := e.Line()
+	return storage.Message{
+		NetworkID:   c.networkID,
+		ChannelID:   channelID,
+		User:        user,
+		Message:     text,
+		MessageType: messageType,
+		Timestamp:   c.getHistoryTime(e),
+		RawLine:     rawLine,
+		MsgID:       c.getMsgID(e),
+	}, true
+}
+
+// buildHistoryChatMessage handles the PRIVMSG/NOTICE (incl. CTCP ACTION) branch
+// of buildHistoryMessage, applying the same channel-vs-PM routing as the live
+// handlers. ok=false for malformed lines or non-ACTION CTCP.
+func (c *IRCClient) buildHistoryChatMessage(e ircmsg.Message) (storage.Message, bool) {
 	if len(e.Params) < 2 {
 		return storage.Message{}, false
 	}
@@ -3892,8 +4008,6 @@ func (c *IRCClient) buildHistoryMessage(e ircmsg.Message) (storage.Message, bool
 		}
 	case "NOTICE":
 		messageType = "notice"
-	default:
-		return storage.Message{}, false
 	}
 
 	var channelID *int64

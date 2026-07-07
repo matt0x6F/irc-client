@@ -56,6 +56,7 @@ Legend: ✅ Supported · ◐ Partial · ⛔ Not yet
 | `echo-message` | ✅ | Yes | Self-message reconciliation / dedup |
 | `batch` | ✅ | Yes | Wraps `chathistory` replays |
 | `chathistory` / `draft/chathistory` | ✅ | Yes | Latest-on-join + on-demand backscroll |
+| `draft/event-playback` | ✅ | Yes | Replays JOIN/PART/QUIT/KICK/MODE as structured lines (not HistServ text) inside `chathistory` batches |
 | `msgid` (via `message-tags`) | ✅ | n/a | Consumed for history deduplication |
 | `sts` | ✅ | Read (never `REQ`'d) | Auto-upgrades plaintext→TLS; persists per-host TLS enforcement |
 | CAP LS 302 negotiation | ✅ | n/a | Full LS/REQ/ACK/NAK/END lifecycle |
@@ -88,7 +89,7 @@ Legend: ✅ Supported · ◐ Partial · ⛔ Not yet
 The set of requested capabilities lives in one place, `internal/irc/client.go:31`:
 
 ```go
-var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "multi-prefix", "cap-notify", "away-notify", "account-notify", "extended-join", "chghost", "account-tag", "userhost-in-names", "setname", "invite-notify", "standard-replies", "labeled-response", "extended-monitor", "no-implicit-names"}
+var requestedCaps = []string{"sasl", "server-time", "echo-message", "message-tags", "batch", "draft/chathistory", "chathistory", "draft/event-playback", "multi-prefix", "cap-notify", "away-notify", "account-notify", "extended-join", "chghost", "account-tag", "userhost-in-names", "setname", "invite-notify", "standard-replies", "labeled-response", "extended-monitor", "no-implicit-names"}
 ```
 
 `sasl` is only requested when the network has SASL configured (`client.go:1927`); the others
@@ -225,6 +226,17 @@ Two request shapes:
 Replays are deduplicated by `@msgid`: `getMsgID` extracts the tag (`client.go:2219-2224`) and
 the storage layer enforces uniqueness so the same message is never stored twice across
 overlapping history pulls and live traffic (unique index, `storage/schema.sql:120`).
+
+With `draft/event-playback` negotiated, the server also replays JOIN/PART/QUIT/KICK/MODE
+inside `chathistory` batches as real structured lines carrying their original `@msgid`,
+instead of narrating them as `HistServ` PRIVMSG text. `buildHistoryMessage` turns each into
+the same `join`/`part`/`quit`/`kick`/`mode` row type the live handlers already write
+(`client.go:1926` et al.), so a replayed membership event collides with — and is skipped
+against — the live row already stored for that event, via the per-conversation
+`(network_id, conversation, msgid)` unique index. Without the cap, Ergo instead narrates
+these as plain-text PRIVMSGs from `HistServ`, which don't carry the original msgid and can't
+dedup against the live structured row.
+
 Coverage lives in `internal/irc/chathistory_test.go` and `internal/storage/chathistory_test.go`.
 
 **In the client:** joining a channel shows recent backlog immediately, and scrolling up loads

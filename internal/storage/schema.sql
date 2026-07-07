@@ -191,9 +191,13 @@ CREATE TABLE IF NOT EXISTS activity_ignored_senders (
 
 CREATE INDEX IF NOT EXISTS idx_messages_network_channel_time ON messages(network_id, channel_id, timestamp);
 CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
--- Partial unique index: dedup CHATHISTORY replays by IRCv3 msgid, while leaving
--- legacy/local rows (msgid IS NULL) exempt so they never collide.
-CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_network_msgid ON messages(network_id, msgid) WHERE msgid IS NOT NULL;
+-- Per-conversation dedup: a broadcast event (one QUIT/one msgid) fans out to one
+-- row per shared channel, so the key includes the conversation (channel_id for
+-- channels, pm_target for DMs). COALESCE avoids SQLite's "every NULL is distinct"
+-- behaviour that would otherwise defeat dedup for DM rows (channel_id IS NULL).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_conv_msgid
+  ON messages(network_id, COALESCE(channel_id, 0), COALESCE(pm_target, ''), msgid)
+  WHERE msgid IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_servers_network_order ON servers(network_id, "order");
 CREATE INDEX IF NOT EXISTS idx_pinned_network_channel ON pinned_messages(network_id, channel_id);
 CREATE INDEX IF NOT EXISTS idx_activity_items_seen_time ON activity_items(seen, timestamp);

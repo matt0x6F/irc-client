@@ -1330,6 +1330,59 @@ func TestNetwork_IdentifyAsBot_UpdateRoundTrips(t *testing.T) {
 
 // ---------- IRCv3 reply/channel-context tags ----------
 
+// TestConversationDedupAllowsMultiChannelQuit verifies that the dedup index is
+// keyed on the conversation (network_id, channel_id/pm_target), not just
+// (network_id, msgid). A single broadcast event (e.g. one QUIT) legitimately
+// fans out to one row per shared channel, all carrying the same msgid; the
+// dedup index must allow those sibling rows to coexist while still deduping a
+// replay of the *same* conversation+msgid (e.g. a CHATHISTORY replay of the
+// quit already stored for #a).
+func TestConversationDedupAllowsMultiChannelQuit(t *testing.T) {
+	s := newTestStorage(t)
+	net := makeNetwork("DedupNet")
+	if err := s.CreateNetwork(net); err != nil {
+		t.Fatalf("CreateNetwork: %v", err)
+	}
+	chA := &Channel{NetworkID: net.ID, Name: "#a", CreatedAt: time.Now()}
+	if err := s.CreateChannel(chA); err != nil {
+		t.Fatalf("CreateChannel #a: %v", err)
+	}
+	chB := &Channel{NetworkID: net.ID, Name: "#b", CreatedAt: time.Now()}
+	if err := s.CreateChannel(chB); err != nil {
+		t.Fatalf("CreateChannel #b: %v", err)
+	}
+
+	// One QUIT (one msgid) fans out to two channels — both rows must persist.
+	q := Message{NetworkID: net.ID, User: "bob", Message: "bob quit", MessageType: "quit", Timestamp: time.Now(), MsgID: "quit123"}
+	qa := q
+	qa.ChannelID = &chA.ID
+	qb := q
+	qb.ChannelID = &chB.ID
+	if err := s.WriteMessageSync(qa); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteMessageSync(qb); err != nil {
+		t.Fatal(err)
+	}
+
+	// A CHATHISTORY replay of #a's quit (same conversation+msgid) must dedup.
+	n, err := s.WriteHistoryMessages([]Message{qa})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("replay of existing quit should insert 0 rows, got %d", n)
+	}
+
+	var got int
+	if err := s.db.Get(&got, "SELECT count(*) FROM messages WHERE network_id = ?", net.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got != 2 {
+		t.Fatalf("want 2 quit rows (one per channel), got %d", got)
+	}
+}
+
 func TestMessageReplyContextRoundTrip(t *testing.T) {
 	s := newTestStorage(t)
 	net := makeNetwork("ReplyNet")
