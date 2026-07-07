@@ -39,13 +39,14 @@ test('activity inbox renders a received invite', async ({ page, runtime }) => {
     // Open the global Activity destination (top of the tree).
     await page.getByTestId('activity-node').click();
 
-    // The invite should render in the inbox — "invitebot" sent it to #invite-target.
+    // The invite should render as a row in the inbox — "invitebot" sent it to
+    // #invite-target. Target the row by its accessible name (the row is a button
+    // labelled "<channel> — open") to avoid matching both the row label and the
+    // preview text.
     await expect(
-      page.getByText('invitebot', { exact: false }),
+      page.getByRole('button', { name: /#invite-target/ }),
     ).toBeVisible({ timeout: 10_000 });
-    await expect(
-      page.getByText('#invite-target', { exact: false }),
-    ).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('invitebot', { exact: false }).first()).toBeVisible();
   } finally {
     peer.close();
   }
