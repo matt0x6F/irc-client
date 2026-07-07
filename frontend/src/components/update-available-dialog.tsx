@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import { CheckForUpdates, SkipUpdateVersion } from '../../wailsjs/go/main/App';
+import { renderReleaseNotes } from '../lib/release-notes';
 
 // Shape of the updater:update-available payload emitted by the Go backend's
 // surfaceUpdateIfAvailable (see app_updater.go). currentVersion is the running
@@ -78,8 +79,8 @@ export function UpdateAvailableDialog() {
         </div>
 
         {info.notes ? (
-          <div className="overflow-y-auto px-5 py-4 text-sm text-foreground/90 whitespace-pre-wrap break-words">
-            {info.notes}
+          <div className="overflow-y-auto px-5 py-4 text-sm text-foreground/90 break-words space-y-2">
+            {renderReleaseNotes(info.notes)}
           </div>
         ) : (
           <div className="px-5 py-4 text-sm text-muted-foreground">A new version is ready to install.</div>

@@ -359,8 +359,18 @@ export function MessageView({ networkId, selectedChannel }: MessageViewProps) {
 
   // Drive the return-to-bottom badge (isNearBottom) and maintain the bottom-pin by
   // scroll *direction*: an upward (user) scroll releases it; reaching the bottom
-  // re-engages it. Our own scroll-to-bottom and content growth only move scrollTop
-  // down (or leave it), so they never spuriously release the pin.
+  // re-engages it.
+  //
+  // The upward-scroll release is gated on `!isNear`: an involuntary downward
+  // scrollTop *clamp* must not be mistaken for the user scrolling up to read
+  // history. That clamp happens routinely during a fast flood — rows measure
+  // SHORTER than estimateSize (44px vs a ~34px single line), so scrollHeight
+  // shrinks and the browser pulls scrollTop down to the new max while we're still
+  // pinned at the bottom. Without the guard that decrease released the pin, and
+  // since the burst produced no further render to re-pin, the pane was stranded
+  // part-way up with the latest rows virtualized out (see the "windowed subset"
+  // e2e). A genuine scroll-up to read history moves AWAY from the bottom, so
+  // isNear is false there and the release still fires.
   const checkIfNearBottom = () => {
     const container = scrollContainerRef.current;
     if (!container) return;
@@ -369,7 +379,7 @@ export function MessageView({ networkId, selectedChannel }: MessageViewProps) {
     const isNear = container.scrollHeight - scrollTop - container.clientHeight < threshold;
     setIsNearBottom(isNear);
 
-    if (scrollTop < lastScrollTopRef.current - 4) {
+    if (scrollTop < lastScrollTopRef.current - 4 && !isNear) {
       stickToBottomRef.current = false;
     } else if (isNear) {
       stickToBottomRef.current = true;
@@ -444,6 +454,10 @@ export function MessageView({ networkId, selectedChannel }: MessageViewProps) {
         const step = () => {
           const c = scrollContainerRef.current;
           if (!c) { loadingOlderRef.current = false; return; }
+          // A return-to-bottom request (badge / channel switch) re-armed the pin
+          // mid-restore. Abort: keep restoring the top-anchor would fight — and
+          // override — that scroll, stranding the pane at the top (badge no-op).
+          if (stickToBottomRef.current) { loadingOlderRef.current = false; return; }
           const prevBehavior = c.style.scrollBehavior;
           c.style.scrollBehavior = 'auto';
           // Coarse height-delta first, to bring the anchor row back into the mounted
@@ -565,8 +579,12 @@ export function MessageView({ networkId, selectedChannel }: MessageViewProps) {
       returnToLive(); // reloads the latest messages and flips back to live mode
     }
     // Re-arm the pin; the layout effect refines to the exact last row as rows
-    // measure (and once returnToLive's new buffer lands). scrollToEnd animates for
-    // the live case since the container no longer defaults to CSS smooth.
+    // measure (and once returnToLive's new buffer lands). Setting the pin BEFORE the
+    // scroll also cancels any in-flight older-history restore: maybeLoadOlder's rAF
+    // settle loop bails as soon as it sees stickToBottom, so it can't yank scrollTop
+    // back to the top-anchor and no-op this scrollToEnd (the badge-does-nothing race).
+    // scrollToEnd animates for the live case since the container no longer defaults
+    // to CSS smooth.
     stickToBottomRef.current = true;
     setIsNearBottom(true);
     setAtBottom(true); // resume plain latest-100 loads (returnToLive also sets this)
