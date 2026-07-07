@@ -484,6 +484,169 @@ func (c *IRCClient) handleWelcome(e ircmsg.Message) {
 	}
 }
 
+// handleJoin processes an inbound JOIN: it creates the channel record if this is
+// the first we've seen it, adds the joiner to the channel's user list, and — when
+// WE are the one joining — marks the channel open and kicks off NAMES/CHATHISTORY
+// catch-up/WHOX seeding. It is extracted from setupHandlers so tests can drive the
+// real production path without a live connection.
+func (c *IRCClient) handleJoin(e ircmsg.Message) {
+	channel := e.Params[0]
+	user := e.Nick()
+
+	// IRCv3 bot mode: a bot's JOIN carries the `bot` tag too, so we can
+	// recognize it before it speaks.
+	c.maybeMarkBotFromTag(e)
+	// account-tag: a JOIN may also carry the `@account` tag.
+	c.maybeApplyAccountTag(e)
+	// extended-join: when negotiated, JOIN carries the joiner's account.
+	c.maybeApplyExtendedJoin(e)
+
+	logger.Log.Debug().
+		Str("user", user).
+		Str("channel", channel).
+		Str("network", c.network.Name).
+		Str("our_nick", c.network.Nickname).
+		Msg("User joined channel")
+
+	// Get or create channel in database
+	ch, err := c.storage.GetChannelByName(c.networkID, channel)
+	channelCreated := false
+	if err != nil {
+		// Channel doesn't exist, create it
+		logger.Log.Debug().Str("channel", channel).Msg("Channel doesn't exist, creating it")
+		now := time.Now()
+		newChannel := &storage.Channel{
+			NetworkID: c.networkID,
+			Name:      channel,
+			AutoJoin:  false,
+			IsOpen:    false, // Dialog not open yet - will be opened when user selects it
+			CreatedAt: time.Now(),
+			UpdatedAt: &now,
+		}
+		if err := c.storage.CreateChannel(newChannel); err != nil {
+			logger.Log.Error().Err(err).Str("channel", channel).Msg("Failed to create channel")
+			// Still try to continue with the rest
+		} else {
+			logger.Log.Debug().Str("channel", channel).Msg("Successfully created channel in database")
+			ch = newChannel
+			channelCreated = true
+		}
+	}
+
+	// If the current user joined, mark channel as open (JOINED state)
+	channelUpdated := false
+	if c.isMe(user) && ch != nil {
+		if !ch.IsOpen {
+			c.storage.UpdateChannelIsOpen(ch.ID, true)
+			channelUpdated = true
+		}
+		// The join succeeded, so the key it was sent with (possibly none)
+		// is now the channel's truth — persist it for auto-rejoin (+k).
+		c.persistPendingJoinKey(channel, ch)
+	}
+
+	// Add user to channel user list (for all users, not just ourselves)
+	if ch != nil {
+		if err := c.storage.AddChannelUser(ch.ID, user, ""); err != nil {
+			logger.Log.Error().Err(err).Str("user", user).Str("channel", channel).Msg("Failed to add user to channel user list")
+		} else {
+			logger.Log.Debug().Str("user", user).Str("channel", channel).Msg("Added user to channel user list")
+			// Verify the write is committed by reading it back (forces WAL sync)
+			// This ensures the user is immediately visible when the frontend queries
+			_, _ = c.storage.GetChannelUsers(ch.ID)
+		}
+	}
+
+	// If the current user joined, the server automatically sends the NAMES
+	// list (RPL_NAMREPLY 353 / RPL_ENDOFNAMES 366) as part of the JOIN
+	// response; those handlers clear and repopulate channel_users and emit
+	// channel.names.complete. We deliberately do NOT send an explicit NAMES
+	// here — it's redundant with the server's automatic reply and doubles the
+	// outgoing burst when rejoining a whole session after a reconnect.
+	if c.isMe(user) {
+		logger.Log.Info().
+			Str("channel", channel).
+			Int64("network_id", c.networkID).
+			Msg("Our user joined; awaiting server NAMES reply to populate user list")
+
+		// With no-implicit-names the server won't send the automatic NAMES
+		// reply, so request it explicitly — otherwise the roster stays empty
+		// (WHOX seeds attributes but not membership prefixes).
+		if cmd := c.namesOnSelfJoin(channel); cmd != "" {
+			if err := c.conn.SendRaw(cmd); err != nil {
+				logger.Log.Debug().Err(err).Str("channel", channel).Msg("explicit NAMES request failed")
+			}
+		}
+
+		// Catch-up: pull recent server-side history for the channel so anything
+		// said while we were away is backfilled. No-op when the server didn't
+		// grant CHATHISTORY. Replays arrive via handleChatHistoryBatch and are
+		// deduped by msgid, so re-joining a channel won't duplicate messages.
+		if c.chatHistoryEnabled() {
+			if err := c.RequestChatHistoryLatest(channel, defaultChatHistoryLimit); err != nil {
+				logger.Log.Debug().Err(err).Str("channel", channel).Msg("CHATHISTORY LATEST request skipped")
+			}
+		}
+
+		// Bulk-seed the roster (account/host/away/realname) with one extended
+		// WHO when the server supports WHOX, instead of waiting for live churn.
+		if c.whoxSupported() {
+			if err := c.requestWHOX(channel); err != nil {
+				logger.Log.Debug().Err(err).Str("channel", channel).Msg("WHOX request skipped")
+			}
+		}
+	}
+
+	// Store join message in the channel (use sync write so it appears immediately)
+	if ch != nil {
+		rawLine, _ := e.Line()
+		joinMsg := storage.Message{
+			NetworkID:   c.networkID,
+			ChannelID:   &ch.ID,
+			User:        user,
+			Message:     fmt.Sprintf("%s joined the channel", user),
+			MessageType: "join",
+			Timestamp:   time.Now(),
+			RawLine:     rawLine,
+			MsgID:       c.getMsgID(e),
+		}
+		if err := c.storage.WriteMessageSync(joinMsg); err != nil {
+			// During shutdown, storage may be closed - this is expected
+			if err.Error() == "storage is closed" {
+				logger.Log.Debug().Msg("Skipping join message storage (storage closed during shutdown)")
+			} else {
+				logger.Log.Error().Err(err).Msg("Failed to store join message")
+			}
+		}
+	}
+
+	// Emit event
+	c.eventBus.Emit(events.Event{
+		Type: EventUserJoined,
+		Data: map[string]interface{}{
+			"network":   c.network.Address,
+			"networkId": c.networkID,
+			"channel":   channel,
+			"user":      user,
+		},
+		Timestamp: time.Now(),
+		Source:    events.EventSourceIRC,
+	})
+
+	// Emit channels changed event if channel was created or updated
+	if channelCreated || (channelUpdated && c.isMe(user)) {
+		c.eventBus.Emit(events.Event{
+			Type: EventChannelsChanged,
+			Data: map[string]interface{}{
+				"network":   c.network.Address,
+				"networkId": c.networkID,
+			},
+			Timestamp: time.Now(),
+			Source:    events.EventSourceIRC,
+		})
+	}
+}
+
 // handlePart processes an inbound PART: it removes the user from the channel's
 // user list and, when WE are the one leaving, marks the channel closed so it
 // drops out of the sidebar. Self-detection uses the live nick (isMe), so a PART
@@ -530,6 +693,7 @@ func (c *IRCClient) handlePart(e ircmsg.Message) {
 			MessageType: "part",
 			Timestamp:   time.Now(),
 			RawLine:     rawLine,
+			MsgID:       c.getMsgID(e),
 		}
 		if err := c.storage.WriteMessageSync(partMsg); err != nil {
 			// During shutdown, storage may be closed - this is expected
@@ -619,6 +783,7 @@ func (c *IRCClient) handleQuit(e ircmsg.Message) {
 							MessageType: "quit",
 							Timestamp:   time.Now(),
 							RawLine:     rawLine,
+							MsgID:       c.getMsgID(e),
 						}
 						if err := c.storage.WriteMessageSync(quitMsg); err != nil {
 							// During shutdown, storage may be closed - this is expected
@@ -1733,162 +1898,7 @@ func (c *IRCClient) setupHandlers() {
 	c.conn.AddCallback("PRIVMSG", c.handlePrivmsg)
 
 	// User joined channel
-	c.conn.AddCallback("JOIN", func(e ircmsg.Message) {
-		channel := e.Params[0]
-		user := e.Nick()
-
-		// IRCv3 bot mode: a bot's JOIN carries the `bot` tag too, so we can
-		// recognize it before it speaks.
-		c.maybeMarkBotFromTag(e)
-		// account-tag: a JOIN may also carry the `@account` tag.
-		c.maybeApplyAccountTag(e)
-		// extended-join: when negotiated, JOIN carries the joiner's account.
-		c.maybeApplyExtendedJoin(e)
-
-		logger.Log.Debug().
-			Str("user", user).
-			Str("channel", channel).
-			Str("network", c.network.Name).
-			Str("our_nick", c.network.Nickname).
-			Msg("User joined channel")
-
-		// Get or create channel in database
-		ch, err := c.storage.GetChannelByName(c.networkID, channel)
-		channelCreated := false
-		if err != nil {
-			// Channel doesn't exist, create it
-			logger.Log.Debug().Str("channel", channel).Msg("Channel doesn't exist, creating it")
-			now := time.Now()
-			newChannel := &storage.Channel{
-				NetworkID: c.networkID,
-				Name:      channel,
-				AutoJoin:  false,
-				IsOpen:    false, // Dialog not open yet - will be opened when user selects it
-				CreatedAt: time.Now(),
-				UpdatedAt: &now,
-			}
-			if err := c.storage.CreateChannel(newChannel); err != nil {
-				logger.Log.Error().Err(err).Str("channel", channel).Msg("Failed to create channel")
-				// Still try to continue with the rest
-			} else {
-				logger.Log.Debug().Str("channel", channel).Msg("Successfully created channel in database")
-				ch = newChannel
-				channelCreated = true
-			}
-		}
-
-		// If the current user joined, mark channel as open (JOINED state)
-		channelUpdated := false
-		if c.isMe(user) && ch != nil {
-			if !ch.IsOpen {
-				c.storage.UpdateChannelIsOpen(ch.ID, true)
-				channelUpdated = true
-			}
-			// The join succeeded, so the key it was sent with (possibly none)
-			// is now the channel's truth — persist it for auto-rejoin (+k).
-			c.persistPendingJoinKey(channel, ch)
-		}
-
-		// Add user to channel user list (for all users, not just ourselves)
-		if ch != nil {
-			if err := c.storage.AddChannelUser(ch.ID, user, ""); err != nil {
-				logger.Log.Error().Err(err).Str("user", user).Str("channel", channel).Msg("Failed to add user to channel user list")
-			} else {
-				logger.Log.Debug().Str("user", user).Str("channel", channel).Msg("Added user to channel user list")
-				// Verify the write is committed by reading it back (forces WAL sync)
-				// This ensures the user is immediately visible when the frontend queries
-				_, _ = c.storage.GetChannelUsers(ch.ID)
-			}
-		}
-
-		// If the current user joined, the server automatically sends the NAMES
-		// list (RPL_NAMREPLY 353 / RPL_ENDOFNAMES 366) as part of the JOIN
-		// response; those handlers clear and repopulate channel_users and emit
-		// channel.names.complete. We deliberately do NOT send an explicit NAMES
-		// here — it's redundant with the server's automatic reply and doubles the
-		// outgoing burst when rejoining a whole session after a reconnect.
-		if c.isMe(user) {
-			logger.Log.Info().
-				Str("channel", channel).
-				Int64("network_id", c.networkID).
-				Msg("Our user joined; awaiting server NAMES reply to populate user list")
-
-			// With no-implicit-names the server won't send the automatic NAMES
-			// reply, so request it explicitly — otherwise the roster stays empty
-			// (WHOX seeds attributes but not membership prefixes).
-			if cmd := c.namesOnSelfJoin(channel); cmd != "" {
-				if err := c.conn.SendRaw(cmd); err != nil {
-					logger.Log.Debug().Err(err).Str("channel", channel).Msg("explicit NAMES request failed")
-				}
-			}
-
-			// Catch-up: pull recent server-side history for the channel so anything
-			// said while we were away is backfilled. No-op when the server didn't
-			// grant CHATHISTORY. Replays arrive via handleChatHistoryBatch and are
-			// deduped by msgid, so re-joining a channel won't duplicate messages.
-			if c.chatHistoryEnabled() {
-				if err := c.RequestChatHistoryLatest(channel, defaultChatHistoryLimit); err != nil {
-					logger.Log.Debug().Err(err).Str("channel", channel).Msg("CHATHISTORY LATEST request skipped")
-				}
-			}
-
-			// Bulk-seed the roster (account/host/away/realname) with one extended
-			// WHO when the server supports WHOX, instead of waiting for live churn.
-			if c.whoxSupported() {
-				if err := c.requestWHOX(channel); err != nil {
-					logger.Log.Debug().Err(err).Str("channel", channel).Msg("WHOX request skipped")
-				}
-			}
-		}
-
-		// Store join message in the channel (use sync write so it appears immediately)
-		if ch != nil {
-			rawLine, _ := e.Line()
-			joinMsg := storage.Message{
-				NetworkID:   c.networkID,
-				ChannelID:   &ch.ID,
-				User:        user,
-				Message:     fmt.Sprintf("%s joined the channel", user),
-				MessageType: "join",
-				Timestamp:   time.Now(),
-				RawLine:     rawLine,
-			}
-			if err := c.storage.WriteMessageSync(joinMsg); err != nil {
-				// During shutdown, storage may be closed - this is expected
-				if err.Error() == "storage is closed" {
-					logger.Log.Debug().Msg("Skipping join message storage (storage closed during shutdown)")
-				} else {
-					logger.Log.Error().Err(err).Msg("Failed to store join message")
-				}
-			}
-		}
-
-		// Emit event
-		c.eventBus.Emit(events.Event{
-			Type: EventUserJoined,
-			Data: map[string]interface{}{
-				"network":   c.network.Address,
-				"networkId": c.networkID,
-				"channel":   channel,
-				"user":      user,
-			},
-			Timestamp: time.Now(),
-			Source:    events.EventSourceIRC,
-		})
-
-		// Emit channels changed event if channel was created or updated
-		if channelCreated || (channelUpdated && c.isMe(user)) {
-			c.eventBus.Emit(events.Event{
-				Type: EventChannelsChanged,
-				Data: map[string]interface{}{
-					"network":   c.network.Address,
-					"networkId": c.networkID,
-				},
-				Timestamp: time.Now(),
-				Source:    events.EventSourceIRC,
-			})
-		}
-	})
+	c.conn.AddCallback("JOIN", c.handleJoin)
 
 	// User parted channel
 	c.conn.AddCallback("PART", c.handlePart)
