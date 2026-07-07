@@ -282,6 +282,52 @@ export class ChannelUser {
 }
 
 /**
+ * IgnoredSenderRow is one ignored sender annotated with its network name, for
+ * the settings UI's grouped list.
+ */
+export class IgnoredSenderRow {
+    /**
+     * Creates a new IgnoredSenderRow instance.
+     * @param {Partial<IgnoredSenderRow>} [$$source = {}] - The source object to create the IgnoredSenderRow.
+     */
+    constructor($$source = {}) {
+        if (!("networkId" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["networkId"] = 0;
+        }
+        if (!("networkName" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["networkName"] = "";
+        }
+        if (!("nick" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["nick"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new IgnoredSenderRow instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {IgnoredSenderRow}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new IgnoredSenderRow(/** @type {Partial<IgnoredSenderRow>} */($$parsedSource));
+    }
+}
+
+/**
  * Message represents an IRC message
  */
 export class Message {
