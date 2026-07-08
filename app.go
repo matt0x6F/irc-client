@@ -102,7 +102,16 @@ func NewApp() (*App, error) {
 	applyLogConfig(stor, baseDir)
 
 	eventBus := events.NewEventBus()
-	creds := security.NewCredentialStore(security.NewKeychain())
+	// IRC secrets live in an encrypted file store under dataDir rather than the
+	// OS keychain. Release builds are ad-hoc signed, and macOS binds keychain
+	// ACLs to the binary's code signature (cdhash) — so every app update orphaned
+	// the stored SASL password and forced re-entry. The file store depends only
+	// on dataDir, so secrets survive updates. See internal/security/file_backend.go.
+	secretBackend, err := security.NewSecretBackend(baseDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize credential store: %w", err)
+	}
+	creds := security.NewCredentialStore(secretBackend)
 
 	pluginDir := filepath.Join(baseDir, "plugins")
 	pluginMgr := plugin.NewManager(eventBus, pluginDir)
