@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { main, storage } from '../../wailsjs/go/models';
 import { GetChannels, GetJoinedChannels, GetOpenChannels, GetServers, LeaveChannel, CloseChannel, ToggleChannelAutoJoin, ToggleNetworkAutoConnect, SetChannelOpen, GetPrivateMessageConversations, SendCommand, SetPrivateMessageOpen, ClearPaneFocus } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
@@ -203,6 +203,22 @@ export function ServerTree({
     
     return () => unsubscribe();
   }, []);
+
+  // Clamp the fixed-position context menu into the viewport. It renders at the
+  // raw click coordinates, so a right-click near the window's bottom (e.g. the
+  // last network in a long tree) would push its items off-screen where they
+  // cannot be clicked — there is no scroll container that can reach them. Runs
+  // again when async menu data (joined channels, network row) changes the height.
+  useLayoutEffect(() => {
+    const el = contextMenuRef.current;
+    if (!el || !contextMenu.type) return;
+    const margin = 8;
+    const rect = el.getBoundingClientRect();
+    const left = Math.min(contextMenu.x, window.innerWidth - rect.width - margin);
+    const top = Math.min(contextMenu.y, window.innerHeight - rect.height - margin);
+    el.style.left = `${Math.max(margin, left)}px`;
+    el.style.top = `${Math.max(margin, top)}px`;
+  }, [contextMenu, contextMenuIsJoined, contextMenuJoinedChannels, contextMenuNetworkData]);
 
   // Close context menu on outside click
   useEffect(() => {
