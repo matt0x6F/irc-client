@@ -27,6 +27,7 @@ func TestAppSubscribesPreviouslyDeadForwardedEvents(t *testing.T) {
 		irc.EventBotDetected,
 		irc.EventUserMetaChanged,
 		irc.EventSASLFailed,
+		irc.EventStatusMessage,
 	}
 	for _, ev := range required {
 		if !subscribed[ev] {

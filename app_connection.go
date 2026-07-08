@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/matt0x6f/irc-client/internal/constants"
+	"github.com/matt0x6f/irc-client/internal/events"
 	"github.com/matt0x6f/irc-client/internal/irc"
 	"github.com/matt0x6f/irc-client/internal/logger"
 	"github.com/matt0x6f/irc-client/internal/security"
@@ -39,6 +40,29 @@ type NetworkConfig struct {
 	SASLExternalCert string         `json:"sasl_external_cert"`
 	AutoConnect      bool           `json:"auto_connect"`
 	IdentifyAsBot    bool           `json:"identify_as_bot"`
+}
+
+// writeNetworkStatus writes a line to a network's status buffer and emits
+// status.message on the bus (forwarded to the frontend by OnEvent) so an open
+// server-log pane refreshes live. The sync write commits the row before the
+// notify, so the reload the event triggers can already see it.
+func (a *App) writeNetworkStatus(networkID int64, text string) {
+	if err := a.storage.WriteMessageSync(storage.Message{
+		NetworkID:   networkID,
+		ChannelID:   nil,
+		User:        "*",
+		Message:     text,
+		MessageType: "status",
+		Timestamp:   time.Now(),
+	}); err != nil {
+		logger.Log.Warn().Err(err).Int64("network_id", networkID).Msg("Failed to write network status line")
+	}
+	a.eventBus.Emit(events.Event{
+		Type:      irc.EventStatusMessage,
+		Data:      map[string]interface{}{"networkId": networkID},
+		Timestamp: time.Now(),
+		Source:    events.EventSourceSystem,
+	})
 }
 
 // stringPtr converts a string to *string, returning nil for empty strings
@@ -464,14 +488,7 @@ func (a *App) connectNetwork(config NetworkConfig, reconnect bool) error {
 		if stsForced {
 			connectingMsg = fmt.Sprintf("Connecting to %s:%d (TLS enforced by STS)...", tempNetwork.Address, tempNetwork.Port)
 		}
-		a.storage.WriteMessage(storage.Message{
-			NetworkID:   network.ID,
-			ChannelID:   nil,
-			User:        "*",
-			Message:     connectingMsg,
-			MessageType: "status",
-			Timestamp:   time.Now(),
-		})
+		a.writeNetworkStatus(network.ID, connectingMsg)
 
 		mechanism := ""
 		username := ""
@@ -517,14 +534,7 @@ func (a *App) connectNetwork(config NetworkConfig, reconnect bool) error {
 			lastErr = connErr
 			logger.Log.Warn().Err(connErr).Str("server", serverKey).Msg("Failed to connect")
 
-			a.storage.WriteMessage(storage.Message{
-				NetworkID:   network.ID,
-				ChannelID:   nil,
-				User:        "*",
-				Message:     fmt.Sprintf("Failed to connect to %s:%d: %v", srv.Address, srv.Port, connErr),
-				MessageType: "status",
-				Timestamp:   time.Now(),
-			})
+			a.writeNetworkStatus(network.ID, fmt.Sprintf("Failed to connect to %s:%d: %v", srv.Address, srv.Port, connErr))
 
 			continue
 		}
@@ -552,14 +562,7 @@ func (a *App) connectNetwork(config NetworkConfig, reconnect bool) error {
 		close(connectDone)
 		a.mu.Unlock()
 
-		a.storage.WriteMessage(storage.Message{
-			NetworkID:   network.ID,
-			ChannelID:   nil,
-			User:        "*",
-			Message:     fmt.Sprintf("Connected to %s:%d", srv.Address, srv.Port),
-			MessageType: "status",
-			Timestamp:   time.Now(),
-		})
+		a.writeNetworkStatus(network.ID, fmt.Sprintf("Connected to %s:%d", srv.Address, srv.Port))
 
 		// A successful reconnect surfaces itself in the channel buffers via the JOIN
 		// messages the server echoes as we rejoin, so no separate "Reconnected" marker
@@ -575,14 +578,7 @@ func (a *App) connectNetwork(config NetworkConfig, reconnect bool) error {
 	close(connectDone)
 	a.mu.Unlock()
 
-	a.storage.WriteMessage(storage.Message{
-		NetworkID:   network.ID,
-		ChannelID:   nil,
-		User:        "*",
-		Message:     fmt.Sprintf("Failed to connect to any server: %v", lastErr),
-		MessageType: "status",
-		Timestamp:   time.Now(),
-	})
+	a.writeNetworkStatus(network.ID, fmt.Sprintf("Failed to connect to any server: %v", lastErr))
 
 	return fmt.Errorf("failed to connect to any server: %w", lastErr)
 }
@@ -660,14 +656,7 @@ func (a *App) upgradeToTLS(networkID int64) {
 
 	if err := a.connectNetwork(config, true); err != nil {
 		logger.Log.Error().Err(err).Int64("network_id", networkID).Msg("STS upgrade: TLS reconnect failed")
-		a.storage.WriteMessage(storage.Message{
-			NetworkID:   networkID,
-			ChannelID:   nil,
-			User:        "*",
-			Message:     fmt.Sprintf("STS upgrade to TLS failed: %v", err),
-			MessageType: "status",
-			Timestamp:   time.Now(),
-		})
+		a.writeNetworkStatus(networkID, fmt.Sprintf("STS upgrade to TLS failed: %v", err))
 	}
 }
 
@@ -832,14 +821,7 @@ func (a *App) reconnectWithBackoff(networkID int64, networkName string) {
 			continue
 		}
 
-		a.storage.WriteMessage(storage.Message{
-			NetworkID:   networkID,
-			ChannelID:   nil,
-			User:        "*",
-			Message:     fmt.Sprintf("Attempting to reconnect (attempt %d/%d)...", attempt, maxAttempts),
-			MessageType: "status",
-			Timestamp:   time.Now(),
-		})
+		a.writeNetworkStatus(networkID, fmt.Sprintf("Attempting to reconnect (attempt %d/%d)...", attempt, maxAttempts))
 
 		logger.Log.Info().
 			Int64("network_id", networkID).
@@ -856,14 +838,7 @@ func (a *App) reconnectWithBackoff(networkID int64, networkName string) {
 				Int("attempt", attempt).
 				Msg("Reconnect attempt failed")
 
-			a.storage.WriteMessage(storage.Message{
-				NetworkID:   networkID,
-				ChannelID:   nil,
-				User:        "*",
-				Message:     fmt.Sprintf("Reconnect attempt %d failed: %v", attempt, err),
-				MessageType: "status",
-				Timestamp:   time.Now(),
-			})
+			a.writeNetworkStatus(networkID, fmt.Sprintf("Reconnect attempt %d failed: %v", attempt, err))
 			continue
 		}
 
@@ -874,14 +849,7 @@ func (a *App) reconnectWithBackoff(networkID int64, networkName string) {
 			Int("attempt", attempt).
 			Msg("Reconnected successfully")
 
-		a.storage.WriteMessage(storage.Message{
-			NetworkID:   networkID,
-			ChannelID:   nil,
-			User:        "*",
-			Message:     fmt.Sprintf("Reconnected successfully after %d attempt(s)", attempt),
-			MessageType: "status",
-			Timestamp:   time.Now(),
-		})
+		a.writeNetworkStatus(networkID, fmt.Sprintf("Reconnected successfully after %d attempt(s)", attempt))
 		return
 	}
 
@@ -892,14 +860,7 @@ func (a *App) reconnectWithBackoff(networkID int64, networkName string) {
 		Int("max_attempts", maxAttempts).
 		Msg("Max reconnect attempts reached, giving up")
 
-	a.storage.WriteMessage(storage.Message{
-		NetworkID:   networkID,
-		ChannelID:   nil,
-		User:        "*",
-		Message:     fmt.Sprintf("Failed to reconnect after %d attempts. Please reconnect manually.", maxAttempts),
-		MessageType: "status",
-		Timestamp:   time.Now(),
-	})
+	a.writeNetworkStatus(networkID, fmt.Sprintf("Failed to reconnect after %d attempts. Please reconnect manually.", maxAttempts))
 }
 
 // buildReconnectConfig builds a NetworkConfig from database state for reconnection

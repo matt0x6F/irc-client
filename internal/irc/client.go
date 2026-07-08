@@ -386,7 +386,7 @@ func (c *IRCClient) surfaceManualNickError(attempted, message string) bool {
 	if !manual {
 		return false
 	}
-	c.storage.WriteMessageSync(storage.Message{
+	c.writeStatusBuffer(storage.Message{
 		NetworkID:   c.networkID,
 		ChannelID:   nil,
 		User:        "*",
@@ -422,7 +422,7 @@ func (c *IRCClient) handleNickInUse(e ircmsg.Message) {
 	if registered || alreadyNotified {
 		return
 	}
-	c.storage.WriteMessageSync(storage.Message{
+	c.writeStatusBuffer(storage.Message{
 		NetworkID:   c.networkID,
 		ChannelID:   nil,
 		User:        "*",
@@ -479,7 +479,7 @@ func (c *IRCClient) handleWelcome(e ircmsg.Message) {
 	c.emitNickChanged(nick)
 
 	if nick != preferred {
-		c.storage.WriteMessageSync(storage.Message{
+		c.writeStatusBuffer(storage.Message{
 			NetworkID:   c.networkID,
 			ChannelID:   nil,
 			User:        "*",
@@ -1065,7 +1065,7 @@ func (c *IRCClient) handleForwardedJoin(e ircmsg.Message) {
 		})
 	}
 
-	if err := c.storage.WriteMessageSync(storage.Message{
+	if err := c.writeStatusBuffer(storage.Message{
 		NetworkID:   c.networkID,
 		ChannelID:   nil, // status window
 		User:        "*",
@@ -1132,7 +1132,7 @@ func (c *IRCClient) handleNickMessage(e ircmsg.Message) {
 	c.emitNickChanged(newNick)
 
 	if reclaimed {
-		c.storage.WriteMessageSync(storage.Message{
+		c.writeStatusBuffer(storage.Message{
 			NetworkID:   c.networkID,
 			ChannelID:   nil,
 			User:        "*",
@@ -1545,33 +1545,43 @@ func (c *IRCClient) handleUserOnChannel(e ircmsg.Message) {
 	c.writeStatusLine("status", fmt.Sprintf("%s is already on %s", e.Params[1], e.Params[2]))
 }
 
-// writeStatusLine writes a line to the network status buffer and refreshes it
-// live. The sync write commits the row before the event fires (avoiding a
-// write/notify race), and channel:nil routes the refresh to the status buffer
-// (see the message-event handler in App.tsx).
+// writeStatusBuffer persists a row to the network status buffer and emits
+// status.message so an open server-log pane refreshes live. The sync write
+// commits the row before the event fires (avoiding a write/notify race), and
+// the event deliberately carries no channel/target — the frontend routes a
+// target-less message-event to the "status" pane (see lib/pane-routing.ts).
+//
+// status.message is its own event type rather than a message.received: that
+// type feeds the desktop-notification and activity-inbox classifiers, which
+// substring-match the body — the 001 welcome and many server notices contain
+// our own nick and would phantom-"mention" on every connect.
+func (c *IRCClient) writeStatusBuffer(msg storage.Message) error {
+	err := c.storage.WriteMessageSync(msg)
+	if err != nil {
+		logger.Log.Warn().Err(err).Str("type", msg.MessageType).Msg("Failed to write status buffer row")
+	}
+	c.eventBus.Emit(events.Event{
+		Type: EventStatusMessage,
+		Data: map[string]interface{}{
+			"network":   c.network.Address,
+			"networkId": c.networkID,
+		},
+		Timestamp: time.Now(),
+		Source:    events.EventSourceIRC,
+	})
+	return err
+}
+
+// writeStatusLine writes a plain informational line to the network status
+// buffer and refreshes it live.
 func (c *IRCClient) writeStatusLine(messageType, text string) {
-	if err := c.storage.WriteMessageSync(storage.Message{
+	_ = c.writeStatusBuffer(storage.Message{
 		NetworkID:   c.networkID,
 		ChannelID:   nil,
 		User:        "*",
 		Message:     text,
 		MessageType: messageType,
 		Timestamp:   time.Now(),
-	}); err != nil {
-		logger.Log.Warn().Err(err).Str("type", messageType).Msg("Failed to write status line")
-	}
-	c.eventBus.Emit(events.Event{
-		Type: EventMessageReceived,
-		Data: map[string]interface{}{
-			"network":     c.network.Address,
-			"networkId":   c.networkID,
-			"channel":     nil,
-			"user":        "*",
-			"message":     text,
-			"messageType": "privmsg",
-		},
-		Timestamp: time.Now(),
-		Source:    events.EventSourceIRC,
 	})
 }
 
@@ -1968,7 +1978,7 @@ func (c *IRCClient) onConnect(e ircmsg.Message) {
 		Timestamp:   time.Now(),
 		RawLine:     rawLine,
 	}
-	c.storage.WriteMessage(statusMsg)
+	c.writeStatusBuffer(statusMsg)
 
 	// CAP negotiation and SASL already completed before this callback fired — the
 	// library owns them now and runs them before registration, so there is no
@@ -2043,7 +2053,7 @@ func (c *IRCClient) onDisconnect(e ircmsg.Message) {
 		Timestamp:   time.Now(),
 		RawLine:     rawLine,
 	}
-	c.storage.WriteMessage(statusMsg)
+	c.writeStatusBuffer(statusMsg)
 
 	c.eventBus.Emit(events.Event{
 		Type:      EventConnectionLost,
@@ -2500,7 +2510,7 @@ func (c *IRCClient) setupHandlers() {
 			Timestamp:   time.Now(),
 			RawLine:     rawLine,
 		}
-		c.storage.WriteMessage(statusMsg)
+		c.writeStatusBuffer(statusMsg)
 
 		c.eventBus.Emit(events.Event{
 			Type: EventError,
@@ -2615,7 +2625,7 @@ func (c *IRCClient) setupHandlers() {
 				Timestamp:   time.Now(),
 				RawLine:     rawLine,
 			}
-			c.storage.WriteMessage(statusMsg)
+			c.writeStatusBuffer(statusMsg)
 		}
 	})
 
@@ -2649,7 +2659,7 @@ func (c *IRCClient) setupHandlers() {
 				Timestamp:   time.Now(),
 				RawLine:     rawLine,
 			}
-			c.storage.WriteMessage(statusMsg)
+			c.writeStatusBuffer(statusMsg)
 		}
 	})
 
@@ -2956,7 +2966,7 @@ func (c *IRCClient) setupHandlers() {
 
 	c.conn.AddCallback("CAP", func(e ircmsg.Message) {
 		rawLine, _ := e.Line()
-		c.storage.WriteMessage(storage.Message{
+		c.writeStatusBuffer(storage.Message{
 			NetworkID:   c.networkID,
 			ChannelID:   nil,
 			User:        "*",
@@ -2995,7 +3005,7 @@ func (c *IRCClient) setupHandlers() {
 					c.handleSTSAdvertisement(v)
 				}
 
-				c.storage.WriteMessage(storage.Message{
+				c.writeStatusBuffer(storage.Message{
 					NetworkID:   c.networkID,
 					ChannelID:   nil,
 					User:        "*",
@@ -3021,7 +3031,7 @@ func (c *IRCClient) setupHandlers() {
 				}
 				c.mu.Unlock()
 
-				c.storage.WriteMessage(storage.Message{
+				c.writeStatusBuffer(storage.Message{
 					NetworkID:   c.networkID,
 					ChannelID:   nil,
 					User:        "*",
@@ -3038,7 +3048,7 @@ func (c *IRCClient) setupHandlers() {
 			if len(e.Params) >= 3 {
 				rejected = e.Params[2]
 			}
-			c.storage.WriteMessage(storage.Message{
+			c.writeStatusBuffer(storage.Message{
 				NetworkID:   c.networkID,
 				ChannelID:   nil,
 				User:        "*",
@@ -3058,7 +3068,7 @@ func (c *IRCClient) setupHandlers() {
 					c.setChatHistoryMax(v)
 				}
 
-				c.storage.WriteMessage(storage.Message{
+				c.writeStatusBuffer(storage.Message{
 					NetworkID:   c.networkID,
 					ChannelID:   nil,
 					User:        "*",
@@ -3074,7 +3084,7 @@ func (c *IRCClient) setupHandlers() {
 				c.mu.RUnlock()
 				if len(toRequest) > 0 {
 					reqStr := strings.Join(toRequest, " ")
-					c.storage.WriteMessage(storage.Message{
+					c.writeStatusBuffer(storage.Message{
 						NetworkID:   c.networkID,
 						ChannelID:   nil,
 						User:        "*",
@@ -3100,7 +3110,7 @@ func (c *IRCClient) setupHandlers() {
 				}
 				c.mu.Unlock()
 
-				c.storage.WriteMessage(storage.Message{
+				c.writeStatusBuffer(storage.Message{
 					NetworkID:   c.networkID,
 					ChannelID:   nil,
 					User:        "*",
@@ -4073,7 +4083,7 @@ func (c *IRCClient) handleSTSAdvertisement(value string) {
 		return
 	}
 
-	c.storage.WriteMessage(storage.Message{
+	c.writeStatusBuffer(storage.Message{
 		NetworkID:   c.networkID,
 		ChannelID:   nil,
 		User:        "*",
@@ -4222,7 +4232,7 @@ func (c *IRCClient) Connect() error {
 		// write a status line — do NOT register unauthenticated.
 		if isSASLFailure(c.saslEnabled, err) {
 			c.setAuthFailed(true)
-			c.storage.WriteMessage(storage.Message{
+			c.writeStatusBuffer(storage.Message{
 				NetworkID:   c.networkID,
 				ChannelID:   nil,
 				User:        "*",
@@ -4832,7 +4842,7 @@ func (c *IRCClient) SetNetworkID(id int64) {
 
 // WriteStatusMessage writes a message to the status window
 func (c *IRCClient) WriteStatusMessage(message string) error {
-	statusMsg := storage.Message{
+	return c.writeStatusBuffer(storage.Message{
 		NetworkID:   c.networkID,
 		ChannelID:   nil, // Status window
 		User:        "*",
@@ -4840,8 +4850,7 @@ func (c *IRCClient) WriteStatusMessage(message string) error {
 		MessageType: "status",
 		Timestamp:   time.Now(),
 		RawLine:     "",
-	}
-	return c.storage.WriteMessage(statusMsg)
+	})
 }
 
 // validateRawCommand rejects a raw command containing a CR or LF. The library's
@@ -4888,7 +4897,7 @@ func (c *IRCClient) SendRawCommand(command string) error {
 		RawLine:     command,
 	}
 
-	if err := c.storage.WriteMessage(msg); err != nil {
+	if err := c.writeStatusBuffer(msg); err != nil {
 		return fmt.Errorf("failed to store command: %w", err)
 	}
 
@@ -5265,7 +5274,7 @@ func (c *IRCClient) SendCTCPRequest(target, command, args string) error {
 		Timestamp:   time.Now(),
 		RawLine:     "",
 	}
-	c.storage.WriteMessage(statusMsg)
+	c.writeStatusBuffer(statusMsg)
 
 	return nil
 }
@@ -5310,7 +5319,7 @@ func (c *IRCClient) handleNotice(e ircmsg.Message) {
 				Timestamp:   c.getMessageTime(e),
 				RawLine:     rawLine,
 			}
-			c.storage.WriteMessage(statusMsg)
+			c.writeStatusBuffer(statusMsg)
 			return
 		}
 	}
@@ -5390,8 +5399,9 @@ func (c *IRCClient) handleNotice(e ircmsg.Message) {
 		}
 
 		if pmTarget == "" {
-			// Server notice — buffered write into Status, no event (unchanged).
-			c.storage.WriteMessage(msg)
+			// Server notice — lands in Status; writeStatusBuffer commits it and
+			// announces status.message so an open server-log pane refreshes live.
+			c.writeStatusBuffer(msg)
 		} else {
 			// Service/user notice — sync write so it shows immediately, plus a
 			// message event so the query pane badges and updates live. The
