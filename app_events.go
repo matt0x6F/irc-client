@@ -49,6 +49,7 @@ var appForwardedEventTypes = []string{
 	irc.EventSASLFailed,
 	irc.EventSTSPolicy,
 	irc.EventInviteReceived,
+	irc.EventStatusMessage,
 }
 
 // OnEvent implements the events.Subscriber interface to forward events to frontend
@@ -146,7 +147,8 @@ func (a *App) OnEvent(event events.Event) {
 		event.Type == irc.EventUserKicked || event.Type == irc.EventUserNick ||
 		event.Type == irc.EventChannelTopic || event.Type == irc.EventChannelMode ||
 		event.Type == irc.EventChannelUserMode || event.Type == irc.EventChannelBanList ||
-		event.Type == irc.EventError || event.Type == "channel.names.complete" {
+		event.Type == irc.EventError || event.Type == "channel.names.complete" ||
+		event.Type == irc.EventStatusMessage {
 		a.emit("message-event", map[string]interface{}{
 			"type":      event.Type,
 			"data":      event.Data,

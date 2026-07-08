@@ -32,6 +32,7 @@ const (
 	EventMonitorChanged        = "monitor.changed" // a monitored nick's online/offline state changed (MONITOR)
 	EventTypingReceived        = "typing.received" // a peer sent an IRCv3 +typing client tag (active/paused/done)
 	EventInviteReceived        = "invite.received" // an INVITE addressed to us (actionable)
+	EventStatusMessage         = "status.message"  // a line was written to a network's status buffer (server log)
 )
 
 // UserMeta holds the live, session-local roster attributes Cascade tracks for a

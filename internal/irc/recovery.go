@@ -40,7 +40,7 @@ func (c *IRCClient) observeSASLSuccess() {
 	c.authFailed = false
 	c.mu.Unlock()
 
-	c.storage.WriteMessage(storage.Message{
+	c.writeStatusBuffer(storage.Message{
 		NetworkID:   c.networkID,
 		ChannelID:   nil,
 		User:        "*",
@@ -67,7 +67,7 @@ func (c *IRCClient) observeSASLFailure(reason string) {
 	c.authFailed = true
 	c.mu.Unlock()
 
-	c.storage.WriteMessage(storage.Message{
+	c.writeStatusBuffer(storage.Message{
 		NetworkID:   c.networkID,
 		ChannelID:   nil,
 		User:        "*",
@@ -129,7 +129,7 @@ func (c *IRCClient) handleJoinError(e ircmsg.Message) {
 	if serverText != "" {
 		msg += " (" + serverText + ")"
 	}
-	if err := c.storage.WriteMessageSync(storage.Message{
+	if err := c.writeStatusBuffer(storage.Message{
 		NetworkID:   c.networkID,
 		ChannelID:   nil,
 		User:        "*",
