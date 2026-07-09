@@ -56,6 +56,15 @@ test.describe('network side rail', () => {
     await expect(page.getByTestId('channel-panel')).toBeHidden();
   });
 
+  test('hovering a network tile shows a name tooltip that hides on mouse-out', async ({ page }) => {
+    await networkTile(page, 'e2e').hover();
+    await expect(page.getByRole('tooltip')).toHaveText('e2e');
+
+    // Move the pointer off the rail entirely — the tooltip must disappear.
+    await page.mouse.move(400, 300);
+    await expect(page.getByRole('tooltip')).toHaveCount(0);
+  });
+
   test('rail-add-network is present and clickable', async ({ page }) => {
     const addButton = page.getByTestId('rail-add-network');
     await expect(addButton).toBeVisible();
