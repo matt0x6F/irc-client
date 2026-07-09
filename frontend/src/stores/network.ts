@@ -923,13 +923,14 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
   },
 
   connectNetwork: async (config) => {
-    const { networks, connectionStatus, loadNetworks } = get();
-    const existingNetwork = networks.find(
-      (n) => (n.address === config.address && n.port === config.port) || n.name === config.name
-    );
-    if (existingNetwork && connectionStatus[existingNetwork.id]) {
-      return;
-    }
+    // No dedup guard here: it can only match the target by name/address (the
+    // config is a backend connect payload and carries no network id), which is
+    // unreliable — Address is deprecated/non-unique, and the multi-server case
+    // leaves top-level address/port undefined. Callers already gate on the
+    // correct id-based connectionStatus/connectingNetworks before dialing (see
+    // server-tree's Connect item), and the auth-banner reconnect path *wants*
+    // to redial. Deduping is the backend's job.
+    const { loadNetworks } = get();
     try {
       await ConnectNetwork(config);
       await loadNetworks();
@@ -1290,12 +1291,11 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
   setAuthFailed: (networkId, reason) =>
     set((state) => ({
       authState: { ...state.authState, [networkId]: { reason } },
-      // An auth failure means the session is not connected (the banner says so).
-      // Clear any stale connected flag — otherwise connectNetwork's
-      // `if (connectionStatus[id]) return` guard treats the network as still up
-      // and silently refuses to redial from the auth banner (reconnect appears to
-      // do nothing until an app restart). Since SASL now fails before registration,
-      // no connection-status:false event is emitted to reset this on its own.
+      // An auth failure means the session is not connected (the banner says so),
+      // so clear any stale connected flag to keep UI state honest — the network
+      // rail / presence dots must not stay green behind the auth banner. Since
+      // SASL now fails before registration, no connection-status:false event is
+      // emitted to reset this on its own.
       connectionStatus: { ...state.connectionStatus, [networkId]: false },
     })),
   clearAuthFailed: (networkId) =>

@@ -25,12 +25,11 @@ describe('authState slice', () => {
     expect(useNetworkStore.getState().authState[2]).toEqual({ reason: 'b' });
   });
 
-  it('clears a stale connected flag so reconnect is not silently blocked', () => {
+  it('clears a stale connected flag so UI state stays honest', () => {
     // A network that was connected earlier this session leaves connectionStatus
     // true. An auth failure means the session dropped, so the flag must be
-    // cleared — otherwise connectNetwork's `if (connectionStatus[id]) return`
-    // guard silently refuses to redial from the auth banner (reconnect "does
-    // nothing" until an app restart).
+    // cleared — otherwise the network rail / presence dots stay green behind the
+    // auth banner that says the session is down.
     useNetworkStore.setState({ connectionStatus: { 1: true } });
     useNetworkStore.getState().setAuthFailed(1, 'invalid credentials');
     expect(useNetworkStore.getState().connectionStatus[1]).toBe(false);
