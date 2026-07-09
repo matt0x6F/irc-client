@@ -2045,7 +2045,22 @@ func (c *IRCClient) onDisconnect(e ircmsg.Message) {
 	c.currentNick = ""
 	c.nickCollisionNotified = false
 	c.pendingManualNick = ""
+	conn := c.conn
 	c.mu.Unlock()
+
+	// Also set the LIBRARY's quit flag, or the abandoned flag never gets its
+	// chance to matter: Loop() re-checks isQuitting() right after this callback
+	// completes (readLoop fires disconnect callbacks in a defer that precedes
+	// wg.Done(); Loop blocks on wg.Wait() before that check) and, for a
+	// long-lived link whose reconnect delay has elapsed, would otherwise re-dial
+	// IMMEDIATELY. That re-dial completes a full registration — CAP, SASL, NICK —
+	// before onConnect's abandoned guard refuses it, squatting the preferred nick
+	// just long enough that the app's own reconnect registers as nick_0 and
+	// visibly joins every channel as a ghost. Quit() is idempotent and safe here:
+	// on a dead connection the QUIT line itself goes nowhere (ClientDisconnected).
+	if conn != nil {
+		conn.Quit()
+	}
 
 	// The per-channel drop is surfaced by the QUIT/JOIN protocol messages the server
 	// echoes (see handleQuit / JOIN handler), so onDisconnect no longer writes its own

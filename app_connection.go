@@ -1419,6 +1419,17 @@ func (a *App) writeShutdownDisconnectMessages() {
 				}
 			}()
 
+			// The app is quitting: every drop this teardown causes is deliberate.
+			// Disconnect() rides the same EventConnectionLost path as an unexpected
+			// drop, so without the marker handleConnectionLost auto-reconnects every
+			// auto-connect network FROM THE DYING PROCESS — zombie sessions that race
+			// the next app instance for the user's nick. Marked for every client
+			// (connected or not): a half-open client's late drop must not reconnect
+			// during shutdown either.
+			a.mu.Lock()
+			a.intentionalDisconnect[networkID] = true
+			a.mu.Unlock()
+
 			if !client.IsConnectedDirect() {
 				return
 			}

@@ -358,6 +358,12 @@ func (irc *Connection) Loop() {
 		}
 
 		lastReconnect = time.Now()
+		// Re-check after the reconnect delay: a Quit() that landed while we were
+		// waiting (or while the previous connection was being torn down) must not
+		// be honored one reconnect too late.
+		if irc.isQuitting() {
+			return
+		}
 		err := irc.Connect()
 		if err != nil {
 			// we are still stopped, the stop checks will return immediately
