@@ -100,18 +100,18 @@ func TestMonitorReconcileNickUsesBuddiesAndOpenPMs(t *testing.T) {
 		t.Fatal(err)
 	}
 	// bob: an open PM, not a buddy.
-	if _, err := c.storage.GetOrCreatePMConversation(nid, "bob", self); err != nil {
+	if _, _, err := c.storage.GetOrCreatePMConversation(nid, "bob", self); err != nil {
 		t.Fatal(err)
 	}
 	// carol: a PM that has been closed.
-	if _, err := c.storage.GetOrCreatePMConversation(nid, "carol", self); err != nil {
+	if _, _, err := c.storage.GetOrCreatePMConversation(nid, "carol", self); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.storage.UpdatePMConversationIsOpen(nid, "carol", false); err != nil {
 		t.Fatal(err)
 	}
 	// NickServ: an open PM, but a service nick — must not be auto-monitored.
-	if _, err := c.storage.GetOrCreatePMConversation(nid, "NickServ", self); err != nil {
+	if _, _, err := c.storage.GetOrCreatePMConversation(nid, "NickServ", self); err != nil {
 		t.Fatal(err)
 	}
 
@@ -150,10 +150,10 @@ func TestSendInitialMonitorArmsUnion(t *testing.T) {
 	if err := c.storage.AddMonitoredNick(nid, "alice"); err != nil { // buddy
 		t.Fatal(err)
 	}
-	if _, err := c.storage.GetOrCreatePMConversation(nid, "bob", self); err != nil { // open PM
+	if _, _, err := c.storage.GetOrCreatePMConversation(nid, "bob", self); err != nil { // open PM
 		t.Fatal(err)
 	}
-	if _, err := c.storage.GetOrCreatePMConversation(nid, "NickServ", self); err != nil { // service PM (excluded)
+	if _, _, err := c.storage.GetOrCreatePMConversation(nid, "NickServ", self); err != nil { // service PM (excluded)
 		t.Fatal(err)
 	}
 
@@ -184,7 +184,7 @@ func TestSendInitialMonitorRespectsLimit(t *testing.T) {
 	if err := c.storage.AddMonitoredNick(nid, "dave"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.storage.GetOrCreatePMConversation(nid, "bob", self); err != nil {
+	if _, _, err := c.storage.GetOrCreatePMConversation(nid, "bob", self); err != nil {
 		t.Fatal(err)
 	}
 

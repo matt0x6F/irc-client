@@ -180,6 +180,70 @@ func TestInboundChannelContextPersisted(t *testing.T) {
 	}
 }
 
+// TestInboundPMEmitsChannelsChanged asserts that the FIRST inbound PM from a new
+// peer announces the sidebar change (channels.changed) so the DM list refreshes,
+// and that a SECOND PM to the same already-open conversation does not re-announce.
+// This is the regression the network-rail refactor exposed: the old server-tree
+// reloaded the DM list off an incidental `servers` dependency; the channel-panel
+// only refreshes on channels.changed / ui-pane-event, and nothing emitted either
+// when handlePrivmsg auto-created the conversation.
+func TestInboundPMEmitsChannelsChanged(t *testing.T) {
+	c := newPrivmsgTestClient(t)
+	got := make(chan events.Event, 4)
+	c.eventBus.Subscribe(EventChannelsChanged, capturingSub{got: got})
+
+	// First PM from a new peer creates the conversation → must announce it.
+	msg, err := ircmsg.ParseLine("@msgid=pm-1 :alittlefang!u@h PRIVMSG matt0x6f :hey")
+	if err != nil {
+		t.Fatalf("ParseLine: %v", err)
+	}
+	c.handlePrivmsg(msg)
+
+	select {
+	case <-got:
+		// good — the new conversation was announced
+	case <-time.After(2 * time.Second):
+		t.Fatal("first inbound PM did not emit channels.changed")
+	}
+
+	// A second PM to the same (already-open) conversation must NOT re-announce —
+	// the conversation already exists, so nothing about the sidebar list changed.
+	msg2, err := ircmsg.ParseLine("@msgid=pm-2 :alittlefang!u@h PRIVMSG matt0x6f :again")
+	if err != nil {
+		t.Fatalf("ParseLine: %v", err)
+	}
+	c.handlePrivmsg(msg2)
+
+	select {
+	case <-got:
+		t.Fatal("second PM to an existing conversation should not emit channels.changed")
+	case <-time.After(200 * time.Millisecond):
+		// good — no redundant announce
+	}
+}
+
+// TestInboundTaggedPMEmitsChannelsChanged proves the +draft/channel-context tag
+// does not suppress the sidebar announce: a tagged PM surfaces the DM entry
+// exactly like an untagged one (the tag is a pure display annotation).
+func TestInboundTaggedPMEmitsChannelsChanged(t *testing.T) {
+	c := newPrivmsgTestClient(t)
+	got := make(chan events.Event, 1)
+	c.eventBus.Subscribe(EventChannelsChanged, capturingSub{got: got})
+
+	msg, err := ircmsg.ParseLine("@msgid=pm-1;+draft/channel-context=#dev :alittlefang!u@h PRIVMSG matt0x6f :about #dev")
+	if err != nil {
+		t.Fatalf("ParseLine: %v", err)
+	}
+	c.handlePrivmsg(msg)
+
+	select {
+	case <-got:
+		// good
+	case <-time.After(2 * time.Second):
+		t.Fatal("tagged inbound PM did not emit channels.changed")
+	}
+}
+
 // TestInboundReplyTagEmitted asserts the event Data map includes replyMsgid and
 // channelContext keys after a tagged PRIVMSG.
 func TestInboundReplyTagEmitted(t *testing.T) {

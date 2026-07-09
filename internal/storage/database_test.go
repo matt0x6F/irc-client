@@ -699,12 +699,15 @@ func TestGetOrCreatePMConversation(t *testing.T) {
 		t.Fatalf("CreateNetwork: %v", err)
 	}
 
-	conv, err := s.GetOrCreatePMConversation(net.ID, "OtherUser", "testuser")
+	conv, created, err := s.GetOrCreatePMConversation(net.ID, "OtherUser", "testuser")
 	if err != nil {
 		t.Fatalf("GetOrCreatePMConversation: %v", err)
 	}
 	if conv == nil {
 		t.Fatal("expected conversation, got nil")
+	}
+	if !created {
+		t.Error("expected created=true for a brand-new conversation")
 	}
 	if conv.TargetUser != "otheruser" {
 		t.Errorf("expected target_user 'otheruser' (lowercase), got '%s'", conv.TargetUser)
@@ -713,10 +716,13 @@ func TestGetOrCreatePMConversation(t *testing.T) {
 		t.Error("expected new PM conversation to be open")
 	}
 
-	// Getting the same conversation should return the existing one
-	conv2, err := s.GetOrCreatePMConversation(net.ID, "OtherUser", "testuser")
+	// Getting the same conversation should return the existing one, not create it.
+	conv2, created2, err := s.GetOrCreatePMConversation(net.ID, "OtherUser", "testuser")
 	if err != nil {
 		t.Fatalf("GetOrCreatePMConversation (second): %v", err)
+	}
+	if created2 {
+		t.Error("expected created=false when returning an existing conversation")
 	}
 	if conv2.ID != conv.ID {
 		t.Errorf("expected same ID %d, got %d", conv.ID, conv2.ID)
@@ -730,7 +736,7 @@ func TestUpdatePMConversationIsOpen(t *testing.T) {
 		t.Fatalf("CreateNetwork: %v", err)
 	}
 
-	conv, err := s.GetOrCreatePMConversation(net.ID, "friend", "testuser")
+	conv, _, err := s.GetOrCreatePMConversation(net.ID, "friend", "testuser")
 	if err != nil {
 		t.Fatalf("GetOrCreatePMConversation: %v", err)
 	}
@@ -742,7 +748,7 @@ func TestUpdatePMConversationIsOpen(t *testing.T) {
 		t.Fatalf("UpdatePMConversationIsOpen: %v", err)
 	}
 
-	conv2, err := s.GetOrCreatePMConversation(net.ID, "friend", "testuser")
+	conv2, _, err := s.GetOrCreatePMConversation(net.ID, "friend", "testuser")
 	if err != nil {
 		t.Fatalf("GetOrCreatePMConversation: %v", err)
 	}
@@ -760,7 +766,7 @@ func TestGetOpenPMConversations(t *testing.T) {
 
 	// Create some conversations
 	for _, user := range []string{"alice", "bob", "charlie"} {
-		if _, err := s.GetOrCreatePMConversation(net.ID, user, "testuser"); err != nil {
+		if _, _, err := s.GetOrCreatePMConversation(net.ID, user, "testuser"); err != nil {
 			t.Fatalf("GetOrCreatePMConversation(%s): %v", user, err)
 		}
 	}
