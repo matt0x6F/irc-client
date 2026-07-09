@@ -50,6 +50,11 @@ func Migrate(db *sqlx.DB) error {
 		return fmt.Errorf("identify_as_bot migration failed: %w", err)
 	}
 
+	// Handle network rail columns migration (color, icon_path, sort_order)
+	if err := migrateNetworkRailColumns(db); err != nil {
+		return fmt.Errorf("network rail columns migration failed: %w", err)
+	}
+
 	// Handle channel is_open field migration
 	if err := migrateChannelIsOpen(db); err != nil {
 		return fmt.Errorf("channel is_open migration failed: %w", err)
@@ -520,6 +525,36 @@ func migrateIdentifyAsBot(db *sqlx.DB) error {
 		}
 	}
 
+	return nil
+}
+
+// migrateNetworkRailColumns adds the side-rail columns (color, icon_path,
+// sort_order) to the networks table if missing, and backfills sort_order from
+// id so pre-existing rows get a stable, distinct order. Idempotent.
+func migrateNetworkRailColumns(db *sqlx.DB) error {
+	adds := map[string]string{
+		"color":      "ALTER TABLE networks ADD COLUMN color TEXT",
+		"icon_path":  "ALTER TABLE networks ADD COLUMN icon_path TEXT",
+		"sort_order": "ALTER TABLE networks ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0",
+	}
+	for _, col := range []string{"color", "icon_path", "sort_order"} {
+		var exists int
+		if err := db.Get(&exists,
+			"SELECT COUNT(*) FROM pragma_table_info('networks') WHERE name=?", col); err != nil {
+			return fmt.Errorf("failed to check for %s column: %w", col, err)
+		}
+		if exists == 0 {
+			if _, err := db.Exec(adds[col]); err != nil {
+				if !strings.Contains(err.Error(), "duplicate column") {
+					return fmt.Errorf("failed to add %s column: %w", col, err)
+				}
+			}
+		}
+	}
+	// Backfill: any row left at the default 0 gets sort_order = id (stable, unique).
+	if _, err := db.Exec("UPDATE networks SET sort_order = id WHERE sort_order = 0"); err != nil {
+		return fmt.Errorf("failed to backfill sort_order: %w", err)
+	}
 	return nil
 }
 
