@@ -1,5 +1,5 @@
-import { useEffect, useCallback, useRef } from 'react';
-import { SendCommand, OpenSettings, GetServers } from '../wailsjs/go/main/App';
+import { useEffect, useCallback, useRef, useState } from 'react';
+import { SendCommand, OpenSettings, GetServers, ReorderNetworks } from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime/runtime';
 import { main } from '../wailsjs/go/models';
 import { useNetworkStore } from './stores/network';
@@ -11,7 +11,9 @@ import { initCommands } from './stores/commands';
 import { initDeepLinks } from './stores/deeplink';
 import { useNotificationRouting } from './hooks/useNotificationRouting';
 import { useTypingRouting } from './hooks/useTypingRouting';
-import { ServerTree } from './components/server-tree';
+import { NetworkRail } from './components/network-rail';
+import { ChannelPanel } from './components/channel-panel';
+import { NetworkContextMenu } from './components/network-context-menu';
 import { MessageView } from './components/message-view';
 import { InputArea } from './components/input-area';
 import { ChannelInfo } from './components/channel-info';
@@ -29,7 +31,7 @@ import { DeepLinkDisambiguation } from './components/deeplink-disambiguation';
 import { InviteToChannelModal } from './components/invite-to-channel-modal';
 import { ActivityInbox } from './components/activity-inbox';
 import { unseenGroupCount } from './lib/activity-inbox';
-import { List, Settings, Bell } from 'lucide-react';
+import { List, Bell } from 'lucide-react';
 
 function App() {
   // Network store
@@ -65,7 +67,17 @@ function App() {
   const markActivity = useNetworkStore((s) => s.markActivity);
   const activityItems = useNetworkStore((s) => s.activityItems);
   const unseenActivity = unseenGroupCount(activityItems);
+  const connectingNetworks = useNetworkStore((s) => s.connectingNetworks);
+  const setSelectedNetwork = useNetworkStore((s) => s.setSelectedNetwork);
+  const selectActivityInbox = useNetworkStore((s) => s.selectActivityInbox);
   const restoreLastPane = useNetworkStore((s) => s.restoreLastPane);
+
+  // Network-rail right-click menu: which tile, at what viewport coordinates.
+  const [networkMenu, setNetworkMenu] = useState<{ x: number; y: number; networkId: number } | null>(null);
+  const openNetworkContextMenu = useCallback((e: React.MouseEvent, id: number) => {
+    e.preventDefault();
+    setNetworkMenu({ x: e.clientX, y: e.clientY, networkId: id });
+  }, []);
 
   useNotificationRouting();
   useTypingRouting();
@@ -558,7 +570,7 @@ function App() {
   };
 
   // Reconnect from the auth-failure banner: rebuild a NetworkConfig from the
-  // stored network record (same approach as the server-tree context menu) and
+  // stored network record (same approach as the network context menu) and
   // delegate to the shared connectNetwork action.
   const handleAuthBannerReconnect = async (networkId: number) => {
     const network = useNetworkStore.getState().networks.find((n) => n.id === networkId);
@@ -705,42 +717,60 @@ function App() {
 
   return (
     <div className="flex h-screen bg-background overflow-hidden">
-      {/* Network Tree Sidebar */}
+      {/* Left region — always-visible network rail + collapsible channel panel */}
       <div
         ref={serverTreeRef}
         data-testid="left-sidebar"
         data-collapsed={String(leftSidebarCollapsed)}
-        className="border-r border-border overflow-auto flex-shrink-0 relative bg-card/30"
-        style={{
-          width: leftSidebarCollapsed ? '0px' : `${leftSidebarWidth}px`,
-          minWidth: leftSidebarCollapsed ? '0px' : undefined,
-          overflow: leftSidebarCollapsed ? 'hidden' : undefined,
-          transition: 'width 0.2s ease',
-        }}
+        className="flex flex-shrink-0"
         tabIndex={-1}
       >
-        <ServerTree
-          servers={networks}
-          selectedServer={selectedNetwork}
-          selectedChannel={selectedChannel}
-          onSelectServer={useNetworkStore.getState().setSelectedNetwork}
-          unreadCounts={unreadCounts}
-          onShowUserInfo={(networkId, nickname) => setShowUserInfo({ networkId, nickname })}
-          onNetworkUpdate={loadNetworks}
-          onSelectChannel={(networkId, channel) => selectPane(networkId, channel)}
-          onConnect={handleConnect}
-          onDisconnect={handleDisconnect}
-          onDelete={handleDelete}
+        {/* Network rail — always visible, fixed width */}
+        <NetworkRail
+          networks={networks}
+          selectedNetwork={selectedNetwork}
+          activityActive={selectedChannel === 'activity'}
           connectionStatus={connectionStatus}
+          connectingNetworks={connectingNetworks}
+          unreadCounts={unreadCounts}
+          activityItems={activityItems}
+          onSelectNetwork={(id) => {
+            setSelectedNetwork(id);
+            selectPane(id, 'status');
+          }}
+          onSelectActivity={() => void selectActivityInbox()}
+          onAddNetwork={() => void OpenSettings()}
+          onNetworkContextMenu={openNetworkContextMenu}
+          onReordered={async (ids) => {
+            await ReorderNetworks(ids);
+            await loadNetworks();
+          }}
         />
-        {!leftSidebarCollapsed && (
+
+        {/* Channel panel — the selected network, hidden during the Activity
+            takeover, when no network is selected, or when collapsed */}
+        {selectedChannel !== 'activity' && selectedNetwork !== null && !leftSidebarCollapsed && (
           <div
-            data-testid="left-resize-handle"
-            className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:w-2 hover:bg-primary/40 bg-transparent z-10"
-            style={{ transition: 'var(--transition-base)' }}
-            onMouseDown={handleLeftResizeStart}
-            title="Drag to resize"
-          />
+            className="border-r border-border flex-shrink-0 relative bg-card/30"
+            style={{ width: `${leftSidebarWidth}px`, transition: 'width 0.2s ease' }}
+          >
+            <ChannelPanel
+              network={networks.find((n) => n.id === selectedNetwork)!}
+              selectedChannel={selectedChannel}
+              connected={connectionStatus[selectedNetwork] || false}
+              currentNick={currentNick[selectedNetwork]}
+              unreadCounts={unreadCounts}
+              onSelectChannel={(networkId, channel) => selectPane(networkId, channel)}
+              onShowUserInfo={(networkId, nickname) => setShowUserInfo({ networkId, nickname })}
+            />
+            <div
+              data-testid="left-resize-handle"
+              className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:w-2 hover:bg-primary/40 bg-transparent z-10"
+              style={{ transition: 'var(--transition-base)' }}
+              onMouseDown={handleLeftResizeStart}
+              title="Drag to resize"
+            />
+          </div>
         )}
       </div>
 
@@ -906,15 +936,6 @@ function App() {
                   </span>
                 )}
               </div>
-              {/* Settings */}
-              <button
-                onClick={() => void OpenSettings()}
-                className="p-1.5 rounded-md hover:bg-accent/50 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-                title="Settings"
-                aria-label="Settings"
-              >
-                <Settings size={18} />
-              </button>
               {/* Right sidebar toggle — show for channels and PMs */}
               {selectedChannel && selectedChannel !== 'status' && selectedChannel !== 'activity' && (
                 <button
@@ -1155,6 +1176,26 @@ function App() {
           onClose={() => setInviteTo(null)}
         />
       )}
+
+      {networkMenu &&
+        (() => {
+          const menuNetwork = networks.find((n) => n.id === networkMenu.networkId);
+          if (!menuNetwork) return null;
+          return (
+            <NetworkContextMenu
+              x={networkMenu.x}
+              y={networkMenu.y}
+              network={menuNetwork}
+              connected={connectionStatus[menuNetwork.id] || false}
+              connecting={connectingNetworks[menuNetwork.id] || false}
+              onConnect={handleConnect}
+              onDisconnect={handleDisconnect}
+              onDelete={handleDelete}
+              onReloadNetworks={loadNetworks}
+              onClose={() => setNetworkMenu(null)}
+            />
+          );
+        })()}
 
       <HelpDialog />
       <UpdateAvailableDialog />

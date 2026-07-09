@@ -13,6 +13,12 @@ const nets = [
   storage.Network.createFrom({ id: 2, name: 'OFTC' }),
 ];
 
+const activityItem = (o: Partial<any> = {}) => ({
+  id: 1, network_id: 1, source_type: 'highlight', target: '#dev', actor: 'alice',
+  preview: 'hi', msgid: 'm1', keyword: '', seen: false, timestamp: '2026-07-06T12:00:00Z',
+  trusted: false, expires_at: null, ...o,
+});
+
 function base(over = {}) {
   return {
     networks: nets, selectedNetwork: 1, activityActive: false,
@@ -38,6 +44,18 @@ describe('NetworkRail', () => {
     expect(b.onSelectActivity).toHaveBeenCalled();
     fireEvent.click(screen.getByTestId('rail-add-network'));
     expect(b.onAddNetwork).toHaveBeenCalled();
+  });
+
+  it('shows an unseen badge on the activity tile when there is unseen activity', () => {
+    render(<NetworkRail {...base({ activityItems: [activityItem({ id: 1, seen: false })] })} />);
+    const activity = screen.getByTestId('rail-activity');
+    expect(activity).toHaveTextContent('1');
+  });
+
+  it('does not show a badge when nothing is unseen', () => {
+    render(<NetworkRail {...base({ activityItems: [activityItem({ id: 1, seen: true })] })} />);
+    const activity = screen.getByTestId('rail-activity');
+    expect(activity).not.toHaveTextContent('1');
   });
 
   it('marks the activity tile active when activityActive', () => {
