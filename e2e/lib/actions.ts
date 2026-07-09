@@ -187,13 +187,15 @@ export async function disconnectViaContextMenu(page: Page, name = 'e2e'): Promis
 
 /**
  * Locator for a network tile's status indicator in the named connection state.
- * The indicator is now a descendant of the tile (matched by its aria-label),
- * not a preceding-sibling of a name text node — tiles show a monogram/icon
- * only, the name lives solely in aria-label.
+ * The indicator is a following SIBLING of the tile button (both children of the
+ * tile's wrapper div), NOT a descendant of it — so scope by the tile's
+ * aria-label and reach the indicator via the general-sibling combinator. Tiles
+ * show a monogram/icon only; the name lives solely in aria-label.
  */
 export function networkIndicator(page: Page, name: string, connected: boolean): Locator {
-  return networkTile(page, name).locator(
-    `[data-testid="network-status-indicator"][data-connected="${connected ? 'true' : 'false'}"]`,
+  return page.locator(
+    `[data-testid="network-tile"][aria-label="${name.replace(/"/g, '\\"')}"]` +
+      ` ~ [data-testid="network-status-indicator"][data-connected="${connected ? 'true' : 'false'}"]`,
   );
 }
 
