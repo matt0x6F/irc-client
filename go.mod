@@ -14,6 +14,7 @@ require (
 	github.com/wailsapp/wails/v3 v3.0.0-alpha2.108
 	github.com/zalando/go-keyring v0.2.6
 	golang.org/x/crypto v0.53.0
+	golang.org/x/image v0.44.0
 	golang.org/x/mod v0.35.0
 	golang.org/x/net v0.56.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1

@@ -2,11 +2,15 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/matt0x6f/irc-client/internal/constants"
 	"github.com/matt0x6f/irc-client/internal/events"
+	"github.com/matt0x6f/irc-client/internal/imageproc"
 	"github.com/matt0x6f/irc-client/internal/irc"
 	"github.com/matt0x6f/irc-client/internal/logger"
 	"github.com/matt0x6f/irc-client/internal/security"
@@ -1200,6 +1204,7 @@ func (a *App) DeleteNetwork(networkID int64) error {
 	if err := a.storage.DeleteNetwork(networkID); err != nil {
 		return err
 	}
+	_ = os.Remove(a.networkIconPath(networkID)) // best-effort icon cleanup
 	// Remove any secrets held in the keychain for this network.
 	if err := a.creds.Delete(networkID); err != nil {
 		logger.Log.Warn().Err(err).Int64("network_id", networkID).Msg("Failed to delete network secrets from keychain")
@@ -1229,6 +1234,57 @@ func (a *App) ReorderNetworks(orderedIDs []int64) error {
 		}
 	}
 	return nil
+}
+
+// networkIconPath returns the on-disk path for a network's processed icon.
+func (a *App) networkIconPath(networkID int64) string {
+	return filepath.Join(a.dataDir, "network-icons", fmt.Sprintf("%d.png", networkID))
+}
+
+// SetNetworkIcon processes a base64-encoded uploaded image into a 128x128 PNG,
+// writes it under <dataDir>/network-icons/<id>.png, and records the path.
+func (a *App) SetNetworkIcon(networkID int64, dataB64 string) error {
+	raw, err := base64.StdEncoding.DecodeString(dataB64)
+	if err != nil {
+		return fmt.Errorf("decode base64: %w", err)
+	}
+	pngBytes, err := imageproc.SquareIconPNG(raw, 128)
+	if err != nil {
+		return fmt.Errorf("process icon: %w", err)
+	}
+	path := a.networkIconPath(networkID)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("mkdir icons: %w", err)
+	}
+	if err := os.WriteFile(path, pngBytes, 0o644); err != nil {
+		return fmt.Errorf("write icon: %w", err)
+	}
+	if err := a.storage.UpdateNetworkIcon(networkID, path); err != nil {
+		return fmt.Errorf("persist icon path: %w", err)
+	}
+	return nil
+}
+
+// RemoveNetworkIcon deletes the icon file and clears the stored path.
+func (a *App) RemoveNetworkIcon(networkID int64) error {
+	_ = os.Remove(a.networkIconPath(networkID)) // best-effort
+	if err := a.storage.ClearNetworkIcon(networkID); err != nil {
+		return fmt.Errorf("clear icon path: %w", err)
+	}
+	return nil
+}
+
+// GetNetworkIcon returns the network's icon as a data URL, or "" if none.
+func (a *App) GetNetworkIcon(networkID int64) (string, error) {
+	path := a.networkIconPath(networkID)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("read icon: %w", err)
+	}
+	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(b), nil
 }
 
 // ToggleNetworkAutoConnect toggles the auto-connect setting for a network

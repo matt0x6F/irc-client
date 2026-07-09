@@ -688,6 +688,18 @@ func (s *Storage) UpdateNetworkSortOrder(networkID int64, order int64) error {
 	return s.queries.UpdateNetworkSortOrder(context.Background(), db.UpdateNetworkSortOrderParams{SortOrder: order, ID: networkID})
 }
 
+// UpdateNetworkIcon records the on-disk path of a network's processed icon.
+func (s *Storage) UpdateNetworkIcon(networkID int64, path string) error {
+	return s.queries.UpdateNetworkIcon(context.Background(), db.UpdateNetworkIconParams{
+		IconPath: sql.NullString{String: path, Valid: true}, ID: networkID,
+	})
+}
+
+// ClearNetworkIcon clears a network's stored icon path (reverts to monogram).
+func (s *Storage) ClearNetworkIcon(networkID int64) error {
+	return s.queries.ClearNetworkIcon(context.Background(), networkID)
+}
+
 // DeleteNetwork deletes a network (cascade will delete servers)
 func (s *Storage) DeleteNetwork(networkID int64) error {
 	err := s.queries.DeleteNetwork(context.Background(), networkID)
