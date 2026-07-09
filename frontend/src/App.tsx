@@ -788,9 +788,11 @@ function App() {
           className="border-b border-border"
           style={{ background: 'var(--glass-bg)', backdropFilter: 'blur(var(--backdrop-blur))', WebkitBackdropFilter: 'blur(var(--backdrop-blur))' }}
         >
-          <div className="h-14 flex items-center justify-between px-3 sm:px-5">
-            <div className="flex items-center gap-2 min-w-0">
-              {/* Hamburger toggle for left sidebar */}
+          <div className="h-14 flex items-center gap-2 px-3 sm:px-5">
+              {/* Hamburger toggle for left sidebar. Kept as a direct flex child
+                  (not inside the min-w-0 metadata group) so it always reserves
+                  its own width and can never be overlapped by the shrinking
+                  metadata or the right-hand action buttons at narrow widths. */}
               {leftSidebarCollapsed && (
                 <button
                   onClick={toggleLeftSidebar}
@@ -818,6 +820,9 @@ function App() {
                   </svg>
                 </button>
               )}
+              {/* Network metadata — grows to fill and clips its own overflow so
+                  it never spills under the action buttons. */}
+              <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
               {selectedNetwork !== null && (
                 <>
                   <span className="font-semibold text-lg truncate">

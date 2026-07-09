@@ -23,6 +23,29 @@ function horizontalOverflow(page: Page): Promise<number> {
   );
 }
 
+/**
+ * What sits at the center of the left-sidebar toggle button? Should be the
+ * toggle itself; a header regression (see below) let a sibling — the "Search
+ * messages" button — slide on top of it at narrow widths, so a click landed on
+ * search instead of the toggle.
+ */
+function elementAtToggleCenter(page: Page): Promise<string | null> {
+  return page.evaluate(() => {
+    const toggle = document.querySelector('[data-testid="toggle-left-sidebar"]');
+    if (!toggle) return null;
+    const r = toggle.getBoundingClientRect();
+    let el = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) as HTMLElement | null;
+    while (el) {
+      const id = el.getAttribute('data-testid');
+      if (id) return `testid=${id}`;
+      const title = el.getAttribute('title');
+      if (title) return `title=${title}`;
+      el = el.parentElement;
+    }
+    return 'unknown';
+  });
+}
+
 test.describe('sidebar + window expansion behavior', () => {
   test.beforeEach(async ({ page, runtime }) => {
     // Mount wide so both sidebars start expanded, then open a channel so the
@@ -92,6 +115,14 @@ test.describe('sidebar + window expansion behavior', () => {
     // it; force it open to recreate the inconsistent state a manual toggle makes.
     await page.setViewportSize({ width: 240, height: 800 });
     await expect(page.getByTestId('left-sidebar')).toHaveAttribute('data-collapsed', 'true');
+
+    // Regression: the network rail permanently claims ~64px of the header, so at
+    // very narrow widths the right-hand action buttons were free to slide over
+    // the toggle (`justify-between` + negative free space). The toggle must stay
+    // the hit-test target, or the click below lands on the Search button instead.
+    await expect
+      .poll(() => elementAtToggleCenter(page), { message: 'toggle-left-sidebar must not be overlapped at width=240' })
+      .toBe('testid=toggle-left-sidebar');
 
     await page.getByTestId('toggle-left-sidebar').click();
     await expect(page.getByTestId('left-sidebar')).toHaveAttribute('data-collapsed', 'false');
