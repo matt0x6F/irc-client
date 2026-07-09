@@ -44,4 +44,27 @@ describe('NetworkRail', () => {
     render(<NetworkRail {...base({ activityActive: true })} />);
     expect(screen.getByTestId('rail-activity')).toHaveAttribute('data-active', 'true');
   });
+
+  it('reorders networks on drag-and-drop', () => {
+    const b = base();
+    render(<NetworkRail {...b} />);
+    const tiles = screen.getAllByTestId('network-tile');
+    const firstWrapper = tiles[0].closest('[draggable]')!;
+    const secondWrapper = tiles[1].closest('[draggable]')!;
+    fireEvent.dragStart(firstWrapper);
+    fireEvent.drop(secondWrapper);
+    expect(b.onReordered).toHaveBeenCalledWith([2, 1]);
+  });
+
+  it('clears stale drag state on dragEnd so a later unrelated drop is a no-op', () => {
+    const b = base();
+    render(<NetworkRail {...b} />);
+    const tiles = screen.getAllByTestId('network-tile');
+    const firstWrapper = tiles[0].closest('[draggable]')!;
+    const secondWrapper = tiles[1].closest('[draggable]')!;
+    fireEvent.dragStart(firstWrapper);
+    fireEvent.dragEnd(firstWrapper);
+    fireEvent.drop(secondWrapper);
+    expect(b.onReordered).not.toHaveBeenCalled();
+  });
 });

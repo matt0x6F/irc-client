@@ -81,8 +81,9 @@ export function NetworkRail(props: NetworkRailProps) {
             key={n.id}
             draggable
             onDragStart={() => setDragId(n.id)}
+            onDragEnd={() => setDragId(null)}
             onDragOver={(e) => e.preventDefault()}
-            onDrop={() => handleDrop(n.id)}
+            onDrop={(e) => { e.preventDefault(); handleDrop(n.id); }}
           >
             <NetworkTile
               network={n}
