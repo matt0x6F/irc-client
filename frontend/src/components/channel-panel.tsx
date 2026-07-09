@@ -40,7 +40,6 @@ export function ChannelPanel({
 }: ChannelPanelProps) {
   const networkId = network.id;
   const [channelList, setChannelList] = useState<string[]>([]);
-  const [channelData, setChannelData] = useState<Record<string, Channel>>({});
   const [pmConversations, setPmConversations] = useState<string[]>([]);
   const [contextMenu, setContextMenu] = useState<ContextMenu>({ x: 0, y: 0, type: null });
   const [contextMenuChannelData, setContextMenuChannelData] = useState<Channel | null>(null);
@@ -60,9 +59,6 @@ export function ChannelPanel({
     const list = await GetOpenChannels(id);
     if (list && Array.isArray(list)) {
       setChannelList(list.map((c: Channel) => c.name));
-      const channelMap: Record<string, Channel> = {};
-      list.forEach((c: Channel) => { channelMap[c.name] = c; });
-      setChannelData(channelMap);
     } else {
       setChannelList([]);
     }
@@ -428,11 +424,6 @@ export function ChannelPanel({
                     await ToggleChannelAutoJoin(networkId, channelName);
                     const list = await GetOpenChannels(networkId);
                     if (list && Array.isArray(list)) {
-                      const channelMap: Record<string, Channel> = {};
-                      list.forEach((c: Channel) => {
-                        channelMap[c.name] = c;
-                      });
-                      setChannelData(channelMap);
                       setChannelList(list.map((c: Channel) => c.name));
                       const updatedChannel = list.find((c: Channel) => c.name === channelName);
                       if (updatedChannel) {

@@ -62,4 +62,34 @@ describe('NetworkTile', () => {
     expect(await screen.findByText('LC')).toBeInTheDocument();
     expect(screen.getByTestId('network-tile').querySelector('img')).toBeNull();
   });
+
+  it('re-fetches the icon when the network row updates even though iconPath is unchanged (icon replace)', async () => {
+    vi.mocked(GetNetworkIcon).mockResolvedValueOnce('data:image/png;base64,AAAA');
+    const { rerender } = render(
+      <NetworkTile
+        network={net({ iconPath: '/icons/1.png', updated_at: '2026-07-09T00:00:00Z' })}
+        selected={false} connected connecting={false}
+        unread={0} onSelect={() => {}} onContextMenu={() => {}}
+      />,
+    );
+    const tile = screen.getByTestId('network-tile');
+    await waitFor(() => {
+      expect(tile.querySelector('img')).toHaveAttribute('src', 'data:image/png;base64,AAAA');
+    });
+
+    // Replace: same iconPath string, but the backend bumped updated_at when
+    // it rewrote the file in place. The effect must re-run and re-fetch.
+    vi.mocked(GetNetworkIcon).mockResolvedValueOnce('data:image/png;base64,BBBB');
+    rerender(
+      <NetworkTile
+        network={net({ iconPath: '/icons/1.png', updated_at: '2026-07-09T00:05:00Z' })}
+        selected={false} connected connecting={false}
+        unread={0} onSelect={() => {}} onContextMenu={() => {}}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(tile.querySelector('img')).toHaveAttribute('src', 'data:image/png;base64,BBBB');
+    });
+  });
 });

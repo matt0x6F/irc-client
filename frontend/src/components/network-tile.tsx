@@ -32,7 +32,11 @@ export function NetworkTile({
       setIconUrl('');
     }
     return () => { live = false; };
-  }, [network.id, network.iconPath]);
+    // network.updated_at is bumped by UpdateNetworkIcon even when a replaced
+    // icon keeps the same iconPath string, so it must be in the deps to
+    // force a re-fetch on replace (otherwise the tile keeps showing the old
+    // image until an unrelated remount).
+  }, [network.id, network.iconPath, network.updated_at]);
 
   const { bg, fg } = resolveNetworkColor(network.color, network.name);
 
