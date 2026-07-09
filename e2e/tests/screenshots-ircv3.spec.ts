@@ -283,10 +283,10 @@ test.describe('IRCv3 documentation screenshots', () => {
 
       // Open the PM pane.
       await page
-        .getByTestId('server-tree')
+        .getByTestId('channel-panel')
         .getByText('ctxscreenbot', { exact: true })
         .waitFor({ state: 'visible', timeout: 15_000 });
-      await page.getByTestId('server-tree').getByText('ctxscreenbot', { exact: true }).click();
+      await page.getByTestId('channel-panel').getByText('ctxscreenbot', { exact: true }).click();
 
       // Wait for the message and the pill.
       const msgList = page.getByTestId('message-list');
