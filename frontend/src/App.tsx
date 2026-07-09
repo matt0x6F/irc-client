@@ -715,6 +715,15 @@ function App() {
     selectedNetwork !== null ? networks.find((n) => n.id === selectedNetwork)?.nickname : undefined;
   const nickReclaimPending = !!selectedNick && !!preferredNick && selectedNick !== preferredNick;
 
+  // Channel panel's network: computed separately from selectedNetwork so we
+  // can gate the panel's render on it existing. Deleting the currently
+  // selected network leaves a window where selectedNetwork still holds the
+  // deleted id but `networks` no longer contains it (deleteNetwork awaits
+  // loadNetworks() before clearing selectedNetwork) — rendering the panel
+  // in that window would crash on a missing network.
+  const panelNetwork =
+    selectedNetwork !== null ? networks.find((n) => n.id === selectedNetwork) : undefined;
+
   return (
     <div className="flex h-screen bg-background overflow-hidden">
       {/* Left region — always-visible network rail + collapsible channel panel */}
@@ -749,16 +758,16 @@ function App() {
 
         {/* Channel panel — the selected network, hidden during the Activity
             takeover, when no network is selected, or when collapsed */}
-        {selectedChannel !== 'activity' && selectedNetwork !== null && !leftSidebarCollapsed && (
+        {selectedChannel !== 'activity' && panelNetwork && !leftSidebarCollapsed && (
           <div
             className="border-r border-border flex-shrink-0 relative bg-card/30"
             style={{ width: `${leftSidebarWidth}px`, transition: 'width 0.2s ease' }}
           >
             <ChannelPanel
-              network={networks.find((n) => n.id === selectedNetwork)!}
+              network={panelNetwork}
               selectedChannel={selectedChannel}
-              connected={connectionStatus[selectedNetwork] || false}
-              currentNick={currentNick[selectedNetwork]}
+              connected={connectionStatus[panelNetwork.id] || false}
+              currentNick={currentNick[panelNetwork.id]}
               unreadCounts={unreadCounts}
               onSelectChannel={(networkId, channel) => selectPane(networkId, channel)}
               onShowUserInfo={(networkId, nickname) => setShowUserInfo({ networkId, nickname })}
