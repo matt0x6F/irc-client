@@ -566,6 +566,31 @@ export class Network {
              */
             this["updated_at"] = null;
         }
+        if (/** @type {any} */(false)) {
+            /**
+             * Side-rail presentation: user-chosen accent color, custom icon path, and
+             * manual drag-reorder position. Color/IconPath are nullable (unset = derive
+             * a default client-side); SortOrder is NOT NULL and defaults to 0 for new
+             * rows (see CreateNetwork), tie-broken by id in GetNetworks' ORDER BY.
+             * @member
+             * @type {string | null | undefined}
+             */
+            this["color"] = undefined;
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * @member
+             * @type {string | null | undefined}
+             */
+            this["iconPath"] = undefined;
+        }
+        if (!("sortOrder" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["sortOrder"] = 0;
+        }
         if (!("hasPassword" in $$source)) {
             /**
              * Computed, non-persisted flags populated by the App layer for the frontend.

@@ -944,6 +944,15 @@ export function RemoveMonitor(networkID, nick) {
 }
 
 /**
+ * ReorderNetworks persists the rail order; each id's sort_order becomes its 1-based index.
+ * @param {number[]} orderedIDs
+ * @returns {$CancellablePromise<void>}
+ */
+export function ReorderNetworks(orderedIDs) {
+    return $Call.ByID(1855243967, orderedIDs);
+}
+
+/**
  * RequestChannelBans asks the server for a channel's ban list. The result is delivered
  * asynchronously to the frontend via the "channel.banlist" event.
  * @param {number} networkID
@@ -1104,6 +1113,17 @@ export function SetChannelOpen(networkID, channelName, isOpen) {
  */
 export function SetLogConfig(enabled, path, level) {
     return $Call.ByID(2238388953, enabled, path, level);
+}
+
+/**
+ * SetNetworkColor sets the rail tile color palette key. Empty string clears it
+ * (NULL), reverting to the deterministic name-hashed fallback.
+ * @param {number} networkID
+ * @param {string} color
+ * @returns {$CancellablePromise<void>}
+ */
+export function SetNetworkColor(networkID, color) {
+    return $Call.ByID(1641043938, networkID, color);
 }
 
 /**

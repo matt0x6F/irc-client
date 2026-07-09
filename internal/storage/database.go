@@ -674,6 +674,20 @@ func (s *Storage) UpdateNetworkAutoConnect(networkID int64, autoConnect bool) er
 	return err
 }
 
+// UpdateNetworkColor sets (or clears, when color is nil) the rail color key.
+func (s *Storage) UpdateNetworkColor(networkID int64, color *string) error {
+	var v sql.NullString
+	if color != nil {
+		v = sql.NullString{String: *color, Valid: true}
+	}
+	return s.queries.UpdateNetworkColor(context.Background(), db.UpdateNetworkColorParams{Color: v, ID: networkID})
+}
+
+// UpdateNetworkSortOrder sets the rail sort position for a network.
+func (s *Storage) UpdateNetworkSortOrder(networkID int64, order int64) error {
+	return s.queries.UpdateNetworkSortOrder(context.Background(), db.UpdateNetworkSortOrderParams{SortOrder: order, ID: networkID})
+}
+
 // DeleteNetwork deletes a network (cascade will delete servers)
 func (s *Storage) DeleteNetwork(networkID int64) error {
 	err := s.queries.DeleteNetwork(context.Background(), networkID)

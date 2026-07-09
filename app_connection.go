@@ -1208,6 +1208,29 @@ func (a *App) DeleteNetwork(networkID int64) error {
 	return nil
 }
 
+// SetNetworkColor sets the rail tile color palette key. Empty string clears it
+// (NULL), reverting to the deterministic name-hashed fallback.
+func (a *App) SetNetworkColor(networkID int64, color string) error {
+	var c *string
+	if color != "" {
+		c = &color
+	}
+	if err := a.storage.UpdateNetworkColor(networkID, c); err != nil {
+		return fmt.Errorf("failed to set network color: %w", err)
+	}
+	return nil
+}
+
+// ReorderNetworks persists the rail order; each id's sort_order becomes its 1-based index.
+func (a *App) ReorderNetworks(orderedIDs []int64) error {
+	for i, id := range orderedIDs {
+		if err := a.storage.UpdateNetworkSortOrder(id, int64(i+1)); err != nil {
+			return fmt.Errorf("failed to set sort_order for network %d: %w", id, err)
+		}
+	}
+	return nil
+}
+
 // ToggleNetworkAutoConnect toggles the auto-connect setting for a network
 func (a *App) ToggleNetworkAutoConnect(networkID int64) error {
 	networks, err := a.storage.GetNetworks()
