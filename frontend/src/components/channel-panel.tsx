@@ -132,6 +132,29 @@ export function ChannelPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [networkId]);
 
+  // A newly-arrived (or sent) private message can create a PM conversation that
+  // is NOT announced via channels-changed/ui-pane-event — notably a
+  // +draft/channel-context PM, which never focuses a pane. The old server tree
+  // masked this by re-loading PMs on the 5s networks poll; this panel is
+  // event-driven, so refresh the PM list directly on any PM message-event for
+  // this network. A PM is identified by `pmTarget` (the peer); for a PM the
+  // `channel` field holds the recipient's own nick, so it can't be used to
+  // distinguish PMs from channel messages.
+  useEffect(() => {
+    const unsubscribe = EventsOn('message-event', (data: any) => {
+      const type = data?.type;
+      if (type !== 'message.received' && type !== 'message.sent') return;
+      const d = data?.data || {};
+      const id = d.networkId != null && d.networkId !== '' ? Number(d.networkId) : undefined;
+      if (id !== networkId || !d.pmTarget) return;
+      refreshPmConversations(networkId).catch((error) => {
+        console.error('Failed to refresh PM conversations after message-event:', error);
+      });
+    });
+    return () => unsubscribe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [networkId]);
+
   // Clamp the fixed-position context menu into the viewport. It renders at the
   // raw click coordinates, so a right-click near the window's bottom would push
   // its items off-screen where they cannot be clicked. Runs again when async
