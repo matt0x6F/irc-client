@@ -74,6 +74,40 @@ describe('NetworkRail', () => {
     expect(b.onReordered).toHaveBeenCalledWith([2, 1]);
   });
 
+  it('gives the tile column top headroom so the first tile badge is not clipped', () => {
+    render(<NetworkRail {...base()} />);
+    // The tile column is overflow-clipped (scroll container); the unread badge
+    // overhangs each tile by 4px, so the column needs 4px of top padding.
+    expect(screen.getByTestId('rail-tiles')).toHaveStyle({ paddingTop: '4px' });
+  });
+
+  it('shows a tooltip with the network name on tile hover', () => {
+    render(<NetworkRail {...base()} />);
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+    fireEvent.mouseOver(screen.getAllByTestId('network-tile')[0]);
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Libera');
+    fireEvent.mouseOut(screen.getAllByTestId('network-tile')[0]);
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+  });
+
+  it('shows tooltips for the fixed rail buttons', () => {
+    render(<NetworkRail {...base()} />);
+    fireEvent.mouseOver(screen.getByTestId('rail-activity'));
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Activity');
+    fireEvent.mouseOut(screen.getByTestId('rail-activity'));
+    fireEvent.mouseOver(screen.getByTestId('rail-add-network'));
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Add network');
+  });
+
+  it('hides the tooltip when a tile drag starts', () => {
+    render(<NetworkRail {...base()} />);
+    const tile = screen.getAllByTestId('network-tile')[0];
+    fireEvent.mouseOver(tile);
+    expect(screen.getByRole('tooltip')).toBeInTheDocument();
+    fireEvent.dragStart(tile.closest('[draggable]')!);
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+  });
+
   it('clears stale drag state on dragEnd so a later unrelated drop is a no-op', () => {
     const b = base();
     render(<NetworkRail {...b} />);

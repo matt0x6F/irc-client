@@ -49,7 +49,6 @@ export function NetworkTile({
         type="button"
         data-testid="network-tile"
         data-network-id={network.id}
-        title={network.name}
         aria-label={network.name}
         onClick={() => onSelect(network.id)}
         onContextMenu={(e) => onContextMenu(e, network.id)}
