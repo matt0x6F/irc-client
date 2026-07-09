@@ -1769,6 +1769,23 @@ func (c *IRCClient) accountFor(nick string) string {
 	return ""
 }
 
+// emitChannelsChanged announces that this network's sidebar list (channels or PM
+// conversations) changed, so open windows re-fetch it. The PM handlers call this
+// when a brand-new DM conversation is created: an unsolicited message from a peer
+// not yet in the list has no other refresh trigger, and the channel-panel only
+// reloads the DM list on channels.changed / ui-pane-event.
+func (c *IRCClient) emitChannelsChanged() {
+	c.eventBus.Emit(events.Event{
+		Type: EventChannelsChanged,
+		Data: map[string]interface{}{
+			"network":   c.network.Address,
+			"networkId": c.networkID,
+		},
+		Timestamp: time.Now(),
+		Source:    events.EventSourceIRC,
+	})
+}
+
 // handlePrivmsg is the PRIVMSG callback. It is extracted from setupHandlers so
 // tests can drive the real production path without a live connection.
 func (c *IRCClient) handlePrivmsg(e ircmsg.Message) {
@@ -1807,9 +1824,12 @@ func (c *IRCClient) handlePrivmsg(e ircmsg.Message) {
 				} else {
 					// Private message - create or get PM conversation keyed by the peer
 					pmTarget = c.pmPeer(user, channel)
-					_, err := c.storage.GetOrCreatePMConversation(c.networkID, pmTarget, c.network.Nickname)
+					_, created, err := c.storage.GetOrCreatePMConversation(c.networkID, pmTarget, c.network.Nickname)
 					if err != nil {
 						logger.Log.Error().Err(err).Str("user", user).Str("pmTarget", pmTarget).Msg("Failed to create/get PM conversation")
+					} else if created {
+						// A new DM entry appeared — surface it in the sidebar now.
+						c.emitChannelsChanged()
 					}
 				}
 
@@ -1885,9 +1905,12 @@ func (c *IRCClient) handlePrivmsg(e ircmsg.Message) {
 	} else {
 		// Private message - create or get PM conversation keyed by the peer
 		pmTarget = c.pmPeer(user, channel)
-		_, err := c.storage.GetOrCreatePMConversation(c.networkID, pmTarget, c.network.Nickname)
+		_, created, err := c.storage.GetOrCreatePMConversation(c.networkID, pmTarget, c.network.Nickname)
 		if err != nil {
 			logger.Log.Error().Err(err).Str("user", user).Str("pmTarget", pmTarget).Msg("Failed to create/get PM conversation")
+		} else if created {
+			// A new DM entry appeared — surface it in the sidebar now.
+			c.emitChannelsChanged()
 		}
 	}
 
@@ -4028,7 +4051,9 @@ func (c *IRCClient) buildHistoryChatMessage(e ircmsg.Message) (storage.Message, 
 		}
 	} else {
 		pmTarget = c.pmPeer(user, target)
-		if _, err := c.storage.GetOrCreatePMConversation(c.networkID, pmTarget, c.network.Nickname); err != nil {
+		// History is bulk backfill for an already-targeted pane; the sidebar refresh
+		// for that pane is driven by the open/history flow, so don't announce per row.
+		if _, _, err := c.storage.GetOrCreatePMConversation(c.networkID, pmTarget, c.network.Nickname); err != nil {
 			logger.Log.Error().Err(err).Str("pmTarget", pmTarget).Msg("Failed to create/get PM conversation for history")
 		}
 	}
@@ -4598,9 +4623,13 @@ func (c *IRCClient) sendMessageChunk(target, message, replyMsgID, channelContext
 	} else {
 		// Private message - create or get PM conversation
 		pmTarget = target
-		_, err := c.storage.GetOrCreatePMConversation(c.networkID, target, c.network.Nickname)
+		_, created, err := c.storage.GetOrCreatePMConversation(c.networkID, target, c.network.Nickname)
 		if err != nil {
 			logger.Log.Error().Err(err).Str("target", target).Msg("Failed to create/get PM conversation")
+		} else if created {
+			// Sending to a brand-new peer (e.g. /msg nick hello) creates the DM
+			// entry without navigating to it — surface it in the sidebar now.
+			c.emitChannelsChanged()
 		}
 	}
 
@@ -5379,8 +5408,11 @@ func (c *IRCClient) handleNotice(e ircmsg.Message) {
 
 		if pmTarget != "" {
 			// Open/refresh the query conversation so the pane appears in the sidebar.
-			if _, err := c.storage.GetOrCreatePMConversation(c.networkID, pmTarget, c.network.Nickname); err != nil {
+			if _, created, err := c.storage.GetOrCreatePMConversation(c.networkID, pmTarget, c.network.Nickname); err != nil {
 				logger.Log.Error().Err(err).Str("user", user).Str("pmTarget", pmTarget).Msg("Failed to create/get PM conversation for notice")
+			} else if created {
+				// A new query entry appeared — surface it in the sidebar now.
+				c.emitChannelsChanged()
 			}
 		}
 

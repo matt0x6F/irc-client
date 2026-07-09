@@ -284,7 +284,9 @@ func cmdQuery(a *App, client *irc.IRCClient, networkID int64, args []string) err
 	if err != nil {
 		return fmt.Errorf("network not found: %w", err)
 	}
-	if _, err = a.storage.GetOrCreatePMConversation(networkID, nickname, network.Nickname); err != nil {
+	// SetPrivateMessageOpen below emits the ui-pane-event that refreshes the DM
+	// list, so the created flag is not needed here.
+	if _, _, err = a.storage.GetOrCreatePMConversation(networkID, nickname, network.Nickname); err != nil {
 		return fmt.Errorf("failed to create PM conversation: %w", err)
 	}
 	messages, err := a.storage.GetPrivateMessages(networkID, nickname, network.Nickname, 1)

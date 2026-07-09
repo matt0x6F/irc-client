@@ -1007,10 +1007,15 @@ func (s *Storage) GetPrivateMessageConversations(networkID int64, currentUser st
 	return users, nil
 }
 
-// GetOrCreatePMConversation gets or creates a PM conversation record
-// targetUser should be the other user in the conversation (normalized to lowercase)
-// currentUser is used to determine the target user from messages if needed
-func (s *Storage) GetOrCreatePMConversation(networkID int64, targetUser string, currentUser string) (*PrivateMessageConversation, error) {
+// GetOrCreatePMConversation gets or creates a PM conversation record.
+// targetUser should be the other user in the conversation (normalized to lowercase).
+// currentUser is used to determine the target user from messages if needed.
+//
+// The returned bool reports whether a NEW conversation row was created (true) vs.
+// an existing one returned (false). Callers use this to announce a sidebar change
+// (channels.changed) only when a fresh DM entry actually appeared, so the DM list
+// refreshes for a new peer without re-fetching on every message to an open chat.
+func (s *Storage) GetOrCreatePMConversation(networkID int64, targetUser string, currentUser string) (*PrivateMessageConversation, bool, error) {
 	// Normalize target user to lowercase for case-insensitive matching
 	targetUserLower := strings.ToLower(targetUser)
 
@@ -1022,12 +1027,12 @@ func (s *Storage) GetOrCreatePMConversation(networkID int64, targetUser string, 
 	if err == nil {
 		// Conversation exists, return it
 		conv := convertPMConversationFromDB(dbConv)
-		return &conv, nil
+		return &conv, false, nil
 	}
 
 	// Check if it's a "no rows" error (conversation doesn't exist)
 	if err != nil && !strings.Contains(err.Error(), "no rows") {
-		return nil, fmt.Errorf("failed to get PM conversation: %w", err)
+		return nil, false, fmt.Errorf("failed to get PM conversation: %w", err)
 	}
 
 	// Conversation doesn't exist, create it
@@ -1043,11 +1048,11 @@ func (s *Storage) GetOrCreatePMConversation(networkID int64, targetUser string, 
 	params := convertPMConversationToDBCreateParams(&conv)
 	dbConv, err = s.queries.CreatePMConversation(context.Background(), params)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create PM conversation: %w", err)
+		return nil, false, fmt.Errorf("failed to create PM conversation: %w", err)
 	}
 
 	conv = convertPMConversationFromDB(dbConv)
-	return &conv, nil
+	return &conv, true, nil
 }
 
 // GetOpenPMConversations retrieves PM conversations where is_open = true
