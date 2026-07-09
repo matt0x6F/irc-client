@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { NetworkTile } from '../network-tile';
 import { storage } from '../../../wailsjs/go/models';
+import { GetNetworkIcon } from '../../../wailsjs/go/main/App';
 
 vi.mock('../../../wailsjs/go/main/App', () => ({
   GetNetworkIcon: vi.fn().mockResolvedValue(''), // no custom icon -> monogram
@@ -37,5 +38,28 @@ describe('NetworkTile', () => {
         unread={150} onSelect={() => {}} onContextMenu={() => {}} />,
     );
     expect(screen.getByText('99+')).toBeInTheDocument();
+  });
+
+  it('renders an img when the network has a custom icon that resolves', async () => {
+    vi.mocked(GetNetworkIcon).mockResolvedValueOnce('data:image/png;base64,AAAA');
+    render(
+      <NetworkTile network={net({ iconPath: '/icons/1.png' })} selected={false} connected connecting={false}
+        unread={0} onSelect={() => {}} onContextMenu={() => {}} />,
+    );
+    const tile = screen.getByTestId('network-tile');
+    await waitFor(() => {
+      expect(tile.querySelector('img')).toHaveAttribute('src', 'data:image/png;base64,AAAA');
+    });
+    expect(screen.queryByText('LC')).not.toBeInTheDocument();
+  });
+
+  it('falls back to the monogram when the custom icon fetch rejects', async () => {
+    vi.mocked(GetNetworkIcon).mockRejectedValueOnce(new Error('icon fetch failed'));
+    render(
+      <NetworkTile network={net({ iconPath: '/icons/1.png' })} selected={false} connected connecting={false}
+        unread={0} onSelect={() => {}} onContextMenu={() => {}} />,
+    );
+    expect(await screen.findByText('LC')).toBeInTheDocument();
+    expect(screen.getByTestId('network-tile').querySelector('img')).toBeNull();
   });
 });

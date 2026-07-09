@@ -24,7 +24,10 @@ export function NetworkTile({
     let live = true;
     // iconPath present => fetch the processed data URL; else clear.
     if (network.iconPath) {
-      GetNetworkIcon(network.id).then((url) => { if (live) setIconUrl(url || ''); }).catch(() => {});
+      setIconUrl(''); // clear any prior network's icon before fetching this one
+      GetNetworkIcon(network.id)
+        .then((url) => { if (live) setIconUrl(url || ''); })
+        .catch(() => { if (live) setIconUrl(''); });
     } else {
       setIconUrl('');
     }
