@@ -557,6 +557,15 @@ export function GetNetworkBots(networkID) {
 }
 
 /**
+ * GetNetworkIcon returns the network's icon as a data URL, or "" if none.
+ * @param {number} networkID
+ * @returns {$CancellablePromise<string>}
+ */
+export function GetNetworkIcon(networkID) {
+    return $Call.ByID(322131558, networkID);
+}
+
+/**
  * GetNetworkUserMeta returns the live roster attributes (away/account/host) for
  * a network this session, keyed by lowercased nick. The frontend calls this to
  * hydrate its roster metadata when a window opens or reloads; live changes
@@ -944,6 +953,24 @@ export function RemoveMonitor(networkID, nick) {
 }
 
 /**
+ * RemoveNetworkIcon deletes the icon file and clears the stored path.
+ * @param {number} networkID
+ * @returns {$CancellablePromise<void>}
+ */
+export function RemoveNetworkIcon(networkID) {
+    return $Call.ByID(131875248, networkID);
+}
+
+/**
+ * ReorderNetworks persists the rail order; each id's sort_order becomes its 1-based index.
+ * @param {number[]} orderedIDs
+ * @returns {$CancellablePromise<void>}
+ */
+export function ReorderNetworks(orderedIDs) {
+    return $Call.ByID(1855243967, orderedIDs);
+}
+
+/**
  * RequestChannelBans asks the server for a channel's ban list. The result is delivered
  * asynchronously to the frontend via the "channel.banlist" event.
  * @param {number} networkID
@@ -1104,6 +1131,28 @@ export function SetChannelOpen(networkID, channelName, isOpen) {
  */
 export function SetLogConfig(enabled, path, level) {
     return $Call.ByID(2238388953, enabled, path, level);
+}
+
+/**
+ * SetNetworkColor sets the rail tile color palette key. Empty string clears it
+ * (NULL), reverting to the deterministic name-hashed fallback.
+ * @param {number} networkID
+ * @param {string} color
+ * @returns {$CancellablePromise<void>}
+ */
+export function SetNetworkColor(networkID, color) {
+    return $Call.ByID(1641043938, networkID, color);
+}
+
+/**
+ * SetNetworkIcon processes a base64-encoded uploaded image into a 128x128 PNG,
+ * writes it under <dataDir>/network-icons/<id>.png, and records the path.
+ * @param {number} networkID
+ * @param {string} dataB64
+ * @returns {$CancellablePromise<void>}
+ */
+export function SetNetworkIcon(networkID, dataB64) {
+    return $Call.ByID(1177880418, networkID, dataB64);
 }
 
 /**

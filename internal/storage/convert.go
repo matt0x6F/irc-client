@@ -34,6 +34,7 @@ func convertNetworkFromDB(n db.Network) Network {
 		IdentifyAsBot: n.IdentifyAsBot,
 		CreatedAt:     n.CreatedAt,
 		UpdatedAt:     n.UpdatedAt,
+		SortOrder:     n.SortOrder,
 	}
 	if n.SaslMechanism.Valid {
 		result.SASLMechanism = &n.SaslMechanism.String
@@ -46,6 +47,12 @@ func convertNetworkFromDB(n db.Network) Network {
 	}
 	if n.SaslExternalCert.Valid {
 		result.SASLExternalCert = &n.SaslExternalCert.String
+	}
+	if n.Color.Valid {
+		result.Color = &n.Color.String
+	}
+	if n.IconPath.Valid {
+		result.IconPath = &n.IconPath.String
 	}
 	return result
 }

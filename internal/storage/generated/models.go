@@ -108,6 +108,9 @@ type Network struct {
 	SaslExternalCert sql.NullString `json:"sasl_external_cert"`
 	AutoConnect      bool           `json:"auto_connect"`
 	IdentifyAsBot    bool           `json:"identify_as_bot"`
+	Color            sql.NullString `json:"color"`
+	IconPath         sql.NullString `json:"icon_path"`
+	SortOrder        int64          `json:"sort_order"`
 	CreatedAt        time.Time      `json:"created_at"`
 	UpdatedAt        time.Time      `json:"updated_at"`
 }

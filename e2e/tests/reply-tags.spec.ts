@@ -42,13 +42,13 @@ test('+draft/channel-context tag renders a #channel pill in the PM view', async 
     const unique = `ctx-pill-${Date.now()}`;
     peer.sendRaw(`@+draft/channel-context=#test PRIVMSG e2euser :${unique}`);
 
-    // The PM conversation appears in the server tree once the message lands.
+    // The PM conversation appears in the channel panel once the message lands.
     // Click the peer's nick to open the PM pane.
     await page
-      .getByTestId('server-tree')
+      .getByTestId('channel-panel')
       .getByText('ctxbot', { exact: true })
       .waitFor({ state: 'visible', timeout: 15_000 });
-    await page.getByTestId('server-tree').getByText('ctxbot', { exact: true }).click();
+    await page.getByTestId('channel-panel').getByText('ctxbot', { exact: true }).click();
 
     // The message text must be visible in the PM pane.
     const msgList = page.getByTestId('message-list');

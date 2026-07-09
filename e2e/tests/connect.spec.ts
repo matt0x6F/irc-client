@@ -1,5 +1,5 @@
 import { test, expect } from '../lib/fixtures';
-import { addNetworkAndConnect } from '../lib/actions';
+import { addNetworkAndConnect, networkTile } from '../lib/actions';
 
 test('add a network and connect to Ergo', async ({ page, runtime }) => {
   await page.goto(runtime.bridgeUrl);
@@ -13,8 +13,8 @@ test('add a network and connect to Ergo', async ({ page, runtime }) => {
   // addNetwork here previously made the spec silently depend on running first.)
   await addNetworkAndConnect(page, runtime);
 
-  // The network is present in the server tree and shows a connected (green) indicator.
-  await expect(page.getByTestId('server-tree').getByText('e2e')).toBeVisible({ timeout: 10_000 });
+  // The network is present as a rail tile and shows a connected (green) indicator.
+  await expect(networkTile(page, 'e2e')).toBeVisible({ timeout: 10_000 });
   await expect(
     page.locator('[data-testid="network-status-indicator"][data-connected="true"]').first(),
   ).toBeVisible({ timeout: 10_000 });

@@ -11,10 +11,19 @@ import (
 	"time"
 )
 
+const clearNetworkIcon = `-- name: ClearNetworkIcon :exec
+UPDATE networks SET icon_path = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+`
+
+func (q *Queries) ClearNetworkIcon(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, clearNetworkIcon, id)
+	return err
+}
+
 const createNetwork = `-- name: CreateNetwork :one
 INSERT INTO networks (name, address, port, tls, nickname, username, realname, password, sasl_enabled, sasl_mechanism, sasl_username, sasl_password, sasl_external_cert, auto_connect, identify_as_bot, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, name, address, port, tls, nickname, username, realname, password, sasl_enabled, sasl_mechanism, sasl_username, sasl_password, sasl_external_cert, auto_connect, identify_as_bot, created_at, updated_at
+RETURNING id, name, address, port, tls, nickname, username, realname, password, sasl_enabled, sasl_mechanism, sasl_username, sasl_password, sasl_external_cert, auto_connect, identify_as_bot, color, icon_path, sort_order, created_at, updated_at
 `
 
 type CreateNetworkParams struct {
@@ -75,6 +84,9 @@ func (q *Queries) CreateNetwork(ctx context.Context, arg CreateNetworkParams) (N
 		&i.SaslExternalCert,
 		&i.AutoConnect,
 		&i.IdentifyAsBot,
+		&i.Color,
+		&i.IconPath,
+		&i.SortOrder,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -91,7 +103,7 @@ func (q *Queries) DeleteNetwork(ctx context.Context, id int64) error {
 }
 
 const getNetwork = `-- name: GetNetwork :one
-SELECT id, name, address, port, tls, nickname, username, realname, password, sasl_enabled, sasl_mechanism, sasl_username, sasl_password, sasl_external_cert, auto_connect, identify_as_bot, created_at, updated_at FROM networks WHERE id = ?
+SELECT id, name, address, port, tls, nickname, username, realname, password, sasl_enabled, sasl_mechanism, sasl_username, sasl_password, sasl_external_cert, auto_connect, identify_as_bot, color, icon_path, sort_order, created_at, updated_at FROM networks WHERE id = ?
 `
 
 func (q *Queries) GetNetwork(ctx context.Context, id int64) (Network, error) {
@@ -114,6 +126,9 @@ func (q *Queries) GetNetwork(ctx context.Context, id int64) (Network, error) {
 		&i.SaslExternalCert,
 		&i.AutoConnect,
 		&i.IdentifyAsBot,
+		&i.Color,
+		&i.IconPath,
+		&i.SortOrder,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -121,7 +136,7 @@ func (q *Queries) GetNetwork(ctx context.Context, id int64) (Network, error) {
 }
 
 const getNetworks = `-- name: GetNetworks :many
-SELECT id, name, address, port, tls, nickname, username, realname, password, sasl_enabled, sasl_mechanism, sasl_username, sasl_password, sasl_external_cert, auto_connect, identify_as_bot, created_at, updated_at FROM networks ORDER BY name
+SELECT id, name, address, port, tls, nickname, username, realname, password, sasl_enabled, sasl_mechanism, sasl_username, sasl_password, sasl_external_cert, auto_connect, identify_as_bot, color, icon_path, sort_order, created_at, updated_at FROM networks ORDER BY sort_order, id
 `
 
 func (q *Queries) GetNetworks(ctx context.Context) ([]Network, error) {
@@ -150,6 +165,9 @@ func (q *Queries) GetNetworks(ctx context.Context) ([]Network, error) {
 			&i.SaslExternalCert,
 			&i.AutoConnect,
 			&i.IdentifyAsBot,
+			&i.Color,
+			&i.IconPath,
+			&i.SortOrder,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -230,5 +248,47 @@ type UpdateNetworkAutoConnectParams struct {
 
 func (q *Queries) UpdateNetworkAutoConnect(ctx context.Context, arg UpdateNetworkAutoConnectParams) error {
 	_, err := q.db.ExecContext(ctx, updateNetworkAutoConnect, arg.AutoConnect, arg.ID)
+	return err
+}
+
+const updateNetworkColor = `-- name: UpdateNetworkColor :exec
+UPDATE networks SET color = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+`
+
+type UpdateNetworkColorParams struct {
+	Color sql.NullString `json:"color"`
+	ID    int64          `json:"id"`
+}
+
+func (q *Queries) UpdateNetworkColor(ctx context.Context, arg UpdateNetworkColorParams) error {
+	_, err := q.db.ExecContext(ctx, updateNetworkColor, arg.Color, arg.ID)
+	return err
+}
+
+const updateNetworkIcon = `-- name: UpdateNetworkIcon :exec
+UPDATE networks SET icon_path = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+`
+
+type UpdateNetworkIconParams struct {
+	IconPath sql.NullString `json:"icon_path"`
+	ID       int64          `json:"id"`
+}
+
+func (q *Queries) UpdateNetworkIcon(ctx context.Context, arg UpdateNetworkIconParams) error {
+	_, err := q.db.ExecContext(ctx, updateNetworkIcon, arg.IconPath, arg.ID)
+	return err
+}
+
+const updateNetworkSortOrder = `-- name: UpdateNetworkSortOrder :exec
+UPDATE networks SET sort_order = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+`
+
+type UpdateNetworkSortOrderParams struct {
+	SortOrder int64 `json:"sort_order"`
+	ID        int64 `json:"id"`
+}
+
+func (q *Queries) UpdateNetworkSortOrder(ctx context.Context, arg UpdateNetworkSortOrderParams) error {
+	_, err := q.db.ExecContext(ctx, updateNetworkSortOrder, arg.SortOrder, arg.ID)
 	return err
 }

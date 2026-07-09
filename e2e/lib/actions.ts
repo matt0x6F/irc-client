@@ -107,23 +107,34 @@ export async function addNetworkAndConnect(
   await connect(page, settings);
 }
 
+/**
+ * Locator for a network's rail tile. Tiles show a monogram/icon only — the
+ * network name lives solely in `aria-label` (title-cased tooltip too), so
+ * this is the one place callers should target a network by name.
+ */
+export function networkTile(page: Page, name: string): Locator {
+  return page.locator(
+    `[data-testid="network-tile"][aria-label="${name.replace(/"/g, '\\"')}"]`,
+  );
+}
+
 /** Select the network's status pane so the message input becomes available. */
 export async function selectNetwork(page: Page, name = 'e2e'): Promise<void> {
-  await page.getByTestId('server-tree').getByText(name, { exact: true }).click();
+  await networkTile(page, name).click();
   await page.getByTestId('message-input').waitFor({ state: 'visible', timeout: 10_000 });
 }
 
-/** Right-click a network node to open its context menu. */
+/** Right-click a network tile to open its context menu. */
 export async function openNetworkContextMenu(page: Page, name = 'e2e'): Promise<void> {
-  await page.getByTestId('server-tree').getByText(name, { exact: true }).click({ button: 'right' });
-  await page.getByTestId('context-menu').waitFor({ state: 'visible', timeout: 5_000 });
+  await networkTile(page, name).click({ button: 'right' });
+  await page.getByTestId('network-context-menu').waitFor({ state: 'visible', timeout: 5_000 });
 }
 
 /** Dismiss any open context menu (Escape is wired to close it). */
 async function dismissContextMenu(page: Page): Promise<void> {
   await page.keyboard.press('Escape');
   await page
-    .getByTestId('context-menu')
+    .getByTestId('network-context-menu')
     .waitFor({ state: 'hidden', timeout: 5_000 })
     .catch(() => {});
 }
@@ -147,7 +158,7 @@ export async function toggleAutoConnect(page: Page, name = 'e2e'): Promise<void>
   await openNetworkContextMenu(page, name);
   await page.getByTestId('toggle-auto-connect-button').click();
   // The menu closes itself after the toggle + network refresh completes.
-  await page.getByTestId('context-menu').waitFor({ state: 'hidden', timeout: 5_000 });
+  await page.getByTestId('network-context-menu').waitFor({ state: 'hidden', timeout: 5_000 });
 }
 
 /**
@@ -159,13 +170,8 @@ export async function toggleAutoConnect(page: Page, name = 'e2e'): Promise<void>
  */
 export async function connectViaContextMenu(page: Page, name = 'e2e'): Promise<void> {
   await openNetworkContextMenu(page, name);
-  await page.getByTestId('context-menu').getByText('Connect', { exact: true }).click();
-  await page
-    .locator(
-      `xpath=//span[normalize-space(text())=${JSON.stringify(name)}]` +
-        `/preceding-sibling::span[@data-testid="network-status-indicator" and @data-connected="true"]`,
-    )
-    .waitFor({ state: 'visible', timeout: 30_000 });
+  await page.getByTestId('network-context-menu').getByText('Connect', { exact: true }).click();
+  await networkIndicator(page, name, true).waitFor({ state: 'visible', timeout: 30_000 });
 }
 
 /**
@@ -175,20 +181,21 @@ export async function connectViaContextMenu(page: Page, name = 'e2e'): Promise<v
  */
 export async function disconnectViaContextMenu(page: Page, name = 'e2e'): Promise<void> {
   await openNetworkContextMenu(page, name);
-  await page.getByTestId('context-menu').getByText('Disconnect', { exact: true }).click();
+  await page.getByTestId('network-context-menu').getByText('Disconnect', { exact: true }).click();
   await networkIndicator(page, name, false).waitFor({ state: 'visible', timeout: 30_000 });
 }
 
 /**
- * Locator for a network row's status indicator in the named connection state.
- * The indicator is the dot rendered immediately before the network-name span in
- * the server tree, so it's matched as that span's preceding sibling.
+ * Locator for a network tile's status indicator in the named connection state.
+ * The indicator is a following SIBLING of the tile button (both children of the
+ * tile's wrapper div), NOT a descendant of it — so scope by the tile's
+ * aria-label and reach the indicator via the general-sibling combinator. Tiles
+ * show a monogram/icon only; the name lives solely in aria-label.
  */
 export function networkIndicator(page: Page, name: string, connected: boolean): Locator {
   return page.locator(
-    `xpath=//span[normalize-space(text())=${JSON.stringify(name)}]` +
-      `/preceding-sibling::span[@data-testid="network-status-indicator" and ` +
-      `@data-connected=${JSON.stringify(connected ? 'true' : 'false')}]`,
+    `[data-testid="network-tile"][aria-label="${name.replace(/"/g, '\\"')}"]` +
+      ` ~ [data-testid="network-status-indicator"][data-connected="${connected ? 'true' : 'false'}"]`,
   );
 }
 
@@ -200,10 +207,10 @@ export function networkIndicator(page: Page, name: string, connected: boolean): 
  * Best-effort no-op if the network isn't present.
  */
 export async function deleteNetwork(page: Page, name: string): Promise<void> {
-  const node = page.getByTestId('server-tree').getByText(name, { exact: true });
+  const node = networkTile(page, name);
   if (!(await node.isVisible().catch(() => false))) return;
   await openNetworkContextMenu(page, name);
-  await page.getByTestId('context-menu').getByText('Delete', { exact: true }).click();
+  await page.getByTestId('network-context-menu').getByText('Delete', { exact: true }).click();
   await page.getByTestId('confirm-delete-network-button').click();
   await node.waitFor({ state: 'hidden', timeout: 15_000 });
 }
@@ -219,17 +226,18 @@ export async function joinChannel(page: Page, channel: string): Promise<void> {
   await node.click();
 }
 
-/** Open an already-joined channel's pane, expanding the network first if its node stays hidden. */
+/** Open an already-joined channel's pane, selecting its network first if the channel-panel isn't showing it. */
 export async function openChannel(page: Page, channel: string, networkName = 'e2e'): Promise<void> {
   const node = page.locator(`[data-testid="channel-node"][data-channel="${channel}"]`);
-  // Fast path: the node may already be visible (e.g. session restore re-expanded the tree).
-  // Only click the network to expand if it stays hidden for a short window. Using waitFor
-  // (rather than a point-in-time isVisible snapshot) lets Playwright's retry loop handle the race.
+  // Fast path: the node may already be visible (e.g. session restore left this
+  // network selected). Only click the network tile if it stays hidden for a
+  // short window. Using waitFor (rather than a point-in-time isVisible snapshot)
+  // lets Playwright's retry loop handle the race.
   const alreadyVisible = await node
     .waitFor({ state: 'visible', timeout: 2_000 })
     .then(() => true, () => false);
   if (!alreadyVisible) {
-    await page.getByTestId('server-tree').getByText(networkName, { exact: true }).click();
+    await networkTile(page, networkName).click();
     await node.waitFor({ state: 'visible', timeout: 15_000 });
   }
   await node.click();

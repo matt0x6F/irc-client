@@ -674,6 +674,32 @@ func (s *Storage) UpdateNetworkAutoConnect(networkID int64, autoConnect bool) er
 	return err
 }
 
+// UpdateNetworkColor sets (or clears, when color is nil) the rail color key.
+func (s *Storage) UpdateNetworkColor(networkID int64, color *string) error {
+	var v sql.NullString
+	if color != nil {
+		v = sql.NullString{String: *color, Valid: true}
+	}
+	return s.queries.UpdateNetworkColor(context.Background(), db.UpdateNetworkColorParams{Color: v, ID: networkID})
+}
+
+// UpdateNetworkSortOrder sets the rail sort position for a network.
+func (s *Storage) UpdateNetworkSortOrder(networkID int64, order int64) error {
+	return s.queries.UpdateNetworkSortOrder(context.Background(), db.UpdateNetworkSortOrderParams{SortOrder: order, ID: networkID})
+}
+
+// UpdateNetworkIcon records the on-disk path of a network's processed icon.
+func (s *Storage) UpdateNetworkIcon(networkID int64, path string) error {
+	return s.queries.UpdateNetworkIcon(context.Background(), db.UpdateNetworkIconParams{
+		IconPath: sql.NullString{String: path, Valid: true}, ID: networkID,
+	})
+}
+
+// ClearNetworkIcon clears a network's stored icon path (reverts to monogram).
+func (s *Storage) ClearNetworkIcon(networkID int64) error {
+	return s.queries.ClearNetworkIcon(context.Background(), networkID)
+}
+
 // DeleteNetwork deletes a network (cascade will delete servers)
 func (s *Storage) DeleteNetwork(networkID int64) error {
 	err := s.queries.DeleteNetwork(context.Background(), networkID)

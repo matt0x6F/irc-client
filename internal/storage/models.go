@@ -29,6 +29,14 @@ type Network struct {
 	CreatedAt        time.Time `db:"created_at" json:"created_at"`
 	UpdatedAt        time.Time `db:"updated_at" json:"updated_at"`
 
+	// Side-rail presentation: user-chosen accent color, custom icon path, and
+	// manual drag-reorder position. Color/IconPath are nullable (unset = derive
+	// a default client-side); SortOrder is NOT NULL and defaults to 0 for new
+	// rows (see CreateNetwork), tie-broken by id in GetNetworks' ORDER BY.
+	Color     *string `db:"color" json:"color,omitempty"`
+	IconPath  *string `db:"icon_path" json:"iconPath,omitempty"`
+	SortOrder int64   `db:"sort_order" json:"sortOrder"`
+
 	// Computed, non-persisted flags populated by the App layer for the frontend.
 	// Has* report whether a secret is set (keychain or fallback column) without
 	// exposing the value; CredentialStorageInsecure is true when any secret is

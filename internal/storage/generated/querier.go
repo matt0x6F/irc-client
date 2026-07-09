@@ -15,6 +15,7 @@ type Querier interface {
 	AddMonitoredNick(ctx context.Context, arg AddMonitoredNickParams) error
 	ClearChannelUsers(ctx context.Context, channelID int64) error
 	ClearNetworkChannelUsers(ctx context.Context, networkID int64) error
+	ClearNetworkIcon(ctx context.Context, id int64) error
 	CountIgnoredSender(ctx context.Context, arg CountIgnoredSenderParams) (int64, error)
 	CreateActivityItem(ctx context.Context, arg CreateActivityItemParams) (ActivityItem, error)
 	CreateChannel(ctx context.Context, arg CreateChannelParams) (Channel, error)
@@ -102,6 +103,9 @@ type Querier interface {
 	UpdateChannelUserNickname(ctx context.Context, arg UpdateChannelUserNicknameParams) error
 	UpdateNetwork(ctx context.Context, arg UpdateNetworkParams) error
 	UpdateNetworkAutoConnect(ctx context.Context, arg UpdateNetworkAutoConnectParams) error
+	UpdateNetworkColor(ctx context.Context, arg UpdateNetworkColorParams) error
+	UpdateNetworkIcon(ctx context.Context, arg UpdateNetworkIconParams) error
+	UpdateNetworkSortOrder(ctx context.Context, arg UpdateNetworkSortOrderParams) error
 	UpdatePMConversationIsOpen(ctx context.Context, arg UpdatePMConversationIsOpenParams) error
 	UpdateServer(ctx context.Context, arg UpdateServerParams) error
 	UpsertLinkPreview(ctx context.Context, arg UpsertLinkPreviewParams) error
