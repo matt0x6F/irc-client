@@ -48,14 +48,21 @@ describe('NetworkRail', () => {
 
   it('shows an unseen badge on the activity tile when there is unseen activity', () => {
     render(<NetworkRail {...base({ activityItems: [activityItem({ id: 1, seen: false })] })} />);
-    const activity = screen.getByTestId('rail-activity');
-    expect(activity).toHaveTextContent('1');
+    expect(screen.getByTestId('rail-activity-badge')).toHaveTextContent('1');
+  });
+
+  it('renders the unseen badge outside the clip-path\'d activity button', () => {
+    render(<NetworkRail {...base({ activityItems: [activityItem({ id: 1, seen: false })] })} />);
+    const badge = screen.getByTestId('rail-activity-badge');
+    // clip-path clips ALL descendants (unlike overflow on a non-positioned
+    // ancestor), so the badge must be a sibling of the squircle button, not
+    // a child — otherwise it is sliced to the squircle's curve.
+    expect(screen.getByTestId('rail-activity')).not.toContainElement(badge);
   });
 
   it('does not show a badge when nothing is unseen', () => {
     render(<NetworkRail {...base({ activityItems: [activityItem({ id: 1, seen: true })] })} />);
-    const activity = screen.getByTestId('rail-activity');
-    expect(activity).not.toHaveTextContent('1');
+    expect(screen.queryByTestId('rail-activity-badge')).not.toBeInTheDocument();
   });
 
   it('marks the activity tile active when activityActive', () => {

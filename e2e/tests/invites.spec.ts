@@ -32,7 +32,7 @@ test('activity inbox renders a received invite', async ({ page, runtime }) => {
     // been absorbed as an activity_items row and the rail has re-rendered, so
     // this removes the race between "click the tile" and "the invite arrives"
     // — we don't open the inbox until the item exists.
-    await expect(page.getByTestId('rail-activity')).toHaveText(/\d/, { timeout: 15_000 });
+    await expect(page.getByTestId('rail-activity-badge')).toHaveText(/\d/, { timeout: 15_000 });
 
     // Open the global Activity destination on the rail.
     await page.getByTestId('rail-activity').click();
