@@ -52,27 +52,31 @@ export function NetworkRail(props: NetworkRailProps) {
       style={{ width: 64, flexShrink: 0 }}
     >
       <RailTooltip label="Activity">
-        <button
-          type="button"
-          data-testid="rail-activity"
-          data-active={activityActive ? 'true' : 'false'}
-          aria-label="Activity"
-          onClick={onSelectActivity}
-          className="relative mb-2"
-          style={{
-            width: 44, height: 44, clipPath: SQUIRCLE,
-            background: activityActive ? 'var(--primary)' : 'var(--accent)',
-            color: activityActive ? 'var(--primary-foreground)' : 'var(--accent-foreground)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}
-        >
-          <Bell size={20} />
+        {/* The badge must sit OUTSIDE the squircle button: clip-path clips all
+            descendants, so a badge inside gets sliced to the squircle curve.
+            Same wrapper-sibling structure as NetworkTile. */}
+        <div className="relative mb-2" style={{ width: 44 }}>
+          <button
+            type="button"
+            data-testid="rail-activity"
+            data-active={activityActive ? 'true' : 'false'}
+            aria-label="Activity"
+            onClick={onSelectActivity}
+            style={{
+              width: 44, height: 44, clipPath: SQUIRCLE,
+              background: activityActive ? 'var(--primary)' : 'var(--accent)',
+              color: activityActive ? 'var(--primary-foreground)' : 'var(--accent-foreground)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+          >
+            <Bell size={20} />
+          </button>
           {unseen > 0 && (
-            <span className="absolute" style={{ right: -4, top: -4, minWidth: 18, height: 18, padding: '0 4px', borderRadius: 9, background: 'var(--primary)', color: 'var(--primary-foreground)', fontSize: 11, fontWeight: 500, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 0 2px var(--background)' }}>
+            <span data-testid="rail-activity-badge" className="absolute" style={{ right: -4, top: -4, minWidth: 18, height: 18, padding: '0 4px', borderRadius: 9, background: 'var(--primary)', color: 'var(--primary-foreground)', fontSize: 11, fontWeight: 500, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 0 2px var(--background)' }}>
               {unseen > 99 ? '99+' : unseen}
             </span>
           )}
-        </button>
+        </div>
       </RailTooltip>
 
       <div style={{ width: 32, height: 1, background: 'var(--border)', margin: '2px 0 8px' }} />
