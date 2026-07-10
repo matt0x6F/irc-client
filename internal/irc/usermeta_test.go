@@ -52,6 +52,24 @@ func waitForMetaCount(t *testing.T, c *metaCounter, n int) {
 	t.Fatalf("timed out waiting for %d user-meta events; got %d", n, c.snapshotCount())
 }
 
+// waitForMetaLatest waits until the latest delivered payload for nick satisfies
+// pred. User-meta events are coalesced snapshots delivered off the read loop, so
+// tests assert the eventual latest state rather than a per-transition count.
+func waitForMetaLatest(t *testing.T, c *metaCounter, nick string, pred func(map[string]interface{}) bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		c.mu.Lock()
+		d := c.latest[nick]
+		c.mu.Unlock()
+		if d != nil && pred(d) {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for latest user-meta on %q to satisfy predicate", nick)
+}
+
 // newUserMetaTestClient builds a minimal IRCClient with the fields the roster
 // helpers touch: an event bus, storage, a network, and the userMeta map.
 func newUserMetaTestClient(t *testing.T) (*IRCClient, *metaCounter) {
@@ -110,7 +128,13 @@ func TestAwayNotifySetsAndClears(t *testing.T) {
 		t.Fatalf("after un-AWAY: meta=%+v", meta)
 	}
 
-	waitForMetaCount(t, counter, 2) // one set, one clear
+	// Events are coalesced snapshots delivered off the read loop, so a rapid
+	// set-then-clear may collapse to a single emit — the contract is that the
+	// latest delivered state reflects the cleared away, not a per-transition
+	// count.
+	waitForMetaLatest(t, counter, "alice", func(d map[string]interface{}) bool {
+		return d["away"] == false && d["away_message"] == ""
+	})
 }
 
 func TestAwayNotifyIdempotent(t *testing.T) {

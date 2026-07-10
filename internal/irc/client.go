@@ -104,6 +104,12 @@ type IRCClient struct {
 	knownBotsMu           sync.Mutex             // Mutex for knownBots map
 	userMeta              map[string]*UserMeta   // Live roster attributes (away/account/host) this session (key: lowercased nick)
 	userMetaMu            sync.Mutex             // Mutex for userMeta map
+	metaEmitOnce          sync.Once              // Lazily starts the user-meta forwarder goroutine
+	metaEmitStopOnce      sync.Once              // Guards the single close of metaEmitStop
+	metaEmitMu            sync.Mutex             // Guards metaPending, metaEmitSignal, metaEmitStop
+	metaPending           map[string]UserMeta    // Coalesced pending user-meta snapshots awaiting emit (key: lowercased nick)
+	metaEmitSignal        chan struct{}          // Wakes the forwarder (buffered 1)
+	metaEmitStop          chan struct{}          // Closed on teardown to stop the forwarder
 	autoJoinOnce          *sync.Once             // Guards the one auto-join per connection; re-created each Connect (guarded by mu)
 	autoJoinAction        func()                 // What triggerAutoJoin runs once per connection; defaults to doAutoJoin (injectable for tests)
 	enabledCaps           map[string]bool        // IRCv3 capabilities granted by the server
@@ -1377,9 +1383,94 @@ func (c *IRCClient) applyUserMeta(nick string, mutate func(*UserMeta)) {
 	c.emitUserMeta(key, stored)
 }
 
-// emitUserMeta publishes a snapshot of a nick's roster attributes. nick must
-// already be lowercased.
+// emitUserMeta queues a snapshot of a nick's roster attributes for asynchronous
+// publication. nick must already be lowercased.
+//
+// This must never block: emitUserMeta runs on the irc-go read goroutine (via
+// applyUserMeta, from the NAMES/WHO/away/account handlers), and EventBus.Emit
+// applies backpressure onto its caller when the queue fills. Seeding a large
+// channel roster (e.g. ##chat, ~800 users) emits one event per user; if a slow
+// subscriber (the plugin manager fanning out to subprocesses) can't drain fast
+// enough, a blocking Emit here would stall the read loop, stop draining the
+// socket, and let the server drop the link — the reconnect-churn bug. So we
+// hand the snapshot to a background forwarder and return immediately. Snapshots
+// coalesce per nick (last write wins), which is correct: a user-meta event is a
+// full snapshot, so only the latest matters.
 func (c *IRCClient) emitUserMeta(nick string, meta UserMeta) {
+	c.startMetaEmitter()
+
+	c.metaEmitMu.Lock()
+	c.metaPending[nick] = meta
+	signal := c.metaEmitSignal
+	c.metaEmitMu.Unlock()
+
+	// Non-blocking wake: a buffered signal already pending is enough — the
+	// forwarder drains the whole pending map each time it wakes.
+	select {
+	case signal <- struct{}{}:
+	default:
+	}
+}
+
+// startMetaEmitter lazily initialises the forwarder state and goroutine. Lazy so
+// it works whether the client came from newClient or was built directly (tests).
+func (c *IRCClient) startMetaEmitter() {
+	c.metaEmitOnce.Do(func() {
+		c.metaEmitMu.Lock()
+		if c.metaPending == nil {
+			c.metaPending = make(map[string]UserMeta)
+		}
+		if c.metaEmitSignal == nil {
+			c.metaEmitSignal = make(chan struct{}, 1)
+		}
+		if c.metaEmitStop == nil {
+			c.metaEmitStop = make(chan struct{})
+		}
+		signal, stop := c.metaEmitSignal, c.metaEmitStop
+		c.metaEmitMu.Unlock()
+		go c.metaEmitLoop(signal, stop)
+	})
+}
+
+// metaEmitLoop drains coalesced user-meta snapshots to the event bus, off the
+// read goroutine. Blocking on Emit here is harmless — it throttles this
+// forwarder, not the socket read loop.
+func (c *IRCClient) metaEmitLoop(signal <-chan struct{}, stop <-chan struct{}) {
+	for {
+		select {
+		case <-stop:
+			return
+		case <-signal:
+			c.drainMetaPending()
+		}
+	}
+}
+
+// drainMetaPending publishes and clears every pending snapshot. It re-checks the
+// map after each publish so snapshots that arrive mid-drain are not stranded
+// until the next signal.
+func (c *IRCClient) drainMetaPending() {
+	for {
+		c.metaEmitMu.Lock()
+		var nick string
+		var meta UserMeta
+		found := false
+		for n, m := range c.metaPending {
+			nick, meta, found = n, m, true
+			delete(c.metaPending, n)
+			break
+		}
+		c.metaEmitMu.Unlock()
+		if !found {
+			return
+		}
+		c.publishUserMeta(nick, meta)
+	}
+}
+
+// publishUserMeta emits a single user-meta snapshot to the bus. nick must
+// already be lowercased.
+func (c *IRCClient) publishUserMeta(nick string, meta UserMeta) {
 	c.eventBus.Emit(events.Event{
 		Type: EventUserMetaChanged,
 		Data: map[string]interface{}{
@@ -1395,6 +1486,20 @@ func (c *IRCClient) emitUserMeta(nick string, meta UserMeta) {
 		Timestamp: time.Now(),
 		Source:    events.EventSourceIRC,
 	})
+}
+
+// stopMetaEmitter halts the forwarder goroutine. Safe to call more than once and
+// safe if the emitter never started. Any snapshot in flight is dropped — the
+// client is being torn down, so a stale roster event has no consumer worth
+// waiting for.
+func (c *IRCClient) stopMetaEmitter() {
+	c.metaEmitMu.Lock()
+	if c.metaEmitStop == nil {
+		c.metaEmitStop = make(chan struct{})
+	}
+	stop := c.metaEmitStop
+	c.metaEmitMu.Unlock()
+	c.metaEmitStopOnce.Do(func() { close(stop) })
 }
 
 // renameUserMeta moves a nick's roster attributes to its new nick on NICK so the
@@ -2099,6 +2204,11 @@ func (c *IRCClient) onDisconnect(e ircmsg.Message) {
 		Timestamp: time.Now(),
 		Source:    events.EventSourceIRC,
 	})
+
+	// Stop the user-meta forwarder for this now-dead client. A fresh client
+	// re-seeds the roster on reconnect, so any snapshot still pending here is
+	// stale and has no consumer worth keeping the goroutine alive for.
+	c.stopMetaEmitter()
 
 	logger.Log.Debug().Int64("network_id", c.networkID).Msg("Disconnect callback: finished processing disconnect")
 }
