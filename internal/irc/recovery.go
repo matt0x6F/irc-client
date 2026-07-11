@@ -32,13 +32,24 @@ func (c *IRCClient) setAuthFailed(v bool) {
 // observeSASLSuccess records a successful authentication seen via RPL_LOGGEDIN
 // (900) / RPL_SASLSUCCESS (903). It is observation-only: the library owns CAP
 // negotiation and SASL and has already completed them, so this just records
-// state. Safe to call more than once (900 and 903 usually both arrive); the flag
-// writes and status line are harmless when repeated.
+// state.
+//
+// A single successful auth usually delivers BOTH 900 and 903, so this is called
+// twice. The flag writes are idempotent, but the status line and event are only
+// surfaced on the first observation per connection: a duplicate "SASL
+// authentication successful" reads to users like a second connection (it
+// repeatedly raised false "double connection" alarms during the reconnect-churn
+// investigation).
 func (c *IRCClient) observeSASLSuccess() {
 	c.mu.Lock()
+	alreadyObserved := c.saslAuthenticated
 	c.saslAuthenticated = true
 	c.authFailed = false
 	c.mu.Unlock()
+
+	if alreadyObserved {
+		return
+	}
 
 	c.writeStatusBuffer(storage.Message{
 		NetworkID:   c.networkID,
