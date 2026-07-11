@@ -1,13 +1,15 @@
 # Cascade Chat
 
-A modern, multi-platform IRC client built with Wails, featuring plugin support, ShadCN UI, and efficient message storage.
+A modern, multi-platform IRC client built with Wails, with IRCv3 support,
+extensible plugins and scripts, a React/Tailwind UI, and durable SQLite history.
 
 ## Features
 
 - **Multi-platform**: Windows, macOS, and Linux support
-- **Plugin System**: IPC-based plugins (kubectl-style) for extensibility
-- **Modern UI**: ShadCN components with Tailwind CSS v4
-- **Efficient Storage**: SQLite with optimized batch writes
+- **IRCv3**: SASL, STS, CHATHISTORY, MONITOR, replies, typing, account metadata, and more
+- **Extensibility**: Process-isolated JSON-RPC plugins and user-authored Go scripts
+- **Modern UI**: React 19, Radix primitives, Zustand, virtualization, and Tailwind CSS v4
+- **Durable Storage**: SQLite/WAL history, FTS5 search, migrations, and encrypted credentials
 - **Event-Driven**: Extensible event bus architecture
 
 ## Install (macOS)
@@ -31,7 +33,7 @@ You only need to do this once; afterwards it launches normally.
 - Go 1.25+ (required by Wails v3)
 - Node.js 20 (see `.nvmrc`; with nvm run `nvm use` so `task` can find npm)
 - Task: `go install github.com/go-task/task/v3/cmd/task@latest` (or `brew install go-task`)
-- Wails v3 CLI: `go install github.com/wailsapp/wails/v3/cmd/wails3@latest`
+- Wails v3 CLI: `go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha2.108`
 
 ### Installation
 
@@ -114,19 +116,19 @@ task --list
 ## Project Structure
 
 ```
-cascade/
-├── app.go                 # Wails app entry with bindings
-├── main.go                # Application entry point
+irc-client/
+├── app*.go                 # Wails application services and bindings
 ├── internal/
-│   ├── irc/              # IRC core implementation
-│   ├── events/            # Event bus
-│   ├── plugin/            # Plugin system
-│   └── storage/           # Database layer
-├── frontend/
-│   └── src/
-│       ├── components/    # React components
-│       └── types/         # TypeScript definitions
-└── plugins/               # Example plugins
+│   ├── irc/                # IRC protocol/session core
+│   ├── events/             # Ordered event bus
+│   ├── plugin/             # Process-isolated JSON-RPC plugins
+│   ├── script/             # In-process Go scripting runtime
+│   ├── security/           # Encrypted credential storage
+│   └── storage/            # SQLite, migrations, and SQLC queries
+├── frontend/src/           # React components, stores, hooks, and tests
+├── e2e/                    # Playwright + headless Wails + local Ergo tests
+├── cascade/                # Public SDK used by plugins and scripts
+└── plugins/                # Example plugins
 ```
 
 ## Testing with Local IRC Server

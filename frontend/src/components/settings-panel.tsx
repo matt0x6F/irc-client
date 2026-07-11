@@ -15,27 +15,7 @@ import {
 import { useThemeStore, ACCENTS, type ThemeMode } from '../stores/theme';
 import { useSettingsStore, type PrefixDisplayMode, type UpdateChannel } from '../stores/settings';
 import { usePreferencesStore } from '../stores/preferences';
-
-function serializeNetworkForm(
-  fd: main.NetworkConfig,
-  servers: Array<{ address: string; port: number; tls: boolean }>,
-): string {
-  return JSON.stringify({
-    name: fd.name ?? '',
-    nickname: fd.nickname ?? '',
-    username: fd.username ?? '',
-    realname: fd.realname ?? '',
-    password: fd.password ?? '',
-    sasl_enabled: (fd as any).sasl_enabled ?? false,
-    sasl_mechanism: (fd as any).sasl_mechanism ?? '',
-    sasl_username: (fd as any).sasl_username ?? '',
-    sasl_password: (fd as any).sasl_password ?? '',
-    sasl_external_cert: (fd as any).sasl_external_cert ?? '',
-    auto_connect: (fd as any).auto_connect ?? false,
-    identify_as_bot: (fd as any).identify_as_bot ?? false,
-    servers: (servers ?? []).map((s) => ({ address: s.address ?? '', port: s.port ?? 6667, tls: s.tls ?? false })),
-  });
-}
+import { serializeNetworkForm } from '../lib/settings-network-form';
 
 export type SettingsSection = 'networks' | 'plugins' | 'scripts' | 'display' | 'notifications' | 'advanced' | 'about';
 
@@ -2070,4 +2050,3 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
     </div>
   );
 }
-

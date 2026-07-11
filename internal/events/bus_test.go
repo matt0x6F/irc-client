@@ -37,6 +37,20 @@ type orderedSub struct {
 	fired bool
 }
 
+type blockingSub struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (s *blockingSub) OnEvent(Event) {
+	select {
+	case <-s.started:
+	default:
+		close(s.started)
+	}
+	<-s.release
+}
+
 func (s *orderedSub) OnEvent(e Event) {
 	s.mu.Lock()
 	s.got = append(s.got, e.Data["i"].(int))
@@ -365,5 +379,80 @@ func TestEventSources(t *testing.T) {
 		if events[i].Source != src {
 			t.Errorf("event %d: expected source '%s', got '%s'", i, src, events[i].Source)
 		}
+	}
+}
+
+func TestEmitAfterCloseDoesNotBlock(t *testing.T) {
+	eb := NewEventBus()
+	eb.Close()
+
+	done := make(chan struct{})
+	go func() {
+		for i := 0; i <= eventQueueSize; i++ {
+			eb.Emit(Event{Type: "after.close"})
+		}
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("Emit blocked after EventBus.Close")
+	}
+}
+
+func TestCloseUnblocksEmitterWhenQueueIsFull(t *testing.T) {
+	eb := NewEventBus()
+	sub := &blockingSub{started: make(chan struct{}), release: make(chan struct{})}
+	eb.Subscribe("blocked", sub)
+	eb.Emit(Event{Type: "blocked"})
+	<-sub.started
+
+	for i := 0; i < eventQueueSize; i++ {
+		eb.Emit(Event{Type: "blocked"})
+	}
+	emitDone := make(chan struct{})
+	emitStarted := make(chan struct{})
+	go func() {
+		close(emitStarted)
+		eb.Emit(Event{Type: "blocked"})
+		close(emitDone)
+	}()
+	<-emitStarted
+	emitterDeadline := time.Now().Add(250 * time.Millisecond)
+	for eb.mu.TryLock() {
+		eb.mu.Unlock()
+		if time.Now().After(emitterDeadline) {
+			t.Fatal("emitter did not block while holding the event-bus read lock")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	closeDone := make(chan struct{})
+	closeStarted := make(chan struct{})
+	go func() {
+		close(closeStarted)
+		eb.Close()
+		close(closeDone)
+	}()
+	<-closeStarted
+	closeDeadline := time.Now().Add(250 * time.Millisecond)
+	for eb.mu.TryRLock() {
+		eb.mu.RUnlock()
+		if time.Now().After(closeDeadline) {
+			t.Fatal("Close did not begin waiting for the event-bus write lock")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	close(sub.release)
+	select {
+	case <-emitDone:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("full-queue emitter remained blocked during Close")
+	}
+	select {
+	case <-closeDone:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("Close deadlocked with a full queue")
 	}
 }

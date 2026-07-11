@@ -15,6 +15,7 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   GetPrivateMessageConversations: vi.fn().mockResolvedValue(['bob']),
   GetChannels: vi.fn().mockResolvedValue([]),
   GetJoinedChannels: vi.fn().mockResolvedValue([]),
+  GetMonitorPresence: vi.fn().mockResolvedValue({}),
   CloseChannel: vi.fn(), LeaveChannel: vi.fn(), SendCommand: vi.fn(),
   SetPrivateMessageOpen: vi.fn(), ClearPaneFocus: vi.fn(),
   ToggleChannelAutoJoin: vi.fn(),
@@ -37,12 +38,13 @@ describe('ChannelPanel', () => {
     await waitFor(() => expect(screen.getByText(/cascade/)).toBeInTheDocument());
   });
 
-  it('selecting the server log calls onSelectChannel with status', () => {
+  it('selecting the server log calls onSelectChannel with status', async () => {
     const onSelect = vi.fn();
     render(
       <ChannelPanel network={network} selectedChannel={null} connected currentNick="nyx_"
         unreadCounts={new Map()} onSelectChannel={onSelect} onShowUserInfo={() => {}} />,
     );
+    await waitFor(() => expect(screen.getByText(/cascade/)).toBeInTheDocument());
     fireEvent.click(screen.getByText('Server log'));
     expect(onSelect).toHaveBeenCalledWith(1, 'status');
   });

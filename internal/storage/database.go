@@ -70,49 +70,18 @@ func NewStorage(dbPath string, bufferSize int, flushInterval time.Duration) (*St
 // Close closes the database connection and flushes remaining messages
 func (s *Storage) Close() error {
 	s.closedMu.Lock()
+	if s.closed {
+		s.closedMu.Unlock()
+		return nil
+	}
 	s.closed = true
 	s.closedMu.Unlock()
 
-	// Close writeBuffer first to prevent new writes
-	close(s.writeBuffer)
-
-	// Signal flushLoop to stop
+	// Writers hold closedMu for the duration of enqueueing, so once the write
+	// lock above succeeds no producer can still be racing a final flush. Keep the
+	// buffer channel open: closing it would create a check-then-send panic window.
 	close(s.stopCh)
-
-	// Wait for flushLoop to finish - it should exit quickly when stopCh is closed
-	// The flushLoop will check if storage is closed before doing any database operations
-	done := make(chan struct{})
-	go func() {
-		s.wg.Wait()
-		close(done)
-	}()
-
-	// Wait for flushLoop to finish (with a reasonable timeout as safety net)
-	select {
-	case <-done:
-		// flushLoop finished
-	case <-time.After(500 * time.Millisecond):
-		// If flushLoop is stuck in a database operation, it should have checked
-		// if storage is closed and exited. If it's still running after 500ms,
-		// something is wrong, but we'll continue anyway.
-		logger.Log.Debug().Msg("flushLoop still running after 500ms, proceeding with database close")
-	}
-
-	// Try to flush any remaining messages, but don't block if it's slow
-	// Use a goroutine with timeout to avoid blocking shutdown
-	flushDone := make(chan struct{})
-	go func() {
-		s.flushBuffer()
-		close(flushDone)
-	}()
-
-	select {
-	case <-flushDone:
-		// Flush completed
-	case <-time.After(200 * time.Millisecond):
-		// Flush is taking too long, skip it
-		logger.Log.Debug().Msg("Skipping final flush due to timeout")
-	}
+	s.wg.Wait()
 
 	return s.db.Close()
 }
@@ -127,7 +96,7 @@ func (s *Storage) flushLoop() {
 		select {
 		case <-s.stopCh:
 			// Storage is closing - flush any remaining messages and exit
-			s.flushBuffer()
+			s.flushBuffer(true)
 			return
 		case <-ticker.C:
 			// Check if storage is closed before flushing
@@ -138,13 +107,13 @@ func (s *Storage) flushLoop() {
 				// Storage is closed, exit immediately
 				return
 			}
-			s.flushBuffer()
+			s.flushBuffer(false)
 		}
 	}
 }
 
 // flushBuffer flushes all messages in the buffer to the database
-func (s *Storage) flushBuffer() {
+func (s *Storage) flushBuffer(allowClosed bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -152,7 +121,7 @@ func (s *Storage) flushBuffer() {
 	s.closedMu.RLock()
 	closed := s.closed
 	s.closedMu.RUnlock()
-	if closed {
+	if closed && !allowClosed {
 		return
 	}
 
@@ -174,7 +143,7 @@ func (s *Storage) flushBuffer() {
 			s.closedMu.RLock()
 			closed = s.closed
 			s.closedMu.RUnlock()
-			if closed {
+			if closed && !allowClosed {
 				return
 			}
 
@@ -211,28 +180,27 @@ func normalizeForStore(msg Message) Message {
 
 // WriteMessage queues a message for batch insertion
 func (s *Storage) WriteMessage(msg Message) error {
-	// Check if storage is closed
 	s.closedMu.RLock()
 	if s.closed {
 		s.closedMu.RUnlock()
 		return fmt.Errorf("storage is closed")
 	}
-	s.closedMu.RUnlock()
-
-	// Use recover to handle panic if channel is closed
-	defer func() {
-		if r := recover(); r != nil {
-			// Channel was closed, storage is shutting down
-			// Silently ignore - this is expected during shutdown
-		}
-	}()
 
 	select {
 	case s.writeBuffer <- msg:
+		s.closedMu.RUnlock()
 		return nil
 	default:
-		// Buffer full, flush immediately
-		s.flushBuffer()
+		// Do not hold closedMu while flushing: Close needs its write lock to
+		// establish the final-flush boundary.
+		s.closedMu.RUnlock()
+		s.flushBuffer(false)
+
+		s.closedMu.RLock()
+		defer s.closedMu.RUnlock()
+		if s.closed {
+			return fmt.Errorf("storage is closed")
+		}
 		select {
 		case s.writeBuffer <- msg:
 			return nil
@@ -262,13 +230,13 @@ func (s *Storage) WriteMessageSync(msg Message) error {
 	}()
 
 	// Flush buffer first to ensure we can read it back immediately
-	s.flushBuffer()
+	s.flushBuffer(false)
 
 	// Write the message
 	select {
 	case s.writeBuffer <- msg:
 		// Immediately flush again to ensure it's in the database
-		s.flushBuffer()
+		s.flushBuffer(false)
 		return nil
 	default:
 		// Buffer still full after flush, try direct insert using SQLC

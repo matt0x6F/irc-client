@@ -7,6 +7,7 @@ vi.mock('../../wailsjs/go/main/App', () => ({
   SendCommand: (...a: unknown[]) => sendCommand(...a),
   // other App imports used by the store are unused in this test path:
   SendMessage: vi.fn(), SetPaneFocus: vi.fn(), RequestChatHistoryLatest: vi.fn(),
+  GetMessages: vi.fn().mockResolvedValue([]),
 }));
 vi.mock('../../wailsjs/runtime/runtime', () => ({ EventsOn: vi.fn(() => () => {}) }));
 

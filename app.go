@@ -88,7 +88,7 @@ func NewApp() (*App, error) {
 	}
 	dbPath := filepath.Join(baseDir, "cascade-chat.db")
 
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+	if err := ensurePrivateDir(filepath.Dir(dbPath)); err != nil {
 		return nil, fmt.Errorf("failed to create config directory: %w", err)
 	}
 
@@ -328,6 +328,12 @@ func (a *App) ServiceShutdown() error {
 			case <-shutdownCtx.Done():
 				logger.Log.Warn().Msg("Timeout closing plugin manager, continuing shutdown")
 			}
+		}
+
+		// All event producers are stopped at this point. Close the bus before
+		// storage so late emissions cannot dispatch into services being torn down.
+		if a.eventBus != nil {
+			a.eventBus.Close()
 		}
 
 		// Close storage

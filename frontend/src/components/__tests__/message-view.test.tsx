@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, act } from '@testing-library/react'
 import { MessageView } from '../message-view'
 import { storage } from '../../../wailsjs/go/models'
 import { useNetworkStore } from '../../stores/network'
@@ -240,7 +240,7 @@ describe('MessageView nick interactions', () => {
     expect(storeState.openQuery).toHaveBeenCalledWith(1, 'alice')
   })
 
-  it('opens the shared user context menu when the author nick is right-clicked', () => {
+  it('opens the shared user context menu when the author nick is right-clicked', async () => {
     const msg = makeMessage({ id: 21, user: 'alice', message: 'hi', message_type: 'privmsg' })
 
     renderView([msg], 1, '#chan')
@@ -248,18 +248,22 @@ describe('MessageView nick interactions', () => {
     // No menu until the nick is right-clicked.
     expect(screen.queryByText('CTCP Version')).toBeNull()
 
-    fireEvent.contextMenu(screen.getByTestId('author-nick'))
+    await act(async () => {
+      fireEvent.contextMenu(screen.getByTestId('author-nick'))
+    })
 
     // The same always-available entries the userlist menu shows.
     expect(screen.getByText('Whois')).toBeInTheDocument()
     expect(screen.getByText('CTCP Version')).toBeInTheDocument()
   })
 
-  it('right-click menu offers a single Invite entry, not a per-channel list', () => {
+  it('right-click menu offers a single Invite entry, not a per-channel list', async () => {
     const msg = makeMessage({ id: 22, user: 'alice', message: 'hi', message_type: 'privmsg' })
     renderView([msg], 1, '#chan')
 
-    fireEvent.contextMenu(screen.getByTestId('author-nick'))
+    await act(async () => {
+      fireEvent.contextMenu(screen.getByTestId('author-nick'))
+    })
 
     expect(screen.getByText('Invite to channel…')).toBeInTheDocument()
     // The old inline "Invite to" section header must be gone.

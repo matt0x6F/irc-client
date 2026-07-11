@@ -32,8 +32,20 @@ permissions:
   contents: write
 
 jobs:
+  # Make publication the final stage of the same tested pipeline. These reusable
+  # workflows also run directly on pull requests, while main/release builds call
+  # them here so an RC or stable artifact cannot publish before both gates pass.
+  quality-gate:
+    name: Unit, race, lint & frontend gate
+    uses: ./.github/workflows/ci.yml
+
+  e2e-gate:
+    name: Headless IRC end-to-end gate
+    uses: ./.github/workflows/e2e.yml
+
   derive-version:
     name: Derive version
+    needs: [quality-gate, e2e-gate]
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.version.outputs.tag }}
@@ -100,7 +112,7 @@ jobs:
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
       - name: Install Wails v3 CLI
-        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha2.103
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha2.108
       - name: Build universal app, DMG & updater zip
         # The fts5 tag + CGO and version ldflags are applied by the v3 platform
         # Taskfile (build/darwin/Taskfile.yml), which reads APP_VERSION/APP_COMMIT/
@@ -148,7 +160,7 @@ jobs:
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
       - name: Install Wails v3 CLI
-        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha2.103
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha2.108
       - name: Install NSIS
         # NSIS is not preinstalled on the hosted Windows images. choco updates the
         # *machine* PATH in the registry, but this job's environment was captured at
@@ -238,7 +250,7 @@ jobs:
       - name: Install GTK/WebKit build dependencies
         run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev
       - name: Install Wails v3 CLI
-        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha2.103
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha2.108
       - name: Build updater tarball, AppImage, deb & rpm
         # CGO_ENABLED=1 (process env) + the native gcc give an fts5 binary. The native
         # leg builds in-place (no Docker) because OS==linux and target arch == host
