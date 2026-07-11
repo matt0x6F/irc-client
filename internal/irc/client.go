@@ -304,6 +304,42 @@ func (c *IRCClient) ForceReconnect() {
 	}
 }
 
+// ProbeAlive sends a keepalive PING and reports whether the link answered within
+// deadline. It lets the wake path tell apart a connection macOS kept alive across
+// sleep (TCPKeepAlive) from one that died: on a live link the server's PONG — or any
+// inbound traffic — advances the library's last-read timestamp; on a dead or
+// half-open socket nothing arrives and this returns false. Without it, the wake path
+// force-reconnected every network on every (even 2-second maintenance) DarkWake,
+// tearing down healthy links and rejoining channels — the visible ##chat join-spam.
+// The PING is sent from a goroutine so a wedged write queue can't block the probe.
+// Returns false immediately when there is no live connection to probe.
+func (c *IRCClient) ProbeAlive(deadline time.Duration) bool {
+	c.mu.RLock()
+	conn := c.conn
+	connected := c.connected
+	c.mu.RUnlock()
+	if conn == nil || !connected {
+		return false
+	}
+
+	before := conn.LastReadNano()
+	go conn.SendKeepalivePing()
+
+	deadlineC := time.After(deadline)
+	poll := time.NewTicker(50 * time.Millisecond)
+	defer poll.Stop()
+	for {
+		select {
+		case <-deadlineC:
+			return conn.LastReadNano() != before
+		case <-poll.C:
+			if conn.LastReadNano() != before {
+				return true
+			}
+		}
+	}
+}
+
 // preferredNick is the nick the user configured and wants to hold. It matches
 // the library's PreferredNick (conn.Nick is initialized from it) and is the one
 // the library re-requests every keepalive while we're on an alternative.

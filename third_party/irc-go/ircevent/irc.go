@@ -86,6 +86,21 @@ func (irc *Connection) ping() {
 	irc.Send("PING", param)
 }
 
+// LastReadNano returns the UnixNano timestamp of the most recent inbound line, or 0
+// before the first read. Exposed so callers can probe link liveness on demand (e.g.
+// after a system wake) by observing whether a keepalive PONG advanced it.
+func (irc *Connection) LastReadNano() int64 {
+	return irc.lastReadNano.Load()
+}
+
+// SendKeepalivePing sends one keepalive PING out of band of the pingLoop's schedule,
+// in the same timestamped format. Used to probe whether a link that may have died
+// during sleep is still answering, without waiting for the next scheduled keepalive.
+// A PONG (or any inbound line) advances LastReadNano.
+func (irc *Connection) SendKeepalivePing() {
+	irc.ping()
+}
+
 // Interpret the PONG from a keepalive ping
 func (irc *Connection) recordPong(param string) {
 	ts := strings.TrimPrefix(param, keepalivePrefix)
