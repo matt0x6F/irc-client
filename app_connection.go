@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/matt0x6f/irc-client/internal/constants"
@@ -1097,13 +1099,48 @@ func (a *App) GetConnectionStatus(networkID int64) (bool, error) {
 	return client.IsConnected(), nil
 }
 
-// reconnectAllOnWake forces every auto-connect network to reconnect after the
-// system wakes from sleep, where sockets are usually dead but not yet detected by
-// the library's ping loop. Teardown flows through the normal DisconnectCallback ->
-// handleConnectionLost -> auto-reconnect path. Networks with auto-connect disabled
-// are left untouched so a manually-managed connection that survived a brief sleep
-// is not needlessly killed; a genuinely dead one there is still caught by the
-// library ping loop within KeepAlive+Timeout.
+// wakeReconnectClient is the slice of IRCClient behavior reconnectAllOnWake needs.
+// Extracting it makes the wake decision — probe first, reconnect only the dead —
+// unit-testable without a live socket (see app_connection_wake_test.go).
+type wakeReconnectClient interface {
+	IsConnected() bool
+	ProbeAlive(deadline time.Duration) bool
+	ForceReconnect()
+}
+
+// reconnectDeadOnWake probes each still-"connected" client and force-reconnects only
+// those that fail to answer within deadline, all concurrently. A link macOS kept alive
+// across sleep (TCPKeepAlive) answers its keepalive PING and is left untouched — the
+// fix for maintenance-DarkWake churn, where the old unconditional ForceReconnect tore
+// down healthy links and rejoined every channel (visible ##chat JOIN-spam). A client
+// that already dropped (!IsConnected) is skipped and left to the normal
+// handleConnectionLost path. Returns how many links it reconnected.
+func reconnectDeadOnWake(clients []wakeReconnectClient, deadline time.Duration) int {
+	var wg sync.WaitGroup
+	var reconnected int32
+	for _, c := range clients {
+		if !c.IsConnected() {
+			continue
+		}
+		wg.Add(1)
+		go func(c wakeReconnectClient) {
+			defer wg.Done()
+			if !c.ProbeAlive(deadline) {
+				c.ForceReconnect()
+				atomic.AddInt32(&reconnected, 1)
+			}
+		}(c)
+	}
+	wg.Wait()
+	return int(reconnected)
+}
+
+// reconnectAllOnWake recovers auto-connect networks after the system wakes. macOS
+// keeps IRC sockets alive across sleep (TCPKeepAlive) and does frequent short
+// maintenance DarkWakes, so this no longer force-reconnects blindly: it PINGs each
+// still-connected link and reconnects only the ones that don't answer. Teardown of a
+// dead link flows through the normal DisconnectCallback -> handleConnectionLost ->
+// auto-reconnect path. Networks with auto-connect disabled are left untouched.
 func (a *App) reconnectAllOnWake() {
 	type entry struct {
 		id     int64
@@ -1116,15 +1153,17 @@ func (a *App) reconnectAllOnWake() {
 	}
 	a.mu.RUnlock()
 
+	eligible := make([]wakeReconnectClient, 0, len(entries))
 	for _, e := range entries {
-		if !e.client.IsConnected() {
-			continue
-		}
 		network, err := a.storage.GetNetwork(e.id)
 		if err != nil || network == nil || !network.AutoConnect {
 			continue
 		}
-		e.client.ForceReconnect()
+		eligible = append(eligible, e.client)
+	}
+
+	if n := reconnectDeadOnWake(eligible, constants.WakeProbeTimeout); n > 0 {
+		logger.Log.Info().Int("reconnected", n).Int("checked", len(eligible)).Msg("Wake: reconnected links that failed the liveness probe")
 	}
 }
 

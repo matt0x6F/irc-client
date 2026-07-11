@@ -33,4 +33,12 @@ const (
 	// PING. Detection of a dead socket (including after sleep/wake) is owned
 	// entirely by this library PING/PONG loop, bounded by KeepAlive + Timeout.
 	ConnectionKeepAlive = 60 * time.Second
+
+	// WakeProbeTimeout bounds how long the wake handler waits for a keepalive PONG
+	// before deciding a connection died during sleep. A live link (one macOS kept
+	// alive via TCP keepalive) answers in well under a second, so this only delays
+	// reconnecting a genuinely dead socket — far better than the old behavior of
+	// force-reconnecting every link on every maintenance DarkWake, which rejoined
+	// channels and spammed visible JOINs.
+	WakeProbeTimeout = 5 * time.Second
 )
