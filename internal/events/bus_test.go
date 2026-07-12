@@ -401,7 +401,7 @@ func TestEmitAfterCloseDoesNotBlock(t *testing.T) {
 	}
 }
 
-func TestCloseUnblocksEmitterWhenQueueIsFull(t *testing.T) {
+func TestCloseUnblocksMultipleEmittersWhenQueueIsFull(t *testing.T) {
 	eb := NewEventBus()
 	sub := &blockingSub{started: make(chan struct{}), release: make(chan struct{})}
 	eb.Subscribe("blocked", sub)
@@ -411,22 +411,19 @@ func TestCloseUnblocksEmitterWhenQueueIsFull(t *testing.T) {
 	for i := 0; i < eventQueueSize; i++ {
 		eb.Emit(Event{Type: "blocked"})
 	}
-	emitDone := make(chan struct{})
-	emitStarted := make(chan struct{})
-	go func() {
-		close(emitStarted)
-		eb.Emit(Event{Type: "blocked"})
-		close(emitDone)
-	}()
-	<-emitStarted
-	emitterDeadline := time.Now().Add(250 * time.Millisecond)
-	for eb.mu.TryLock() {
-		eb.mu.Unlock()
-		if time.Now().After(emitterDeadline) {
-			t.Fatal("emitter did not block while holding the event-bus read lock")
-		}
-		time.Sleep(time.Millisecond)
+	emitDone := make(chan struct{}, 2)
+	emitStarted := make(chan struct{}, 2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			emitStarted <- struct{}{}
+			eb.Emit(Event{Type: "blocked"})
+			emitDone <- struct{}{}
+		}()
 	}
+	<-emitStarted
+	<-emitStarted
+	// Give both emitters a scheduling turn against the already-full queue.
+	time.Sleep(20 * time.Millisecond)
 	closeDone := make(chan struct{})
 	closeStarted := make(chan struct{})
 	go func() {
@@ -435,20 +432,15 @@ func TestCloseUnblocksEmitterWhenQueueIsFull(t *testing.T) {
 		close(closeDone)
 	}()
 	<-closeStarted
-	closeDeadline := time.Now().Add(250 * time.Millisecond)
-	for eb.mu.TryRLock() {
-		eb.mu.RUnlock()
-		if time.Now().After(closeDeadline) {
-			t.Fatal("Close did not begin waiting for the event-bus write lock")
-		}
-		time.Sleep(time.Millisecond)
-	}
+	time.Sleep(20 * time.Millisecond)
 
 	close(sub.release)
-	select {
-	case <-emitDone:
-	case <-time.After(250 * time.Millisecond):
-		t.Fatal("full-queue emitter remained blocked during Close")
+	for i := 0; i < 2; i++ {
+		select {
+		case <-emitDone:
+		case <-time.After(250 * time.Millisecond):
+			t.Fatal("full-queue emitter remained blocked during Close")
+		}
 	}
 	select {
 	case <-closeDone:

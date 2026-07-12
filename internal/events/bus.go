@@ -135,12 +135,19 @@ func (eb *EventBus) Unsubscribe(eventType string, subscriber Subscriber) {
 // (sustained overload) — backpressure onto the emitter.
 func (eb *EventBus) Emit(event Event) {
 	eb.mu.RLock()
-	if eb.closed {
-		eb.mu.RUnlock()
+	closed := eb.closed
+	eb.mu.RUnlock()
+	if closed {
 		return
 	}
-	eb.queue <- event
-	eb.mu.RUnlock()
+
+	// Never hold the subscriber/closed-state lock across a potentially blocking
+	// queue send. Close signals done, which releases every saturated emitter
+	// without waiting for the dispatcher or a slow subscriber to make progress.
+	select {
+	case eb.queue <- event:
+	case <-eb.done:
+	}
 }
 
 // EmitSync emits an event synchronously (for testing or when order matters)
