@@ -228,6 +228,13 @@ func NewApp() (*App, error) {
 			}
 			return client.SetAway(message)
 		},
+		IsChannel: func(networkID int64, target string) bool {
+			client, ok := scriptClient(networkID)
+			if !ok {
+				return len(target) > 0 && strings.ContainsRune("#&", rune(target[0]))
+			}
+			return client.IsChannelName(target)
+		},
 		LoadDisabled: func() map[string]bool {
 			d, _ := app.storage.DisabledScripts()
 			return d

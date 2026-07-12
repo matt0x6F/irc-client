@@ -20,7 +20,9 @@ type TextEvent struct {
 	Time    Time   // message timestamp (server-time aware)
 	Action  bool   // true if this was a CTCP ACTION (/me)
 
-	replyFn func(string)
+	replyFn     func(string)
+	direct      bool
+	directKnown bool
 }
 
 // NewTextEvent is the host-side constructor. Scripts never call it.
@@ -28,8 +30,16 @@ func NewTextEvent(nick, channel, message string, reply func(string)) TextEvent {
 	return TextEvent{Nick: nick, Channel: channel, Message: message, replyFn: reply}
 }
 
+// NewTextEventWithDirect is the host-side constructor with authoritative target classification.
+func NewTextEventWithDirect(nick, channel, message string, direct bool, reply func(string)) TextEvent {
+	return TextEvent{Nick: nick, Channel: channel, Message: message, replyFn: reply, direct: direct, directKnown: true}
+}
+
 // IsDM reports whether this message was a direct message (Channel is not a channel name).
 func (e TextEvent) IsDM() bool {
+	if e.directKnown {
+		return e.direct
+	}
 	return e.Channel == "" || (e.Channel[0] != '#' && e.Channel[0] != '&')
 }
 
@@ -101,7 +111,9 @@ type NoticeEvent struct {
 	MsgID   string // IRCv3 msgid; "" if the server sent none
 	Time    Time   // message timestamp (server-time aware)
 
-	replyFn func(string)
+	replyFn     func(string)
+	direct      bool
+	directKnown bool
 }
 
 // NewNoticeEvent is the host-side constructor. Scripts never call it.
@@ -109,8 +121,16 @@ func NewNoticeEvent(nick, channel, message string, reply func(string)) NoticeEve
 	return NoticeEvent{Nick: nick, Channel: channel, Message: message, replyFn: reply}
 }
 
+// NewNoticeEventWithDirect is the host-side constructor with authoritative target classification.
+func NewNoticeEventWithDirect(nick, channel, message string, direct bool, reply func(string)) NoticeEvent {
+	return NoticeEvent{Nick: nick, Channel: channel, Message: message, replyFn: reply, direct: direct, directKnown: true}
+}
+
 // IsDM reports whether this notice was a direct message (Channel is not a channel name).
 func (e NoticeEvent) IsDM() bool {
+	if e.directKnown {
+		return e.direct
+	}
 	return e.Channel == "" || (e.Channel[0] != '#' && e.Channel[0] != '&')
 }
 
@@ -132,8 +152,14 @@ func (e NoticeEvent) IsHighlight() bool {
 
 // JoinEvent is delivered to OnJoin handlers when a user joins a channel.
 type JoinEvent struct {
-	Nick    string
-	Channel string
+	Nick     string
+	Channel  string
+	Self     string
+	Account  string
+	Network  string
+	Host     string
+	Realname string
+	Time     Time
 
 	replyFn func(string)
 }
@@ -152,9 +178,15 @@ func (e JoinEvent) Reply(msg string) {
 
 // PartEvent is delivered to OnPart handlers when a user leaves a channel.
 type PartEvent struct {
-	Nick    string
-	Channel string
-	Reason  string
+	Nick     string
+	Channel  string
+	Reason   string
+	Self     string
+	Account  string
+	Network  string
+	Host     string
+	Realname string
+	Time     Time
 
 	replyFn func(string)
 }

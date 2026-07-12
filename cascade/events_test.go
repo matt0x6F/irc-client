@@ -113,3 +113,27 @@ func TestNoticeEventContext(t *testing.T) {
 		t.Fatalf("fields did not round-trip: %+v", e)
 	}
 }
+
+func TestAuthoritativeDMClassification(t *testing.T) {
+	channel := NewTextEventWithDirect("alice", "!room", "hi", false, nil)
+	if channel.IsDM() {
+		t.Fatal("host-classified nonstandard channel reported as DM")
+	}
+	dm := NewNoticeEventWithDirect("alice", "Matt", "hi", true, nil)
+	if !dm.IsDM() {
+		t.Fatal("host-classified nick target did not report DM")
+	}
+}
+
+func TestJoinPartEventContext(t *testing.T) {
+	j := NewJoinEvent("alice", "#go", nil)
+	j.Self, j.Account, j.Network, j.Host, j.Realname, j.Time = "Matt", "alice_account", "libera", "a@host", "Alice", NewTime(42)
+	if j.Self != "Matt" || j.Account != "alice_account" || j.Network != "libera" || j.Host != "a@host" || j.Realname != "Alice" || j.Time.Unix() != 42 {
+		t.Fatalf("join context = %+v", j)
+	}
+	p := NewPartEvent("alice", "#go", "bye", nil)
+	p.Self, p.Account, p.Network, p.Host, p.Realname, p.Time = "Matt", "alice_account", "libera", "a@host", "Alice", NewTime(43)
+	if p.Self != "Matt" || p.Account != "alice_account" || p.Network != "libera" || p.Host != "a@host" || p.Realname != "Alice" || p.Time.Unix() != 43 {
+		t.Fatalf("part context = %+v", p)
+	}
+}

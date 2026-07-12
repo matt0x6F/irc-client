@@ -4979,6 +4979,9 @@ func (c *IRCClient) isChannelName(name string) bool {
 	return channelNameMatches(name, c.ChanTypes())
 }
 
+// IsChannelName reports whether name is a channel under the server's CHANTYPES.
+func (c *IRCClient) IsChannelName(name string) bool { return c.isChannelName(name) }
+
 // ChanTypes returns the server-advertised CHANTYPES set, or the default "#&"
 // when the server hasn't advertised one yet. Exported so the App can surface it
 // to the frontend (ServerCapabilitiesInfo). Lock-free.

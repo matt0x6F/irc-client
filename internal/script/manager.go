@@ -48,6 +48,7 @@ type Host struct {
 	Part           func(networkID int64, channel, reason string) error
 	ChangeNick     func(networkID int64, nick string) error
 	SetAway        func(networkID int64, message string) error
+	IsChannel      func(networkID int64, target string) bool
 	// LoadDisabled returns the set of script IDs that should start disabled.
 	// Nil-safe: a nil func is treated as returning an empty map.
 	LoadDisabled func() map[string]bool
@@ -416,10 +417,17 @@ func (m *Manager) msgFields(ev events.Event) (nick, channel, message string, net
 // or to the sender nick (for DMs).
 func (m *Manager) replyTo(networkID int64, channel, nick string) func(string) {
 	target := channel
-	if !isChannel(channel) {
+	if !m.isChannel(networkID, channel) {
 		target = nick
 	}
 	return func(msg string) { _ = m.host.Send(networkID, target, msg) }
+}
+
+func (m *Manager) isChannel(networkID int64, target string) bool {
+	if m.host.IsChannel != nil {
+		return m.host.IsChannel(networkID, target)
+	}
+	return isChannel(target)
 }
 
 // buildTextEvent maps a message.received event into a cascade.TextEvent with a
@@ -429,7 +437,7 @@ func (m *Manager) buildTextEvent(ev events.Event) (cascade.TextEvent, bool) {
 	if !ok {
 		return cascade.TextEvent{}, false
 	}
-	e := cascade.NewTextEvent(nick, channel, message, m.replyTo(networkID, channel, nick))
+	e := cascade.NewTextEventWithDirect(nick, channel, message, !m.isChannel(networkID, channel), m.replyTo(networkID, channel, nick))
 	m.applyContext(&e.Self, &e.Account, &e.Network, &e.MsgID, &e.Time, ev, networkID)
 	e.Action, _ = ev.Data["isAction"].(bool)
 	return e, true
@@ -441,7 +449,7 @@ func (m *Manager) buildNoticeEvent(ev events.Event) (cascade.NoticeEvent, bool) 
 	if !ok {
 		return cascade.NoticeEvent{}, false
 	}
-	e := cascade.NewNoticeEvent(nick, channel, message, m.replyTo(networkID, channel, nick))
+	e := cascade.NewNoticeEventWithDirect(nick, channel, message, !m.isChannel(networkID, channel), m.replyTo(networkID, channel, nick))
 	m.applyContext(&e.Self, &e.Account, &e.Network, &e.MsgID, &e.Time, ev, networkID)
 	return e, true
 }
@@ -467,7 +475,9 @@ func (m *Manager) buildJoinEvent(ev events.Event) (cascade.JoinEvent, bool) {
 	if nick == "" || nick == "*" || (m.host.SelfNick != nil && nick == m.host.SelfNick(networkID)) {
 		return cascade.JoinEvent{}, false
 	}
-	return cascade.NewJoinEvent(nick, channel, m.replyTo(networkID, channel, nick)), true
+	e := cascade.NewJoinEvent(nick, channel, m.replyTo(networkID, channel, nick))
+	m.applyMembershipContext(&e.Self, &e.Account, &e.Network, &e.Host, &e.Realname, &e.Time, ev, networkID, nick)
+	return e, true
 }
 
 // buildPartEvent maps a user.parted event into a cascade.PartEvent.
@@ -479,7 +489,26 @@ func (m *Manager) buildPartEvent(ev events.Event) (cascade.PartEvent, bool) {
 	if nick == "" || nick == "*" || (m.host.SelfNick != nil && nick == m.host.SelfNick(networkID)) {
 		return cascade.PartEvent{}, false
 	}
-	return cascade.NewPartEvent(nick, channel, reason, m.replyTo(networkID, channel, nick)), true
+	e := cascade.NewPartEvent(nick, channel, reason, m.replyTo(networkID, channel, nick))
+	m.applyMembershipContext(&e.Self, &e.Account, &e.Network, &e.Host, &e.Realname, &e.Time, ev, networkID, nick)
+	return e, true
+}
+
+func (m *Manager) applyMembershipContext(self, account, network, host, realname *string, ts *cascade.Time, ev events.Event, networkID int64, nick string) {
+	if m.host.SelfNick != nil {
+		*self = m.host.SelfNick(networkID)
+	}
+	*network, _ = ev.Data["networkName"].(string)
+	if *network == "" {
+		*network, _ = ev.Data["network"].(string)
+	}
+	if m.host.UserStatus != nil {
+		status := m.host.UserStatus(networkID, nick)
+		*account, *host, *realname = status.Account, status.Host, status.Realname
+	}
+	if !ev.Timestamp.IsZero() {
+		*ts = cascade.NewTime(ev.Timestamp.Unix())
+	}
 }
 
 func isChannel(s string) bool {

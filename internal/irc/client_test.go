@@ -76,6 +76,15 @@ func TestIsCurrentNickUsesServerCaseMapping(t *testing.T) {
 	}
 }
 
+func TestIsChannelNameUsesAdvertisedChanTypes(t *testing.T) {
+	c := &IRCClient{}
+	types := "!"
+	c.chanTypesAtomic.Store(&types)
+	if !c.IsChannelName("!room") || c.IsChannelName("#room") {
+		t.Fatalf("CHANTYPES=%q classification was incorrect", types)
+	}
+}
+
 // TestSelfPartUnderFallbackNickClosesChannel is the regression guard for the
 // phantom-channel symptom: while connected under a fallback nick, our OWN PART
 // must mark the channel closed so it leaves the sidebar. With the preferred-nick
