@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/matt0x6f/irc-client/cascade"
 	"github.com/matt0x6f/irc-client/internal/events"
 	"github.com/matt0x6f/irc-client/internal/irc"
 	"github.com/matt0x6f/irc-client/internal/logger"
@@ -137,6 +138,12 @@ func NewApp() (*App, error) {
 	}
 
 	scriptDir := filepath.Join(baseDir, "scripts")
+	scriptClient := func(networkID int64) (*irc.IRCClient, bool) {
+		app.mu.RLock()
+		defer app.mu.RUnlock()
+		client, ok := app.ircClients[networkID]
+		return client, ok
+	}
 	app.scriptMgr = script.NewManager(eventBus, scriptDir, script.Host{
 		Send: app.SendMessage,
 		SelfNick: func(networkID int64) string {
@@ -154,6 +161,72 @@ func NewApp() (*App, error) {
 				}
 			}
 			return 0, false
+		},
+		Connected: func(networkID int64) bool {
+			client, ok := scriptClient(networkID)
+			return ok && client.IsConnected()
+		},
+		IsMe: func(networkID int64, nick string) bool {
+			client, ok := scriptClient(networkID)
+			return ok && client.IsCurrentNick(nick)
+		},
+		UserStatus: func(networkID int64, nick string) cascade.UserStatus {
+			client, ok := scriptClient(networkID)
+			if !ok {
+				return cascade.UserStatus{}
+			}
+			meta, known := client.UserMetaFor(nick)
+			status := cascade.UserStatus{
+				Known: known, Away: meta.Away, AwayMessage: meta.AwayMessage,
+				Account: meta.Account, Host: meta.Host, Realname: meta.Realname,
+			}
+			if client.IsCurrentNick(nick) {
+				status.Known = true
+				status.Away, status.AwayMessage = client.SelfAwayStatus()
+			}
+			return status
+		},
+		Notice: func(networkID int64, target, message string) error {
+			client, ok := scriptClient(networkID)
+			if !ok {
+				return fmt.Errorf("network not connected")
+			}
+			return client.SendNotice(target, message)
+		},
+		Action: func(networkID int64, target, message string) error {
+			client, ok := scriptClient(networkID)
+			if !ok {
+				return fmt.Errorf("network not connected")
+			}
+			return client.SendAction(target, message)
+		},
+		Join: func(networkID int64, channel, key string) error {
+			client, ok := scriptClient(networkID)
+			if !ok {
+				return fmt.Errorf("network not connected")
+			}
+			return client.JoinChannelWithKey(channel, key)
+		},
+		Part: func(networkID int64, channel, reason string) error {
+			client, ok := scriptClient(networkID)
+			if !ok {
+				return fmt.Errorf("network not connected")
+			}
+			return client.PartChannelWithReason(channel, reason)
+		},
+		ChangeNick: func(networkID int64, nick string) error {
+			client, ok := scriptClient(networkID)
+			if !ok {
+				return fmt.Errorf("network not connected")
+			}
+			return client.ChangeNick(nick)
+		},
+		SetAway: func(networkID int64, message string) error {
+			client, ok := scriptClient(networkID)
+			if !ok {
+				return fmt.Errorf("network not connected")
+			}
+			return client.SetAway(message)
 		},
 		LoadDisabled: func() map[string]bool {
 			d, _ := app.storage.DisabledScripts()

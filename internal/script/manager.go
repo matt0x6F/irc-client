@@ -39,6 +39,15 @@ type Host struct {
 	Send           Sender                          // App.SendMessage
 	SelfNick       func(networkID int64) string    // App.GetCurrentNick wrapper
 	ResolveNetwork func(name string) (int64, bool) // name → networkID (via App.GetNetworks)
+	Connected      func(networkID int64) bool
+	IsMe           func(networkID int64, nick string) bool
+	UserStatus     func(networkID int64, nick string) cascade.UserStatus
+	Notice         func(networkID int64, target, message string) error
+	Action         func(networkID int64, target, message string) error
+	Join           func(networkID int64, channel, key string) error
+	Part           func(networkID int64, channel, reason string) error
+	ChangeNick     func(networkID int64, nick string) error
+	SetAway        func(networkID int64, message string) error
 	// LoadDisabled returns the set of script IDs that should start disabled.
 	// Nil-safe: a nil func is treated as returning an empty map.
 	LoadDisabled func() map[string]bool
@@ -96,15 +105,80 @@ func NewManager(bus *events.EventBus, dir string, host Host) *Manager {
 // to the per-script timer registry so ticks run through the watchdog +
 // per-script mutex and are cancelled on reload/unload.
 func (m *Manager) makeClient(id extension.ID) *cascade.Client {
+	resolve := func(networkName string) (int64, bool) {
+		if m.host.ResolveNetwork == nil {
+			return 0, false
+		}
+		return m.host.ResolveNetwork(networkName)
+	}
 	say := func(networkName, target, message string) {
-		netID, ok := m.host.ResolveNetwork(networkName)
+		netID, ok := resolve(networkName)
 		if !ok {
 			logger.Log.Warn().Str("script", string(id)).Str("network", networkName).Msg("script Say: unknown network")
 			return
 		}
 		_ = m.host.Send(netID, target, message)
 	}
-	return cascade.NewClient(say, m.scheduleEvery(id), m.scheduleAfter(id))
+	connected := func(networkName string) bool {
+		netID, ok := resolve(networkName)
+		return ok && m.host.Connected != nil && m.host.Connected(netID)
+	}
+	nick := func(networkName string) string {
+		netID, ok := resolve(networkName)
+		if !ok || m.host.SelfNick == nil {
+			return ""
+		}
+		return m.host.SelfNick(netID)
+	}
+	isMe := func(networkName, candidate string) bool {
+		netID, ok := resolve(networkName)
+		return ok && m.host.IsMe != nil && m.host.IsMe(netID, candidate)
+	}
+	userStatus := func(networkName, candidate string) cascade.UserStatus {
+		netID, ok := resolve(networkName)
+		if !ok || m.host.UserStatus == nil {
+			return cascade.UserStatus{}
+		}
+		return m.host.UserStatus(netID, candidate)
+	}
+	withTargetAction := func(name string, fn func(int64, string, string) error) func(string, string, string) {
+		return func(networkName, target, value string) {
+			netID, ok := resolve(networkName)
+			if !ok || fn == nil {
+				if !ok {
+					logger.Log.Warn().Str("script", string(id)).Str("network", networkName).Str("action", name).Msg("script action: unknown network")
+				}
+				return
+			}
+			_ = fn(netID, target, value)
+		}
+	}
+	withNetworkAction := func(name string, fn func(int64, string) error) func(string, string) {
+		return func(networkName, value string) {
+			netID, ok := resolve(networkName)
+			if !ok || fn == nil {
+				if !ok {
+					logger.Log.Warn().Str("script", string(id)).Str("network", networkName).Str("action", name).Msg("script action: unknown network")
+				}
+				return
+			}
+			_ = fn(netID, value)
+		}
+	}
+	return cascade.NewClient(
+		say,
+		m.scheduleEvery(id),
+		m.scheduleAfter(id),
+		cascade.WithNetworkQueries(connected, nick, isMe, userStatus),
+		cascade.WithIRCActions(
+			withTargetAction("notice", m.host.Notice),
+			withTargetAction("action", m.host.Action),
+			withTargetAction("join", m.host.Join),
+			withTargetAction("part", m.host.Part),
+			withNetworkAction("nick", m.host.ChangeNick),
+			withNetworkAction("away", m.host.SetAway),
+		),
+	)
 }
 
 // reconcileModule keeps the scripts-dir go.mod's cascade SDK pin in lockstep with

@@ -64,6 +64,18 @@ func TestSelfIdentityUsesLiveNick(t *testing.T) {
 	})
 }
 
+func TestIsCurrentNickUsesServerCaseMapping(t *testing.T) {
+	c := &IRCClient{network: &storage.Network{Nickname: "Nick[One]"}, currentNick: "Nick[One]"}
+	if !c.IsCurrentNick("nick{one}") {
+		t.Fatal("RFC1459-equivalent nick was not recognized as self")
+	}
+	mapping := "ascii"
+	c.caseMappingAtomic.Store(&mapping)
+	if c.IsCurrentNick("nick{one}") {
+		t.Fatal("ASCII CASEMAPPING treated brackets and braces as equal")
+	}
+}
+
 // TestSelfPartUnderFallbackNickClosesChannel is the regression guard for the
 // phantom-channel symptom: while connected under a fallback nick, our OWN PART
 // must mark the channel closed so it leaves the sidebar. With the preferred-nick

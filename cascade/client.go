@@ -10,6 +10,31 @@ type Client struct {
 	nickFn       func(networkName string) string
 	isMeFn       func(networkName, nick string) bool
 	userStatusFn func(networkName, nick string) UserStatus
+	noticeFn     func(networkName, target, message string)
+	actionFn     func(networkName, target, message string)
+	joinFn       func(networkName, channel, key string)
+	partFn       func(networkName, channel, reason string)
+	changeNickFn func(networkName, nick string)
+	setAwayFn    func(networkName, message string)
+}
+
+// WithIRCActions binds the proactive IRC operations available to scripts.
+func WithIRCActions(
+	notice func(networkName, target, message string),
+	action func(networkName, target, message string),
+	join func(networkName, channel, key string),
+	part func(networkName, channel, reason string),
+	changeNick func(networkName, nick string),
+	setAway func(networkName, message string),
+) ClientOption {
+	return func(c *Client) {
+		c.noticeFn = notice
+		c.actionFn = action
+		c.joinFn = join
+		c.partFn = part
+		c.changeNickFn = changeNick
+		c.setAwayFn = setAway
+	}
 }
 
 // ClientOption binds an optional host capability to a Client.
@@ -52,6 +77,12 @@ func (c *Client) Network(name string) Network {
 		nickFn:       c.nickFn,
 		isMeFn:       c.isMeFn,
 		userStatusFn: c.userStatusFn,
+		noticeFn:     c.noticeFn,
+		actionFn:     c.actionFn,
+		joinFn:       c.joinFn,
+		partFn:       c.partFn,
+		changeNickFn: c.changeNickFn,
+		setAwayFn:    c.setAwayFn,
 	}
 }
 
@@ -77,6 +108,12 @@ type Network struct {
 	nickFn       func(networkName string) string
 	isMeFn       func(networkName, nick string) bool
 	userStatusFn func(networkName, nick string) UserStatus
+	noticeFn     func(networkName, target, message string)
+	actionFn     func(networkName, target, message string)
+	joinFn       func(networkName, channel, key string)
+	partFn       func(networkName, channel, reason string)
+	changeNickFn func(networkName, nick string)
+	setAwayFn    func(networkName, message string)
 }
 
 // UserStatus is Cascade's latest session-local metadata snapshot for a nick.
@@ -97,6 +134,7 @@ type User struct {
 	sayFn       func(networkName, target, message string)
 	isMeFn      func(networkName, nick string) bool
 	statusFn    func(networkName, nick string) UserStatus
+	noticeFn    func(networkName, target, message string)
 }
 
 // Name returns the configured network name used by this handle.
@@ -125,7 +163,7 @@ func (n Network) Self() User { return n.User(n.Nick()) }
 
 // User returns a handle for nick without performing network I/O.
 func (n Network) User(nick string) User {
-	return User{networkName: n.name, nick: nick, sayFn: n.sayFn, isMeFn: n.isMeFn, statusFn: n.userStatusFn}
+	return User{networkName: n.name, nick: nick, sayFn: n.sayFn, noticeFn: n.noticeFn, isMeFn: n.isMeFn, statusFn: n.userStatusFn}
 }
 
 // Nick returns the nickname addressed by this handle.
@@ -157,9 +195,64 @@ func (u User) Say(message string) {
 	}
 }
 
+// Notice sends a NOTICE to this user. Fire-and-forget.
+func (u User) Notice(message string) {
+	if u.noticeFn != nil {
+		u.noticeFn(u.networkName, u.nick, message)
+	}
+}
+
 // Say sends a PRIVMSG to target on this network. Fire-and-forget.
 func (n Network) Say(target, message string) {
 	if n.sayFn != nil {
 		n.sayFn(n.name, target, message)
 	}
 }
+
+// Notice sends a NOTICE to target. Fire-and-forget.
+func (n Network) Notice(target, message string) {
+	if n.noticeFn != nil {
+		n.noticeFn(n.name, target, message)
+	}
+}
+
+// Action sends a CTCP ACTION to target. Fire-and-forget.
+func (n Network) Action(target, message string) {
+	if n.actionFn != nil {
+		n.actionFn(n.name, target, message)
+	}
+}
+
+// Join joins channel without a key. Fire-and-forget.
+func (n Network) Join(channel string) { n.JoinWithKey(channel, "") }
+
+// JoinWithKey joins channel with an optional key. Fire-and-forget.
+func (n Network) JoinWithKey(channel, key string) {
+	if n.joinFn != nil {
+		n.joinFn(n.name, channel, key)
+	}
+}
+
+// Part leaves channel with an optional reason. Fire-and-forget.
+func (n Network) Part(channel, reason string) {
+	if n.partFn != nil {
+		n.partFn(n.name, channel, reason)
+	}
+}
+
+// ChangeNick requests a new nickname. Fire-and-forget.
+func (n Network) ChangeNick(nick string) {
+	if n.changeNickFn != nil {
+		n.changeNickFn(n.name, nick)
+	}
+}
+
+// SetAway requests away state with message. Fire-and-forget.
+func (n Network) SetAway(message string) {
+	if n.setAwayFn != nil {
+		n.setAwayFn(n.name, message)
+	}
+}
+
+// ClearAway requests present state. Fire-and-forget.
+func (n Network) ClearAway() { n.SetAway("") }

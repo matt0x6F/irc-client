@@ -1,6 +1,7 @@
 package script
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,9 +9,84 @@ import (
 	"testing"
 	"time"
 
+	"github.com/matt0x6f/irc-client/cascade"
 	"github.com/matt0x6f/irc-client/internal/events"
 	"github.com/matt0x6f/irc-client/internal/extension"
 )
+
+func TestManagerClientBindings(t *testing.T) {
+	var calls []string
+	h := Host{
+		Send: func(networkID int64, target, message string) error {
+			calls = append(calls, fmt.Sprintf("say:%d:%s:%s", networkID, target, message))
+			return nil
+		},
+		SelfNick: func(int64) string { return "Matt" },
+		ResolveNetwork: func(name string) (int64, bool) {
+			return 7, name == "libera"
+		},
+		Connected: func(networkID int64) bool { return networkID == 7 },
+		IsMe:      func(networkID int64, nick string) bool { return networkID == 7 && (nick == "Matt" || nick == "mAtT") },
+		UserStatus: func(networkID int64, nick string) cascade.UserStatus {
+			if networkID == 7 && nick == "alice" {
+				return cascade.UserStatus{Known: true, Away: true, AwayMessage: "lunch", Account: "alice_account"}
+			}
+			return cascade.UserStatus{}
+		},
+		Notice: func(id int64, target, message string) error {
+			calls = append(calls, fmt.Sprintf("notice:%d:%s:%s", id, target, message))
+			return nil
+		},
+		Action: func(id int64, target, message string) error {
+			calls = append(calls, fmt.Sprintf("action:%d:%s:%s", id, target, message))
+			return nil
+		},
+		Join: func(id int64, channel, key string) error {
+			calls = append(calls, fmt.Sprintf("join:%d:%s:%s", id, channel, key))
+			return nil
+		},
+		Part: func(id int64, channel, reason string) error {
+			calls = append(calls, fmt.Sprintf("part:%d:%s:%s", id, channel, reason))
+			return nil
+		},
+		ChangeNick: func(id int64, nick string) error {
+			calls = append(calls, fmt.Sprintf("nick:%d:%s", id, nick))
+			return nil
+		},
+		SetAway: func(id int64, message string) error {
+			calls = append(calls, fmt.Sprintf("away:%d:%s", id, message))
+			return nil
+		},
+	}
+	m := NewManager(events.NewEventBus(), t.TempDir(), h)
+	n := m.makeClient("test").Network("libera")
+	if !n.IsConnected() || n.Nick() != "Matt" || !n.IsMe("mAtT") {
+		t.Fatalf("network query bindings failed")
+	}
+	if got := n.User("alice").Status(); !got.Known || !got.Away || got.Account != "alice_account" {
+		t.Fatalf("user status = %+v", got)
+	}
+	n.Say("#go", "hello")
+	n.Notice("alice", "hi")
+	n.Action("#go", "waves")
+	n.JoinWithKey("#private", "secret")
+	n.Part("#go", "bye")
+	n.ChangeNick("Matt2")
+	n.SetAway("lunch")
+	if len(calls) != 7 {
+		t.Fatalf("calls = %v", calls)
+	}
+
+	before := len(calls)
+	missing := m.makeClient("test").Network("missing")
+	if missing.IsConnected() || missing.Nick() != "" || missing.User("alice").Known() {
+		t.Fatal("unknown network returned state")
+	}
+	missing.Notice("alice", "drop")
+	if len(calls) != before {
+		t.Fatalf("unknown network invoked host: %v", calls[before:])
+	}
+}
 
 func TestManagerRoutesNoticeJoinPart(t *testing.T) {
 	dir := t.TempDir()

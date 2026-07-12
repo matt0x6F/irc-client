@@ -79,3 +79,52 @@ func TestClientUnknownQueriesAreNilSafe(t *testing.T) {
 		t.Fatalf("unbound user status = %+v", u.Status())
 	}
 }
+
+func TestClientIRCActions(t *testing.T) {
+	var calls []string
+	c := NewClient(nil, nil, nil, WithIRCActions(
+		func(network, target, message string) { calls = append(calls, "notice:"+network+":"+target+":"+message) },
+		func(network, target, message string) { calls = append(calls, "action:"+network+":"+target+":"+message) },
+		func(network, channel, key string) { calls = append(calls, "join:"+network+":"+channel+":"+key) },
+		func(network, channel, reason string) { calls = append(calls, "part:"+network+":"+channel+":"+reason) },
+		func(network, nick string) { calls = append(calls, "nick:"+network+":"+nick) },
+		func(network, message string) { calls = append(calls, "away:"+network+":"+message) },
+	))
+	n := c.Network("libera")
+	n.Notice("#go", "heads up")
+	n.User("alice").Notice("hello")
+	n.Action("#go", "waves")
+	n.Join("#go")
+	n.JoinWithKey("#private", "secret")
+	n.Part("#go", "bye")
+	n.ChangeNick("Matt2")
+	n.SetAway("lunch")
+	n.ClearAway()
+
+	want := []string{
+		"notice:libera:#go:heads up", "notice:libera:alice:hello", "action:libera:#go:waves",
+		"join:libera:#go:", "join:libera:#private:secret", "part:libera:#go:bye",
+		"nick:libera:Matt2", "away:libera:lunch", "away:libera:",
+	}
+	if len(calls) != len(want) {
+		t.Fatalf("calls = %v; want %v", calls, want)
+	}
+	for i := range want {
+		if calls[i] != want[i] {
+			t.Fatalf("calls[%d] = %q; want %q", i, calls[i], want[i])
+		}
+	}
+}
+
+func TestClientIRCActionsAreNilSafe(t *testing.T) {
+	n := NewClient(nil, nil, nil).Network("missing")
+	n.Notice("alice", "hi")
+	n.User("alice").Notice("hi")
+	n.Action("#go", "waves")
+	n.Join("#go")
+	n.JoinWithKey("#go", "key")
+	n.Part("#go", "bye")
+	n.ChangeNick("new")
+	n.SetAway("away")
+	n.ClearAway()
+}

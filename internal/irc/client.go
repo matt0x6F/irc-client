@@ -364,6 +364,12 @@ func (c *IRCClient) CurrentNick() string {
 	return nick
 }
 
+// IsCurrentNick compares nick with our live nickname using the server's
+// CASEMAPPING rules.
+func (c *IRCClient) IsCurrentNick(nick string) bool {
+	return c.sameName(c.CurrentNick(), nick)
+}
+
 // ChangeNick sends a user-initiated NICK request and records the requested nick
 // so a resulting failure (e.g. ERR_NICKNAMEINUSE) is surfaced to the user rather
 // than swallowed by the silence we keep for the library's background reclaims.
@@ -4804,6 +4810,40 @@ func (c *IRCClient) SendMessage(target, message string) error {
 	return c.sendMessage(target, message, "", "")
 }
 
+// SendNotice sends one or more wire-sized NOTICE messages to target.
+func (c *IRCClient) SendNotice(target, message string) error {
+	c.mu.RLock()
+	connected := c.connected
+	c.mu.RUnlock()
+	if !connected {
+		return fmt.Errorf("not connected")
+	}
+	for _, chunk := range splitOutboundMessage(message, c.maxMessageChunk(target)) {
+		c.rateLimiter.Wait()
+		if err := c.conn.Send("NOTICE", target, chunk); err != nil {
+			return fmt.Errorf("failed to send notice: %w", err)
+		}
+	}
+	return nil
+}
+
+// SendAction sends one or more CTCP ACTION messages to target.
+func (c *IRCClient) SendAction(target, message string) error {
+	c.mu.RLock()
+	connected := c.connected
+	c.mu.RUnlock()
+	if !connected {
+		return fmt.Errorf("not connected")
+	}
+	for _, chunk := range splitOutboundMessage(message, c.maxMessageChunk(target)-len("\x01ACTION \x01")) {
+		c.rateLimiter.Wait()
+		if err := c.conn.Send("PRIVMSG", target, "\x01ACTION "+chunk+"\x01"); err != nil {
+			return fmt.Errorf("failed to send action: %w", err)
+		}
+	}
+	return nil
+}
+
 // SendMessageWithTags sends a message with optional IRCv3 client tags.
 // replyMsgID populates +draft/reply; channelContext populates
 // +draft/channel-context. Either may be empty.
@@ -5102,6 +5142,11 @@ func (c *IRCClient) persistPendingJoinKey(channel string, ch *storage.Channel) {
 
 // PartChannel leaves an IRC channel
 func (c *IRCClient) PartChannel(channel string) error {
+	return c.PartChannelWithReason(channel, "")
+}
+
+// PartChannelWithReason leaves an IRC channel with an optional reason.
+func (c *IRCClient) PartChannelWithReason(channel, reason string) error {
 	c.mu.RLock()
 	if !c.connected {
 		c.mu.RUnlock()
@@ -5109,7 +5154,10 @@ func (c *IRCClient) PartChannel(channel string) error {
 	}
 	c.mu.RUnlock()
 
-	return c.conn.Part(channel)
+	if reason == "" {
+		return c.conn.Part(channel)
+	}
+	return c.conn.Send("PART", channel, reason)
 }
 
 // SetNetworkID sets the network ID for message storage
