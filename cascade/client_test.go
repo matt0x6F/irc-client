@@ -33,3 +33,49 @@ func TestClientNetworkSayAndTimers(t *testing.T) {
 		t.Fatalf("timers = %v %v", everies, afters)
 	}
 }
+
+func TestClientNetworkQueries(t *testing.T) {
+	c := NewClient(nil, nil, nil, WithNetworkQueries(
+		func(network string) bool { return network == "libera" },
+		func(network string) string {
+			if network == "libera" {
+				return "Matt"
+			}
+			return ""
+		},
+		func(network, nick string) bool { return network == "libera" && (nick == "Matt" || nick == "mAtT") },
+		func(network, nick string) UserStatus {
+			if network == "libera" && nick == "Alice" {
+				return UserStatus{Known: true, Away: true, AwayMessage: "lunch", Account: "alice_account"}
+			}
+			return UserStatus{}
+		},
+	))
+
+	net := c.Network("libera")
+	if net.Name() != "libera" || !net.IsConnected() || net.Nick() != "Matt" {
+		t.Fatalf("network queries = %q %v %q", net.Name(), net.IsConnected(), net.Nick())
+	}
+	if !net.IsMe("mAtT") || !net.Self().IsSelf() || net.Self().Nick() != "Matt" {
+		t.Fatalf("self identity was not delegated to the host")
+	}
+	alice := net.User("Alice")
+	if !alice.Known() || !alice.IsAway() || alice.Status().AwayMessage != "lunch" || alice.Status().Account != "alice_account" {
+		t.Fatalf("alice status = %+v", alice.Status())
+	}
+	if net.User("unknown").Known() || net.User("unknown").IsAway() {
+		t.Fatal("unknown user reported known or away")
+	}
+}
+
+func TestClientUnknownQueriesAreNilSafe(t *testing.T) {
+	c := NewClient(nil, nil, nil)
+	net := c.Network("missing")
+	if net.IsConnected() || net.Nick() != "" || net.IsMe("anyone") {
+		t.Fatalf("unbound network returned non-zero queries")
+	}
+	u := net.User("alice")
+	if u.Known() || u.IsAway() || u.IsSelf() || u.Status() != (UserStatus{}) {
+		t.Fatalf("unbound user status = %+v", u.Status())
+	}
+}
