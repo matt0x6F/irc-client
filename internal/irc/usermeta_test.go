@@ -151,6 +151,47 @@ func TestAwayNotifyIdempotent(t *testing.T) {
 	}
 }
 
+func TestSelfAwayNumericsCommitServerAcknowledgedState(t *testing.T) {
+	c, counter := newUserMetaTestClient(t)
+	c.eventBus.Subscribe(EventSelfStatusChanged, counter)
+	c.pendingAwayMessage = "lunch"
+	c.awayRequestPending = true
+
+	c.handleNowAway(parse(t, ":irc.libera.chat 306 matt0x6f :You have been marked as being away"))
+	away, message := c.SelfAwayStatus()
+	if !away || message != "lunch" {
+		t.Fatalf("after 306: away=%v message=%q", away, message)
+	}
+	waitForMetaCount(t, counter, 1)
+
+	c.handleNowAway(parse(t, ":irc.libera.chat 306 matt0x6f :You have been marked as being away"))
+	time.Sleep(50 * time.Millisecond)
+	if got := counter.snapshotCount(); got != 1 {
+		t.Fatalf("duplicate 306 emitted %d self-status events; want 1", got)
+	}
+
+	c.handleUnAway(parse(t, ":irc.libera.chat 305 matt0x6f :You are no longer marked as being away"))
+	away, message = c.SelfAwayStatus()
+	if away || message != "" {
+		t.Fatalf("after 305: away=%v message=%q", away, message)
+	}
+	waitForMetaCount(t, counter, 2)
+}
+
+func TestSetAwayFailureDoesNotChangeCommittedState(t *testing.T) {
+	c, _ := newUserMetaTestClient(t)
+	if err := c.SetAway("lunch"); err == nil {
+		t.Fatal("SetAway on disconnected client returned nil")
+	}
+	if c.awayRequestPending || c.pendingAwayMessage != "" {
+		t.Fatalf("failed request left pending state: pending=%v message=%q", c.awayRequestPending, c.pendingAwayMessage)
+	}
+	away, message := c.SelfAwayStatus()
+	if away || message != "" {
+		t.Fatalf("failed request changed committed state: away=%v message=%q", away, message)
+	}
+}
+
 func TestAccountNotifySetsAndLogsOut(t *testing.T) {
 	c, _ := newUserMetaTestClient(t)
 

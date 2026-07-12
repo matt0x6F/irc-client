@@ -155,10 +155,7 @@ func cmdQuit(a *App, client *irc.IRCClient, networkID int64, args []string) erro
 }
 
 func cmdAway(a *App, client *irc.IRCClient, networkID int64, args []string) error {
-	if len(args) >= 1 {
-		return client.SendRawCommand(fmt.Sprintf("AWAY :%s", strings.Join(args, " ")))
-	}
-	return client.SendRawCommand("AWAY")
+	return client.SetAway(strings.Join(args, " "))
 }
 
 func cmdWhois(a *App, client *irc.IRCClient, networkID int64, args []string) error {

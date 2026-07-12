@@ -120,6 +120,10 @@ type IRCClient struct {
 	banListsMu            sync.Mutex             // Mutex for banLists
 	rateLimiter           *RateLimiter           // Rate limiter for outgoing messages
 	currentNick           string                 // Nick the server currently knows us by; differs from the preferred nick during a collision (guarded by mu)
+	selfAway              bool                   // Server-acknowledged away state for our current nick (guarded by mu)
+	selfAwayMessage       string                 // Requested away reason committed by RPL_NOWAWAY (guarded by mu)
+	pendingAwayMessage    string                 // Away reason awaiting 305/306 acknowledgement (guarded by mu)
+	awayRequestPending    bool                   // Distinguishes a pending clear (empty message) from no request (guarded by mu)
 	nickCollisionNotified bool                   // True once we've told the user (one time) that the preferred nick was unavailable (guarded by mu)
 	pendingManualNick     string                 // Nick the user explicitly asked for via /nick and is awaiting; lets us surface a failure that the library's silent background reclaims would otherwise hide (guarded by mu)
 	reconnecting          bool                   // True when this connection is an auto-reconnect after an unexpected drop (guarded by mu)
@@ -1591,6 +1595,87 @@ func (c *IRCClient) handleAway(e ircmsg.Message) {
 	})
 }
 
+// SelfAwayStatus returns our server-acknowledged away state for this session.
+func (c *IRCClient) SelfAwayStatus() (away bool, message string) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.selfAway, c.selfAwayMessage
+}
+
+// SetAway asks the server to set (non-empty message) or clear (empty message)
+// our away state. The committed state changes only after RPL_NOWAWAY/RPL_UNAWAY.
+func (c *IRCClient) SetAway(message string) error {
+	c.mu.Lock()
+	c.pendingAwayMessage = message
+	c.awayRequestPending = true
+	c.mu.Unlock()
+
+	command := "AWAY"
+	if message != "" {
+		command += " :" + message
+	}
+	if err := c.SendRawCommand(command); err != nil {
+		c.mu.Lock()
+		if c.awayRequestPending && c.pendingAwayMessage == message {
+			c.pendingAwayMessage = ""
+			c.awayRequestPending = false
+		}
+		c.mu.Unlock()
+		return err
+	}
+	return nil
+}
+
+// handleNowAway processes RPL_NOWAWAY (306), the server's acknowledgement that
+// our away state is active.
+func (c *IRCClient) handleNowAway(ircmsg.Message) {
+	c.mu.Lock()
+	message := c.selfAwayMessage
+	if c.awayRequestPending {
+		message = c.pendingAwayMessage
+	}
+	changed := !c.selfAway || c.selfAwayMessage != message
+	c.selfAway = true
+	c.selfAwayMessage = message
+	c.pendingAwayMessage = ""
+	c.awayRequestPending = false
+	c.mu.Unlock()
+	if changed {
+		c.emitSelfStatus()
+	}
+}
+
+// handleUnAway processes RPL_UNAWAY (305), the server's acknowledgement that
+// our away state is cleared.
+func (c *IRCClient) handleUnAway(ircmsg.Message) {
+	c.mu.Lock()
+	changed := c.selfAway || c.selfAwayMessage != ""
+	c.selfAway = false
+	c.selfAwayMessage = ""
+	c.pendingAwayMessage = ""
+	c.awayRequestPending = false
+	c.mu.Unlock()
+	if changed {
+		c.emitSelfStatus()
+	}
+}
+
+func (c *IRCClient) emitSelfStatus() {
+	away, message := c.SelfAwayStatus()
+	c.eventBus.Emit(events.Event{
+		Type: EventSelfStatusChanged,
+		Data: map[string]interface{}{
+			"network":      c.network.Address,
+			"networkId":    c.networkID,
+			"nickname":     c.CurrentNick(),
+			"away":         away,
+			"away_message": message,
+		},
+		Timestamp: time.Now(),
+		Source:    events.EventSourceIRC,
+	})
+}
+
 // handleAccount processes account-notify: ":nick ACCOUNT <account>" where "*"
 // means the user logged out.
 func (c *IRCClient) handleAccount(e ircmsg.Message) {
@@ -2354,6 +2439,8 @@ func (c *IRCClient) setupHandlers() {
 	// These only arrive when the matching cap was negotiated; each updates the
 	// session-local UserMeta and emits EventUserMetaChanged when something changed.
 	c.conn.AddCallback("AWAY", c.handleAway)
+	c.conn.AddCallback("305", c.handleUnAway)  // RPL_UNAWAY
+	c.conn.AddCallback("306", c.handleNowAway) // RPL_NOWAWAY
 	c.conn.AddCallback("ACCOUNT", c.handleAccount)
 	c.conn.AddCallback("CHGHOST", c.handleChghost)
 	c.conn.AddCallback("SETNAME", c.handleSetname)
