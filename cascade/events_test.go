@@ -113,3 +113,57 @@ func TestNoticeEventContext(t *testing.T) {
 		t.Fatalf("fields did not round-trip: %+v", e)
 	}
 }
+
+func TestAuthoritativeDMClassification(t *testing.T) {
+	channel := NewTextEventWithDirect("alice", "!room", "hi", false, nil)
+	if channel.IsDM() {
+		t.Fatal("host-classified nonstandard channel reported as DM")
+	}
+	dm := NewNoticeEventWithDirect("alice", "Matt", "hi", true, nil)
+	if !dm.IsDM() {
+		t.Fatal("host-classified nick target did not report DM")
+	}
+}
+
+func TestJoinPartEventContext(t *testing.T) {
+	j := NewJoinEvent("alice", "#go", nil)
+	j.Self, j.Account, j.Network, j.Host, j.Realname, j.Time = "Matt", "alice_account", "libera", "a@host", "Alice", NewTime(42)
+	if j.Self != "Matt" || j.Account != "alice_account" || j.Network != "libera" || j.Host != "a@host" || j.Realname != "Alice" || j.Time.Unix() != 42 {
+		t.Fatalf("join context = %+v", j)
+	}
+	p := NewPartEvent("alice", "#go", "bye", nil)
+	p.Self, p.Account, p.Network, p.Host, p.Realname, p.Time = "Matt", "alice_account", "libera", "a@host", "Alice", NewTime(43)
+	if p.Self != "Matt" || p.Account != "alice_account" || p.Network != "libera" || p.Host != "a@host" || p.Realname != "Alice" || p.Time.Unix() != 43 {
+		t.Fatalf("part context = %+v", p)
+	}
+}
+
+func TestQuitKickNickEvents(t *testing.T) {
+	q := NewQuitEvent("alice", "gone")
+	q.Self, q.Account, q.Network, q.Host, q.Realname, q.Time = "Matt", "acct", "Libera", "a@h", "Alice", NewTime(10)
+	if q.Nick != "alice" || q.Reason != "gone" || q.Time.Unix() != 10 {
+		t.Fatalf("quit event = %+v", q)
+	}
+	var reply string
+	k := NewKickEvent("alice", "oper", "#go", "rules", func(message string) { reply = message })
+	k.Reply("ack")
+	if k.Nick != "alice" || k.By != "oper" || k.Channel != "#go" || k.Reason != "rules" || reply != "ack" {
+		t.Fatalf("kick event = %+v reply=%q", k, reply)
+	}
+	n := NewNickEvent("alice", "alice2")
+	if n.OldNick != "alice" || n.NewNick != "alice2" {
+		t.Fatalf("nick event = %+v", n)
+	}
+}
+
+func TestUserStatusEvent(t *testing.T) {
+	status := UserStatus{Known: true, Away: true, AwayMessage: "lunch", Account: "acct", Host: "a@h", Realname: "Alice"}
+	e := NewUserStatusEvent("Libera", "Matt", "alice", status, NewTime(44), false)
+	if e.Network != "Libera" || e.Self != "Matt" || e.Nick != "alice" || e.Status != status || e.Time.Unix() != 44 || e.IsSelf() {
+		t.Fatalf("other status event = %+v", e)
+	}
+	self := NewUserStatusEvent("Libera", "Matt", "Matt", UserStatus{Known: true}, NewTime(45), true)
+	if !self.IsSelf() {
+		t.Fatalf("self status event = %+v", self)
+	}
+}

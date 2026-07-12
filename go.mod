@@ -2,7 +2,7 @@ module github.com/matt0x6f/irc-client
 
 go 1.25.0
 
-require github.com/matt0x6f/irc-client/cascade v1.1.0
+require github.com/matt0x6f/irc-client/cascade v1.2.0
 
 require (
 	github.com/ergochat/irc-go v0.6.0

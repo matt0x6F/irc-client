@@ -20,7 +20,9 @@ type TextEvent struct {
 	Time    Time   // message timestamp (server-time aware)
 	Action  bool   // true if this was a CTCP ACTION (/me)
 
-	replyFn func(string)
+	replyFn     func(string)
+	direct      bool
+	directKnown bool
 }
 
 // NewTextEvent is the host-side constructor. Scripts never call it.
@@ -28,8 +30,16 @@ func NewTextEvent(nick, channel, message string, reply func(string)) TextEvent {
 	return TextEvent{Nick: nick, Channel: channel, Message: message, replyFn: reply}
 }
 
+// NewTextEventWithDirect is the host-side constructor with authoritative target classification.
+func NewTextEventWithDirect(nick, channel, message string, direct bool, reply func(string)) TextEvent {
+	return TextEvent{Nick: nick, Channel: channel, Message: message, replyFn: reply, direct: direct, directKnown: true}
+}
+
 // IsDM reports whether this message was a direct message (Channel is not a channel name).
 func (e TextEvent) IsDM() bool {
+	if e.directKnown {
+		return e.direct
+	}
 	return e.Channel == "" || (e.Channel[0] != '#' && e.Channel[0] != '&')
 }
 
@@ -101,7 +111,9 @@ type NoticeEvent struct {
 	MsgID   string // IRCv3 msgid; "" if the server sent none
 	Time    Time   // message timestamp (server-time aware)
 
-	replyFn func(string)
+	replyFn     func(string)
+	direct      bool
+	directKnown bool
 }
 
 // NewNoticeEvent is the host-side constructor. Scripts never call it.
@@ -109,8 +121,16 @@ func NewNoticeEvent(nick, channel, message string, reply func(string)) NoticeEve
 	return NoticeEvent{Nick: nick, Channel: channel, Message: message, replyFn: reply}
 }
 
+// NewNoticeEventWithDirect is the host-side constructor with authoritative target classification.
+func NewNoticeEventWithDirect(nick, channel, message string, direct bool, reply func(string)) NoticeEvent {
+	return NoticeEvent{Nick: nick, Channel: channel, Message: message, replyFn: reply, direct: direct, directKnown: true}
+}
+
 // IsDM reports whether this notice was a direct message (Channel is not a channel name).
 func (e NoticeEvent) IsDM() bool {
+	if e.directKnown {
+		return e.direct
+	}
 	return e.Channel == "" || (e.Channel[0] != '#' && e.Channel[0] != '&')
 }
 
@@ -132,8 +152,14 @@ func (e NoticeEvent) IsHighlight() bool {
 
 // JoinEvent is delivered to OnJoin handlers when a user joins a channel.
 type JoinEvent struct {
-	Nick    string
-	Channel string
+	Nick     string
+	Channel  string
+	Self     string
+	Account  string
+	Network  string
+	Host     string
+	Realname string
+	Time     Time
 
 	replyFn func(string)
 }
@@ -152,9 +178,15 @@ func (e JoinEvent) Reply(msg string) {
 
 // PartEvent is delivered to OnPart handlers when a user leaves a channel.
 type PartEvent struct {
-	Nick    string
-	Channel string
-	Reason  string
+	Nick     string
+	Channel  string
+	Reason   string
+	Self     string
+	Account  string
+	Network  string
+	Host     string
+	Realname string
+	Time     Time
 
 	replyFn func(string)
 }
@@ -170,6 +202,83 @@ func (e PartEvent) Reply(msg string) {
 		e.replyFn(msg)
 	}
 }
+
+// QuitEvent is delivered to OnQuit when a user leaves the network.
+type QuitEvent struct {
+	Nick     string
+	Reason   string
+	Self     string
+	Account  string
+	Network  string
+	Host     string
+	Realname string
+	Time     Time
+}
+
+// NewQuitEvent is the host-side constructor.
+func NewQuitEvent(nick, reason string) QuitEvent { return QuitEvent{Nick: nick, Reason: reason} }
+
+// KickEvent is delivered to OnKick when a user is kicked from a channel.
+type KickEvent struct {
+	Nick    string
+	By      string
+	Channel string
+	Reason  string
+	Self    string
+	Account string
+	Network string
+	Time    Time
+
+	replyFn func(string)
+}
+
+// NewKickEvent is the host-side constructor.
+func NewKickEvent(nick, by, channel, reason string, reply func(string)) KickEvent {
+	return KickEvent{Nick: nick, By: by, Channel: channel, Reason: reason, replyFn: reply}
+}
+
+// Reply sends a message to the channel where the kick occurred.
+func (e KickEvent) Reply(message string) {
+	if e.replyFn != nil {
+		e.replyFn(message)
+	}
+}
+
+// NickEvent is delivered to OnNick when a user changes nickname.
+type NickEvent struct {
+	OldNick string
+	NewNick string
+	Self    string
+	Account string
+	Network string
+	Time    Time
+}
+
+// NewNickEvent is the host-side constructor.
+func NewNickEvent(oldNick, newNick string) NickEvent {
+	return NickEvent{OldNick: oldNick, NewNick: newNick}
+}
+
+// UserStatusEvent is delivered when Cascade's session-local metadata snapshot
+// for a user changes.
+type UserStatusEvent struct {
+	Network string
+	Self    string
+	Nick    string
+	Status  UserStatus
+	Time    Time
+
+	self bool
+}
+
+// NewUserStatusEvent is the host-side constructor.
+func NewUserStatusEvent(network, currentNick, nick string, status UserStatus, at Time, self bool) UserStatusEvent {
+	return UserStatusEvent{Network: network, Self: currentNick, Nick: nick, Status: status, Time: at, self: self}
+}
+
+// IsSelf reports whether the changed user is our current nick, using the host's
+// IRC case-mapped identity decision.
+func (e UserStatusEvent) IsSelf() bool { return e.self }
 
 // Time is a script-safe timestamp. Scripts can't import "time", so the cascade
 // package (compiled host code) owns formatting and comparison.

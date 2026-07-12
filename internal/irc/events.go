@@ -28,6 +28,7 @@ const (
 	EventHistoryReceived       = "history.received"
 	EventBotDetected           = "bot.detected"    // a nick was recognized as an IRCv3 bot (bot tag or RPL_WHOISBOT)
 	EventUserMetaChanged       = "user.meta"       // a user's live roster attributes changed (away/account/host)
+	EventSelfStatusChanged     = "self.status"     // our server-acknowledged away state changed
 	EventSTSPolicy             = "sts.policy"      // server advertised an IRCv3 STS policy in CAP LS
 	EventMonitorChanged        = "monitor.changed" // a monitored nick's online/offline state changed (MONITOR)
 	EventTypingReceived        = "typing.received" // a peer sent an IRCv3 +typing client tag (active/paused/done)

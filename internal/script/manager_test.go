@@ -1,6 +1,7 @@
 package script
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,9 +9,84 @@ import (
 	"testing"
 	"time"
 
+	"github.com/matt0x6f/irc-client/cascade"
 	"github.com/matt0x6f/irc-client/internal/events"
 	"github.com/matt0x6f/irc-client/internal/extension"
 )
+
+func TestManagerClientBindings(t *testing.T) {
+	var calls []string
+	h := Host{
+		Send: func(networkID int64, target, message string) error {
+			calls = append(calls, fmt.Sprintf("say:%d:%s:%s", networkID, target, message))
+			return nil
+		},
+		SelfNick: func(int64) string { return "Matt" },
+		ResolveNetwork: func(name string) (int64, bool) {
+			return 7, name == "libera"
+		},
+		Connected: func(networkID int64) bool { return networkID == 7 },
+		IsMe:      func(networkID int64, nick string) bool { return networkID == 7 && (nick == "Matt" || nick == "mAtT") },
+		UserStatus: func(networkID int64, nick string) cascade.UserStatus {
+			if networkID == 7 && nick == "alice" {
+				return cascade.UserStatus{Known: true, Away: true, AwayMessage: "lunch", Account: "alice_account"}
+			}
+			return cascade.UserStatus{}
+		},
+		Notice: func(id int64, target, message string) error {
+			calls = append(calls, fmt.Sprintf("notice:%d:%s:%s", id, target, message))
+			return nil
+		},
+		Action: func(id int64, target, message string) error {
+			calls = append(calls, fmt.Sprintf("action:%d:%s:%s", id, target, message))
+			return nil
+		},
+		Join: func(id int64, channel, key string) error {
+			calls = append(calls, fmt.Sprintf("join:%d:%s:%s", id, channel, key))
+			return nil
+		},
+		Part: func(id int64, channel, reason string) error {
+			calls = append(calls, fmt.Sprintf("part:%d:%s:%s", id, channel, reason))
+			return nil
+		},
+		ChangeNick: func(id int64, nick string) error {
+			calls = append(calls, fmt.Sprintf("nick:%d:%s", id, nick))
+			return nil
+		},
+		SetAway: func(id int64, message string) error {
+			calls = append(calls, fmt.Sprintf("away:%d:%s", id, message))
+			return nil
+		},
+	}
+	m := NewManager(events.NewEventBus(), t.TempDir(), h)
+	n := m.makeClient("test").Network("libera")
+	if !n.IsConnected() || n.Nick() != "Matt" || !n.IsMe("mAtT") {
+		t.Fatalf("network query bindings failed")
+	}
+	if got := n.User("alice").Status(); !got.Known || !got.Away || got.Account != "alice_account" {
+		t.Fatalf("user status = %+v", got)
+	}
+	n.Say("#go", "hello")
+	n.Notice("alice", "hi")
+	n.Action("#go", "waves")
+	n.JoinWithKey("#private", "secret")
+	n.Part("#go", "bye")
+	n.ChangeNick("Matt2")
+	n.SetAway("lunch")
+	if len(calls) != 7 {
+		t.Fatalf("calls = %v", calls)
+	}
+
+	before := len(calls)
+	missing := m.makeClient("test").Network("missing")
+	if missing.IsConnected() || missing.Nick() != "" || missing.User("alice").Known() {
+		t.Fatal("unknown network returned state")
+	}
+	missing.Notice("alice", "drop")
+	if len(calls) != before {
+		t.Fatalf("unknown network invoked host: %v", calls[before:])
+	}
+}
 
 func TestManagerRoutesNoticeJoinPart(t *testing.T) {
 	dir := t.TempDir()
@@ -70,6 +146,84 @@ func TestManagerRoutesNoticeJoinPart(t *testing.T) {
 	}
 	if cN != 1 || cT != 1 {
 		t.Fatalf("routing leaked: got-notice=%d got-text=%d (want 1,1)", cN, cT)
+	}
+}
+
+func TestManagerRoutesQuitKickNick(t *testing.T) {
+	dir := t.TempDir()
+	d := filepath.Join(dir, "lifecycle")
+	if err := os.MkdirAll(d, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := `package main
+import "github.com/matt0x6f/irc-client/cascade"
+func OnQuit(e cascade.QuitEvent) { if e.Nick != "alice" { panic("bad quit") } }
+func OnKick(e cascade.KickEvent) { e.Reply("kicked:"+e.Nick) }
+func OnNick(e cascade.NickEvent) { if e.OldNick != "alice" || e.NewNick != "alice2" { panic("bad nick") } }
+`
+	if err := os.WriteFile(filepath.Join(d, "main.go"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fs := &fakeSender{}
+	bus := events.NewEventBus()
+	m := NewManager(bus, dir, testHost(fs.send))
+	if err := m.LoadAll(); err != nil {
+		t.Fatal(err)
+	}
+	bus.EmitSync(events.Event{Type: "user.quit", Data: map[string]interface{}{
+		"networkId": int64(1), "networkName": "Libera", "user": "alice", "reason": "gone",
+	}})
+	bus.EmitSync(events.Event{Type: "user.kicked", Data: map[string]interface{}{
+		"networkId": int64(1), "networkName": "Libera", "channel": "#go", "user": "alice", "kicker": "oper", "reason": "rules",
+	}})
+	bus.EmitSync(events.Event{Type: "user.nick", Data: map[string]interface{}{
+		"networkId": int64(1), "networkName": "Libera", "oldNick": "alice", "newNick": "alice2",
+	}})
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	if len(fs.sent) != 1 || fs.sent[0].target != "#go" || fs.sent[0].message != "kicked:alice" {
+		t.Fatalf("lifecycle sends = %+v", fs.sent)
+	}
+}
+
+func TestManagerRoutesUserStatus(t *testing.T) {
+	dir := t.TempDir()
+	d := filepath.Join(dir, "status")
+	if err := os.MkdirAll(d, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := `package main
+import "github.com/matt0x6f/irc-client/cascade"
+var client *cascade.Client
+func Setup(c *cascade.Client) { client = c }
+func OnUserStatus(e cascade.UserStatusEvent) {
+    if e.IsSelf() { client.Network(e.Network).Say("#log", "self")
+    } else if e.Status.Away { client.Network(e.Network).Say("#log", "away:"+e.Nick) }
+}
+`
+	if err := os.WriteFile(filepath.Join(d, "main.go"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fs := &fakeSender{}
+	h := testHost(fs.send)
+	h.ResolveNetwork = func(name string) (int64, bool) { return 1, name == "Libera" }
+	h.SelfNick = func(int64) string { return "Matt" }
+	h.IsMe = func(_ int64, nick string) bool { return nick == "Matt" }
+	bus := events.NewEventBus()
+	m := NewManager(bus, dir, h)
+	if err := m.LoadAll(); err != nil {
+		t.Fatal(err)
+	}
+	bus.EmitSync(events.Event{Type: "user.meta", Data: map[string]interface{}{
+		"networkId": int64(1), "networkName": "Libera", "nickname": "alice", "away": true, "away_message": "lunch", "account": "acct", "host": "a@h", "realname": "Alice",
+	}})
+	bus.EmitSync(events.Event{Type: "self.status", Data: map[string]interface{}{
+		"networkId": int64(1), "networkName": "Libera", "nickname": "Matt", "away": false, "away_message": "",
+	}})
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	if len(fs.sent) != 2 || fs.sent[0].message != "away:alice" || fs.sent[1].message != "self" {
+		t.Fatalf("status sends = %+v", fs.sent)
 	}
 }
 

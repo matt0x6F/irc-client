@@ -120,6 +120,10 @@ type IRCClient struct {
 	banListsMu            sync.Mutex             // Mutex for banLists
 	rateLimiter           *RateLimiter           // Rate limiter for outgoing messages
 	currentNick           string                 // Nick the server currently knows us by; differs from the preferred nick during a collision (guarded by mu)
+	selfAway              bool                   // Server-acknowledged away state for our current nick (guarded by mu)
+	selfAwayMessage       string                 // Requested away reason committed by RPL_NOWAWAY (guarded by mu)
+	pendingAwayMessage    string                 // Away reason awaiting 305/306 acknowledgement (guarded by mu)
+	awayRequestPending    bool                   // Distinguishes a pending clear (empty message) from no request (guarded by mu)
 	nickCollisionNotified bool                   // True once we've told the user (one time) that the preferred nick was unavailable (guarded by mu)
 	pendingManualNick     string                 // Nick the user explicitly asked for via /nick and is awaiting; lets us surface a failure that the library's silent background reclaims would otherwise hide (guarded by mu)
 	reconnecting          bool                   // True when this connection is an auto-reconnect after an unexpected drop (guarded by mu)
@@ -358,6 +362,12 @@ func (c *IRCClient) CurrentNick() string {
 		return c.preferredNick()
 	}
 	return nick
+}
+
+// IsCurrentNick compares nick with our live nickname using the server's
+// CASEMAPPING rules.
+func (c *IRCClient) IsCurrentNick(nick string) bool {
+	return c.sameName(c.CurrentNick(), nick)
 }
 
 // ChangeNick sends a user-initiated NICK request and records the requested nick
@@ -677,10 +687,11 @@ func (c *IRCClient) handleJoin(e ircmsg.Message) {
 	c.eventBus.Emit(events.Event{
 		Type: EventUserJoined,
 		Data: map[string]interface{}{
-			"network":   c.network.Address,
-			"networkId": c.networkID,
-			"channel":   channel,
-			"user":      user,
+			"network":     c.network.Address,
+			"networkName": c.network.Name,
+			"networkId":   c.networkID,
+			"channel":     channel,
+			"user":        user,
 		},
 		Timestamp: time.Now(),
 		Source:    events.EventSourceIRC,
@@ -761,11 +772,12 @@ func (c *IRCClient) handlePart(e ircmsg.Message) {
 	c.eventBus.Emit(events.Event{
 		Type: EventUserParted,
 		Data: map[string]interface{}{
-			"network":   c.network.Address,
-			"networkId": c.networkID,
-			"channel":   channel,
-			"user":      user,
-			"reason":    reason,
+			"network":     c.network.Address,
+			"networkName": c.network.Name,
+			"networkId":   c.networkID,
+			"channel":     channel,
+			"user":        user,
+			"reason":      reason,
 		},
 		Timestamp: time.Now(),
 		Source:    events.EventSourceIRC,
@@ -797,6 +809,10 @@ func (c *IRCClient) handleQuit(e ircmsg.Message) {
 	if len(e.Params) > 0 {
 		reason = e.Params[0]
 	}
+
+	// Snapshot metadata before removing it so downstream consumers receive the
+	// identity that belonged to this quit event.
+	meta, _ := c.UserMetaFor(user)
 
 	// The user left the network entirely, so drop their live roster
 	// attributes (away/account/host). PART/KICK deliberately don't do this.
@@ -856,10 +872,14 @@ func (c *IRCClient) handleQuit(e ircmsg.Message) {
 	c.eventBus.Emit(events.Event{
 		Type: EventUserQuit,
 		Data: map[string]interface{}{
-			"network":   c.network.Address,
-			"networkId": c.networkID,
-			"user":      user,
-			"reason":    reason,
+			"network":     c.network.Address,
+			"networkName": c.network.Name,
+			"networkId":   c.networkID,
+			"user":        user,
+			"reason":      reason,
+			"account":     meta.Account,
+			"host":        meta.Host,
+			"realname":    meta.Realname,
 		},
 		Timestamp: time.Now(),
 		Source:    events.EventSourceIRC,
@@ -933,12 +953,13 @@ func (c *IRCClient) handleKick(e ircmsg.Message) {
 	c.eventBus.Emit(events.Event{
 		Type: EventUserKicked,
 		Data: map[string]interface{}{
-			"network":   c.network.Address,
-			"networkId": c.networkID,
-			"channel":   channel,
-			"kicker":    kicker,
-			"user":      kickedUser,
-			"reason":    reason,
+			"network":     c.network.Address,
+			"networkName": c.network.Name,
+			"networkId":   c.networkID,
+			"channel":     channel,
+			"kicker":      kicker,
+			"user":        kickedUser,
+			"reason":      reason,
 		},
 		Timestamp: time.Now(),
 		Source:    events.EventSourceIRC,
@@ -1142,10 +1163,11 @@ func (c *IRCClient) handleNickMessage(e ircmsg.Message) {
 	c.eventBus.Emit(events.Event{
 		Type: EventUserNick,
 		Data: map[string]interface{}{
-			"network":   c.network.Address,
-			"networkId": c.networkID,
-			"oldNick":   oldNick,
-			"newNick":   newNick,
+			"network":     c.network.Address,
+			"networkName": c.network.Name,
+			"networkId":   c.networkID,
+			"oldNick":     oldNick,
+			"newNick":     newNick,
 		},
 		Timestamp: time.Now(),
 		Source:    events.EventSourceIRC,
@@ -1511,6 +1533,7 @@ func (c *IRCClient) publishUserMeta(nick string, meta UserMeta) {
 		Type: EventUserMetaChanged,
 		Data: map[string]interface{}{
 			"network":      c.network.Address,
+			"networkName":  c.network.Name,
 			"networkId":    c.networkID,
 			"nickname":     nick,
 			"away":         meta.Away,
@@ -1588,6 +1611,88 @@ func (c *IRCClient) handleAway(e ircmsg.Message) {
 	c.applyUserMeta(e.Nick(), func(m *UserMeta) {
 		m.Away = away
 		m.AwayMessage = message
+	})
+}
+
+// SelfAwayStatus returns our server-acknowledged away state for this session.
+func (c *IRCClient) SelfAwayStatus() (away bool, message string) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.selfAway, c.selfAwayMessage
+}
+
+// SetAway asks the server to set (non-empty message) or clear (empty message)
+// our away state. The committed state changes only after RPL_NOWAWAY/RPL_UNAWAY.
+func (c *IRCClient) SetAway(message string) error {
+	c.mu.Lock()
+	c.pendingAwayMessage = message
+	c.awayRequestPending = true
+	c.mu.Unlock()
+
+	command := "AWAY"
+	if message != "" {
+		command += " :" + message
+	}
+	if err := c.SendRawCommand(command); err != nil {
+		c.mu.Lock()
+		if c.awayRequestPending && c.pendingAwayMessage == message {
+			c.pendingAwayMessage = ""
+			c.awayRequestPending = false
+		}
+		c.mu.Unlock()
+		return err
+	}
+	return nil
+}
+
+// handleNowAway processes RPL_NOWAWAY (306), the server's acknowledgement that
+// our away state is active.
+func (c *IRCClient) handleNowAway(ircmsg.Message) {
+	c.mu.Lock()
+	message := c.selfAwayMessage
+	if c.awayRequestPending {
+		message = c.pendingAwayMessage
+	}
+	changed := !c.selfAway || c.selfAwayMessage != message
+	c.selfAway = true
+	c.selfAwayMessage = message
+	c.pendingAwayMessage = ""
+	c.awayRequestPending = false
+	c.mu.Unlock()
+	if changed {
+		c.emitSelfStatus()
+	}
+}
+
+// handleUnAway processes RPL_UNAWAY (305), the server's acknowledgement that
+// our away state is cleared.
+func (c *IRCClient) handleUnAway(ircmsg.Message) {
+	c.mu.Lock()
+	changed := c.selfAway || c.selfAwayMessage != ""
+	c.selfAway = false
+	c.selfAwayMessage = ""
+	c.pendingAwayMessage = ""
+	c.awayRequestPending = false
+	c.mu.Unlock()
+	if changed {
+		c.emitSelfStatus()
+	}
+}
+
+func (c *IRCClient) emitSelfStatus() {
+	away, message := c.SelfAwayStatus()
+	c.eventBus.Emit(events.Event{
+		Type: EventSelfStatusChanged,
+		Data: map[string]interface{}{
+			"network":      c.network.Address,
+			"networkName":  c.network.Name,
+			"networkId":    c.networkID,
+			"nickname":     c.CurrentNick(),
+			"away":         away,
+			"away_message": message,
+		},
+		Timestamp: time.Now(),
+		Source:    events.EventSourceIRC,
 	})
 }
 
@@ -2354,6 +2459,8 @@ func (c *IRCClient) setupHandlers() {
 	// These only arrive when the matching cap was negotiated; each updates the
 	// session-local UserMeta and emits EventUserMetaChanged when something changed.
 	c.conn.AddCallback("AWAY", c.handleAway)
+	c.conn.AddCallback("305", c.handleUnAway)  // RPL_UNAWAY
+	c.conn.AddCallback("306", c.handleNowAway) // RPL_NOWAWAY
 	c.conn.AddCallback("ACCOUNT", c.handleAccount)
 	c.conn.AddCallback("CHGHOST", c.handleChghost)
 	c.conn.AddCallback("SETNAME", c.handleSetname)
@@ -4717,6 +4824,40 @@ func (c *IRCClient) SendMessage(target, message string) error {
 	return c.sendMessage(target, message, "", "")
 }
 
+// SendNotice sends one or more wire-sized NOTICE messages to target.
+func (c *IRCClient) SendNotice(target, message string) error {
+	c.mu.RLock()
+	connected := c.connected
+	c.mu.RUnlock()
+	if !connected {
+		return fmt.Errorf("not connected")
+	}
+	for _, chunk := range splitOutboundMessage(message, c.maxMessageChunk(target)) {
+		c.rateLimiter.Wait()
+		if err := c.conn.Send("NOTICE", target, chunk); err != nil {
+			return fmt.Errorf("failed to send notice: %w", err)
+		}
+	}
+	return nil
+}
+
+// SendAction sends one or more CTCP ACTION messages to target.
+func (c *IRCClient) SendAction(target, message string) error {
+	c.mu.RLock()
+	connected := c.connected
+	c.mu.RUnlock()
+	if !connected {
+		return fmt.Errorf("not connected")
+	}
+	for _, chunk := range splitOutboundMessage(message, c.maxMessageChunk(target)-len("\x01ACTION \x01")) {
+		c.rateLimiter.Wait()
+		if err := c.conn.Send("PRIVMSG", target, "\x01ACTION "+chunk+"\x01"); err != nil {
+			return fmt.Errorf("failed to send action: %w", err)
+		}
+	}
+	return nil
+}
+
 // SendMessageWithTags sends a message with optional IRCv3 client tags.
 // replyMsgID populates +draft/reply; channelContext populates
 // +draft/channel-context. Either may be empty.
@@ -4851,6 +4992,9 @@ func (c *IRCClient) SetReconnecting(v bool) {
 func (c *IRCClient) isChannelName(name string) bool {
 	return channelNameMatches(name, c.ChanTypes())
 }
+
+// IsChannelName reports whether name is a channel under the server's CHANTYPES.
+func (c *IRCClient) IsChannelName(name string) bool { return c.isChannelName(name) }
 
 // ChanTypes returns the server-advertised CHANTYPES set, or the default "#&"
 // when the server hasn't advertised one yet. Exported so the App can surface it
@@ -5015,6 +5159,11 @@ func (c *IRCClient) persistPendingJoinKey(channel string, ch *storage.Channel) {
 
 // PartChannel leaves an IRC channel
 func (c *IRCClient) PartChannel(channel string) error {
+	return c.PartChannelWithReason(channel, "")
+}
+
+// PartChannelWithReason leaves an IRC channel with an optional reason.
+func (c *IRCClient) PartChannelWithReason(channel, reason string) error {
 	c.mu.RLock()
 	if !c.connected {
 		c.mu.RUnlock()
@@ -5022,7 +5171,10 @@ func (c *IRCClient) PartChannel(channel string) error {
 	}
 	c.mu.RUnlock()
 
-	return c.conn.Part(channel)
+	if reason == "" {
+		return c.conn.Part(channel)
+	}
+	return c.conn.Send("PART", channel, reason)
 }
 
 // SetNetworkID sets the network ID for message storage

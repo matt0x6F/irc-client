@@ -1,6 +1,8 @@
 package script
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -21,6 +23,37 @@ func TestLoadAndDispatchOnText(t *testing.T) {
 
 	if len(got) != 1 || got[0] != "Hi bob" {
 		t.Fatalf("reply = %v; want [Hi bob]", got)
+	}
+}
+
+func TestLifecycleHandlersLoadAndDispatch(t *testing.T) {
+	dir := t.TempDir()
+	src := `package main
+import "github.com/matt0x6f/irc-client/cascade"
+func OnQuit(e cascade.QuitEvent) { if e.Nick != "alice" { panic("bad quit") } }
+func OnKick(e cascade.KickEvent) { e.Reply("kick:"+e.Nick) }
+func OnNick(e cascade.NickEvent) { if e.NewNick != "alice2" { panic("bad nick") } }
+func OnUserStatus(e cascade.UserStatusEvent) { if !e.Status.Away { panic("bad status") } }
+`
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := LoadPackage(dir)
+	if err != nil {
+		t.Fatalf("LoadPackage: %v", err)
+	}
+	for _, name := range []string{"OnQuit", "OnKick", "OnNick", "OnUserStatus"} {
+		if !s.Has(name) {
+			t.Fatalf("missing handler %s", name)
+		}
+	}
+	s.DispatchQuit(cascade.NewQuitEvent("alice", "gone"))
+	var reply string
+	s.DispatchKick(cascade.NewKickEvent("alice", "oper", "#go", "rules", func(message string) { reply = message }))
+	s.DispatchNick(cascade.NewNickEvent("alice", "alice2"))
+	s.DispatchUserStatus(cascade.NewUserStatusEvent("Libera", "Matt", "alice", cascade.UserStatus{Known: true, Away: true}, cascade.NewTime(1), false))
+	if reply != "kick:alice" {
+		t.Fatalf("kick reply = %q", reply)
 	}
 }
 

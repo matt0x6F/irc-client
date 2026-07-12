@@ -134,7 +134,7 @@ func cmdJoin(a *App, client *irc.IRCClient, networkID int64, args []string) erro
 func cmdPart(a *App, client *irc.IRCClient, networkID int64, args []string) error {
 	channelName := args[0]
 	if len(args) >= 2 {
-		return client.SendRawCommand(fmt.Sprintf("PART %s :%s", channelName, strings.Join(args[1:], " ")))
+		return client.PartChannelWithReason(channelName, strings.Join(args[1:], " "))
 	}
 	return client.PartChannel(channelName)
 }
@@ -155,10 +155,7 @@ func cmdQuit(a *App, client *irc.IRCClient, networkID int64, args []string) erro
 }
 
 func cmdAway(a *App, client *irc.IRCClient, networkID int64, args []string) error {
-	if len(args) >= 1 {
-		return client.SendRawCommand(fmt.Sprintf("AWAY :%s", strings.Join(args, " ")))
-	}
-	return client.SendRawCommand("AWAY")
+	return client.SetAway(strings.Join(args, " "))
 }
 
 func cmdWhois(a *App, client *irc.IRCClient, networkID int64, args []string) error {
@@ -177,7 +174,7 @@ func cmdWho(a *App, client *irc.IRCClient, networkID int64, args []string) error
 }
 
 func cmdMe(a *App, client *irc.IRCClient, networkID int64, args []string) error {
-	return client.SendRawCommand(fmt.Sprintf("PRIVMSG %s :\001ACTION %s\001", args[0], strings.Join(args[1:], " ")))
+	return client.SendAction(args[0], strings.Join(args[1:], " "))
 }
 
 func cmdCtcp(a *App, client *irc.IRCClient, networkID int64, args []string) error {

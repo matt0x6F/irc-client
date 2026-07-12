@@ -22,11 +22,16 @@ const eventMessageReceived = "message.received"
 const (
 	eventUserJoined = "user.joined"
 	eventUserParted = "user.parted"
+	eventUserQuit   = "user.quit"
+	eventUserKicked = "user.kicked"
+	eventUserNick   = "user.nick"
+	eventUserMeta   = "user.meta"
+	eventSelfStatus = "self.status"
 )
 
 // cascadeSDKVersion is the cascade SDK module version the scaffolded scripts
 // go.mod requires. Bump this when the app ships against a newer cascade tag.
-const cascadeSDKVersion = "v1.1.0"
+const cascadeSDKVersion = "v1.2.0"
 
 // cascadeModulePath is the import path of the cascade SDK module.
 const cascadeModulePath = "github.com/matt0x6f/irc-client/cascade"
@@ -39,6 +44,16 @@ type Host struct {
 	Send           Sender                          // App.SendMessage
 	SelfNick       func(networkID int64) string    // App.GetCurrentNick wrapper
 	ResolveNetwork func(name string) (int64, bool) // name → networkID (via App.GetNetworks)
+	Connected      func(networkID int64) bool
+	IsMe           func(networkID int64, nick string) bool
+	UserStatus     func(networkID int64, nick string) cascade.UserStatus
+	Notice         func(networkID int64, target, message string) error
+	Action         func(networkID int64, target, message string) error
+	Join           func(networkID int64, channel, key string) error
+	Part           func(networkID int64, channel, reason string) error
+	ChangeNick     func(networkID int64, nick string) error
+	SetAway        func(networkID int64, message string) error
+	IsChannel      func(networkID int64, target string) bool
 	// LoadDisabled returns the set of script IDs that should start disabled.
 	// Nil-safe: a nil func is treated as returning an empty map.
 	LoadDisabled func() map[string]bool
@@ -96,15 +111,80 @@ func NewManager(bus *events.EventBus, dir string, host Host) *Manager {
 // to the per-script timer registry so ticks run through the watchdog +
 // per-script mutex and are cancelled on reload/unload.
 func (m *Manager) makeClient(id extension.ID) *cascade.Client {
+	resolve := func(networkName string) (int64, bool) {
+		if m.host.ResolveNetwork == nil {
+			return 0, false
+		}
+		return m.host.ResolveNetwork(networkName)
+	}
 	say := func(networkName, target, message string) {
-		netID, ok := m.host.ResolveNetwork(networkName)
+		netID, ok := resolve(networkName)
 		if !ok {
 			logger.Log.Warn().Str("script", string(id)).Str("network", networkName).Msg("script Say: unknown network")
 			return
 		}
 		_ = m.host.Send(netID, target, message)
 	}
-	return cascade.NewClient(say, m.scheduleEvery(id), m.scheduleAfter(id))
+	connected := func(networkName string) bool {
+		netID, ok := resolve(networkName)
+		return ok && m.host.Connected != nil && m.host.Connected(netID)
+	}
+	nick := func(networkName string) string {
+		netID, ok := resolve(networkName)
+		if !ok || m.host.SelfNick == nil {
+			return ""
+		}
+		return m.host.SelfNick(netID)
+	}
+	isMe := func(networkName, candidate string) bool {
+		netID, ok := resolve(networkName)
+		return ok && m.host.IsMe != nil && m.host.IsMe(netID, candidate)
+	}
+	userStatus := func(networkName, candidate string) cascade.UserStatus {
+		netID, ok := resolve(networkName)
+		if !ok || m.host.UserStatus == nil {
+			return cascade.UserStatus{}
+		}
+		return m.host.UserStatus(netID, candidate)
+	}
+	withTargetAction := func(name string, fn func(int64, string, string) error) func(string, string, string) {
+		return func(networkName, target, value string) {
+			netID, ok := resolve(networkName)
+			if !ok || fn == nil {
+				if !ok {
+					logger.Log.Warn().Str("script", string(id)).Str("network", networkName).Str("action", name).Msg("script action: unknown network")
+				}
+				return
+			}
+			_ = fn(netID, target, value)
+		}
+	}
+	withNetworkAction := func(name string, fn func(int64, string) error) func(string, string) {
+		return func(networkName, value string) {
+			netID, ok := resolve(networkName)
+			if !ok || fn == nil {
+				if !ok {
+					logger.Log.Warn().Str("script", string(id)).Str("network", networkName).Str("action", name).Msg("script action: unknown network")
+				}
+				return
+			}
+			_ = fn(netID, value)
+		}
+	}
+	return cascade.NewClient(
+		say,
+		m.scheduleEvery(id),
+		m.scheduleAfter(id),
+		cascade.WithNetworkQueries(connected, nick, isMe, userStatus),
+		cascade.WithIRCActions(
+			withTargetAction("notice", m.host.Notice),
+			withTargetAction("action", m.host.Action),
+			withTargetAction("join", m.host.Join),
+			withTargetAction("part", m.host.Part),
+			withNetworkAction("nick", m.host.ChangeNick),
+			withNetworkAction("away", m.host.SetAway),
+		),
+	)
 }
 
 // reconcileModule keeps the scripts-dir go.mod's cascade SDK pin in lockstep with
@@ -241,6 +321,18 @@ func (m *Manager) loadDir(dir string) {
 	if s.Has("OnPart") {
 		evs = append(evs, eventUserParted)
 	}
+	if s.Has("OnQuit") {
+		evs = append(evs, eventUserQuit)
+	}
+	if s.Has("OnKick") {
+		evs = append(evs, eventUserKicked)
+	}
+	if s.Has("OnNick") {
+		evs = append(evs, eventUserNick)
+	}
+	if s.Has("OnUserStatus") {
+		evs = append(evs, eventUserMeta, eventSelfStatus)
+	}
 
 	m.mu.Lock()
 	m.scripts[id] = &loaded{script: s}
@@ -310,6 +402,30 @@ func (m *Manager) dispatch(id extension.ID, ev events.Event) (err error) {
 			defer l.mu.Unlock()
 			l.script.DispatchPart(pe)
 		}
+	case eventUserQuit:
+		if qe, ok := m.buildQuitEvent(ev); ok {
+			l.mu.Lock()
+			defer l.mu.Unlock()
+			l.script.DispatchQuit(qe)
+		}
+	case eventUserKicked:
+		if ke, ok := m.buildKickEvent(ev); ok {
+			l.mu.Lock()
+			defer l.mu.Unlock()
+			l.script.DispatchKick(ke)
+		}
+	case eventUserNick:
+		if ne, ok := m.buildNickEvent(ev); ok {
+			l.mu.Lock()
+			defer l.mu.Unlock()
+			l.script.DispatchNick(ne)
+		}
+	case eventUserMeta, eventSelfStatus:
+		if se, ok := m.buildUserStatusEvent(ev); ok {
+			l.mu.Lock()
+			defer l.mu.Unlock()
+			l.script.DispatchUserStatus(se)
+		}
 	}
 	return nil
 }
@@ -342,10 +458,17 @@ func (m *Manager) msgFields(ev events.Event) (nick, channel, message string, net
 // or to the sender nick (for DMs).
 func (m *Manager) replyTo(networkID int64, channel, nick string) func(string) {
 	target := channel
-	if !isChannel(channel) {
+	if !m.isChannel(networkID, channel) {
 		target = nick
 	}
 	return func(msg string) { _ = m.host.Send(networkID, target, msg) }
+}
+
+func (m *Manager) isChannel(networkID int64, target string) bool {
+	if m.host.IsChannel != nil {
+		return m.host.IsChannel(networkID, target)
+	}
+	return isChannel(target)
 }
 
 // buildTextEvent maps a message.received event into a cascade.TextEvent with a
@@ -355,7 +478,7 @@ func (m *Manager) buildTextEvent(ev events.Event) (cascade.TextEvent, bool) {
 	if !ok {
 		return cascade.TextEvent{}, false
 	}
-	e := cascade.NewTextEvent(nick, channel, message, m.replyTo(networkID, channel, nick))
+	e := cascade.NewTextEventWithDirect(nick, channel, message, !m.isChannel(networkID, channel), m.replyTo(networkID, channel, nick))
 	m.applyContext(&e.Self, &e.Account, &e.Network, &e.MsgID, &e.Time, ev, networkID)
 	e.Action, _ = ev.Data["isAction"].(bool)
 	return e, true
@@ -367,7 +490,7 @@ func (m *Manager) buildNoticeEvent(ev events.Event) (cascade.NoticeEvent, bool) 
 	if !ok {
 		return cascade.NoticeEvent{}, false
 	}
-	e := cascade.NewNoticeEvent(nick, channel, message, m.replyTo(networkID, channel, nick))
+	e := cascade.NewNoticeEventWithDirect(nick, channel, message, !m.isChannel(networkID, channel), m.replyTo(networkID, channel, nick))
 	m.applyContext(&e.Self, &e.Account, &e.Network, &e.MsgID, &e.Time, ev, networkID)
 	return e, true
 }
@@ -393,7 +516,9 @@ func (m *Manager) buildJoinEvent(ev events.Event) (cascade.JoinEvent, bool) {
 	if nick == "" || nick == "*" || (m.host.SelfNick != nil && nick == m.host.SelfNick(networkID)) {
 		return cascade.JoinEvent{}, false
 	}
-	return cascade.NewJoinEvent(nick, channel, m.replyTo(networkID, channel, nick)), true
+	e := cascade.NewJoinEvent(nick, channel, m.replyTo(networkID, channel, nick))
+	m.applyMembershipContext(&e.Self, &e.Account, &e.Network, &e.Host, &e.Realname, &e.Time, ev, networkID, nick)
+	return e, true
 }
 
 // buildPartEvent maps a user.parted event into a cascade.PartEvent.
@@ -405,7 +530,103 @@ func (m *Manager) buildPartEvent(ev events.Event) (cascade.PartEvent, bool) {
 	if nick == "" || nick == "*" || (m.host.SelfNick != nil && nick == m.host.SelfNick(networkID)) {
 		return cascade.PartEvent{}, false
 	}
-	return cascade.NewPartEvent(nick, channel, reason, m.replyTo(networkID, channel, nick)), true
+	e := cascade.NewPartEvent(nick, channel, reason, m.replyTo(networkID, channel, nick))
+	m.applyMembershipContext(&e.Self, &e.Account, &e.Network, &e.Host, &e.Realname, &e.Time, ev, networkID, nick)
+	return e, true
+}
+
+func (m *Manager) applyMembershipContext(self, account, network, host, realname *string, ts *cascade.Time, ev events.Event, networkID int64, nick string) {
+	if m.host.SelfNick != nil {
+		*self = m.host.SelfNick(networkID)
+	}
+	*network, _ = ev.Data["networkName"].(string)
+	if *network == "" {
+		*network, _ = ev.Data["network"].(string)
+	}
+	if m.host.UserStatus != nil {
+		status := m.host.UserStatus(networkID, nick)
+		*account, *host, *realname = status.Account, status.Host, status.Realname
+	}
+	if value, ok := ev.Data["account"].(string); ok {
+		*account = value
+	}
+	if value, ok := ev.Data["host"].(string); ok {
+		*host = value
+	}
+	if value, ok := ev.Data["realname"].(string); ok {
+		*realname = value
+	}
+	if !ev.Timestamp.IsZero() {
+		*ts = cascade.NewTime(ev.Timestamp.Unix())
+	}
+}
+
+func (m *Manager) buildQuitEvent(ev events.Event) (cascade.QuitEvent, bool) {
+	nick, _ := ev.Data["user"].(string)
+	reason, _ := ev.Data["reason"].(string)
+	networkID, _ := ev.Data["networkId"].(int64)
+	if nick == "" || nick == "*" || (m.host.IsMe != nil && m.host.IsMe(networkID, nick)) {
+		return cascade.QuitEvent{}, false
+	}
+	e := cascade.NewQuitEvent(nick, reason)
+	m.applyMembershipContext(&e.Self, &e.Account, &e.Network, &e.Host, &e.Realname, &e.Time, ev, networkID, nick)
+	return e, true
+}
+
+func (m *Manager) buildKickEvent(ev events.Event) (cascade.KickEvent, bool) {
+	nick, _ := ev.Data["user"].(string)
+	by, _ := ev.Data["kicker"].(string)
+	channel, _ := ev.Data["channel"].(string)
+	reason, _ := ev.Data["reason"].(string)
+	networkID, _ := ev.Data["networkId"].(int64)
+	if nick == "" || channel == "" {
+		return cascade.KickEvent{}, false
+	}
+	e := cascade.NewKickEvent(nick, by, channel, reason, m.replyTo(networkID, channel, by))
+	var host, realname string
+	m.applyMembershipContext(&e.Self, &e.Account, &e.Network, &host, &realname, &e.Time, ev, networkID, by)
+	return e, true
+}
+
+func (m *Manager) buildNickEvent(ev events.Event) (cascade.NickEvent, bool) {
+	oldNick, _ := ev.Data["oldNick"].(string)
+	newNick, _ := ev.Data["newNick"].(string)
+	networkID, _ := ev.Data["networkId"].(int64)
+	if oldNick == "" || newNick == "" {
+		return cascade.NickEvent{}, false
+	}
+	e := cascade.NewNickEvent(oldNick, newNick)
+	var host, realname string
+	m.applyMembershipContext(&e.Self, &e.Account, &e.Network, &host, &realname, &e.Time, ev, networkID, newNick)
+	return e, true
+}
+
+func (m *Manager) buildUserStatusEvent(ev events.Event) (cascade.UserStatusEvent, bool) {
+	nick, _ := ev.Data["nickname"].(string)
+	networkID, _ := ev.Data["networkId"].(int64)
+	if nick == "" {
+		return cascade.UserStatusEvent{}, false
+	}
+	network, _ := ev.Data["networkName"].(string)
+	if network == "" {
+		network, _ = ev.Data["network"].(string)
+	}
+	self := ""
+	if m.host.SelfNick != nil {
+		self = m.host.SelfNick(networkID)
+	}
+	isSelf := m.host.IsMe != nil && m.host.IsMe(networkID, nick)
+	status := cascade.UserStatus{Known: true}
+	status.Away, _ = ev.Data["away"].(bool)
+	status.AwayMessage, _ = ev.Data["away_message"].(string)
+	status.Account, _ = ev.Data["account"].(string)
+	status.Host, _ = ev.Data["host"].(string)
+	status.Realname, _ = ev.Data["realname"].(string)
+	at := cascade.Time{}
+	if !ev.Timestamp.IsZero() {
+		at = cascade.NewTime(ev.Timestamp.Unix())
+	}
+	return cascade.NewUserStatusEvent(network, self, nick, status, at, isSelf), true
 }
 
 func isChannel(s string) bool {
