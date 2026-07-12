@@ -21,6 +21,33 @@ describe('mergeMessagesById', () => {
     expect(merged.find((m) => m.id === 2)!.message).toBe('edited');
   });
 
+  it('reconciles an optimistic reply with its canonical server echo', () => {
+    const optimistic = storage.Message.createFrom({
+      id: 1_783_815_469_300,
+      network_id: 1,
+      channel_id: 42,
+      user: 'matt0x6f',
+      message: 'one message on the wire',
+      message_type: 'privmsg',
+      timestamp: '2026-07-12T00:17:49.300Z',
+      raw_line: '',
+      msgid: '',
+      reply_msgid: 'parent-msgid',
+    });
+    const canonical = storage.Message.createFrom({
+      ...optimistic,
+      id: 255246,
+      timestamp: '2026-07-12T00:17:49.406Z',
+      raw_line: '@msgid=server-msgid :matt0x6f!u@h PRIVMSG ##programming :one message on the wire',
+      msgid: 'server-msgid',
+      reply_msgid: '', // Some servers omit client-only tags from echo-message.
+    });
+
+    const merged = mergeMessagesById([optimistic], [canonical]);
+
+    expect(merged).toEqual([canonical]);
+  });
+
   it('keeps the result in timestamp order', () => {
     const merged = mergeMessagesById([msg(3, 30), msg(1, 10)], [msg(2, 20)]);
     expect(merged.map((m) => m.id)).toEqual([1, 2, 3]);

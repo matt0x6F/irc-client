@@ -86,6 +86,11 @@ const SCROLLBACK_PAGE = 100;
 // real DB row loads. Never paginate past one — its id isn't a real row boundary.
 const OPTIMISTIC_ID_THRESHOLD = 1_000_000_000_000;
 
+// A server echo should arrive almost immediately after its optimistic UI row.
+// Keep the window bounded so an older, intentionally repeated message cannot be
+// mistaken for the new echo when the latest-message window is merged.
+const OPTIMISTIC_ECHO_WINDOW_MS = 30_000;
+
 // Give up waiting for a CHATHISTORY reply after this long, so a silent/unsupported
 // server can't wedge scrollback pagination (loadOlderMessages would never resolve).
 const HISTORY_REQUEST_TIMEOUT_MS = 8000;
@@ -152,8 +157,45 @@ export function mergeMessagesById(
   existing: storage.Message[],
   incoming: storage.Message[]
 ): storage.Message[] {
+  const unmatchedOptimistic = existing.filter(
+    (m) => m.id >= OPTIMISTIC_ID_THRESHOLD && !m.raw_line && !m.msgid
+  );
+  const reconciledOptimisticIds = new Set<number>();
+
+  for (const canonical of incoming) {
+    if (canonical.id >= OPTIMISTIC_ID_THRESHOLD) continue;
+
+    let closest: storage.Message | undefined;
+    let closestDelta = Number.POSITIVE_INFINITY;
+    const canonicalTime = new Date(canonical.timestamp).getTime();
+
+    for (const optimistic of unmatchedOptimistic) {
+      if (reconciledOptimisticIds.has(optimistic.id)) continue;
+      if (
+        optimistic.network_id !== canonical.network_id ||
+        optimistic.channel_id !== canonical.channel_id ||
+        optimistic.pm_target !== canonical.pm_target ||
+        optimistic.user !== canonical.user ||
+        optimistic.message_type !== canonical.message_type ||
+        optimistic.message !== canonical.message
+      ) {
+        continue;
+      }
+
+      const delta = Math.abs(new Date(optimistic.timestamp).getTime() - canonicalTime);
+      if (delta <= OPTIMISTIC_ECHO_WINDOW_MS && delta < closestDelta) {
+        closest = optimistic;
+        closestDelta = delta;
+      }
+    }
+
+    if (closest) reconciledOptimisticIds.add(closest.id);
+  }
+
   const byId = new Map<number, storage.Message>();
-  for (const m of existing) byId.set(m.id, m);
+  for (const m of existing) {
+    if (!reconciledOptimisticIds.has(m.id)) byId.set(m.id, m);
+  }
   for (const m of incoming) byId.set(m.id, m); // fresh copies win (e.g. optimistic → real row)
   return sortByTimestamp([...byId.values()]);
 }
