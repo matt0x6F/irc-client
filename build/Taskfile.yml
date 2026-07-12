@@ -204,11 +204,17 @@ tasks:
     dir: build
     sources:
       - "appicon.png"
+      - "generate-darwin-icon.sh"
     generates:
       - "darwin/icons.icns"
       - "windows/icon.ico"
     cmds:
       - wails3 generate icons -input appicon.png -macfilename darwin/icons.icns -windowsfilename windows/icon.ico
+      # Wails currently flattens the transparent margin onto white while
+      # producing ICNS files. Rebuild the macOS asset with Apple's tools so the
+      # intended 100 px optical padding remains transparent in Finder and Dock.
+      - cmd: sh generate-darwin-icon.sh appicon.png darwin/icons.icns
+        platforms: [darwin]
 
   dev:frontend:
     summary: Runs the frontend in development mode

@@ -46,6 +46,8 @@ nav = [
 # Feature toggles have NO defaults — omitting this list ships the bare theme
 # (no dark mode, no prev/next, no instant nav). Keep this curated.
 [project.theme]
+logo = "assets/cascade-chat.svg"
+favicon = "assets/cascade-chat.svg"
 features = [
   # Lets readers dismiss the announcement bar once read.
   "announce.dismiss",
@@ -84,11 +86,6 @@ features = [
   # Auto-scroll the table of contents to keep the active anchor visible.
   "toc.follow",
 ]
-
-# A built-in icon used as the header logo (no asset file required). "waves"
-# nods to the Cascade name. See https://github.com/zensical/ui/tree/master/dist/.icons
-[project.theme.icon]
-logo = "lucide/waves"
 
 # Light/dark color schemes with a header toggle. Without this block there is
 # no dark mode switch at all.
