@@ -149,6 +149,43 @@ func TestManagerRoutesNoticeJoinPart(t *testing.T) {
 	}
 }
 
+func TestManagerRoutesQuitKickNick(t *testing.T) {
+	dir := t.TempDir()
+	d := filepath.Join(dir, "lifecycle")
+	if err := os.MkdirAll(d, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := `package main
+import "github.com/matt0x6f/irc-client/cascade"
+func OnQuit(e cascade.QuitEvent) { if e.Nick != "alice" { panic("bad quit") } }
+func OnKick(e cascade.KickEvent) { e.Reply("kicked:"+e.Nick) }
+func OnNick(e cascade.NickEvent) { if e.OldNick != "alice" || e.NewNick != "alice2" { panic("bad nick") } }
+`
+	if err := os.WriteFile(filepath.Join(d, "main.go"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fs := &fakeSender{}
+	bus := events.NewEventBus()
+	m := NewManager(bus, dir, testHost(fs.send))
+	if err := m.LoadAll(); err != nil {
+		t.Fatal(err)
+	}
+	bus.EmitSync(events.Event{Type: "user.quit", Data: map[string]interface{}{
+		"networkId": int64(1), "networkName": "Libera", "user": "alice", "reason": "gone",
+	}})
+	bus.EmitSync(events.Event{Type: "user.kicked", Data: map[string]interface{}{
+		"networkId": int64(1), "networkName": "Libera", "channel": "#go", "user": "alice", "kicker": "oper", "reason": "rules",
+	}})
+	bus.EmitSync(events.Event{Type: "user.nick", Data: map[string]interface{}{
+		"networkId": int64(1), "networkName": "Libera", "oldNick": "alice", "newNick": "alice2",
+	}})
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	if len(fs.sent) != 1 || fs.sent[0].target != "#go" || fs.sent[0].message != "kicked:alice" {
+		t.Fatalf("lifecycle sends = %+v", fs.sent)
+	}
+}
+
 // noSelf is a selfNick stub that always returns "" (bot has no nick).
 func noSelf(int64) string { return "" }
 

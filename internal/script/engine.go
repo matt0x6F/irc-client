@@ -84,6 +84,15 @@ func (s *Script) DispatchJoin(e cascade.JoinEvent) { s.call("OnJoin", e) }
 // DispatchPart calls the script's OnPart handler, if present.
 func (s *Script) DispatchPart(e cascade.PartEvent) { s.call("OnPart", e) }
 
+// DispatchQuit calls the script's OnQuit handler, if present.
+func (s *Script) DispatchQuit(e cascade.QuitEvent) { s.call("OnQuit", e) }
+
+// DispatchKick calls the script's OnKick handler, if present.
+func (s *Script) DispatchKick(e cascade.KickEvent) { s.call("OnKick", e) }
+
+// DispatchNick calls the script's OnNick handler, if present.
+func (s *Script) DispatchNick(e cascade.NickEvent) { s.call("OnNick", e) }
+
 // HasSetup reports whether the script exported a Setup function.
 func (s *Script) HasSetup() bool { return s.Has("Setup") }
 

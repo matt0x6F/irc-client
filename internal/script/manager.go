@@ -22,6 +22,9 @@ const eventMessageReceived = "message.received"
 const (
 	eventUserJoined = "user.joined"
 	eventUserParted = "user.parted"
+	eventUserQuit   = "user.quit"
+	eventUserKicked = "user.kicked"
+	eventUserNick   = "user.nick"
 )
 
 // cascadeSDKVersion is the cascade SDK module version the scaffolded scripts
@@ -316,6 +319,15 @@ func (m *Manager) loadDir(dir string) {
 	if s.Has("OnPart") {
 		evs = append(evs, eventUserParted)
 	}
+	if s.Has("OnQuit") {
+		evs = append(evs, eventUserQuit)
+	}
+	if s.Has("OnKick") {
+		evs = append(evs, eventUserKicked)
+	}
+	if s.Has("OnNick") {
+		evs = append(evs, eventUserNick)
+	}
 
 	m.mu.Lock()
 	m.scripts[id] = &loaded{script: s}
@@ -384,6 +396,24 @@ func (m *Manager) dispatch(id extension.ID, ev events.Event) (err error) {
 			l.mu.Lock()
 			defer l.mu.Unlock()
 			l.script.DispatchPart(pe)
+		}
+	case eventUserQuit:
+		if qe, ok := m.buildQuitEvent(ev); ok {
+			l.mu.Lock()
+			defer l.mu.Unlock()
+			l.script.DispatchQuit(qe)
+		}
+	case eventUserKicked:
+		if ke, ok := m.buildKickEvent(ev); ok {
+			l.mu.Lock()
+			defer l.mu.Unlock()
+			l.script.DispatchKick(ke)
+		}
+	case eventUserNick:
+		if ne, ok := m.buildNickEvent(ev); ok {
+			l.mu.Lock()
+			defer l.mu.Unlock()
+			l.script.DispatchNick(ne)
 		}
 	}
 	return nil
@@ -509,6 +539,46 @@ func (m *Manager) applyMembershipContext(self, account, network, host, realname 
 	if !ev.Timestamp.IsZero() {
 		*ts = cascade.NewTime(ev.Timestamp.Unix())
 	}
+}
+
+func (m *Manager) buildQuitEvent(ev events.Event) (cascade.QuitEvent, bool) {
+	nick, _ := ev.Data["user"].(string)
+	reason, _ := ev.Data["reason"].(string)
+	networkID, _ := ev.Data["networkId"].(int64)
+	if nick == "" || nick == "*" || (m.host.IsMe != nil && m.host.IsMe(networkID, nick)) {
+		return cascade.QuitEvent{}, false
+	}
+	e := cascade.NewQuitEvent(nick, reason)
+	m.applyMembershipContext(&e.Self, &e.Account, &e.Network, &e.Host, &e.Realname, &e.Time, ev, networkID, nick)
+	return e, true
+}
+
+func (m *Manager) buildKickEvent(ev events.Event) (cascade.KickEvent, bool) {
+	nick, _ := ev.Data["user"].(string)
+	by, _ := ev.Data["kicker"].(string)
+	channel, _ := ev.Data["channel"].(string)
+	reason, _ := ev.Data["reason"].(string)
+	networkID, _ := ev.Data["networkId"].(int64)
+	if nick == "" || channel == "" {
+		return cascade.KickEvent{}, false
+	}
+	e := cascade.NewKickEvent(nick, by, channel, reason, m.replyTo(networkID, channel, by))
+	var host, realname string
+	m.applyMembershipContext(&e.Self, &e.Account, &e.Network, &host, &realname, &e.Time, ev, networkID, by)
+	return e, true
+}
+
+func (m *Manager) buildNickEvent(ev events.Event) (cascade.NickEvent, bool) {
+	oldNick, _ := ev.Data["oldNick"].(string)
+	newNick, _ := ev.Data["newNick"].(string)
+	networkID, _ := ev.Data["networkId"].(int64)
+	if oldNick == "" || newNick == "" {
+		return cascade.NickEvent{}, false
+	}
+	e := cascade.NewNickEvent(oldNick, newNick)
+	var host, realname string
+	m.applyMembershipContext(&e.Self, &e.Account, &e.Network, &host, &realname, &e.Time, ev, networkID, newNick)
+	return e, true
 }
 
 func isChannel(s string) bool {

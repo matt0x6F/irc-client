@@ -137,3 +137,21 @@ func TestJoinPartEventContext(t *testing.T) {
 		t.Fatalf("part context = %+v", p)
 	}
 }
+
+func TestQuitKickNickEvents(t *testing.T) {
+	q := NewQuitEvent("alice", "gone")
+	q.Self, q.Account, q.Network, q.Host, q.Realname, q.Time = "Matt", "acct", "Libera", "a@h", "Alice", NewTime(10)
+	if q.Nick != "alice" || q.Reason != "gone" || q.Time.Unix() != 10 {
+		t.Fatalf("quit event = %+v", q)
+	}
+	var reply string
+	k := NewKickEvent("alice", "oper", "#go", "rules", func(message string) { reply = message })
+	k.Reply("ack")
+	if k.Nick != "alice" || k.By != "oper" || k.Channel != "#go" || k.Reason != "rules" || reply != "ack" {
+		t.Fatalf("kick event = %+v reply=%q", k, reply)
+	}
+	n := NewNickEvent("alice", "alice2")
+	if n.OldNick != "alice" || n.NewNick != "alice2" {
+		t.Fatalf("nick event = %+v", n)
+	}
+}

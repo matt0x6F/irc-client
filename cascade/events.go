@@ -203,6 +203,62 @@ func (e PartEvent) Reply(msg string) {
 	}
 }
 
+// QuitEvent is delivered to OnQuit when a user leaves the network.
+type QuitEvent struct {
+	Nick     string
+	Reason   string
+	Self     string
+	Account  string
+	Network  string
+	Host     string
+	Realname string
+	Time     Time
+}
+
+// NewQuitEvent is the host-side constructor.
+func NewQuitEvent(nick, reason string) QuitEvent { return QuitEvent{Nick: nick, Reason: reason} }
+
+// KickEvent is delivered to OnKick when a user is kicked from a channel.
+type KickEvent struct {
+	Nick    string
+	By      string
+	Channel string
+	Reason  string
+	Self    string
+	Account string
+	Network string
+	Time    Time
+
+	replyFn func(string)
+}
+
+// NewKickEvent is the host-side constructor.
+func NewKickEvent(nick, by, channel, reason string, reply func(string)) KickEvent {
+	return KickEvent{Nick: nick, By: by, Channel: channel, Reason: reason, replyFn: reply}
+}
+
+// Reply sends a message to the channel where the kick occurred.
+func (e KickEvent) Reply(message string) {
+	if e.replyFn != nil {
+		e.replyFn(message)
+	}
+}
+
+// NickEvent is delivered to OnNick when a user changes nickname.
+type NickEvent struct {
+	OldNick string
+	NewNick string
+	Self    string
+	Account string
+	Network string
+	Time    Time
+}
+
+// NewNickEvent is the host-side constructor.
+func NewNickEvent(oldNick, newNick string) NickEvent {
+	return NickEvent{OldNick: oldNick, NewNick: newNick}
+}
+
 // Time is a script-safe timestamp. Scripts can't import "time", so the cascade
 // package (compiled host code) owns formatting and comparison.
 type Time struct {
