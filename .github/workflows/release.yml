@@ -162,26 +162,36 @@ jobs:
       - name: Install Wails v3 CLI
         run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha2.108
       - name: Install NSIS
-        # NSIS is not preinstalled on the hosted Windows images. Download the pinned
-        # install package directly because Chocolatey's V2 metadata lookup can return
-        # a transient 503 while choco still exits zero, leaving makensis absent. curl
-        # gives the download real retry/failure semantics; installing from the local
-        # source avoids a second metadata lookup. choco updates the machine PATH, but
-        # this job's environment is already captured, so export the verified install
-        # directory for later steps. makensis runs under x64 emulation on arm64.
+        # The arm64 image currently includes NSIS, while the amd64 image does not.
+        # Reuse an existing makensis first: forcing a newer nsis.install conflicts
+        # with the arm64 image's pinned `nsis` meta-package. When NSIS is absent,
+        # download the pinned install package directly because Chocolatey's V2
+        # metadata lookup can return a transient 503 while choco still exits zero.
+        # curl gives the download real retry/failure semantics, and a local source
+        # avoids a second metadata lookup. Export the verified directory because
+        # machine PATH changes are not reflected in the already-running job.
         run: |
-          $nsisVersion = '3.12.0'
-          $packageDir = Join-Path $env:RUNNER_TEMP 'nsis-package'
-          $packagePath = Join-Path $packageDir "nsis.install.$nsisVersion.nupkg"
-          $nsisDir = 'C:\Program Files (x86)\NSIS'
+          $nsisDir = @(
+            'C:\Program Files (x86)\NSIS'
+            'C:\Program Files\NSIS'
+          ) | Where-Object {
+            Test-Path -Path (Join-Path $_ 'makensis.exe') -PathType Leaf
+          } | Select-Object -First 1
+
+          if (-not $nsisDir) {
+            $nsisVersion = '3.12.0'
+            $packageDir = Join-Path $env:RUNNER_TEMP 'nsis-package'
+            $packagePath = Join-Path $packageDir "nsis.install.$nsisVersion.nupkg"
+            $nsisDir = 'C:\Program Files (x86)\NSIS'
+
+            New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
+            curl.exe --fail --location --retry 5 --retry-all-errors --retry-delay 5 `
+              --output $packagePath `
+              "https://community.chocolatey.org/api/v2/package/nsis.install/$nsisVersion"
+            choco install nsis.install --version $nsisVersion --source $packageDir -y --no-progress
+          }
+
           $makensis = Join-Path $nsisDir 'makensis.exe'
-
-          New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
-          curl.exe --fail --location --retry 5 --retry-all-errors --retry-delay 5 `
-            --output $packagePath `
-            "https://community.chocolatey.org/api/v2/package/nsis.install/$nsisVersion"
-          choco install nsis.install --version $nsisVersion --source $packageDir -y --no-progress
-
           if (-not (Test-Path $makensis -PathType Leaf)) {
             throw "NSIS installation completed without creating $makensis"
           }
