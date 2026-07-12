@@ -2,18 +2,17 @@ import React from 'react'
 import {createRoot} from 'react-dom/client'
 import {EventsEmit} from '../wailsjs/runtime/runtime'
 import './style.css'
-import App from './App'
-import { SettingsWindow } from './components/settings-window'
+import { RootView, rootViewForSearch } from './root-view'
 import { initTheme } from './stores/theme'
 import { initSettings } from './stores/settings'
 import { initPreferences } from './stores/preferences'
 import { initScripts } from './stores/scripts'
 import { installExternalLinkHandler } from './lib/external-links'
 
-// The same bundle backs both the main window and the standalone Settings window.
-// The backend opens the latter at /?view=settings (see App.openSettingsSection);
-// we branch on it here to render the settings UI instead of the main app.
-const isSettingsWindow = new URLSearchParams(window.location.search).get('view') === 'settings'
+// The same entry point backs both windows. The backend opens Settings at
+// /?view=settings; RootView branches on that route and lazy-loads its separate
+// chunk so the large settings tree does not inflate chat-window startup.
+const isSettingsWindow = rootViewForSearch(window.location.search) === 'settings'
 
 // Suppress expected Wails dev mode WebSocket errors
 // These occur when Wails tries to connect to the dev server before it's ready
@@ -85,7 +84,7 @@ void initScripts()
 initTheme().finally(() => {
     root.render(
         <React.StrictMode>
-            {isSettingsWindow ? <SettingsWindow/> : <App/>}
+            <RootView search={window.location.search}/>
         </React.StrictMode>
     )
 })

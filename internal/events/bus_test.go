@@ -37,6 +37,20 @@ type orderedSub struct {
 	fired bool
 }
 
+type blockingSub struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (s *blockingSub) OnEvent(Event) {
+	select {
+	case <-s.started:
+	default:
+		close(s.started)
+	}
+	<-s.release
+}
+
 func (s *orderedSub) OnEvent(e Event) {
 	s.mu.Lock()
 	s.got = append(s.got, e.Data["i"].(int))
@@ -365,5 +379,72 @@ func TestEventSources(t *testing.T) {
 		if events[i].Source != src {
 			t.Errorf("event %d: expected source '%s', got '%s'", i, src, events[i].Source)
 		}
+	}
+}
+
+func TestEmitAfterCloseDoesNotBlock(t *testing.T) {
+	eb := NewEventBus()
+	eb.Close()
+
+	done := make(chan struct{})
+	go func() {
+		for i := 0; i <= eventQueueSize; i++ {
+			eb.Emit(Event{Type: "after.close"})
+		}
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("Emit blocked after EventBus.Close")
+	}
+}
+
+func TestCloseUnblocksMultipleEmittersWhenQueueIsFull(t *testing.T) {
+	eb := NewEventBus()
+	sub := &blockingSub{started: make(chan struct{}), release: make(chan struct{})}
+	eb.Subscribe("blocked", sub)
+	eb.Emit(Event{Type: "blocked"})
+	<-sub.started
+
+	for i := 0; i < eventQueueSize; i++ {
+		eb.Emit(Event{Type: "blocked"})
+	}
+	emitDone := make(chan struct{}, 2)
+	emitStarted := make(chan struct{}, 2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			emitStarted <- struct{}{}
+			eb.Emit(Event{Type: "blocked"})
+			emitDone <- struct{}{}
+		}()
+	}
+	<-emitStarted
+	<-emitStarted
+	// Give both emitters a scheduling turn against the already-full queue.
+	time.Sleep(20 * time.Millisecond)
+	closeDone := make(chan struct{})
+	closeStarted := make(chan struct{})
+	go func() {
+		close(closeStarted)
+		eb.Close()
+		close(closeDone)
+	}()
+	<-closeStarted
+	time.Sleep(20 * time.Millisecond)
+
+	close(sub.release)
+	for i := 0; i < 2; i++ {
+		select {
+		case <-emitDone:
+		case <-time.After(250 * time.Millisecond):
+			t.Fatal("full-queue emitter remained blocked during Close")
+		}
+	}
+	select {
+	case <-closeDone:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("Close deadlocked with a full queue")
 	}
 }

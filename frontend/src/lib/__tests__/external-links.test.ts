@@ -82,6 +82,9 @@ describe('external link handler', () => {
 
     const a = document.createElement('a')
     a.setAttribute('href', 'https://example.com')
+    // Prevent jsdom from attempting a navigation after verifying that the
+    // document-level Wails handler itself has been removed.
+    a.addEventListener('click', (event) => event.preventDefault())
     document.body.appendChild(a)
     dispatchClick(a)
 

@@ -19,6 +19,7 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
   GetPrivateMessageConversations: (...args: unknown[]) => getPm(...args),
   GetChannels: vi.fn().mockResolvedValue([]),
   GetJoinedChannels: vi.fn().mockResolvedValue([]),
+  GetMonitorPresence: vi.fn().mockResolvedValue({}),
   CloseChannel: vi.fn(),
   LeaveChannel: vi.fn(),
   SendCommand: vi.fn(),

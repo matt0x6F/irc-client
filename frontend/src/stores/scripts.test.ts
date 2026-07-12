@@ -71,10 +71,13 @@ describe('scripts store', () => {
   });
 
   it('create() surfaces backend errors and does not set a path', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     newScript.mockRejectedValueOnce(new Error('script "foo" already exists'));
     await useScriptsStore.getState().create('foo');
     expect(useScriptsStore.getState().error).toContain('already exists');
     expect(useScriptsStore.getState().lastCreatedPath).toBeNull();
+    expect(consoleError).toHaveBeenCalledOnce();
+    consoleError.mockRestore();
   });
 
   it('fetch() clears a stale error on success', async () => {

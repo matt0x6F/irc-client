@@ -921,6 +921,53 @@ func TestWriteBufferFlushViaTicker(t *testing.T) {
 	}
 }
 
+func TestCloseFlushesBufferedMessages(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "close_flush.db")
+
+	s, err := NewStorage(dbPath, 100, time.Hour)
+	if err != nil {
+		t.Fatalf("NewStorage: %v", err)
+	}
+
+	net := makeNetwork("CloseFlushNet")
+	if err := s.CreateNetwork(net); err != nil {
+		t.Fatalf("CreateNetwork: %v", err)
+	}
+	ch := &Channel{NetworkID: net.ID, Name: "#close-flush", CreatedAt: time.Now()}
+	if err := s.CreateChannel(ch); err != nil {
+		t.Fatalf("CreateChannel: %v", err)
+	}
+	if err := s.WriteMessage(Message{
+		NetworkID:   net.ID,
+		ChannelID:   &ch.ID,
+		User:        "alice",
+		Message:     "survive shutdown",
+		MessageType: "privmsg",
+		Timestamp:   time.Now(),
+	}); err != nil {
+		t.Fatalf("WriteMessage: %v", err)
+	}
+
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	s2, err := NewStorage(dbPath, 100, time.Hour)
+	if err != nil {
+		t.Fatalf("NewStorage after close: %v", err)
+	}
+	t.Cleanup(func() { _ = s2.Close() })
+
+	msgs, err := s2.GetMessages(net.ID, &ch.ID, 10)
+	if err != nil {
+		t.Fatalf("GetMessages: %v", err)
+	}
+	if len(msgs) != 1 || msgs[0].Message != "survive shutdown" {
+		t.Fatalf("buffered message was not flushed on close: %#v", msgs)
+	}
+}
+
 func TestWriteMessageAfterClose(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "afterclose.db")

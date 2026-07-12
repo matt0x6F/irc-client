@@ -49,6 +49,7 @@ type EventBus struct {
 	queue       chan Event
 	closeOnce   sync.Once
 	done        chan struct{}
+	closed      bool
 }
 
 // eventQueueSize bounds the in-flight event backlog. Emit blocks only if the
@@ -98,7 +99,12 @@ func (eb *EventBus) deliver(event Event) {
 
 // Close stops the dispatcher goroutine. Safe to call more than once.
 func (eb *EventBus) Close() {
-	eb.closeOnce.Do(func() { close(eb.done) })
+	eb.closeOnce.Do(func() {
+		eb.mu.Lock()
+		eb.closed = true
+		close(eb.done)
+		eb.mu.Unlock()
+	})
 }
 
 // Subscribe subscribes a subscriber to a specific event type
@@ -128,12 +134,29 @@ func (eb *EventBus) Unsubscribe(eventType string, subscriber Subscriber) {
 // events in the order they were emitted. Blocks only if the queue is full
 // (sustained overload) — backpressure onto the emitter.
 func (eb *EventBus) Emit(event Event) {
-	eb.queue <- event
+	eb.mu.RLock()
+	closed := eb.closed
+	eb.mu.RUnlock()
+	if closed {
+		return
+	}
+
+	// Never hold the subscriber/closed-state lock across a potentially blocking
+	// queue send. Close signals done, which releases every saturated emitter
+	// without waiting for the dispatcher or a slow subscriber to make progress.
+	select {
+	case eb.queue <- event:
+	case <-eb.done:
+	}
 }
 
 // EmitSync emits an event synchronously (for testing or when order matters)
 func (eb *EventBus) EmitSync(event Event) {
 	eb.mu.RLock()
+	if eb.closed {
+		eb.mu.RUnlock()
+		return
+	}
 	subs := make([]Subscriber, len(eb.subscribers[event.Type]))
 	copy(subs, eb.subscribers[event.Type])
 	wildcardSubs := make([]Subscriber, len(eb.subscribers["*"]))
