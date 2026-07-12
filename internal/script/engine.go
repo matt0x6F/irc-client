@@ -93,6 +93,9 @@ func (s *Script) DispatchKick(e cascade.KickEvent) { s.call("OnKick", e) }
 // DispatchNick calls the script's OnNick handler, if present.
 func (s *Script) DispatchNick(e cascade.NickEvent) { s.call("OnNick", e) }
 
+// DispatchUserStatus calls the script's OnUserStatus handler, if present.
+func (s *Script) DispatchUserStatus(e cascade.UserStatusEvent) { s.call("OnUserStatus", e) }
+
 // HasSetup reports whether the script exported a Setup function.
 func (s *Script) HasSetup() bool { return s.Has("Setup") }
 

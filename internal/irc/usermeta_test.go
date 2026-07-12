@@ -133,7 +133,7 @@ func TestAwayNotifySetsAndClears(t *testing.T) {
 	// latest delivered state reflects the cleared away, not a per-transition
 	// count.
 	waitForMetaLatest(t, counter, "alice", func(d map[string]interface{}) bool {
-		return d["away"] == false && d["away_message"] == ""
+		return d["away"] == false && d["away_message"] == "" && d["networkName"] == "Libera"
 	})
 }
 

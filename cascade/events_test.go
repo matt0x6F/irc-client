@@ -155,3 +155,15 @@ func TestQuitKickNickEvents(t *testing.T) {
 		t.Fatalf("nick event = %+v", n)
 	}
 }
+
+func TestUserStatusEvent(t *testing.T) {
+	status := UserStatus{Known: true, Away: true, AwayMessage: "lunch", Account: "acct", Host: "a@h", Realname: "Alice"}
+	e := NewUserStatusEvent("Libera", "Matt", "alice", status, NewTime(44), false)
+	if e.Network != "Libera" || e.Self != "Matt" || e.Nick != "alice" || e.Status != status || e.Time.Unix() != 44 || e.IsSelf() {
+		t.Fatalf("other status event = %+v", e)
+	}
+	self := NewUserStatusEvent("Libera", "Matt", "Matt", UserStatus{Known: true}, NewTime(45), true)
+	if !self.IsSelf() {
+		t.Fatalf("self status event = %+v", self)
+	}
+}

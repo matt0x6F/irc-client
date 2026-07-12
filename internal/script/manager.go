@@ -25,6 +25,8 @@ const (
 	eventUserQuit   = "user.quit"
 	eventUserKicked = "user.kicked"
 	eventUserNick   = "user.nick"
+	eventUserMeta   = "user.meta"
+	eventSelfStatus = "self.status"
 )
 
 // cascadeSDKVersion is the cascade SDK module version the scaffolded scripts
@@ -328,6 +330,9 @@ func (m *Manager) loadDir(dir string) {
 	if s.Has("OnNick") {
 		evs = append(evs, eventUserNick)
 	}
+	if s.Has("OnUserStatus") {
+		evs = append(evs, eventUserMeta, eventSelfStatus)
+	}
 
 	m.mu.Lock()
 	m.scripts[id] = &loaded{script: s}
@@ -414,6 +419,12 @@ func (m *Manager) dispatch(id extension.ID, ev events.Event) (err error) {
 			l.mu.Lock()
 			defer l.mu.Unlock()
 			l.script.DispatchNick(ne)
+		}
+	case eventUserMeta, eventSelfStatus:
+		if se, ok := m.buildUserStatusEvent(ev); ok {
+			l.mu.Lock()
+			defer l.mu.Unlock()
+			l.script.DispatchUserStatus(se)
 		}
 	}
 	return nil
@@ -579,6 +590,34 @@ func (m *Manager) buildNickEvent(ev events.Event) (cascade.NickEvent, bool) {
 	var host, realname string
 	m.applyMembershipContext(&e.Self, &e.Account, &e.Network, &host, &realname, &e.Time, ev, networkID, newNick)
 	return e, true
+}
+
+func (m *Manager) buildUserStatusEvent(ev events.Event) (cascade.UserStatusEvent, bool) {
+	nick, _ := ev.Data["nickname"].(string)
+	networkID, _ := ev.Data["networkId"].(int64)
+	if nick == "" {
+		return cascade.UserStatusEvent{}, false
+	}
+	network, _ := ev.Data["networkName"].(string)
+	if network == "" {
+		network, _ = ev.Data["network"].(string)
+	}
+	self := ""
+	if m.host.SelfNick != nil {
+		self = m.host.SelfNick(networkID)
+	}
+	isSelf := m.host.IsMe != nil && m.host.IsMe(networkID, nick)
+	status := cascade.UserStatus{Known: true}
+	status.Away, _ = ev.Data["away"].(bool)
+	status.AwayMessage, _ = ev.Data["away_message"].(string)
+	status.Account, _ = ev.Data["account"].(string)
+	status.Host, _ = ev.Data["host"].(string)
+	status.Realname, _ = ev.Data["realname"].(string)
+	at := cascade.Time{}
+	if !ev.Timestamp.IsZero() {
+		at = cascade.NewTime(ev.Timestamp.Unix())
+	}
+	return cascade.NewUserStatusEvent(network, self, nick, status, at, isSelf), true
 }
 
 func isChannel(s string) bool {

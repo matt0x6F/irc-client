@@ -259,6 +259,27 @@ func NewNickEvent(oldNick, newNick string) NickEvent {
 	return NickEvent{OldNick: oldNick, NewNick: newNick}
 }
 
+// UserStatusEvent is delivered when Cascade's session-local metadata snapshot
+// for a user changes.
+type UserStatusEvent struct {
+	Network string
+	Self    string
+	Nick    string
+	Status  UserStatus
+	Time    Time
+
+	self bool
+}
+
+// NewUserStatusEvent is the host-side constructor.
+func NewUserStatusEvent(network, currentNick, nick string, status UserStatus, at Time, self bool) UserStatusEvent {
+	return UserStatusEvent{Network: network, Self: currentNick, Nick: nick, Status: status, Time: at, self: self}
+}
+
+// IsSelf reports whether the changed user is our current nick, using the host's
+// IRC case-mapped identity decision.
+func (e UserStatusEvent) IsSelf() bool { return e.self }
+
 // Time is a script-safe timestamp. Scripts can't import "time", so the cascade
 // package (compiled host code) owns formatting and comparison.
 type Time struct {

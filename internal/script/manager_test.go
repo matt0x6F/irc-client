@@ -186,6 +186,47 @@ func OnNick(e cascade.NickEvent) { if e.OldNick != "alice" || e.NewNick != "alic
 	}
 }
 
+func TestManagerRoutesUserStatus(t *testing.T) {
+	dir := t.TempDir()
+	d := filepath.Join(dir, "status")
+	if err := os.MkdirAll(d, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := `package main
+import "github.com/matt0x6f/irc-client/cascade"
+var client *cascade.Client
+func Setup(c *cascade.Client) { client = c }
+func OnUserStatus(e cascade.UserStatusEvent) {
+    if e.IsSelf() { client.Network(e.Network).Say("#log", "self")
+    } else if e.Status.Away { client.Network(e.Network).Say("#log", "away:"+e.Nick) }
+}
+`
+	if err := os.WriteFile(filepath.Join(d, "main.go"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fs := &fakeSender{}
+	h := testHost(fs.send)
+	h.ResolveNetwork = func(name string) (int64, bool) { return 1, name == "Libera" }
+	h.SelfNick = func(int64) string { return "Matt" }
+	h.IsMe = func(_ int64, nick string) bool { return nick == "Matt" }
+	bus := events.NewEventBus()
+	m := NewManager(bus, dir, h)
+	if err := m.LoadAll(); err != nil {
+		t.Fatal(err)
+	}
+	bus.EmitSync(events.Event{Type: "user.meta", Data: map[string]interface{}{
+		"networkId": int64(1), "networkName": "Libera", "nickname": "alice", "away": true, "away_message": "lunch", "account": "acct", "host": "a@h", "realname": "Alice",
+	}})
+	bus.EmitSync(events.Event{Type: "self.status", Data: map[string]interface{}{
+		"networkId": int64(1), "networkName": "Libera", "nickname": "Matt", "away": false, "away_message": "",
+	}})
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	if len(fs.sent) != 2 || fs.sent[0].message != "away:alice" || fs.sent[1].message != "self" {
+		t.Fatalf("status sends = %+v", fs.sent)
+	}
+}
+
 // noSelf is a selfNick stub that always returns "" (bot has no nick).
 func noSelf(int64) string { return "" }
 

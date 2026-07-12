@@ -33,6 +33,7 @@ import "github.com/matt0x6f/irc-client/cascade"
 func OnQuit(e cascade.QuitEvent) { if e.Nick != "alice" { panic("bad quit") } }
 func OnKick(e cascade.KickEvent) { e.Reply("kick:"+e.Nick) }
 func OnNick(e cascade.NickEvent) { if e.NewNick != "alice2" { panic("bad nick") } }
+func OnUserStatus(e cascade.UserStatusEvent) { if !e.Status.Away { panic("bad status") } }
 `
 	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(src), 0o644); err != nil {
 		t.Fatal(err)
@@ -41,7 +42,7 @@ func OnNick(e cascade.NickEvent) { if e.NewNick != "alice2" { panic("bad nick") 
 	if err != nil {
 		t.Fatalf("LoadPackage: %v", err)
 	}
-	for _, name := range []string{"OnQuit", "OnKick", "OnNick"} {
+	for _, name := range []string{"OnQuit", "OnKick", "OnNick", "OnUserStatus"} {
 		if !s.Has(name) {
 			t.Fatalf("missing handler %s", name)
 		}
@@ -50,6 +51,7 @@ func OnNick(e cascade.NickEvent) { if e.NewNick != "alice2" { panic("bad nick") 
 	var reply string
 	s.DispatchKick(cascade.NewKickEvent("alice", "oper", "#go", "rules", func(message string) { reply = message }))
 	s.DispatchNick(cascade.NewNickEvent("alice", "alice2"))
+	s.DispatchUserStatus(cascade.NewUserStatusEvent("Libera", "Matt", "alice", cascade.UserStatus{Known: true, Away: true}, cascade.NewTime(1), false))
 	if reply != "kick:alice" {
 		t.Fatalf("kick reply = %q", reply)
 	}
