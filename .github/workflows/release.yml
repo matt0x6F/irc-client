@@ -162,15 +162,30 @@ jobs:
       - name: Install Wails v3 CLI
         run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha2.108
       - name: Install NSIS
-        # NSIS is not preinstalled on the hosted Windows images. choco updates the
-        # *machine* PATH in the registry, but this job's environment was captured at
-        # start and isn't refreshed — so the later build step's makensis lookup fails
-        # (exit 127) unless we add the install dir to GITHUB_PATH ourselves. makensis
-        # runs under x64 emulation on the arm64 runner; the .nsi itself is arch-agnostic
-        # (only the embedded binary differs). The updater zip needs no NSIS.
+        # NSIS is not preinstalled on the hosted Windows images. Download the pinned
+        # install package directly because Chocolatey's V2 metadata lookup can return
+        # a transient 503 while choco still exits zero, leaving makensis absent. curl
+        # gives the download real retry/failure semantics; installing from the local
+        # source avoids a second metadata lookup. choco updates the machine PATH, but
+        # this job's environment is already captured, so export the verified install
+        # directory for later steps. makensis runs under x64 emulation on arm64.
         run: |
-          choco install nsis -y --no-progress
-          "C:\Program Files (x86)\NSIS" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          $nsisVersion = '3.12.0'
+          $packageDir = Join-Path $env:RUNNER_TEMP 'nsis-package'
+          $packagePath = Join-Path $packageDir "nsis.install.$nsisVersion.nupkg"
+          $nsisDir = 'C:\Program Files (x86)\NSIS'
+          $makensis = Join-Path $nsisDir 'makensis.exe'
+
+          New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
+          curl.exe --fail --location --retry 5 --retry-all-errors --retry-delay 5 `
+            --output $packagePath `
+            "https://community.chocolatey.org/api/v2/package/nsis.install/$nsisVersion"
+          choco install nsis.install --version $nsisVersion --source $packageDir -y --no-progress
+
+          if (-not (Test-Path $makensis -PathType Leaf)) {
+            throw "NSIS installation completed without creating $makensis"
+          }
+          $nsisDir | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
       - name: Install ARM64 C toolchain (llvm-mingw)
         # The gcc preinstalled on windows-11-arm is an x86_64 mingw build: its
         # assembler can't emit ARM64, so go-sqlite3's cgo dies with
