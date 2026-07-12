@@ -89,5 +89,62 @@ func OnJoin(e cascade.JoinEvent) {
 
 ---
 
+## Away-aware lookup
+
+Checks the latest session-local status Cascade knows for a user. Keep the client from `Setup` when an event handler needs proactive network access.
+
+```go
+package main
+
+// cascade:name away-check
+
+import "github.com/matt0x6f/irc-client/cascade"
+
+var client *cascade.Client
+
+func Setup(c *cascade.Client) { client = c }
+
+func OnText(e cascade.TextEvent) {
+	if e.Message != "!where-alice" {
+		return
+	}
+	alice := client.Network(e.Network).User("alice")
+	if !alice.Known() {
+		e.Reply("I don't have current status for alice")
+	} else if alice.IsAway() {
+		e.Reply("alice is away: " + alice.Status().AwayMessage)
+	} else {
+		e.Reply("alice is not marked away")
+	}
+}
+```
+
+---
+
+## React to away changes
+
+```go
+package main
+
+// cascade:name away-log
+
+import "github.com/matt0x6f/irc-client/cascade"
+
+var client *cascade.Client
+
+func Setup(c *cascade.Client) { client = c }
+
+func OnUserStatus(e cascade.UserStatusEvent) {
+	if e.IsSelf() {
+		return
+	}
+	if e.Status.Away {
+		client.Network(e.Network).Say("#ops", e.Nick+" is now away")
+	}
+}
+```
+
+---
+
 !!! note "Customize for your setup"
     Replace `Libera` with your own network name and `#ops` with the channel you want to target (both are shown in the Networks settings).

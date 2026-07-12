@@ -31,7 +31,7 @@ const (
 
 // cascadeSDKVersion is the cascade SDK module version the scaffolded scripts
 // go.mod requires. Bump this when the app ships against a newer cascade tag.
-const cascadeSDKVersion = "v1.1.0"
+const cascadeSDKVersion = "v1.2.0"
 
 // cascadeModulePath is the import path of the cascade SDK module.
 const cascadeModulePath = "github.com/matt0x6f/irc-client/cascade"
@@ -546,6 +546,15 @@ func (m *Manager) applyMembershipContext(self, account, network, host, realname 
 	if m.host.UserStatus != nil {
 		status := m.host.UserStatus(networkID, nick)
 		*account, *host, *realname = status.Account, status.Host, status.Realname
+	}
+	if value, ok := ev.Data["account"].(string); ok {
+		*account = value
+	}
+	if value, ok := ev.Data["host"].(string); ok {
+		*host = value
+	}
+	if value, ok := ev.Data["realname"].(string); ok {
+		*realname = value
 	}
 	if !ev.Timestamp.IsZero() {
 		*ts = cascade.NewTime(ev.Timestamp.Unix())

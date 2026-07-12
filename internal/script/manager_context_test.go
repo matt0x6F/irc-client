@@ -75,3 +75,19 @@ func TestBuildJoinPartEventContext(t *testing.T) {
 		t.Fatalf("part context: ok=%v event=%+v", ok, pe)
 	}
 }
+
+func TestBuildQuitEventUsesPayloadMetadata(t *testing.T) {
+	m := &Manager{host: Host{
+		SelfNick: func(int64) string { return "Matt" },
+		UserStatus: func(int64, string) cascade.UserStatus {
+			return cascade.UserStatus{Account: "stale"}
+		},
+	}}
+	e, ok := m.buildQuitEvent(events.Event{Data: map[string]interface{}{
+		"networkId": int64(1), "networkName": "Libera", "user": "alice", "reason": "gone",
+		"account": "acct", "host": "a@h", "realname": "Alice",
+	}})
+	if !ok || e.Account != "acct" || e.Host != "a@h" || e.Realname != "Alice" {
+		t.Fatalf("quit event metadata: ok=%v event=%+v", ok, e)
+	}
+}

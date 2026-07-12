@@ -810,6 +810,10 @@ func (c *IRCClient) handleQuit(e ircmsg.Message) {
 		reason = e.Params[0]
 	}
 
+	// Snapshot metadata before removing it so downstream consumers receive the
+	// identity that belonged to this quit event.
+	meta, _ := c.UserMetaFor(user)
+
 	// The user left the network entirely, so drop their live roster
 	// attributes (away/account/host). PART/KICK deliberately don't do this.
 	c.removeUserMeta(user)
@@ -873,6 +877,9 @@ func (c *IRCClient) handleQuit(e ircmsg.Message) {
 			"networkId":   c.networkID,
 			"user":        user,
 			"reason":      reason,
+			"account":     meta.Account,
+			"host":        meta.Host,
+			"realname":    meta.Realname,
 		},
 		Timestamp: time.Now(),
 		Source:    events.EventSourceIRC,

@@ -57,6 +57,10 @@ A script works by exporting functions with specific names and signatures. Cascad
 | `func OnNotice(e cascade.NoticeEvent)` | An inbound NOTICE. |
 | `func OnJoin(e cascade.JoinEvent)` | Someone joined a channel you are in. |
 | `func OnPart(e cascade.PartEvent)` | Someone left a channel you are in. |
+| `func OnQuit(e cascade.QuitEvent)` | Someone left the IRC network. |
+| `func OnKick(e cascade.KickEvent)` | Someone was kicked from a channel. |
+| `func OnNick(e cascade.NickEvent)` | Someone changed nickname. |
+| `func OnUserStatus(e cascade.UserStatusEvent)` | Away/account/host/real-name metadata changed. |
 
 Cascade never delivers your own messages back to you. `OnText` and `OnNotice` only fire for messages from other users.
 
@@ -101,7 +105,7 @@ func OnText(e cascade.TextEvent) {
 
 ---
 
-## Acting on your own: `Setup`, timers, and `Say`
+## Acting on your own: networks, users, and timers
 
 `Setup` receives a `*cascade.Client` that you can use to schedule work and send messages independently of incoming events.
 
@@ -112,6 +116,21 @@ c.Network("Libera").Say("#team", "hello from a script")
 ```
 
 `c.Network("<name>")` returns a handle to the named network. `.Say(target, message)` sends a PRIVMSG to `target` (a channel or nick).
+
+The same handle provides connection and identity queries plus common IRC actions:
+
+```go
+net := c.Network("Libera")
+if net.IsConnected() {
+	me := net.Self()
+	alice := net.User("alice")
+	if alice.Known() && alice.IsAway() {
+		net.Say("#team", me.Nick()+": alice is away: "+alice.Status().AwayMessage)
+	}
+}
+```
+
+User metadata is session-local and a query never sends `WHOIS`. `Known()` says Cascade has metadata; it does not say the user is online. Network and user handles also provide `Notice`, `Action`, `Join`, `Part`, nickname changes, and away controls. These actions are fire-and-forget and no-op if the named network is unavailable.
 
 **Scheduling work:**
 
@@ -160,7 +179,7 @@ module cascade-scripts
 
 go 1.21
 
-require github.com/matt0x6f/irc-client/cascade v1.0.0
+require github.com/matt0x6f/irc-client/cascade v1.2.0
 ```
 
 This file exists so your editor and gopls give you real autocomplete and type-checking for the `cascade` package. The `cascade` module is published, so gopls resolves the import directly, with no extra setup needed. The `go.mod` powers editor tooling only; the running app interprets your script regardless of what it says.

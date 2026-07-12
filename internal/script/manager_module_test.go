@@ -7,6 +7,12 @@ import (
 	"testing"
 )
 
+func TestCascadeSDKVersionIsV12(t *testing.T) {
+	if cascadeSDKVersion != "v1.2.0" {
+		t.Fatalf("cascadeSDKVersion = %q; want v1.2.0", cascadeSDKVersion)
+	}
+}
+
 // reconcileModule must rewrite a stale cascade require to the app's SDK version
 // while leaving the rest of a user-edited go.mod (e.g. a replace directive) intact.
 func TestReconcileModuleRewritesStaleVersionPreservingEdits(t *testing.T) {
