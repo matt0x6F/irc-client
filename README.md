@@ -1,169 +1,125 @@
-# Cascade Chat
+<p align="center">
+  <img src="build-assets/appicon.png" width="96" alt="Cascade Chat icon">
+</p>
 
-A modern, multi-platform IRC client built with Wails, with IRCv3 support,
-extensible plugins and scripts, a React/Tailwind UI, and durable SQLite history.
+<h1 align="center">Cascade Chat</h1>
 
-## Features
+<p align="center">
+  A modern desktop IRC client with deep IRCv3 support, persistent history, and an open plugin system.
+</p>
 
-- **Multi-platform**: Windows, macOS, and Linux support
-- **IRCv3**: SASL, STS, CHATHISTORY, MONITOR, replies, typing, account metadata, and more
-- **Extensibility**: Process-isolated JSON-RPC plugins and user-authored Go scripts
-- **Modern UI**: React 19, Radix primitives, Zustand, virtualization, and Tailwind CSS v4
-- **Durable Storage**: SQLite/WAL history, FTS5 search, migrations, and encrypted credentials
-- **Event-Driven**: Extensible event bus architecture
+<p align="center">
+  <a href="https://github.com/matt0x6F/irc-client/releases"><strong>Download Cascade</strong></a>
+  ·
+  <a href="https://matt0x6f.github.io/irc-client/">Documentation</a>
+  ·
+  <a href="https://web.libera.chat/#cascade-irc">Join #cascade-irc</a>
+</p>
 
-## Install (macOS)
+![Cascade Chat connected to the programming channel on Libera.Chat](docs/assets/cascade-chat.png)
 
-Download the latest `Cascade-<version>-universal.dmg` from the
-[Releases page](https://github.com/matt0x6F/irc-client/releases). The build is a
-universal binary, running natively on both Apple Silicon and Intel Macs.
+Cascade keeps the parts of IRC that still work: open networks, durable communities,
+and control over your client. It adds the desktop features you expect today, including
+searchable history, replies, typing indicators, link previews, pinned messages, native
+notifications, and themes.
 
-1. Open the DMG and drag **Cascade** to your Applications folder.
-2. The build is **not code-signed**, so the first launch needs one extra step to
-   get past Gatekeeper:
-   - **Right-click** `Cascade.app` → **Open** → **Open** in the dialog, or
-   - run `xattr -dr com.apple.quarantine /Applications/cascade.app` in Terminal.
+## Why Cascade
 
-You only need to do this once; afterwards it launches normally.
+- **IRCv3 throughout.** Server-time, chat history, replies, typing indicators, account
+  tracking, away state, extended monitor, and the rest of the ratified capability set
+  are wired into the interface instead of hidden behind protocol support.
+- **Made for busy networks.** Keep multiple networks organized with unread counts,
+  mentions, a buddy list, pinned messages, channel search, and full-text message search.
+- **Your history stays useful.** SQLite-backed storage keeps scrollback fast and local.
+  Server history is merged by message ID, so reconnects do not fill your timeline with
+  duplicates.
+- **Built to be extended.** Write lightweight in-process scripts in Go, or build
+  out-of-process plugins in any language using JSON-RPC over stdin and stdout.
 
-## Quick Start
+Cascade runs on macOS, Windows, and Linux. The interface is built with React and
+Tailwind CSS inside a lightweight [Wails](https://wails.io/) desktop shell; the IRC,
+storage, scripting, and plugin layers are written in Go.
 
-### Prerequisites
+## Download
 
-- Go 1.25+ (required by Wails v3)
-- Node.js 20 (see `.nvmrc`; with nvm run `nvm use` so `task` can find npm)
-- Task: `go install github.com/go-task/task/v3/cmd/task@latest` (or `brew install go-task`)
-- Wails v3 CLI: `go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha2.108`
+Prebuilt packages are available from the
+[Releases page](https://github.com/matt0x6F/irc-client/releases):
 
-### Installation
+- **macOS:** Universal DMG for Apple Silicon and Intel
+- **Windows:** Installers for `amd64` and `arm64`
+- **Linux:** AppImage, `.deb`, and `.rpm` packages for `amd64` and `arm64`
 
-1. Clone the repository
-2. Run setup:
-   ```bash
-   task setup
-   ```
+The current builds are not code-signed, so your operating system may ask you to confirm
+the first launch. See [Install & first run](docs/public/users/install.md) for the exact
+steps on each platform.
 
-### Development
+## Build from source
 
-Run the development server with hot reload:
+You will need Go 1.25+, Node.js 20, [Task](https://taskfile.dev), and the
+[Wails v3 CLI](https://v3alpha.wails.io/getting-started/installation/).
+
 ```bash
+git clone https://github.com/matt0x6F/irc-client.git
+cd irc-client
+task setup
 task dev
 ```
 
-Or use Wails directly:
-```bash
-wails3 dev
+Run `task build` for a production build on your current platform. Run `task check` to
+format, lint, test, and type-check the project.
+
+<details>
+<summary>Common development commands</summary>
+
+| Command | Purpose |
+| --- | --- |
+| `task dev` | Start Cascade with hot reload |
+| `task build` | Build for the current platform |
+| `task package` | Create a distributable app or installer |
+| `task check` | Run formatting, linting, tests, and type checks |
+| `task go-test` | Run the Go test suite |
+| `task frontend-type-check` | Type-check the React frontend |
+| `task dmg-universal` | Build a universal macOS DMG |
+| `task --list` | Show every available task |
+
+</details>
+
+## Extend Cascade
+
+Cascade offers two ways to add behavior:
+
+- [Scripts](docs/public/scripting/index.md) run in-process and are a good fit for personal
+  automation, event handlers, and timers.
+- [Plugins](docs/public/developers/plugin-system.md) run as separate processes, subscribe
+  to Cascade events, register commands, and can provide UI metadata. They can be written
+  in any language that can speak JSON-RPC.
+
+The repository includes example plugins in [`plugins/`](plugins/) for nickname coloring
+and completion.
+
+## Architecture
+
+```text
+React + TypeScript UI
+        │ Wails bindings
+        ▼
+Go application ── IRC core ── IRC networks
+        ├──────── SQLite history and search
+        ├──────── Go scripting runtime
+        └──────── JSON-RPC plugin processes
 ```
 
-### Building
-
-Build for your current platform:
-```bash
-task build
-```
-
-Package a distributable `.app` bundle / installer:
-```bash
-task package
-```
-
-Build a macOS `.dmg` (output in `bin/`; `brew install create-dmg` for a nicer
-layout, otherwise `hdiutil` is used):
-```bash
-task dmg            # current architecture
-task dmg-universal  # arm64 + amd64 universal
-```
-
-## Taskfile Commands
-
-This project uses [Task](https://taskfile.dev) for workflow automation. Common commands:
-
-### Development
-- `task dev` - Run development server
-- `task build` - Build application
-- `task check` - Run all checks (fmt, lint, test, type-check)
-
-### Go Tasks
-- `task go-test` - Run Go tests
-- `task go-fmt` - Format Go code
-- `task go-lint` - Run Go linters
-- `task go-mod` - Tidy and verify modules
-
-### Frontend Tasks
-- `task frontend-install` - Install dependencies
-- `task frontend-build` - Build for production
-- `task frontend-type-check` - Type check TypeScript
-
-### Database Tasks
-- `task db-reset` - Reset database (WARNING: deletes all data)
-- `task db-backup` - Backup database
-
-### Plugin Tasks
-- `task plugin-list` - List discovered plugins
-- `task plugin-dir` - Create plugin directory
-
-### Setup & Maintenance
-- `task setup` - Initial project setup
-- `task setup-dev` - Setup development environment
-- `task clean` - Clean build artifacts
-- `task release-check` - Run all checks before release
-
-See all available tasks:
-```bash
-task --list
-```
-
-## Project Structure
-
-```
-irc-client/
-├── app*.go                 # Wails application services and bindings
-├── internal/
-│   ├── irc/                # IRC protocol/session core
-│   ├── events/             # Ordered event bus
-│   ├── plugin/             # Process-isolated JSON-RPC plugins
-│   ├── script/             # In-process Go scripting runtime
-│   ├── security/           # Encrypted credential storage
-│   └── storage/            # SQLite, migrations, and SQLC queries
-├── frontend/src/           # React components, stores, hooks, and tests
-├── e2e/                    # Playwright + headless Wails + local Ergo tests
-├── cascade/                # Public SDK used by plugins and scripts
-└── plugins/                # Example plugins
-```
-
-## Testing with Local IRC Server
-
-A Docker Compose setup is included for running a local Ergo IRC server for testing:
-
-1. **Generate TLS certificates** (one-time setup):
-   ```bash
-   ./docker/ergo/generate-certs.sh
-   ```
-
-2. **Start the test server**:
-   ```bash
-   docker-compose up -d
-   ```
-
-3. **Connect in Cascade Chat**:
-   - Address: `localhost`
-   - Port: `6667` (plaintext) or `6697` (TLS)
-   - Enable TLS if using port 6697
-
-See [docker/ergo/README.md](docker/ergo/README.md) for more details.
-
-## Documentation
-
-- [Cascade Chat Docs](https://matt0x6f.github.io/irc-client/) - User & developer guides
-- [Technical Documentation](agents.md) - Architecture, patterns, and workflows
-- [Wails Documentation](https://wails.io/docs)
-- [irc-go Library](https://github.com/ergochat/irc-go)
+Start with the [technical documentation](agents.md) for the codebase structure and
+development conventions. The [IRCv3 support matrix](docs/public/developers/ircv3-support.md)
+documents each supported capability and where it appears in the client.
 
 ## Community
 
-Join us on IRC: [#cascade-irc on Libera.Chat](https://web.libera.chat/#cascade-irc)
+Questions, bug reports, and contributions are welcome. Open an
+[issue](https://github.com/matt0x6F/irc-client/issues), or join
+[#cascade-irc on Libera.Chat](https://web.libera.chat/#cascade-irc)
 (`ircs://irc.libera.chat:6697/#cascade-irc`).
 
 ## License
 
-BSD 3-Clause License
+Cascade Chat is available under the BSD 3-Clause License.
