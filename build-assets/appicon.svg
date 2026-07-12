@@ -23,9 +23,8 @@
     stroke-linejoin="round"
   />
   <g fill="#fff">
-    <rect x="278" y="720" width="374" height="42" rx="21" opacity="0.48"/>
-    <rect x="350" y="778" width="302" height="42" rx="21" opacity="0.72"/>
-    <rect x="430" y="836" width="222" height="42" rx="21"/>
-    <circle cx="742" cy="836" r="25"/>
+    <rect x="287" y="720" width="450" height="42" rx="21" opacity="0.48"/>
+    <rect x="342" y="778" width="340" height="42" rx="21" opacity="0.72"/>
+    <rect x="397" y="836" width="230" height="42" rx="21"/>
   </g>
 </svg>
