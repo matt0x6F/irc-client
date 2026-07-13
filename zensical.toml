@@ -14,6 +14,13 @@ repo_name = "matt0x6F/irc-client"
 
 copyright = "Copyright &copy; 2026 Matt Ouille"
 
+# mike publishes each release tag as a permanent documentation version. The
+# moving aliases are `latest` (main), `stable`, and `prerelease`.
+[project.extra.version]
+provider = "mike"
+default = "latest"
+alias = true
+
 nav = [
   { "Home" = "index.md" },
   { "User Guide" = [
