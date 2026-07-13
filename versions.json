@@ -7,10 +7,15 @@
     ]
   },
   {
-    "version": "26.7.4-rc.149",
-    "title": "26.7.4-rc.149",
+    "version": "26.7.4-rc.150",
+    "title": "26.7.4-rc.150",
     "aliases": [
       "prerelease"
     ]
+  },
+  {
+    "version": "26.7.4-rc.149",
+    "title": "26.7.4-rc.149",
+    "aliases": []
   }
 ]
