@@ -491,8 +491,9 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
   };
 
   const handleEdit = async (network: storage.Network) => {
-    setEditingNetwork(network);
-    // Load servers for this network
+    // Load the complete editable state before exposing the editor. Rendering it
+    // while this request is pending gives the form an empty dirty-state baseline,
+    // so a fast Back click can incorrectly prompt to discard untouched fields.
     const servers = await GetServers(network.id);
     setNetworkServers(prev => ({ ...prev, [network.id]: servers || [] }));
     const built = main.NetworkConfig.createFrom({
@@ -517,6 +518,7 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
     });
     setFormData(built);
     formSnapshotRef.current = serializeNetworkForm(built, (servers || []) as any);
+    setEditingNetwork(network);
     setShowAddForm(false);
   };
 

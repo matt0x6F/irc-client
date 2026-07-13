@@ -11,6 +11,8 @@ const shortcuts = [
   { keys: `${mod}+K`, description: 'Search messages' },
   { keys: `${mod}+,`, description: 'Open settings' },
   { keys: `${mod}+/`, description: 'Show keyboard shortcuts' },
+  { keys: `${mod}+B`, description: 'Toggle network sidebar' },
+  { keys: `${mod}+Shift+B`, description: 'Toggle details sidebar' },
   { keys: `${mod}+Shift+N`, description: 'Focus network/channel tree' },
   { keys: 'Escape', description: 'Close any open modal' },
 ];

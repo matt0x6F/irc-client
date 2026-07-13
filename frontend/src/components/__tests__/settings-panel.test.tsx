@@ -188,6 +188,28 @@ describe('SettingsPanel Networks master-detail', () => {
     await waitFor(() => expect(screen.getByTestId('network-list')).toBeInTheDocument())
     confirmSpy.mockRestore()
   })
+
+  it('does not expose the editor before its dirty-state baseline is ready', async () => {
+    const serverResolvers: Array<(servers: Array<Record<string, unknown>>) => void> = []
+    getServersMock.mockImplementation(() => new Promise((resolve) => { serverResolvers.push(resolve) }))
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    render(<SettingsPanel section="networks" onSectionChange={() => {}} />)
+    fireEvent.click(await screen.findByTestId('network-row-1'))
+
+    expect(screen.queryByTestId('network-editor')).not.toBeInTheDocument()
+    await waitFor(() => expect(serverResolvers.length).toBeGreaterThanOrEqual(2))
+    const servers = [
+      { id: 10, network_id: 1, address: 'irc.ergo.chat', port: 6697, tls: true, order: 0, created_at: '' },
+    ]
+    serverResolvers.forEach((resolve) => resolve(servers))
+
+    await screen.findByTestId('network-editor')
+    fireEvent.click(screen.getByTestId('network-editor-back'))
+    expect(confirmSpy).not.toHaveBeenCalled()
+    await screen.findByTestId('network-list')
+    confirmSpy.mockRestore()
+  })
 })
 
 describe('SettingsPanel About pane', () => {

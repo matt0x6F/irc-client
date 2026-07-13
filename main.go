@@ -131,49 +131,90 @@ func main() {
 	}
 }
 
-// buildMenu constructs the application menu. The platform-specific role menus
-// (App/Edit/Window) are macOS-only — on Linux/Windows they are populated by the
-// OS and carry no custom items, so we only add the standard roles on darwin.
-// Unlike v2, v3 owns its cross-platform menu builder, so the GTK nil-deref
-// workaround the v2 code needed is no longer required.
+// buildMenu constructs the application menu. Wails' role menus provide native
+// behavior for editing and window management on every desktop platform; macOS
+// additionally gets its conventional application menu. Unlike v2, v3 owns its
+// cross-platform menu builder, so the GTK nil-deref workaround the v2 code
+// needed is no longer required.
 func buildMenu(app *application.App, ircApp *App) *application.Menu {
 	menu := app.NewMenu()
-
-	if runtime.GOOS == "darwin" {
-		menu.AddRole(application.AppMenu)
+	emitUIAction := func(action string) func(*application.Context) {
+		return func(*application.Context) {
+			// Menu commands may be chosen while Settings is frontmost. Bring the
+			// chat window forward before asking its frontend to present UI.
+			ircApp.FocusMainWindow()
+			ircApp.emit("menu:action", action)
+		}
 	}
 
-	// File menu with Settings and shortcuts (Cmd+, is standard for Settings).
+	if runtime.GOOS == "darwin" {
+		// Build this explicitly rather than using AppMenu: the stock role owns
+		// its About action, while Cascade's About pane is the source of truth.
+		appMenu := menu.AddSubmenu("Cascade Chat")
+		appMenu.Add("About Cascade").OnClick(func(*application.Context) {
+			ircApp.OpenSettingsAbout()
+		})
+		appMenu.Add("Check for Updates…").OnClick(func(*application.Context) {
+			ircApp.CheckForUpdates()
+		})
+		appMenu.AddSeparator()
+		appMenu.Add("Settings…").SetAccelerator("CmdOrCtrl+,").OnClick(func(*application.Context) {
+			ircApp.OpenSettings()
+		})
+		appMenu.AddSeparator()
+		appMenu.AddRole(application.ServicesMenu)
+		appMenu.AddSeparator()
+		appMenu.AddRole(application.Hide)
+		appMenu.AddRole(application.HideOthers)
+		appMenu.AddRole(application.UnHide)
+		appMenu.AddSeparator()
+		appMenu.AddRole(application.Quit)
+	}
+
+	// File contains document/window lifecycle commands. Settings belongs in the
+	// application menu on macOS and in File on Windows/Linux.
 	fileMenu := menu.AddSubmenu("File")
-	fileMenu.Add("Settings...").SetAccelerator("CmdOrCtrl+,").OnClick(func(*application.Context) {
-		ircApp.OpenSettings()
-	})
-	fileMenu.AddSeparator()
-	fileMenu.Add("Networks...").SetAccelerator("CmdOrCtrl+N").OnClick(func(*application.Context) {
-		ircApp.OpenSettingsNetworks()
-	})
-	fileMenu.Add("Plugins...").SetAccelerator("CmdOrCtrl+P").OnClick(func(*application.Context) {
-		ircApp.OpenSettingsPlugins()
-	})
-	fileMenu.Add("Display...").SetAccelerator("CmdOrCtrl+D").OnClick(func(*application.Context) {
-		ircApp.OpenSettingsDisplay()
-	})
-
 	if runtime.GOOS == "darwin" {
-		menu.AddRole(application.EditMenu)
-		menu.AddRole(application.WindowMenu)
+		fileMenu.AddRole(application.CloseWindow)
+	} else {
+		fileMenu.Add("Settings…").SetAccelerator("CmdOrCtrl+,").OnClick(func(*application.Context) {
+			ircApp.OpenSettings()
+		})
+		fileMenu.AddSeparator()
+		fileMenu.AddRole(application.Quit)
 	}
 
-	// Help menu with a manual update check and an About entry that opens the
-	// About settings pane. CheckForUpdates is a no-op (with a frontend toast)
-	// on dev builds where the updater was never configured.
+	menu.AddRole(application.EditMenu)
+
+	viewMenu := menu.AddSubmenu("View")
+	viewMenu.Add("Search Messages…").SetAccelerator("CmdOrCtrl+K").OnClick(emitUIAction("search"))
+	viewMenu.AddSeparator()
+	// Do not register native accelerators for the sidebar toggles. The message
+	// editor owns CmdOrCtrl+B for formatting selected text, and an OS-level
+	// accelerator would run before the webview can resolve that context.
+	viewMenu.Add("Toggle Network Sidebar").OnClick(emitUIAction("toggle-left-sidebar"))
+	viewMenu.Add("Toggle Details Sidebar").OnClick(emitUIAction("toggle-right-sidebar"))
+	viewMenu.Add("Focus Network Tree").SetAccelerator("CmdOrCtrl+Shift+N").OnClick(emitUIAction("focus-network-tree"))
+
+	menu.AddRole(application.WindowMenu)
+
+	// CheckForUpdates is a no-op (with a frontend toast) on dev builds where the
+	// updater was never configured. On macOS it lives in the application menu.
 	helpMenu := menu.AddSubmenu("Help")
-	helpMenu.Add("Check for Updates…").OnClick(func(*application.Context) {
-		ircApp.CheckForUpdates()
+	helpMenu.Add("Keyboard Shortcuts").SetAccelerator("CmdOrCtrl+/").OnClick(emitUIAction("keyboard-shortcuts"))
+	helpMenu.Add("Command Reference").OnClick(emitUIAction("command-reference"))
+	helpMenu.Add("Cascade Documentation").OnClick(func(*application.Context) {
+		_ = app.Browser.OpenURL("https://matt0x6f.github.io/irc-client/")
 	})
-	helpMenu.Add("About Cascade").OnClick(func(*application.Context) {
-		ircApp.OpenSettingsAbout()
-	})
+	if runtime.GOOS != "darwin" {
+		helpMenu.AddSeparator()
+		helpMenu.Add("Check for Updates…").OnClick(func(*application.Context) {
+			ircApp.CheckForUpdates()
+		})
+		helpMenu.Add("About Cascade").OnClick(func(*application.Context) {
+			ircApp.OpenSettingsAbout()
+		})
+	}
 
 	return menu
 }
