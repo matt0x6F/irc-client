@@ -5,5 +5,12 @@
     "aliases": [
       "latest"
     ]
+  },
+  {
+    "version": "26.7.4-rc.149",
+    "title": "26.7.4-rc.149",
+    "aliases": [
+      "prerelease"
+    ]
   }
 ]
