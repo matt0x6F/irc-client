@@ -11,7 +11,8 @@ The generated assets are committed alongside it:
   from `../build/appicon.png` with `task generate:icons`.
 - `../docs/public/assets/cascade-chat.svg` is the docs header logo and favicon.
 
-On macOS, `task generate:icons` rebuilds the Wails-generated ICNS with
-`iconutil` so the transparent optical margin is not flattened onto white.
+On macOS, `task generate:icons` rasterizes the SVG with `sips`, then rebuilds
+the ICNS with `iconutil`. This keeps the 100 px optical margin transparent
+instead of flattening it onto a visible white tile.
 - `../frontend/src/assets/brand/cascade-mark.svg` is the full-bleed sidebar
   variant of the same artwork.
