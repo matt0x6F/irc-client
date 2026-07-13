@@ -1333,12 +1333,12 @@ func (a *App) ListPlugins() []PluginInfo {
 
 // EnablePlugin enables a plugin
 func (a *App) EnablePlugin(name string) error {
-	return fmt.Errorf("not implemented")
+	return a.pluginManager.SetPluginEnabled(name, true, a.storage)
 }
 
 // DisablePlugin disables a plugin
 func (a *App) DisablePlugin(name string) error {
-	return a.pluginManager.UnloadPlugin(name)
+	return a.pluginManager.SetPluginEnabled(name, false, a.storage)
 }
 
 // ReloadPlugin reloads a plugin

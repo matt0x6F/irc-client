@@ -63,9 +63,12 @@ func (q *Queries) GetPluginConfig(ctx context.Context, name string) (PluginConfi
 }
 
 const setPluginConfig = `-- name: SetPluginConfig :exec
-INSERT INTO plugin_configs (name, enabled, config, created_at, updated_at)
-VALUES (?, 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-ON CONFLICT(name) DO UPDATE SET config = excluded.config, updated_at = CURRENT_TIMESTAMP
+INSERT INTO plugin_configs (name, enabled, config, config_schema, created_at, updated_at)
+VALUES (?, 1, ?, CAST('{}' AS BLOB), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+ON CONFLICT(name) DO UPDATE SET
+    config = excluded.config,
+    config_schema = CAST(COALESCE(plugin_configs.config_schema, '{}') AS BLOB),
+    updated_at = CURRENT_TIMESTAMP
 `
 
 type SetPluginConfigParams struct {
@@ -79,9 +82,12 @@ func (q *Queries) SetPluginConfig(ctx context.Context, arg SetPluginConfigParams
 }
 
 const setPluginConfigSchema = `-- name: SetPluginConfigSchema :exec
-INSERT INTO plugin_configs (name, enabled, config_schema, created_at, updated_at)
-VALUES (?, 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-ON CONFLICT(name) DO UPDATE SET config_schema = excluded.config_schema, updated_at = CURRENT_TIMESTAMP
+INSERT INTO plugin_configs (name, enabled, config, config_schema, created_at, updated_at)
+VALUES (?, 1, CAST('{}' AS BLOB), ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+ON CONFLICT(name) DO UPDATE SET
+    config = CAST(COALESCE(plugin_configs.config, '{}') AS BLOB),
+    config_schema = excluded.config_schema,
+    updated_at = CURRENT_TIMESTAMP
 `
 
 type SetPluginConfigSchemaParams struct {
@@ -95,9 +101,13 @@ func (q *Queries) SetPluginConfigSchema(ctx context.Context, arg SetPluginConfig
 }
 
 const setPluginEnabled = `-- name: SetPluginEnabled :exec
-INSERT INTO plugin_configs (name, enabled, created_at, updated_at)
-VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-ON CONFLICT(name) DO UPDATE SET enabled = excluded.enabled, updated_at = CURRENT_TIMESTAMP
+INSERT INTO plugin_configs (name, enabled, config, config_schema, created_at, updated_at)
+VALUES (?, ?, CAST('{}' AS BLOB), CAST('{}' AS BLOB), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+ON CONFLICT(name) DO UPDATE SET
+    enabled = excluded.enabled,
+    config = CAST(COALESCE(plugin_configs.config, '{}') AS BLOB),
+    config_schema = CAST(COALESCE(plugin_configs.config_schema, '{}') AS BLOB),
+    updated_at = CURRENT_TIMESTAMP
 `
 
 type SetPluginEnabledParams struct {

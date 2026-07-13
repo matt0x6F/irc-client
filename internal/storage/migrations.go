@@ -770,8 +770,8 @@ const createPluginConfigsTable = `
 CREATE TABLE IF NOT EXISTS plugin_configs (
     name TEXT PRIMARY KEY,
     enabled BOOLEAN NOT NULL DEFAULT 1,
-    config TEXT,
-    config_schema TEXT,
+    config BLOB NOT NULL DEFAULT X'7B7D',
+    config_schema BLOB NOT NULL DEFAULT X'7B7D',
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -800,8 +800,8 @@ func migratePluginConfigs(db *sqlx.DB) error {
 // migratePluginConfigColumn adds the config and config_schema JSON columns to plugin_configs table if they don't exist
 func migratePluginConfigColumn(db *sqlx.DB) error {
 	columnsToAdd := map[string]string{
-		"config":        "ALTER TABLE plugin_configs ADD COLUMN config TEXT",
-		"config_schema": "ALTER TABLE plugin_configs ADD COLUMN config_schema TEXT",
+		"config":        "ALTER TABLE plugin_configs ADD COLUMN config BLOB NOT NULL DEFAULT X'7B7D'",
+		"config_schema": "ALTER TABLE plugin_configs ADD COLUMN config_schema BLOB NOT NULL DEFAULT X'7B7D'",
 	}
 
 	for columnName, alterSQL := range columnsToAdd {
@@ -820,6 +820,20 @@ func migratePluginConfigColumn(db *sqlx.DB) error {
 				}
 			}
 		}
+	}
+
+	// Rows created by older SetPluginEnabled queries omitted the JSON columns,
+	// leaving NULL values that cannot be scanned into json.RawMessage. Older
+	// config writes may also have SQLite TEXT affinity, so normalize both cases
+	// to BLOBs; the current upsert preserves that representation.
+	if _, err := db.Exec(`
+		UPDATE plugin_configs
+		SET config = CAST(COALESCE(config, '{}') AS BLOB),
+		    config_schema = CAST(COALESCE(config_schema, '{}') AS BLOB)
+		WHERE config IS NULL OR config_schema IS NULL
+		   OR typeof(config) != 'blob' OR typeof(config_schema) != 'blob'
+	`); err != nil {
+		return fmt.Errorf("failed to normalize plugin config JSON columns: %w", err)
 	}
 
 	return nil
