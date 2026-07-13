@@ -105,6 +105,7 @@ function App() {
   const rightSidebarCollapsed = useUIStore((s) => s.rightSidebarCollapsed);
   const toggleLeftSidebar = useUIStore((s) => s.toggleLeftSidebar);
   const toggleRightSidebar = useUIStore((s) => s.toggleRightSidebar);
+  const setHelpOpen = useUIStore((s) => s.setHelpOpen);
   const setLeftSidebarCollapsed = useUIStore((s) => s.setLeftSidebarCollapsed);
   const setRightSidebarCollapsed = useUIStore((s) => s.setRightSidebarCollapsed);
   const rightSidebarTab = useUIStore((s) => s.rightSidebarTab);
@@ -127,11 +128,52 @@ function App() {
   // Ref for the server tree sidebar (for keyboard focus)
   const serverTreeRef = useRef<HTMLDivElement>(null);
 
+  const focusNetworkTree = useCallback(() => {
+    const sidebar = serverTreeRef.current;
+    if (!sidebar) return;
+    const focusable = sidebar.querySelector<HTMLElement>(
+      'button, [tabindex]:not([tabindex="-1"]), a'
+    );
+    (focusable ?? sidebar).focus();
+  }, []);
+
   // --- Effects ---
+
+  // Native application-menu actions are emitted by the backend. Keeping their
+  // behavior here means menu clicks and webview keyboard shortcuts share the
+  // same UI state and modal components.
+  useEffect(() => {
+    const unsubscribe = EventsOn('menu:action', (action: string) => {
+      switch (action) {
+        case 'search':
+          openSearch();
+          break;
+        case 'toggle-left-sidebar':
+          toggleLeftSidebar();
+          break;
+        case 'toggle-right-sidebar':
+          toggleRightSidebar();
+          break;
+        case 'focus-network-tree':
+          focusNetworkTree();
+          break;
+        case 'keyboard-shortcuts':
+          toggleKeyboardShortcuts();
+          break;
+        case 'command-reference':
+          setHelpOpen(true);
+          break;
+      }
+    });
+    return () => unsubscribe();
+  }, [focusNetworkTree, openSearch, setHelpOpen, toggleKeyboardShortcuts, toggleLeftSidebar, toggleRightSidebar]);
 
   // Global keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // React controls such as the message editor may already own the shortcut
+      // (notably Cmd/Ctrl+B for bold formatting).
+      if (e.defaultPrevented) return;
       const mod = e.metaKey || e.ctrlKey;
 
       // Cmd/Ctrl+K — Search
@@ -172,18 +214,7 @@ function App() {
       // Cmd/Ctrl+Shift+N — Focus network/channel tree
       if (mod && e.shiftKey && (e.key === 'N' || e.key === 'n')) {
         e.preventDefault();
-        // Focus the first focusable element in the server tree sidebar
-        const sidebar = serverTreeRef.current;
-        if (sidebar) {
-          const focusable = sidebar.querySelector<HTMLElement>(
-            'button, [tabindex]:not([tabindex="-1"]), a'
-          );
-          if (focusable) {
-            focusable.focus();
-          } else {
-            sidebar.focus();
-          }
-        }
+        focusNetworkTree();
         return;
       }
 
@@ -217,7 +248,7 @@ function App() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [openSearch, toggleKeyboardShortcuts, closeKeyboardShortcuts, showKeyboardShortcuts, showSearch, closeSearch, showTopicModal, setShowTopicModal, showModeModal, setShowModeModal, showUserInfo, setShowUserInfo, showChannelList, closeChannelList, toggleLeftSidebar, toggleRightSidebar]);
+  }, [openSearch, toggleKeyboardShortcuts, closeKeyboardShortcuts, showKeyboardShortcuts, showSearch, closeSearch, showTopicModal, setShowTopicModal, showModeModal, setShowModeModal, showUserInfo, setShowUserInfo, showChannelList, closeChannelList, toggleLeftSidebar, toggleRightSidebar, focusNetworkTree]);
 
   // Responsive sidebar collapse on small windows.
   // Only react when the window actually crosses the breakpoint — otherwise a
