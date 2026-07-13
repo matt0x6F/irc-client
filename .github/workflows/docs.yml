@@ -1,8 +1,10 @@
 name: Docs
 
-# Build the Zensical documentation site, and deploy it to GitHub Pages on
-# merge to main. On pull requests the site is built (but not deployed) so docs
-# build failures surface before merge.
+# Build the Zensical documentation site on pull requests. Deploy `main` as the
+# moving `latest` version and every published release tag as an immutable
+# version, updating either the `stable` or `prerelease` alias. Automated RCs
+# call this workflow from release.yml because releases created with
+# GITHUB_TOKEN do not emit another workflow event.
 on:
   push:
     branches: [main]
@@ -10,22 +12,52 @@ on:
       - "docs/public/**"
       - "zensical.toml"
       - ".github/workflows/docs.yml"
+  release:
+    types: [published]
   pull_request:
     paths:
       - "docs/public/**"
       - "zensical.toml"
       - ".github/workflows/docs.yml"
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref containing the documentation to publish
+        required: true
+        type: string
+      version:
+        description: Version label, without a leading v
+        required: true
+        type: string
+      channel:
+        description: Moving alias to update
+        required: true
+        type: string
   workflow_dispatch:
+    inputs:
+      ref:
+        description: Tag/ref to publish (leave as main for latest)
+        required: true
+        default: main
+        type: string
+      version:
+        description: Version label without a leading v (blank publishes main)
+        required: false
+        type: string
+      channel:
+        description: Alias to update when publishing a tagged version
+        required: true
+        default: latest
+        type: choice
+        options:
+          - latest
+          - stable
+          - prerelease
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
-
-# Serialize deploys per ref; PR builds don't collide with the main deploy.
-concurrency:
-  group: pages-${{ github.ref }}
-  cancel-in-progress: false
 
 jobs:
   build:
@@ -33,9 +65,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
-
-      - name: Configure Pages
-        uses: actions/configure-pages@v5
+        with:
+          ref: ${{ inputs.ref || github.event.release.tag_name || github.ref }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -51,20 +82,106 @@ jobs:
       - name: Build site
         run: zensical build --clean
 
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v4
-        with:
-          path: site
-
-  # Deploy only on merge to main (or manual dispatch) — never from a PR.
   deploy:
     if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
+    # Every deployment updates the same gh-pages history and Pages environment.
+    concurrency:
+      group: docs-pages
+      cancel-in-progress: false
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - name: Checkout documentation source
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.event.release.tag_name || github.ref }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install documentation tools (pinned)
+        run: |
+          pip install zensical==0.0.46
+          pip install git+https://github.com/squidfunk/mike.git@2d4ad799442f4592db8ad53b179bfb33db8c69ac
+
+      # Tags created before docs versioning was introduced do not contain this
+      # setting. Add it only to the runner's checkout so backfilled versions get
+      # the selector without changing the immutable tag.
+      - name: Enable selector for historical tags
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          config = Path("zensical.toml")
+          text = config.read_text()
+          if "[project.extra.version]" not in text:
+              config.write_text(text.rstrip() + """
+
+          [project.extra.version]
+          provider = "mike"
+          default = "latest"
+          alias = true
+          """)
+          PY
+
+      - name: Select documentation version
+        id: version
+        env:
+          CALLED_VERSION: ${{ inputs.version }}
+          CALLED_CHANNEL: ${{ inputs.channel }}
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          if [ -n "$CALLED_VERSION" ]; then
+            version="$CALLED_VERSION"
+            channel="$CALLED_CHANNEL"
+          elif [ "$EVENT_NAME" = "release" ]; then
+            version="${RELEASE_TAG#v}"
+            if [ "$RELEASE_PRERELEASE" = "true" ]; then
+              channel="prerelease"
+            else
+              channel="stable"
+            fi
+          else
+            version="main"
+            channel="latest"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
+      - name: Publish version to gh-pages
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          CHANNEL: ${{ steps.version.outputs.channel }}
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          mike deploy --push --update-aliases "$VERSION" "$CHANNEL"
+          if [ "$CHANNEL" = "latest" ]; then
+            mike set-default --push latest
+          fi
+
+      - name: Checkout complete versioned site
+        uses: actions/checkout@v5
+        with:
+          ref: gh-pages
+          path: published-site
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: published-site
+
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4

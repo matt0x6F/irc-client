@@ -30,6 +30,8 @@ on:
 # Required so the release path can upload assets to the release.
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 jobs:
   # Make publication the final stage of the same tested pipeline. These reusable
@@ -349,3 +351,16 @@ jobs:
         env:
           TAG_NAME: ${{ github.event.release.tag_name }}
         run: gh release upload "$TAG_NAME" dist/* --clobber
+
+  # GITHUB_TOKEN-created prereleases do not emit a release event, so publish
+  # their tagged documentation explicitly after the release exists. Human-
+  # published releases enter docs.yml through its release.published trigger.
+  publish-prerelease-docs:
+    name: Publish prerelease documentation
+    if: github.event_name == 'push'
+    needs: [derive-version, release]
+    uses: ./.github/workflows/docs.yml
+    with:
+      ref: ${{ needs.derive-version.outputs.tag }}
+      version: ${{ needs.derive-version.outputs.value }}
+      channel: prerelease
