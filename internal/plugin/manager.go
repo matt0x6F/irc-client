@@ -660,8 +660,10 @@ func (pm *Manager) ListPlugins() []*PluginInfo {
 				}
 			}
 
-			// If no config_schema in database, try to get it by initializing the plugin
-			if unloadedInfo.ConfigSchema == nil || len(unloadedInfo.ConfigSchema) == 0 {
+			// Do not execute disabled plugins just to populate optional metadata. A
+			// disabled plugin must remain inert; cached schemas are still shown when
+			// available from a previous successful initialization.
+			if unloadedInfo.Enabled && (unloadedInfo.ConfigSchema == nil || len(unloadedInfo.ConfigSchema) == 0) {
 				logger.Log.Debug().Str("plugin", info.Name).Msg("No config_schema in database, fetching from plugin")
 				if metadata, err := pm.GetPluginMetadata(info); err == nil && metadata.ConfigSchema != nil {
 					logger.Log.Debug().Str("plugin", info.Name).Msg("Successfully fetched config_schema from plugin")
@@ -886,9 +888,21 @@ func (pm *Manager) SetPluginEnabled(name string, enabled bool, stor *storage.Sto
 		return fmt.Errorf("storage is required to set plugin enabled state")
 	}
 
+	previousConfig, err := stor.GetPluginConfig(name)
+	if err != nil {
+		return fmt.Errorf("failed to read current plugin config: %w", err)
+	}
+	previousEnabled := previousConfig.Enabled
+
 	// Save to database
 	if err := stor.SetPluginEnabled(name, enabled); err != nil {
 		return fmt.Errorf("failed to save plugin config: %w", err)
+	}
+	restoreEnabledState := func(cause error) error {
+		if restoreErr := stor.SetPluginEnabled(name, previousEnabled); restoreErr != nil {
+			return fmt.Errorf("%w (also failed to restore enabled state: %v)", cause, restoreErr)
+		}
+		return cause
 	}
 
 	pm.mu.Lock()
@@ -904,7 +918,7 @@ func (pm *Manager) SetPluginEnabled(name string, enabled bool, stor *storage.Sto
 		// Discover the plugin to get its info
 		plugins, err := DiscoverPlugins(pm.pluginDir, pm.allowPATHDiscovery())
 		if err != nil {
-			return fmt.Errorf("failed to discover plugins: %w", err)
+			return restoreEnabledState(fmt.Errorf("failed to discover plugins: %w", err))
 		}
 
 		// Find the plugin by name
@@ -917,7 +931,7 @@ func (pm *Manager) SetPluginEnabled(name string, enabled bool, stor *storage.Sto
 		}
 
 		if pluginInfo == nil {
-			return fmt.Errorf("plugin not found: %s", name)
+			return restoreEnabledState(fmt.Errorf("plugin not found: %s", name))
 		}
 
 		// Set enabled state (database config takes precedence)
@@ -925,7 +939,7 @@ func (pm *Manager) SetPluginEnabled(name string, enabled bool, stor *storage.Sto
 
 		// Load the plugin
 		if err := pm.loadPluginUnlocked(pluginInfo); err != nil {
-			return fmt.Errorf("failed to load plugin: %w", err)
+			return restoreEnabledState(fmt.Errorf("failed to load plugin: %w", err))
 		}
 
 		logger.Log.Info().Str("plugin", name).Msg("Plugin enabled and loaded")

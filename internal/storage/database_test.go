@@ -801,15 +801,12 @@ func TestPluginConfig(t *testing.T) {
 		t.Error("expected default Enabled=true")
 	}
 
-	// Create the plugin config row first via SetPluginEnabled,
-	// then set config and schema so the row has non-NULL JSON columns.
-	if err := s.SetPluginEnabled("test-plugin", true); err != nil {
-		t.Fatalf("SetPluginEnabled: %v", err)
-	}
-
 	config := map[string]interface{}{"key": "value", "count": float64(42)}
 	if err := s.SetPluginConfig("test-plugin", config); err != nil {
 		t.Fatalf("SetPluginConfig: %v", err)
+	}
+	if _, err := s.GetPluginConfig("test-plugin"); err != nil {
+		t.Fatalf("GetPluginConfig after config-only insert: %v", err)
 	}
 
 	schema := map[string]interface{}{"type": "object"}
@@ -829,15 +826,10 @@ func TestPluginConfig(t *testing.T) {
 func TestSetPluginEnabled(t *testing.T) {
 	s := newTestStorage(t)
 
-	// Create the row with non-NULL config columns first
+	// Create a row through the enabled-state toggle only. Its JSON columns must
+	// still read back as empty objects rather than causing a scan error.
 	if err := s.SetPluginEnabled("my-plugin", true); err != nil {
 		t.Fatalf("SetPluginEnabled (create): %v", err)
-	}
-	if err := s.SetPluginConfig("my-plugin", map[string]interface{}{}); err != nil {
-		t.Fatalf("SetPluginConfig: %v", err)
-	}
-	if err := s.SetPluginConfigSchema("my-plugin", map[string]interface{}{}); err != nil {
-		t.Fatalf("SetPluginConfigSchema: %v", err)
 	}
 
 	// Now disable and verify
@@ -851,6 +843,12 @@ func TestSetPluginEnabled(t *testing.T) {
 	}
 	if cfg.Enabled {
 		t.Error("expected Enabled=false")
+	}
+	if cfg.Config == nil || len(cfg.Config) != 0 {
+		t.Fatalf("expected empty config, got %#v", cfg.Config)
+	}
+	if cfg.ConfigSchema == nil || len(cfg.ConfigSchema) != 0 {
+		t.Fatalf("expected empty config schema, got %#v", cfg.ConfigSchema)
 	}
 }
 

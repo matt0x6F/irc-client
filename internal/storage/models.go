@@ -155,8 +155,8 @@ type CachedPreview struct {
 type PluginConfig struct {
 	Name         string                 `db:"name" json:"name"`
 	Enabled      bool                   `db:"enabled" json:"enabled"`
-	Config       map[string]interface{} `db:"config" json:"config,omitempty"`               // JSON stored as TEXT
-	ConfigSchema map[string]interface{} `db:"config_schema" json:"config_schema,omitempty"` // JSON stored as TEXT
+	Config       map[string]interface{} `db:"config" json:"config,omitempty"`               // JSON stored as BLOB
+	ConfigSchema map[string]interface{} `db:"config_schema" json:"config_schema,omitempty"` // JSON stored as BLOB
 	CreatedAt    time.Time              `db:"created_at" json:"created_at"`
 	UpdatedAt    time.Time              `db:"updated_at" json:"updated_at"`
 }

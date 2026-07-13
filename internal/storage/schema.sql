@@ -109,8 +109,8 @@ CREATE TABLE IF NOT EXISTS private_message_conversations (
 CREATE TABLE IF NOT EXISTS plugin_configs (
     name TEXT PRIMARY KEY,
     enabled BOOLEAN NOT NULL DEFAULT 1,
-    config TEXT,
-    config_schema TEXT,
+    config BLOB NOT NULL DEFAULT X'7B7D',
+    config_schema BLOB NOT NULL DEFAULT X'7B7D',
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
