@@ -204,15 +204,21 @@ tasks:
     dir: build
     sources:
       - "appicon.png"
+      - "../build-assets/appicon.svg"
       - "generate-darwin-icon.sh"
     generates:
       - "darwin/icons.icns"
       - "windows/icon.ico"
     cmds:
+      # The SVG is the canonical source. macOS's renderer preserves its clear
+      # canvas; the previously committed PNG had silently flattened it to white.
+      - cmd: sips -s format png ../build-assets/appicon.svg --out ../build-assets/appicon.png
+        platforms: [darwin]
+      - cmd: cp ../build-assets/appicon.png appicon.png
+        platforms: [darwin]
       - wails3 generate icons -input appicon.png -macfilename darwin/icons.icns -windowsfilename windows/icon.ico
-      # Wails currently flattens the transparent margin onto white while
-      # producing ICNS files. Rebuild the macOS asset with Apple's tools so the
-      # intended 100 px optical padding remains transparent in Finder and Dock.
+      # Rebuild the macOS asset with Apple's tools so every ICNS representation
+      # retains the intended 100 px transparent optical padding.
       - cmd: sh generate-darwin-icon.sh appicon.png darwin/icons.icns
         platforms: [darwin]
 
