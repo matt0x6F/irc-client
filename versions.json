@@ -7,6 +7,13 @@
     ]
   },
   {
+    "version": "26.7.4",
+    "title": "26.7.4",
+    "aliases": [
+      "stable"
+    ]
+  },
+  {
     "version": "26.7.4-rc.150",
     "title": "26.7.4-rc.150",
     "aliases": [
