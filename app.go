@@ -978,30 +978,11 @@ func (a *App) SetChannelOpen(networkID int64, channelName string, isOpen bool) e
 	}
 
 	if isOpen {
-		// Request fresh NAMES list if user is joined to the channel
-		a.mu.RLock()
-		client, exists := a.ircClients[networkID]
-		isConnected := exists && client.IsConnected()
-		a.mu.RUnlock()
-
-		if isConnected {
-			network, err := a.storage.GetNetwork(networkID)
-			if err == nil && network.Nickname != "" {
-				joinedChannels, err := a.storage.GetJoinedChannels(networkID, network.Nickname)
-				if err == nil {
-					for _, joinedChannel := range joinedChannels {
-						if strings.EqualFold(joinedChannel.Name, channelName) {
-							logger.Log.Debug().Str("channel", channelName).Int64("network_id", networkID).Msg("Requesting fresh NAMES list for opened channel")
-							if err := client.SendRawCommand(fmt.Sprintf("NAMES %s", channelName)); err != nil {
-								logger.Log.Warn().Err(err).Str("channel", channelName).Msg("Failed to request NAMES list")
-							}
-							break
-						}
-					}
-				}
-			}
-		}
-
+		// Pane selection is local UI state and must not generate IRC traffic. Our
+		// JOIN already yields the initial NAMES list (or requests it explicitly
+		// under no-implicit-names), while membership events keep the roster live.
+		// A redundant NAMES here can dump thousands of reply rows into a busy
+		// connection and exceed an IRCd's SendQ during registration/auto-join.
 		a.eventBus.Emit(events.Event{
 			Type: events.EventUIPaneFocused,
 			Data: map[string]interface{}{
