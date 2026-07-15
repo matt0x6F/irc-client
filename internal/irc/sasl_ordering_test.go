@@ -215,6 +215,12 @@ func TestConnectWaitsForRegistrationCallbacks(t *testing.T) {
 		close(callbackStarted)
 		<-releaseCallback
 	})
+	// This callback stays on irc-go's socket reader (it deliberately does not use
+	// c.addCallback). Its signal proves the protocol handshake has processed 376,
+	// so the assertion below cannot accidentally pass just because the server has
+	// not delivered the registration terminator yet.
+	protocolRegistrationDone := make(chan struct{})
+	c.conn.AddCallback("376", func(ircmsg.Message) { close(protocolRegistrationDone) })
 
 	done := make(chan error, 1)
 	go func() { done <- c.Connect() }()
@@ -223,6 +229,11 @@ func TestConnectWaitsForRegistrationCallbacks(t *testing.T) {
 	case <-callbackStarted:
 	case <-time.After(10 * time.Second):
 		t.Fatal("registration callback did not start")
+	}
+	select {
+	case <-protocolRegistrationDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("irc-go did not finish the protocol registration handshake")
 	}
 
 	select {
