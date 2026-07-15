@@ -410,7 +410,13 @@ func (irc *Connection) waitForStop() {
 // Quit the current connection and disconnect from the server
 // RFC 1459 details: https://tools.ietf.org/html/rfc1459#section-4.1.6
 func (irc *Connection) Quit() {
-	quitMessage := irc.QuitMessage
+	irc.QuitWithMessage(irc.QuitMessage)
+}
+
+// QuitWithMessage disconnects with a per-call reason without mutating the
+// connection's public configuration fields. It is safe to call concurrently
+// with callbacks and teardown.
+func (irc *Connection) QuitWithMessage(quitMessage string) {
 	if quitMessage == "" {
 		quitMessage = irc.Version
 	}
