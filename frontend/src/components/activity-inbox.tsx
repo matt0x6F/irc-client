@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Bell, AtSign, Tag, MessageSquare, Mail, Eye, X, UserX } from 'lucide-react';
+import { Bell, AtSign, Tag, MessageSquare, Mail, Eye, LogIn, X, UserX } from 'lucide-react';
 import { useNetworkStore } from '../stores/network';
 import { coalesceActivity, relativeTime, type ActivityGroup } from '../lib/activity-inbox';
 import { stripIRCFormatting } from './irc-formatted-text';
@@ -13,6 +13,9 @@ const SOURCE_ICON: Record<string, typeof Bell> = {
   pm: MessageSquare,
   invite: Mail,
 };
+
+const ACTION_BUTTON =
+  'inline-flex h-7 w-7 items-center justify-center rounded-md border border-border/80 bg-background/90 text-muted-foreground shadow-[var(--shadow-sm)] transition-colors hover:border-foreground/20 hover:bg-accent hover:text-foreground cursor-pointer';
 
 // "2 highlights" / "3 messages" / singular for count === 1 (no summary shown then).
 function summaryLabel(g: ActivityGroup): string {
@@ -67,52 +70,56 @@ function ActivityRow({ group }: { group: ActivityGroup }) {
         <div className="flex items-center gap-1 flex-shrink-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
           {isInvite && (
             <button
+              type="button"
               aria-label="Join"
               title="Join"
-              className="text-xs text-primary underline hover:opacity-80 transition-opacity"
+              className={`${ACTION_BUTTON} text-primary hover:text-primary`}
               onClick={(e) => {
                 e.stopPropagation();
                 void openOrJoinChannel(group.networkId, group.target);
                 dismissGroup();
               }}
             >
-              Join
+              <LogIn className="w-4 h-4" />
             </button>
           )}
           <button
+            type="button"
             aria-label="Ignore sender"
             title="Ignore sender"
-            className="text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
+            className={`${ACTION_BUTTON} hover:border-destructive/30 hover:bg-destructive/10 hover:text-destructive`}
             onClick={(e) => {
               e.stopPropagation();
               void IgnoreActivitySender(group.networkId, group.actor);
             }}
           >
-            <UserX className="w-3.5 h-3.5" />
+            <UserX className="w-4 h-4" />
           </button>
           {group.hasUnseen && (
             <button
+              type="button"
               aria-label="Mark seen"
               title="Mark seen"
-              className="text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+              className={ACTION_BUTTON}
               onClick={(e) => {
                 e.stopPropagation();
                 void markActivitySeenMany(group.items.filter((i) => !i.seen).map((i) => i.id));
               }}
             >
-              <Eye className="w-3.5 h-3.5" />
+              <Eye className="w-4 h-4" />
             </button>
           )}
           <button
+            type="button"
             aria-label="Dismiss"
             title="Dismiss"
-            className="text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+            className={ACTION_BUTTON}
             onClick={(e) => {
               e.stopPropagation();
               dismissGroup();
             }}
           >
-            <X className="w-3.5 h-3.5" />
+            <X className="w-4 h-4" />
           </button>
         </div>
       </div>
