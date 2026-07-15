@@ -99,26 +99,33 @@ export function useNicknameColors(networkId: number | null, nicknames: string[])
     if (!networkId) return;
     
     const unsubscribe = EventsOn('metadata-updated', (data: any) => {
-      // Handle network_id comparison (can be number, null, or undefined)
-      const eventNetworkId = data.network_id != null ? Number(data.network_id) : null;
-      if (eventNetworkId === networkId && data.type === 'nickname_color') {
-        const nick = data.key.replace('nickname:', '');
+      const updates = Array.isArray(data.updates) ? data.updates : [data];
+      const applicable = updates.filter((update: any) => {
+        const eventNetworkId = update.network_id != null ? Number(update.network_id) : null;
+        return eventNetworkId === networkId && update.type === 'nickname_color' && typeof update.key === 'string';
+      });
+      if (applicable.length > 0) {
         setColors(prev => {
           const next = new Map(prev);
-          if (data.value) {
-            next.set(nick, data.value);
-            // Update cache
-            if (!cacheRef.current[networkId]) {
-              cacheRef.current[networkId] = { colors: {}, lastUpdate: Date.now() };
+          applicable.forEach((update: any) => {
+            const nick = update.key.replace('nickname:', '');
+            if (update.value) {
+              next.set(nick, update.value);
+              if (!cacheRef.current[networkId]) {
+                cacheRef.current[networkId] = { colors: {}, lastUpdate: Date.now() };
+              }
+              if (typeof update.value === 'string') {
+                cacheRef.current[networkId].colors[nick] = update.value;
+              }
+            } else {
+              next.delete(nick);
+              if (cacheRef.current[networkId]?.colors) {
+                delete cacheRef.current[networkId].colors[nick];
+              }
             }
-            if (typeof data.value === 'string') {
-              cacheRef.current[networkId].colors[nick] = data.value;
-            }
-          } else {
-            next.delete(nick);
-            if (cacheRef.current[networkId]?.colors) {
-              delete cacheRef.current[networkId].colors[nick];
-            }
+          });
+          if (cacheRef.current[networkId]) {
+            cacheRef.current[networkId].lastUpdate = Date.now();
           }
           return next;
         });

@@ -10,7 +10,10 @@ A test plugin for Cascade Chat that assigns consistent colors to nicknames in bo
 - Automatically colors nicknames when they:
   - Join a channel
   - Send messages
+  - Appear in a completed channel NAMES list
   - Change their nickname
+- Subscribes only to those events so large connection-time metadata bursts do
+  not crowd the completed NAMES snapshot out of the plugin IPC queue
 
 ## Installation
 
@@ -18,9 +21,11 @@ The plugin is already built and installed in `~/.cascade-chat/plugins/cascade-ni
 
 ## How It Works
 
-1. The plugin listens for IRC events (`message.received`, `user.joined`, `user.nick`)
+1. The plugin listens for IRC events (`message.received`, `user.joined`,
+   `channel.names.complete`, `user.nick`)
 2. When it sees a nickname, it calculates a color using MD5 hash of the nickname
-3. It sends a `ui_metadata.set` notification to the backend with the color
+3. It sends `ui_metadata.set` for live single-user changes and
+   `ui_metadata.set_batch` for completed channel rosters
 4. The backend stores the color in the metadata registry
 5. The frontend retrieves and displays the colors
 

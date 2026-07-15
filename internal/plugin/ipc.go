@@ -14,6 +14,18 @@ import (
 	"github.com/matt0x6f/irc-client/internal/logger"
 )
 
+const (
+	maxPluginLogPreview        = 4096
+	maxPluginNotificationBytes = 48 * 1024
+)
+
+func pluginLogPreview(line string) string {
+	if len(line) <= maxPluginLogPreview {
+		return line
+	}
+	return line[:maxPluginLogPreview] + "…"
+}
+
 // IPC handles communication with a plugin process
 type IPC struct {
 	cmd          *exec.Cmd
@@ -131,7 +143,8 @@ func NewIPC(pluginPath string, pluginID string, manager *Manager) (*IPC, error) 
 			line = strings.TrimSuffix(line, "\n")
 			logger.Log.Info().
 				Str("plugin", pluginID).
-				Str("stderr", line).
+				Str("stderr", pluginLogPreview(line)).
+				Int("line_length", len(line)).
 				Msg("Plugin stderr")
 		}
 	}()
@@ -241,7 +254,8 @@ func (ipc *IPC) readLoop() {
 
 		logger.Log.Info().
 			Str("plugin", ipc.pluginID).
-			Str("line", line).
+			Str("line", pluginLogPreview(line)).
+			Int("line_length", len(line)).
 			Msg("Received line from plugin stdout")
 
 		// Try to parse as Response first (responses have "result" or "error" field)
@@ -521,6 +535,9 @@ func (ipc *IPC) SendNotification(method string, params interface{}) error {
 	}
 
 	data = append(data, '\n')
+	if len(data) > maxPluginNotificationBytes {
+		return fmt.Errorf("notification exceeds plugin IPC frame limit: %d > %d bytes", len(data), maxPluginNotificationBytes)
+	}
 
 	// Best-effort, non-blocking hand-off to the writer goroutine. Notifications
 	// are called synchronously on the shared event-bus dispatcher; a direct pipe
@@ -562,6 +579,19 @@ func (ipc *IPC) handleNotification(req *Request) {
 				Str("plugin", ipc.pluginID).
 				Interface("params", req.Params).
 				Msg("Failed to parse ui_metadata.set params")
+		}
+	}
+
+	// Handle batched UI metadata snapshots. A single notification and event-bus
+	// entry keeps large nickname rosters from flooding connection startup.
+	if req.Method == "ui_metadata.set_batch" {
+		params, ok := req.Params.(map[string]interface{})
+		if ok {
+			if err := ipc.manager.HandleMetadataBatchRequest(ipc.pluginID, params); err != nil {
+				logger.Log.Error().Err(err).Str("plugin", ipc.pluginID).Msg("Error handling metadata batch request")
+			}
+		} else {
+			logger.Log.Warn().Str("plugin", ipc.pluginID).Msg("Failed to parse ui_metadata.set_batch params")
 		}
 	}
 

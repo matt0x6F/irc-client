@@ -31,7 +31,15 @@ type Manager struct {
 	actionQueue      chan Action
 	pluginCommands   map[string]pluginCommandEntry
 	isBuiltinCommand func(string) bool
+	metadataEventMu  sync.Mutex
+	metadataPending  map[string]map[string]interface{}
+	metadataFlushSet bool
 }
+
+const (
+	metadataEventFlushDelay  = 10 * time.Millisecond
+	pluginEventChunkOverhead = 128
+)
 
 // Plugin represents a running plugin instance
 type Plugin struct {
@@ -63,6 +71,7 @@ func NewManager(eventBus *events.EventBus, pluginDir string) *Manager {
 		actionQueue:      make(chan Action, 100),
 		pluginCommands:   make(map[string]pluginCommandEntry),
 		isBuiltinCommand: func(string) bool { return false },
+		metadataPending:  make(map[string]map[string]interface{}),
 	}
 
 	// Subscribe to events
@@ -109,6 +118,12 @@ func (pm *Manager) OnEvent(event events.Event) {
 		Int("plugin_count", len(plugins)).
 		Msg("Plugin manager received event")
 
+	params, err := pluginEventNotifications(event)
+	if err != nil {
+		logger.Log.Warn().Err(err).Str("event", event.Type).Msg("Event cannot be delivered within the plugin IPC frame limit")
+		return
+	}
+
 	// Send event to all plugins that subscribe to it
 	for _, plugin := range plugins {
 		// Check if plugin subscribes to this event type
@@ -121,22 +136,20 @@ func (pm *Manager) OnEvent(event events.Event) {
 		}
 
 		if subscribes {
-			// Send event notification
-			params := EventParams{
-				Type: event.Type,
-				Data: event.Data,
-			}
 			logger.Log.Info().
 				Str("plugin", plugin.Info.Name).
 				Str("event", event.Type).
-				Interface("data", event.Data).
+				Int("frames", len(params)).
 				Msg("Sending event to plugin")
-			if err := plugin.IPC.SendNotification("event", params); err != nil {
-				logger.Log.Warn().
-					Err(err).
-					Str("plugin", plugin.Info.Name).
-					Str("event", event.Type).
-					Msg("Failed to send event to plugin")
+			for _, frame := range params {
+				if err := plugin.IPC.SendNotification("event", frame); err != nil {
+					logger.Log.Warn().
+						Err(err).
+						Str("plugin", plugin.Info.Name).
+						Str("event", event.Type).
+						Msg("Failed to send event to plugin")
+					break
+				}
 			}
 		} else {
 			logger.Log.Debug().
@@ -146,6 +159,89 @@ func (pm *Manager) OnEvent(event events.Event) {
 				Msg("Plugin does not subscribe to this event")
 		}
 	}
+}
+
+// pluginEventNotifications turns one application event into bounded JSON-RPC
+// frames for plugin delivery. Most events stay exactly as they are. Large
+// events with a top-level "updates" array are split into independently useful
+// chunks, which is the generic batch shape used by the metadata/event system.
+func pluginEventNotifications(event events.Event) ([]EventParams, error) {
+	params := EventParams{Type: event.Type, Data: event.Data}
+	if pluginEventNotificationSize(params) <= maxPluginNotificationBytes {
+		return []EventParams{params}, nil
+	}
+
+	updates, ok := eventUpdateItems(event.Data["updates"])
+	if !ok || len(updates) == 0 {
+		return nil, fmt.Errorf("event is too large and has no chunkable updates array")
+	}
+
+	// Reserve room for the chunk index/total fields added after chunking.
+	target := maxPluginNotificationBytes - pluginEventChunkOverhead
+	chunks := make([][]interface{}, 0, 2)
+	current := make([]interface{}, 0)
+	for _, update := range updates {
+		candidate := append(append([]interface{}{}, current...), update)
+		data := cloneEventData(event.Data)
+		data["updates"] = candidate
+		if pluginEventNotificationSize(EventParams{Type: event.Type, Data: data}) <= target {
+			current = candidate
+			continue
+		}
+		if len(current) == 0 {
+			return nil, fmt.Errorf("one update exceeds the plugin IPC frame limit")
+		}
+		chunks = append(chunks, current)
+		current = []interface{}{update}
+	}
+	if len(current) > 0 {
+		chunks = append(chunks, current)
+	}
+
+	result := make([]EventParams, 0, len(chunks))
+	for i, chunk := range chunks {
+		data := cloneEventData(event.Data)
+		data["updates"] = chunk
+		data["batch_index"] = i + 1
+		data["batch_total"] = len(chunks)
+		frame := EventParams{Type: event.Type, Data: data}
+		if size := pluginEventNotificationSize(frame); size > maxPluginNotificationBytes {
+			return nil, fmt.Errorf("chunk %d exceeds the plugin IPC frame limit: %d bytes", i+1, size)
+		}
+		result = append(result, frame)
+	}
+	return result, nil
+}
+
+func pluginEventNotificationSize(params EventParams) int {
+	data, err := json.Marshal(Request{JSONRPC: "2.0", Method: "event", Params: params})
+	if err != nil {
+		return maxPluginNotificationBytes + 1
+	}
+	return len(data) + 1 // newline-delimited JSON
+}
+
+func eventUpdateItems(value interface{}) ([]interface{}, bool) {
+	switch updates := value.(type) {
+	case []interface{}:
+		return updates, true
+	case []map[string]interface{}:
+		items := make([]interface{}, len(updates))
+		for i := range updates {
+			items[i] = updates[i]
+		}
+		return items, true
+	default:
+		return nil, false
+	}
+}
+
+func cloneEventData(data map[string]interface{}) map[string]interface{} {
+	cloned := make(map[string]interface{}, len(data)+2)
+	for key, value := range data {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 // SetStorage sets the storage instance for the plugin manager
@@ -765,16 +861,111 @@ func (pm *Manager) emitLifecycle(action, plugin string) {
 
 // HandleMetadataRequest handles UI metadata from plugins
 func (pm *Manager) HandleMetadataRequest(pluginID string, params map[string]interface{}) error {
-	// Parse metadata request
+	update, eventData, err := parseMetadataUpdate(params)
+	if err != nil {
+		return err
+	}
+
+	pm.metadataReg.SetMetadata(pluginID, update.Scope, update.Type, update.Value, update.Priority)
+	pm.queueMetadataEvents([]map[string]interface{}{eventData})
+	return nil
+}
+
+// HandleMetadataBatchRequest stores and publishes many metadata values as one
+// snapshot, avoiding one event-bus entry per nickname for large NAMES lists.
+func (pm *Manager) HandleMetadataBatchRequest(pluginID string, params map[string]interface{}) error {
+	raw, ok := params["updates"]
+	if !ok {
+		return fmt.Errorf("missing updates field")
+	}
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		return fmt.Errorf("marshal metadata updates: %w", err)
+	}
+	var entries []map[string]interface{}
+	if err := json.Unmarshal(encoded, &entries); err != nil {
+		return fmt.Errorf("invalid updates field: %w", err)
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+
+	updates := make([]MetadataUpdate, 0, len(entries))
+	eventUpdates := make([]map[string]interface{}, 0, len(entries))
+	for i, entry := range entries {
+		update, eventData, err := parseMetadataUpdate(entry)
+		if err != nil {
+			return fmt.Errorf("invalid update %d: %w", i, err)
+		}
+		updates = append(updates, update)
+		eventUpdates = append(eventUpdates, eventData)
+	}
+
+	pm.metadataReg.SetMetadataBatch(pluginID, updates)
+	pm.queueMetadataEvents(eventUpdates)
+	return nil
+}
+
+// queueMetadataEvents coalesces plugin metadata writes before publishing them
+// to the shared event bus. This protects the IRC read path even when an older
+// plugin sends hundreds of ui_metadata.set notifications one at a time.
+func (pm *Manager) queueMetadataEvents(updates []map[string]interface{}) {
+	pm.metadataEventMu.Lock()
+	if pm.metadataPending == nil {
+		pm.metadataPending = make(map[string]map[string]interface{})
+	}
+	for _, update := range updates {
+		pm.metadataPending[metadataEventKey(update)] = update
+	}
+	if pm.metadataFlushSet {
+		pm.metadataEventMu.Unlock()
+		return
+	}
+	pm.metadataFlushSet = true
+	pm.metadataEventMu.Unlock()
+	time.AfterFunc(metadataEventFlushDelay, pm.flushMetadataEvents)
+}
+
+func metadataEventKey(update map[string]interface{}) string {
+	return fmt.Sprintf("%v\x00%v\x00%v\x00%v", update["network_id"], update["channel"], update["type"], update["key"])
+}
+
+func (pm *Manager) flushMetadataEvents() {
+	pm.metadataEventMu.Lock()
+	updates := make([]map[string]interface{}, 0, len(pm.metadataPending))
+	for _, update := range pm.metadataPending {
+		updates = append(updates, update)
+	}
+	pm.metadataPending = make(map[string]map[string]interface{})
+	pm.metadataFlushSet = false
+	pm.metadataEventMu.Unlock()
+
+	if len(updates) == 0 || pm.eventBus == nil {
+		return
+	}
+	logger.Log.Debug().Int("updates", len(updates)).Msg("Publishing coalesced metadata updates")
+	data := updates[0]
+	if len(updates) > 1 {
+		data = map[string]interface{}{"updates": updates}
+	}
+	pm.eventBus.Emit(events.Event{
+		Type:      events.EventMetadataUpdated,
+		Data:      data,
+		Timestamp: time.Now(),
+		Source:    events.EventSourceSystem,
+	})
+}
+
+func parseMetadataUpdate(params map[string]interface{}) (MetadataUpdate, map[string]interface{}, error) {
 	mtypeStr, ok := params["type"].(string)
 	if !ok {
-		return fmt.Errorf("missing or invalid type field")
+		return MetadataUpdate{}, nil, fmt.Errorf("missing or invalid type field")
 	}
 	mtype := MetadataType(mtypeStr)
 
 	key, ok := params["key"].(string)
 	if !ok {
-		return fmt.Errorf("missing or invalid key field")
+		return MetadataUpdate{}, nil, fmt.Errorf("missing or invalid key field")
 	}
 
 	value := params["value"]
@@ -805,17 +996,6 @@ func (pm *Manager) HandleMetadataRequest(pluginID string, params map[string]inte
 		scope.Channel = &channel
 	}
 
-	// Store metadata
-	pm.metadataReg.SetMetadata(pluginID, scope, mtype, value, priority)
-	logger.Log.Info().
-		Str("plugin", pluginID).
-		Str("type", string(mtype)).
-		Str("key", key).
-		Interface("value", value).
-		Interface("scope", scope).
-		Msg("Stored metadata")
-
-	// Emit event for frontend
 	eventData := map[string]interface{}{
 		"type":  string(mtype),
 		"key":   key,
@@ -827,14 +1007,7 @@ func (pm *Manager) HandleMetadataRequest(pluginID string, params map[string]inte
 	if scope.Channel != nil {
 		eventData["channel"] = *scope.Channel
 	}
-	pm.eventBus.Emit(events.Event{
-		Type:      events.EventMetadataUpdated,
-		Data:      eventData,
-		Timestamp: time.Now(),
-		Source:    events.EventSourceSystem,
-	})
-
-	return nil
+	return MetadataUpdate{Scope: scope, Type: mtype, Value: value, Priority: priority}, eventData, nil
 }
 
 // GetMetadata exposes metadata to app layer

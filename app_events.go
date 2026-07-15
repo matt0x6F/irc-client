@@ -264,6 +264,10 @@ func (a *App) OnEvent(event events.Event) {
 
 	// Handle metadata updates
 	if event.Type == events.EventMetadataUpdated {
+		if updates, ok := event.Data["updates"]; ok {
+			a.emit("metadata-updated", map[string]interface{}{"updates": updates})
+			return
+		}
 		a.emit("metadata-updated", map[string]interface{}{
 			"type":       event.Data["type"],
 			"network_id": event.Data["network_id"],

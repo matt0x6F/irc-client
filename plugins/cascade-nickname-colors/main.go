@@ -41,6 +41,18 @@ type EventParams struct {
 	Data map[string]interface{} `json:"data"`
 }
 
+// nicknameColorEvents is deliberately explicit instead of subscribing to "*".
+// A connection can publish thousands of user.meta snapshots while its channel
+// rosters are being populated. This plugin does not handle those snapshots, and
+// accepting them can fill its bounded IPC queue before channel.names.complete
+// arrives, leaving the initial roster uncoloured.
+var nicknameColorEvents = []string{
+	"message.received",
+	"user.joined",
+	"channel.names.complete",
+	"user.nick",
+}
+
 // Color palette - nice IRC colors
 var colors = []string{
 	"#FF6B6B", // Red
@@ -68,15 +80,6 @@ func getColorForNickname(nickname string) string {
 	// Use first byte to select color
 	index := int(hash[0]) % len(colors)
 	return colors[index]
-}
-
-// getMapKeys returns all keys from a map (for debugging)
-func getMapKeys(m map[string]interface{}) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	return keys
 }
 
 // sendNotification sends a JSON-RPC notification (no response expected)
@@ -150,6 +153,15 @@ func sendError(id interface{}, code int, message string) error {
 
 // setNicknameColor sets the color for a nickname
 func setNicknameColor(nickname string, networkID interface{}) {
+	params := nicknameColorParams(nickname, networkID)
+
+	fmt.Fprintf(os.Stderr, "[nickname-colors] Setting color for %s: %s (networkID: %v)\n", nickname, params["value"], networkID)
+	if err := sendNotification("ui_metadata.set", params); err != nil {
+		fmt.Fprintf(os.Stderr, "[nickname-colors] Error sending color metadata: %v\n", err)
+	}
+}
+
+func nicknameColorParams(nickname string, networkID interface{}) map[string]interface{} {
 	key := fmt.Sprintf("nickname:%s", nickname)
 	color := getColorForNickname(nickname)
 
@@ -177,19 +189,28 @@ func setNicknameColor(nickname string, networkID interface{}) {
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "[nickname-colors] Setting color for %s: %s (networkID: %v)\n", nickname, color, networkID)
-	if err := sendNotification("ui_metadata.set", params); err != nil {
-		fmt.Fprintf(os.Stderr, "[nickname-colors] Error sending color metadata: %v\n", err)
-	} else {
-		fmt.Fprintf(os.Stderr, "[nickname-colors] Successfully sent color for %s\n", nickname)
+	return params
+}
+
+func setNicknameColorsBatch(nicknames []string, networkID interface{}) {
+	updates := make([]map[string]interface{}, 0, len(nicknames))
+	for _, nickname := range nicknames {
+		if nickname != "" {
+			updates = append(updates, nicknameColorParams(nickname, networkID))
+		}
+	}
+	if len(updates) == 0 {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "[nickname-colors] Sending color batch for %d users\n", len(updates))
+	if err := sendNotification("ui_metadata.set_batch", map[string]interface{}{"updates": updates}); err != nil {
+		fmt.Fprintf(os.Stderr, "[nickname-colors] Error sending color metadata batch: %v\n", err)
 	}
 }
 
 // handleEvent processes IRC events
 func handleEvent(params EventParams) {
 	fmt.Fprintf(os.Stderr, "[nickname-colors] Received event: %s\n", params.Type)
-	fmt.Fprintf(os.Stderr, "[nickname-colors] Event data keys: %v\n", getMapKeys(params.Data))
-	fmt.Fprintf(os.Stderr, "[nickname-colors] Full event data: %+v\n", params.Data)
 
 	// Extract networkID from event data (can be networkId or network_id)
 	var networkID interface{}
@@ -226,28 +247,24 @@ func handleEvent(params EventParams) {
 		// Process all users in the channel when NAMES list is complete
 		fmt.Fprintf(os.Stderr, "[nickname-colors] Received channel.names.complete event\n")
 		if usersRaw, ok := params.Data["users"]; ok {
-			fmt.Fprintf(os.Stderr, "[nickname-colors] Found users field, type: %T, value: %v\n", usersRaw, usersRaw)
+			var users []string
 			// Users can be []interface{} when unmarshaled from JSON
 			if usersArray, ok := usersRaw.([]interface{}); ok {
-				fmt.Fprintf(os.Stderr, "[nickname-colors] Processing %d users from channel.names.complete\n", len(usersArray))
 				for _, userRaw := range usersArray {
 					if user, ok := userRaw.(string); ok && user != "" {
-						fmt.Fprintf(os.Stderr, "[nickname-colors] Setting color for user from names list: %s\n", user)
-						setNicknameColor(user, networkID)
+						users = append(users, user)
 					}
 				}
 			} else if usersArray, ok := usersRaw.([]string); ok {
-				// Direct []string type (less common but possible)
-				fmt.Fprintf(os.Stderr, "[nickname-colors] Processing %d users from channel.names.complete ([]string)\n", len(usersArray))
 				for _, user := range usersArray {
 					if user != "" {
-						fmt.Fprintf(os.Stderr, "[nickname-colors] Setting color for user from names list: %s\n", user)
-						setNicknameColor(user, networkID)
+						users = append(users, user)
 					}
 				}
 			} else {
 				fmt.Fprintf(os.Stderr, "[nickname-colors] WARNING: users field is not []interface{} or []string, type: %T\n", usersRaw)
 			}
+			setNicknameColorsBatch(users, networkID)
 		} else {
 			fmt.Fprintf(os.Stderr, "[nickname-colors] WARNING: No users field in channel.names.complete event data\n")
 		}
@@ -295,8 +312,6 @@ func main() {
 
 		// Write directly to stderr for immediate output
 		// Don't call Sync() on pipes - it can block
-		os.Stderr.Write([]byte(fmt.Sprintf("[nickname-colors] Received line from stdin: %s\n", line)))
-
 		var req Request
 		if err := json.Unmarshal([]byte(line), &req); err != nil {
 			os.Stderr.Write([]byte(fmt.Sprintf("[nickname-colors] Error parsing request: %v\n", err)))
@@ -320,7 +335,7 @@ func main() {
 				"version":        "1.0.0",
 				"description":    "Assigns consistent colors to nicknames in sidebar and chat",
 				"author":         "Cascade Chat",
-				"events":         []string{"*"},
+				"events":         nicknameColorEvents,
 				"metadata_types": []string{"nickname_color"},
 			}); err != nil {
 				os.Stderr.Write([]byte(fmt.Sprintf("[nickname-colors] Error sending initialize response: %v\n", err)))

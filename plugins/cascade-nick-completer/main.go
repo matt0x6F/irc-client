@@ -51,6 +51,9 @@ var state = &PluginState{
 
 func main() {
 	scanner := bufio.NewScanner(os.Stdin)
+	// The manager bounds event frames below 48 KiB. Keep a larger defensive
+	// ceiling for future request types and protocol overhead.
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	writer := bufio.NewWriter(os.Stdout)
 	defer writer.Flush()
 
@@ -117,7 +120,9 @@ func handleInitialize(params interface{}) map[string]interface{} {
 		"version":     "1.0.0",
 		"description": "Provides nickname completion with configurable trigger and separator",
 		"author":      "Cascade Chat",
-		"events":      []string{"*"},
+		// Completion is provided by the host UI using this plugin's config; this
+		// process does not consume runtime events.
+		"events": []string{},
 		"config_schema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{

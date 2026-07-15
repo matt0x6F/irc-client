@@ -89,3 +89,9 @@ type MetadataSetParams struct {
 	Channel   *string     `json:"channel,omitempty"`
 	Priority  int         `json:"priority,omitempty"`
 }
+
+// MetadataSetBatchParams represents a group of metadata updates delivered in
+// one ui_metadata.set_batch notification.
+type MetadataSetBatchParams struct {
+	Updates []MetadataSetParams `json:"updates"`
+}

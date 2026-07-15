@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"io"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -72,6 +73,30 @@ func TestSendNotificationDoesNotBlockOnStuckPlugin(t *testing.T) {
 		// Returned promptly despite a plugin that never drains stdin.
 	case <-time.After(3 * time.Second):
 		t.Fatal("SendNotification blocked on a plugin that stopped draining stdin — this is the event-bus-freezing deadlock")
+	}
+}
+
+func TestPluginLogPreviewIsBounded(t *testing.T) {
+	line := strings.Repeat("x", maxPluginLogPreview+100)
+	preview := pluginLogPreview(line)
+	if len(preview) > maxPluginLogPreview+len("…") {
+		t.Fatalf("preview length = %d", len(preview))
+	}
+	if !strings.HasSuffix(preview, "…") {
+		t.Fatalf("preview was not marked as truncated")
+	}
+}
+
+func TestSendNotificationRejectsOversizedFrame(t *testing.T) {
+	bw := &blockingWriter{closed: make(chan struct{})}
+	ipc := newTestIPC(bw, 1)
+	t.Cleanup(func() { _ = ipc.Close() })
+
+	err := ipc.SendNotification("event", map[string]interface{}{
+		"payload": strings.Repeat("x", maxPluginNotificationBytes),
+	})
+	if err == nil {
+		t.Fatal("expected oversized notification to be rejected")
 	}
 }
 
