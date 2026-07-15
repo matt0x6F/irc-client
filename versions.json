@@ -7,11 +7,16 @@
     ]
   },
   {
-    "version": "26.7.5-rc.160",
-    "title": "26.7.5-rc.160",
+    "version": "26.7.5-rc.161",
+    "title": "26.7.5-rc.161",
     "aliases": [
       "prerelease"
     ]
+  },
+  {
+    "version": "26.7.5-rc.160",
+    "title": "26.7.5-rc.160",
+    "aliases": []
   },
   {
     "version": "26.7.5-rc.158",
