@@ -3,6 +3,7 @@ package irc
 import (
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"sync"
@@ -2291,6 +2292,7 @@ func (c *IRCClient) onConnect(e ircmsg.Message) {
 // app turns into an auto-reconnect with a fresh client).
 func (c *IRCClient) onDisconnect(e ircmsg.Message) {
 	c.mu.Lock()
+	wasAbandoned := c.abandoned
 	c.connected = false
 	// The app is the sole reconnect owner: every drop is recovered by building a
 	// FRESH IRCClient (handleConnectionLost -> connectNetwork), never by reusing
@@ -2348,7 +2350,7 @@ func (c *IRCClient) onDisconnect(e ircmsg.Message) {
 		NetworkID:   c.networkID,
 		ChannelID:   nil, // Status window
 		User:        "*",
-		Message:     "Disconnected from server",
+		Message:     disconnectStatusText(wasAbandoned, c.conn.LastError()),
 		MessageType: "status",
 		Timestamp:   time.Now(),
 		RawLine:     rawLine,
@@ -2368,6 +2370,26 @@ func (c *IRCClient) onDisconnect(e ircmsg.Message) {
 	c.stopMetaEmitter()
 
 	logger.Log.Debug().Int64("network_id", c.networkID).Msg("Disconnect callback: finished processing disconnect")
+}
+
+// disconnectStatusText adds the socket-level cause for an unexpected drop. A
+// server may be unable to send an IRC ERROR before closing (notably when its
+// SendQ overflows), but the transport still reports EOF/reset/timeout. Deliberate
+// teardowns and server ERROR handling mark the client abandoned first, so those
+// retain the quiet generic status and don't duplicate a reason already shown.
+func disconnectStatusText(wasAbandoned bool, err error) string {
+	const generic = "Disconnected from server"
+	if wasAbandoned || err == nil {
+		return generic
+	}
+	if errors.Is(err, io.EOF) {
+		return generic + ": remote host closed the connection (EOF)"
+	}
+	reason := strings.TrimSpace(err.Error())
+	if reason == "" {
+		return generic
+	}
+	return generic + ": " + reason
 }
 
 // handleServerError handles the ERROR command a server sends just before it
@@ -2630,7 +2652,7 @@ func (c *IRCClient) setupHandlers() {
 
 		// Parse names (format: "@nick1 +nick2 nick3"; with multi-prefix: "@+nick1 …")
 		names := strings.Fields(namesList)
-		addedCount := 0
+		users := make([]storage.ChannelUser, 0, len(names))
 		for _, nameWithMode := range names {
 			// Extract mode prefixes (@, +, etc.) and nickname. With multi-prefix
 			// enabled this captures every prefix the user holds, highest first.
@@ -2639,15 +2661,16 @@ func (c *IRCClient) setupHandlers() {
 			// it is a bare nick. Store the bare nick and seed the roster host.
 			nickname, userhost := splitNickUserHost(rest)
 			if len(nickname) > 0 {
-				if err := c.storage.AddChannelUser(ch.ID, nickname, modes); err != nil {
-					logger.Log.Warn().Err(err).Str("nickname", nickname).Str("channel", channel).Msg("Failed to add user from NAMES")
-				} else {
-					addedCount++
-				}
+				users = append(users, storage.ChannelUser{Nickname: nickname, Modes: modes})
 				if userhost != "" {
 					c.applyUserMeta(nickname, func(m *UserMeta) { m.Host = userhost })
 				}
 			}
+		}
+		addedCount := len(users)
+		if err := c.storage.AddChannelUsers(ch.ID, users); err != nil {
+			logger.Log.Warn().Err(err).Int("count", len(users)).Str("channel", channel).Msg("Failed to add users from NAMES")
+			addedCount = 0
 		}
 		logger.Log.Debug().Str("channel", channel).Int("added", addedCount).Int("total_in_response", len(names)).Msg("Processed NAMES response")
 	})

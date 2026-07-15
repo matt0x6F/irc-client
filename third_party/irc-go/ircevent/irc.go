@@ -80,6 +80,12 @@ func (irc *Connection) getError() error {
 	return irc.lastError
 }
 
+// LastError returns the transport/protocol error that stopped the current
+// connection. It may be nil for a clean or locally initiated teardown.
+func (irc *Connection) LastError() error {
+	return irc.getError()
+}
+
 // Send a keepalive PING in our timestamp-based format
 func (irc *Connection) ping() {
 	param := fmt.Sprintf("%s%d", keepalivePrefix, time.Now().UnixNano())

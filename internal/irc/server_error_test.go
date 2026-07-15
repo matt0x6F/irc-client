@@ -1,12 +1,26 @@
 package irc
 
 import (
+	"errors"
+	"io"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/matt0x6f/irc-client/internal/events"
 )
+
+func TestDisconnectStatusTextIncludesUnexpectedTransportCause(t *testing.T) {
+	if got := disconnectStatusText(false, errors.New("EOF")); got != "Disconnected from server: EOF" {
+		t.Fatalf("disconnectStatusText unexpected drop = %q", got)
+	}
+	if got := disconnectStatusText(false, io.EOF); got != "Disconnected from server: remote host closed the connection (EOF)" {
+		t.Fatalf("disconnectStatusText EOF = %q", got)
+	}
+	if got := disconnectStatusText(true, errors.New("EOF")); got != "Disconnected from server" {
+		t.Fatalf("disconnectStatusText deliberate drop = %q", got)
+	}
+}
 
 type errorEventRecorder struct {
 	mu     sync.Mutex
