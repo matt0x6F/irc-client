@@ -16,11 +16,12 @@ import { useThemeStore, ACCENTS, type ThemeMode } from '../stores/theme';
 import { useSettingsStore, type PrefixDisplayMode, type UpdateChannel } from '../stores/settings';
 import { usePreferencesStore } from '../stores/preferences';
 import { serializeNetworkForm } from '../lib/settings-network-form';
+import { FileTransferSettings } from './file-transfer-settings';
 
-export type SettingsSection = 'networks' | 'plugins' | 'scripts' | 'display' | 'notifications' | 'advanced' | 'about';
+export type SettingsSection = 'networks' | 'plugins' | 'scripts' | 'display' | 'notifications' | 'privacy' | 'advanced' | 'about';
 
 export const isSettingsSection = (v: string): v is SettingsSection =>
-  v === 'networks' || v === 'plugins' || v === 'scripts' || v === 'display' || v === 'notifications' || v === 'advanced' || v === 'about';
+  v === 'networks' || v === 'plugins' || v === 'scripts' || v === 'display' || v === 'notifications' || v === 'privacy' || v === 'advanced' || v === 'about';
 
 interface SettingsPanelProps {
   /** Currently selected pane (controlled by the host window). */
@@ -1388,6 +1389,8 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
         );
       case 'scripts':
         return <ScriptsPanel />;
+      case 'privacy':
+        return <FileTransferSettings />;
       case 'display':
         return (
           <div className="mb-6">
@@ -2019,6 +2022,7 @@ export function SettingsPanel({ section, onSectionChange }: SettingsPanelProps) 
     { id: 'scripts', label: 'Scripts' },
     { id: 'display', label: 'Display' },
     { id: 'notifications', label: 'Notifications' },
+    { id: 'privacy', label: 'Privacy & safety' },
     { id: 'advanced', label: 'Advanced' },
     { id: 'about', label: 'About' },
   ];

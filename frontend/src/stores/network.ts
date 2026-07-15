@@ -379,6 +379,7 @@ interface NetworkState {
   clearSeenActivity: () => Promise<void>;
   clearAllActivity: () => Promise<void>;
   selectActivityInbox: () => Promise<void>;
+  selectFileTransfers: () => void;
   activateActivityGroup: (group: ActivityGroup) => Promise<void>;
 }
 
@@ -1542,6 +1543,10 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
   selectActivityInbox: async () => {
     set({ selectedNetwork: null, selectedChannel: 'activity' });
     await get().loadActivityItems();
+  },
+  selectFileTransfers: () => {
+    clearHistoryWaiter();
+    set({ selectedNetwork: null, selectedChannel: 'file-transfers' });
   },
   activateActivityGroup: async (group) => {
     const ids = group.items.filter((i) => !i.seen).map((i) => i.id);

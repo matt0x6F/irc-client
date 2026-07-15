@@ -158,6 +158,11 @@ func Migrate(db *sqlx.DB) error {
 		return fmt.Errorf("activity ignored senders migration failed: %w", err)
 	}
 
+	// Handle durable file-transfer state and history.
+	if err := migrateFileTransfers(db); err != nil {
+		return fmt.Errorf("file transfers migration failed: %w", err)
+	}
+
 	return nil
 }
 
@@ -1124,4 +1129,45 @@ func activityItemColumns(db *sqlx.DB) (map[string]struct{}, error) {
 		cols[name] = struct{}{}
 	}
 	return cols, rows.Err()
+}
+
+const createFileTransfersTable = `
+CREATE TABLE IF NOT EXISTS file_transfers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    transfer_id TEXT NOT NULL UNIQUE,
+    network_id INTEGER,
+    network_name TEXT NOT NULL DEFAULT '',
+    peer TEXT NOT NULL,
+    direction TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    local_path TEXT NOT NULL DEFAULT '',
+    partial_path TEXT NOT NULL DEFAULT '',
+    size_bytes INTEGER NOT NULL DEFAULT 0,
+    transferred_bytes INTEGER NOT NULL DEFAULT 0,
+    state TEXT NOT NULL,
+    error TEXT NOT NULL DEFAULT '',
+    resumable INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    finished_at TIMESTAMP,
+    FOREIGN KEY (network_id) REFERENCES networks(id) ON DELETE SET NULL
+);
+`
+
+const createFileTransfersIndexes = `
+CREATE INDEX IF NOT EXISTS idx_file_transfers_active ON file_transfers(finished_at, created_at);
+CREATE INDEX IF NOT EXISTS idx_file_transfers_history ON file_transfers(finished_at DESC, transfer_id DESC);
+`
+
+// migrateFileTransfers creates the durable store for active file transfers and
+// terminal transfer history. Both statements are idempotent because migrations
+// run on every startup rather than through a version table.
+func migrateFileTransfers(db *sqlx.DB) error {
+	if _, err := db.Exec(createFileTransfersTable); err != nil {
+		return fmt.Errorf("failed to create file_transfers table: %w", err)
+	}
+	if _, err := db.Exec(createFileTransfersIndexes); err != nil {
+		return fmt.Errorf("failed to create file_transfers indexes: %w", err)
+	}
+	return nil
 }

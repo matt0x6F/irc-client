@@ -16,7 +16,11 @@ interface NavPayload {
 export function registerNotificationRouting(): () => void {
   const offNav = EventsOn('notification:navigate', (p: NavPayload) => {
     if (p?.target) {
-      void useNetworkStore.getState().selectPane(p.networkId, p.target);
+      if (p.target === 'file-transfers') {
+        useNetworkStore.getState().selectFileTransfers();
+      } else {
+        void useNetworkStore.getState().selectPane(p.networkId, p.target);
+      }
     }
     void FocusMainWindow();
   });

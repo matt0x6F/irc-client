@@ -14,6 +14,7 @@ type Querier interface {
 	AddIgnoredSender(ctx context.Context, arg AddIgnoredSenderParams) error
 	AddMonitoredNick(ctx context.Context, arg AddMonitoredNickParams) error
 	ClearChannelUsers(ctx context.Context, channelID int64) error
+	ClearFileTransferHistory(ctx context.Context) error
 	ClearNetworkChannelUsers(ctx context.Context, networkID int64) error
 	ClearNetworkIcon(ctx context.Context, id int64) error
 	CountIgnoredSender(ctx context.Context, arg CountIgnoredSenderParams) (int64, error)
@@ -28,6 +29,7 @@ type Querier interface {
 	DeleteAllActivityItems(ctx context.Context) error
 	DeleteAllServers(ctx context.Context, networkID int64) error
 	DeleteExpiredInviteActivity(ctx context.Context, expiresAt sql.NullTime) error
+	DeleteFileTransferHistoryEntry(ctx context.Context, transferID string) error
 	DeleteInviteActivity(ctx context.Context, arg DeleteInviteActivityParams) error
 	DeleteInviteActivityFromSender(ctx context.Context, arg DeleteInviteActivityFromSenderParams) error
 	DeleteNetwork(ctx context.Context, id int64) error
@@ -39,6 +41,7 @@ type Querier interface {
 	GetChannelUserModes(ctx context.Context, arg GetChannelUserModesParams) (sql.NullString, error)
 	GetChannelUsers(ctx context.Context, channelID int64) ([]ChannelUser, error)
 	GetChannels(ctx context.Context, networkID int64) ([]Channel, error)
+	GetFileTransfer(ctx context.Context, transferID string) (FileTransfer, error)
 	GetJoinedChannels(ctx context.Context, arg GetJoinedChannelsParams) ([]Channel, error)
 	GetLastOpenChannel(ctx context.Context) (GetLastOpenChannelRow, error)
 	GetLastOpenPM(ctx context.Context) (GetLastOpenPMRow, error)
@@ -74,15 +77,19 @@ type Querier interface {
 	GetSTSPolicy(ctx context.Context, hostname string) (StsPolicy, error)
 	GetServers(ctx context.Context, networkID int64) ([]Server, error)
 	GetSetting(ctx context.Context, key string) (string, error)
+	ListActiveFileTransfers(ctx context.Context) ([]FileTransfer, error)
 	ListActivityItems(ctx context.Context, limit int64) ([]ActivityItem, error)
 	ListAllIgnoredSenders(ctx context.Context) ([]ListAllIgnoredSendersRow, error)
 	ListDisabledScripts(ctx context.Context) ([]string, error)
+	ListFileTransferHistory(ctx context.Context, arg ListFileTransferHistoryParams) ([]FileTransfer, error)
+	ListFileTransferHistoryAfter(ctx context.Context, arg ListFileTransferHistoryAfterParams) ([]FileTransfer, error)
 	ListIgnoredSendersByNetwork(ctx context.Context, networkID int64) ([]string, error)
 	ListInviteActivity(ctx context.Context, arg ListInviteActivityParams) ([]ActivityItem, error)
 	MarkActivityItemSeen(ctx context.Context, id int64) error
 	MarkAllActivityItemsSeen(ctx context.Context) error
 	NetworksWithExpiredInvites(ctx context.Context, expiresAt sql.NullTime) ([]int64, error)
 	PinMessage(ctx context.Context, arg PinMessageParams) error
+	PruneFileTransferHistory(ctx context.Context, finishedAt sql.NullTime) error
 	PruneLinkPreviewsToLimit(ctx context.Context, offset int64) error
 	RemoveChannelUser(ctx context.Context, arg RemoveChannelUserParams) error
 	RemoveIgnoredSender(ctx context.Context, arg RemoveIgnoredSenderParams) error
@@ -108,6 +115,7 @@ type Querier interface {
 	UpdateNetworkSortOrder(ctx context.Context, arg UpdateNetworkSortOrderParams) error
 	UpdatePMConversationIsOpen(ctx context.Context, arg UpdatePMConversationIsOpenParams) error
 	UpdateServer(ctx context.Context, arg UpdateServerParams) error
+	UpsertFileTransfer(ctx context.Context, arg UpsertFileTransferParams) error
 	UpsertLinkPreview(ctx context.Context, arg UpsertLinkPreviewParams) error
 	UpsertSTSPolicy(ctx context.Context, arg UpsertSTSPolicyParams) error
 	UpsertScriptEnabled(ctx context.Context, arg UpsertScriptEnabledParams) error

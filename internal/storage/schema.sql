@@ -192,6 +192,31 @@ CREATE TABLE IF NOT EXISTS activity_ignored_senders (
     UNIQUE(network_id, nick)
 );
 
+-- Durable file-transfer state and history. Local paths are intentionally kept
+-- in the backend storage model and must not be exposed through Wails views.
+-- A NULL finished_at marks an active/pending transfer; terminal transfers set
+-- finished_at and become eligible for history retention and clearing.
+CREATE TABLE IF NOT EXISTS file_transfers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    transfer_id TEXT NOT NULL UNIQUE,
+    network_id INTEGER,
+    network_name TEXT NOT NULL DEFAULT '',
+    peer TEXT NOT NULL,
+    direction TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    local_path TEXT NOT NULL DEFAULT '',
+    partial_path TEXT NOT NULL DEFAULT '',
+    size_bytes INTEGER NOT NULL DEFAULT 0,
+    transferred_bytes INTEGER NOT NULL DEFAULT 0,
+    state TEXT NOT NULL,
+    error TEXT NOT NULL DEFAULT '',
+    resumable INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    finished_at TIMESTAMP,
+    FOREIGN KEY (network_id) REFERENCES networks(id) ON DELETE SET NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_messages_network_channel_time ON messages(network_id, channel_id, timestamp);
 CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
 -- Per-conversation dedup: a broadcast event (one QUIT/one msgid) fans out to one
@@ -205,6 +230,8 @@ CREATE INDEX IF NOT EXISTS idx_servers_network_order ON servers(network_id, "ord
 CREATE INDEX IF NOT EXISTS idx_pinned_network_channel ON pinned_messages(network_id, channel_id);
 CREATE INDEX IF NOT EXISTS idx_activity_items_seen_time ON activity_items(seen, timestamp);
 CREATE INDEX IF NOT EXISTS idx_activity_items_network ON activity_items(network_id);
+CREATE INDEX IF NOT EXISTS idx_file_transfers_active ON file_transfers(finished_at, created_at);
+CREATE INDEX IF NOT EXISTS idx_file_transfers_history ON file_transfers(finished_at DESC, transfer_id DESC);
 
 -- FTS5 full-text search index for messages
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(

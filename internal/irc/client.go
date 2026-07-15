@@ -2056,8 +2056,24 @@ func (c *IRCClient) handlePrivmsg(e ircmsg.Message) {
 				ctcpArgs = strings.Join(parts[1:], " ")
 			}
 
-			// Handle CTCP requests
-			if ctcpCommand == "ACTION" {
+			// DCC is negotiated over CTCP but owns independent TCP sessions. Emit
+			// the control payload without treating it as a chat message or a generic
+			// CTCP request; the App-level DCC manager applies feature gating.
+			if ctcpCommand == "DCC" {
+				c.eventBus.Emit(events.Event{
+					Type: EventDCCControl,
+					Data: map[string]interface{}{
+						"network":     c.network.Address,
+						"networkId":   c.networkID,
+						"networkName": c.network.Name,
+						"peer":        user,
+						"payload":     ctcpArgs,
+					},
+					Timestamp: time.Now(),
+					Source:    events.EventSourceIRC,
+				})
+				return
+			} else if ctcpCommand == "ACTION" {
 				// CTCP ACTION - already handled, but store as action type
 				// Determine if it's a channel or private message
 				var channelID *int64

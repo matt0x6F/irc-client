@@ -54,6 +54,26 @@ type ChannelUser struct {
 	UpdatedAt time.Time      `json:"updated_at"`
 }
 
+type FileTransfer struct {
+	ID               int64         `json:"id"`
+	TransferID       string        `json:"transfer_id"`
+	NetworkID        sql.NullInt64 `json:"network_id"`
+	NetworkName      string        `json:"network_name"`
+	Peer             string        `json:"peer"`
+	Direction        string        `json:"direction"`
+	Filename         string        `json:"filename"`
+	LocalPath        string        `json:"local_path"`
+	PartialPath      string        `json:"partial_path"`
+	SizeBytes        int64         `json:"size_bytes"`
+	TransferredBytes int64         `json:"transferred_bytes"`
+	State            string        `json:"state"`
+	Error            string        `json:"error"`
+	Resumable        int64         `json:"resumable"`
+	CreatedAt        time.Time     `json:"created_at"`
+	UpdatedAt        time.Time     `json:"updated_at"`
+	FinishedAt       sql.NullTime  `json:"finished_at"`
+}
+
 type LinkPreview struct {
 	Url         string `json:"url"`
 	Status      string `json:"status"`

@@ -22,9 +22,10 @@ const activityItem = (o: Partial<any> = {}) => ({
 function base(over = {}) {
   return {
     networks: nets, selectedNetwork: 1, activityActive: false,
+    fileTransfersActive: false, fileTransferAttention: 0,
     connectionStatus: { 1: true, 2: false }, connectingNetworks: {},
     unreadCounts: new Map<string, number>(), activityItems: [],
-    onSelectNetwork: vi.fn(), onSelectActivity: vi.fn(), onAddNetwork: vi.fn(),
+    onSelectNetwork: vi.fn(), onSelectActivity: vi.fn(), onSelectFileTransfers: vi.fn(), onAddNetwork: vi.fn(),
     onNetworkContextMenu: vi.fn(), onReordered: vi.fn(), ...over,
   };
 }
@@ -44,6 +45,14 @@ describe('NetworkRail', () => {
     expect(b.onSelectActivity).toHaveBeenCalled();
     fireEvent.click(screen.getByTestId('rail-add-network'));
     expect(b.onAddNetwork).toHaveBeenCalled();
+  });
+
+  it('opens File Transfers and badges requests needing attention', () => {
+    const b = base({ fileTransferAttention: 2 });
+    render(<NetworkRail {...b} />);
+    fireEvent.click(screen.getByTestId('rail-file-transfers'));
+    expect(b.onSelectFileTransfers).toHaveBeenCalled();
+    expect(screen.getByTestId('rail-file-transfers-badge')).toHaveTextContent('2');
   });
 
   it('shows an unseen badge on the activity tile when there is unseen activity', () => {
