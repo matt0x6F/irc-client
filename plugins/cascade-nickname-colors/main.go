@@ -41,6 +41,18 @@ type EventParams struct {
 	Data map[string]interface{} `json:"data"`
 }
 
+// nicknameColorEvents is deliberately explicit instead of subscribing to "*".
+// A connection can publish thousands of user.meta snapshots while its channel
+// rosters are being populated. This plugin does not handle those snapshots, and
+// accepting them can fill its bounded IPC queue before channel.names.complete
+// arrives, leaving the initial roster uncoloured.
+var nicknameColorEvents = []string{
+	"message.received",
+	"user.joined",
+	"channel.names.complete",
+	"user.nick",
+}
+
 // Color palette - nice IRC colors
 var colors = []string{
 	"#FF6B6B", // Red
@@ -320,7 +332,7 @@ func main() {
 				"version":        "1.0.0",
 				"description":    "Assigns consistent colors to nicknames in sidebar and chat",
 				"author":         "Cascade Chat",
-				"events":         []string{"*"},
+				"events":         nicknameColorEvents,
 				"metadata_types": []string{"nickname_color"},
 			}); err != nil {
 				os.Stderr.Write([]byte(fmt.Sprintf("[nickname-colors] Error sending initialize response: %v\n", err)))
