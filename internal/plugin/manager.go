@@ -22,18 +22,19 @@ type pluginCommandEntry struct {
 
 // Manager manages plugin lifecycle and event routing
 type Manager struct {
-	plugins          map[string]*Plugin
-	eventBus         *events.EventBus
-	metadataReg      *MetadataRegistry
-	pluginDir        string
-	storage          *storage.Storage
-	mu               sync.RWMutex
-	actionQueue      chan Action
-	pluginCommands   map[string]pluginCommandEntry
-	isBuiltinCommand func(string) bool
-	metadataEventMu  sync.Mutex
-	metadataPending  map[string]map[string]interface{}
-	metadataFlushSet bool
+	plugins           map[string]*Plugin
+	eventBus          *events.EventBus
+	metadataReg       *MetadataRegistry
+	pluginDir         string
+	storage           *storage.Storage
+	mu                sync.RWMutex
+	actionQueue       chan Action
+	pluginCommands    map[string]pluginCommandEntry
+	isBuiltinCommand  func(string) bool
+	metadataEventMu   sync.Mutex
+	metadataPending   map[string]map[string]interface{}
+	metadataFlushSet  bool
+	metadataLastWrite time.Time
 }
 
 const (
@@ -102,14 +103,16 @@ func (pm *Manager) OnEvent(event events.Event) {
 	pm.mu.RLock()
 	plugins := make([]*Plugin, 0, len(pm.plugins))
 	for _, plugin := range pm.plugins {
-		plugins = append(plugins, plugin)
+		for _, eventType := range plugin.Info.Events {
+			if eventType == event.Type || eventType == "*" {
+				plugins = append(plugins, plugin)
+				break
+			}
+		}
 	}
 	pm.mu.RUnlock()
 
 	if len(plugins) == 0 {
-		logger.Log.Debug().
-			Str("event", event.Type).
-			Msg("No plugins loaded, skipping event")
 		return
 	}
 
@@ -124,39 +127,24 @@ func (pm *Manager) OnEvent(event events.Event) {
 		return
 	}
 
-	// Send event to all plugins that subscribe to it
+	// Send event only to subscribed plugins. Filtering before logging and JSON
+	// framing is important: roster snapshots can contain thousands of events,
+	// and an unused wildcard routing path must be effectively free.
 	for _, plugin := range plugins {
-		// Check if plugin subscribes to this event type
-		subscribes := false
-		for _, eventType := range plugin.Info.Events {
-			if eventType == event.Type || eventType == "*" {
-				subscribes = true
+		logger.Log.Debug().
+			Str("plugin", plugin.Info.Name).
+			Str("event", event.Type).
+			Int("frames", len(params)).
+			Msg("Sending event to plugin")
+		for _, frame := range params {
+			if err := plugin.IPC.SendNotification("event", frame); err != nil {
+				logger.Log.Warn().
+					Err(err).
+					Str("plugin", plugin.Info.Name).
+					Str("event", event.Type).
+					Msg("Failed to send event to plugin")
 				break
 			}
-		}
-
-		if subscribes {
-			logger.Log.Info().
-				Str("plugin", plugin.Info.Name).
-				Str("event", event.Type).
-				Int("frames", len(params)).
-				Msg("Sending event to plugin")
-			for _, frame := range params {
-				if err := plugin.IPC.SendNotification("event", frame); err != nil {
-					logger.Log.Warn().
-						Err(err).
-						Str("plugin", plugin.Info.Name).
-						Str("event", event.Type).
-						Msg("Failed to send event to plugin")
-					break
-				}
-			}
-		} else {
-			logger.Log.Debug().
-				Str("plugin", plugin.Info.Name).
-				Str("event", event.Type).
-				Strs("subscribed_events", plugin.Info.Events).
-				Msg("Plugin does not subscribe to this event")
 		}
 	}
 }
@@ -917,6 +905,7 @@ func (pm *Manager) queueMetadataEvents(updates []map[string]interface{}) {
 	for _, update := range updates {
 		pm.metadataPending[metadataEventKey(update)] = update
 	}
+	pm.metadataLastWrite = time.Now()
 	if pm.metadataFlushSet {
 		pm.metadataEventMu.Unlock()
 		return
@@ -932,6 +921,16 @@ func metadataEventKey(update map[string]interface{}) string {
 
 func (pm *Manager) flushMetadataEvents() {
 	pm.metadataEventMu.Lock()
+	// Treat a rapid series of plugin writes as one replaceable snapshot. A fixed
+	// interval flush emitted the same nickname several times when overlapping
+	// channel rosters arrived across adjacent 10 ms windows, creating several
+	// large WebView events from one IRC burst. Wait until the producer has been
+	// quiet for a full interval so all overlapping batches coalesce by key.
+	if quietFor := time.Since(pm.metadataLastWrite); quietFor < metadataEventFlushDelay {
+		time.AfterFunc(metadataEventFlushDelay-quietFor, pm.flushMetadataEvents)
+		pm.metadataEventMu.Unlock()
+		return
+	}
 	updates := make([]map[string]interface{}, 0, len(pm.metadataPending))
 	for _, update := range pm.metadataPending {
 		updates = append(updates, update)
@@ -1049,7 +1048,7 @@ func (pm *Manager) GetNicknameColorsBatch(networkID int64, nicknames []string) m
 	}
 	logger.Log.Debug().
 		Int64("networkID", networkID).
-		Strs("nicknames", nicknames).
+		Int("requested", len(nicknames)).
 		Int("found", len(result)).
 		Msg("GetNicknameColorsBatch")
 	return result

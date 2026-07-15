@@ -39,24 +39,31 @@ type App struct {
 	dccManager    *dcc.Manager
 	// notifyWindow is set once at startup (AttachNotifications) and only read on
 	// the Wails main-thread bound path (FocusMainWindow), so no mutex is needed.
-	notifyWindow          *application.WebviewWindow
-	ircClients            map[int64]*irc.IRCClient
-	connectingNetworks    map[string]chan struct{} // Track networks currently connecting by "address:port"
-	reconnectingNetworks  map[int64]bool           // Track networks currently reconnecting (by network ID)
-	stsUpgrades           map[int64]stsTarget      // Pending plaintext→TLS STS upgrades (by network ID)
-	stsUpgrading          map[int64]bool           // Networks mid-STS-upgrade; suppresses auto-reconnect (by network ID)
-	intentionalDisconnect map[int64]bool           // Networks the user deliberately disconnected; suppresses auto-reconnect once (by network ID)
-	mu                    sync.RWMutex
-	channelListCache      map[int64]channelListCacheEntry // Cached LIST results keyed by network ID
-	channelListCacheMu    sync.RWMutex                    // Guards channelListCache; separate from mu to avoid contention
-	startupCtx            context.Context
-	startupCancel         context.CancelFunc
-	startupWg             sync.WaitGroup
-	shutdownOnce          sync.Once                      // Ensure shutdown only runs once
-	emitFn                func(name string, data ...any) // test seam; nil in production
-	pendingNetworkPrefill *NetworkPrefill                // deep-link Add Network prefill; consumed by the settings window
-	frontendReady         bool                           // set once the webview drains pending deep links
-	pendingDeepLink       *PendingDeepLink               // cold-start deep link buffered until the webview is ready
+	notifyWindow           *application.WebviewWindow
+	ircClients             map[int64]*irc.IRCClient
+	connectingNetworks     map[string]chan struct{} // Track networks currently connecting by "address:port"
+	reconnectingNetworks   map[int64]bool           // Track networks currently reconnecting (by network ID)
+	stsUpgrades            map[int64]stsTarget      // Pending plaintext→TLS STS upgrades (by network ID)
+	stsUpgrading           map[int64]bool           // Networks mid-STS-upgrade; suppresses auto-reconnect (by network ID)
+	intentionalDisconnect  map[int64]bool           // Networks the user deliberately disconnected; suppresses auto-reconnect once (by network ID)
+	mu                     sync.RWMutex
+	channelListCache       map[int64]channelListCacheEntry // Cached LIST results keyed by network ID
+	channelListCacheMu     sync.RWMutex                    // Guards channelListCache; separate from mu to avoid contention
+	userMetaEmitMu         sync.Mutex                      // Guards coalesced frontend roster updates below.
+	userMetaPending        map[string]map[string]interface{}
+	userMetaFlushSet       bool
+	channelRosterEmitMu    sync.Mutex // Guards trailing-edge frontend NAMES completion batches.
+	channelRosterPending   map[string]map[string]interface{}
+	channelRosterFlushSet  bool
+	channelRosterLastWrite time.Time
+	startupCtx             context.Context
+	startupCancel          context.CancelFunc
+	startupWg              sync.WaitGroup
+	shutdownOnce           sync.Once                      // Ensure shutdown only runs once
+	emitFn                 func(name string, data ...any) // test seam; nil in production
+	pendingNetworkPrefill  *NetworkPrefill                // deep-link Add Network prefill; consumed by the settings window
+	frontendReady          bool                           // set once the webview drains pending deep links
+	pendingDeepLink        *PendingDeepLink               // cold-start deep link buffered until the webview is ready
 }
 
 // stsTarget is a pending plaintext→TLS upgrade: a host advertised STS over an
@@ -137,6 +144,8 @@ func NewApp() (*App, error) {
 		stsUpgrading:          make(map[int64]bool),
 		intentionalDisconnect: make(map[int64]bool),
 		channelListCache:      make(map[int64]channelListCacheEntry),
+		userMetaPending:       make(map[string]map[string]interface{}),
+		channelRosterPending:  make(map[string]map[string]interface{}),
 	}
 	if err := app.initializeFileTransfers(); err != nil {
 		_ = stor.Close()

@@ -39,14 +39,17 @@ type Subscriber interface {
 	OnEvent(event Event)
 }
 
-// EventBus manages event routing. Emit is asynchronous but ordered: events are
-// queued on a buffered channel and delivered by a single dispatcher goroutine,
-// so subscribers see events in emit order (and goroutine count stays bounded to
-// one regardless of event volume).
+// EventBus manages event routing. Emit is asynchronous but ordered for ordinary
+// events. Snapshot-style floods can use EmitLatest, which coalesces by key on a
+// separate lane so they can never fill the ordered queue or backpressure a
+// socket callback that is publishing a control event.
 type EventBus struct {
 	subscribers map[string][]Subscriber
 	mu          sync.RWMutex
 	queue       chan Event
+	latest      map[string]Event
+	latestOrder []string
+	latestReady chan struct{}
 	closeOnce   sync.Once
 	done        chan struct{}
 	closed      bool
@@ -62,6 +65,8 @@ func NewEventBus() *EventBus {
 	eb := &EventBus{
 		subscribers: make(map[string][]Subscriber),
 		queue:       make(chan Event, eventQueueSize),
+		latest:      make(map[string]Event),
+		latestReady: make(chan struct{}, 1),
 		done:        make(chan struct{}),
 	}
 	go eb.dispatchLoop()
@@ -71,13 +76,57 @@ func NewEventBus() *EventBus {
 // dispatchLoop delivers queued events to subscribers in order, one at a time.
 func (eb *EventBus) dispatchLoop() {
 	for {
+		// Ordinary/control events always win over coalesced snapshots. Check the
+		// ordered lane without blocking before waiting on either lane; otherwise
+		// Go's randomized select could let a large snapshot backlog repeatedly
+		// delay a connection or roster-complete event.
 		select {
 		case event := <-eb.queue:
 			eb.deliver(event)
+			continue
+		default:
+		}
+
+		select {
+		case event := <-eb.queue:
+			eb.deliver(event)
+		case <-eb.latestReady:
+			if event, ok := eb.popLatest(); ok {
+				eb.deliver(event)
+			}
 		case <-eb.done:
 			return
 		}
 	}
+}
+
+// popLatest removes one coalesced snapshot and re-arms the lane when more are
+// pending. Order between different keys is insertion order; repeated writes to
+// the same key replace the value in place (last write wins).
+func (eb *EventBus) popLatest() (Event, bool) {
+	eb.mu.Lock()
+	if len(eb.latestOrder) == 0 {
+		eb.mu.Unlock()
+		return Event{}, false
+	}
+	key := eb.latestOrder[0]
+	eb.latestOrder[0] = ""
+	eb.latestOrder = eb.latestOrder[1:]
+	event := eb.latest[key]
+	delete(eb.latest, key)
+	more := len(eb.latestOrder) > 0
+	if !more {
+		eb.latestOrder = nil
+	}
+	eb.mu.Unlock()
+
+	if more {
+		select {
+		case eb.latestReady <- struct{}{}:
+		default:
+		}
+	}
+	return event, true
 }
 
 // deliver snapshots the subscriber lists and calls them synchronously, in order.
@@ -147,6 +196,32 @@ func (eb *EventBus) Emit(event Event) {
 	select {
 	case eb.queue <- event:
 	case <-eb.done:
+	}
+}
+
+// EmitLatest publishes snapshot state without ever blocking the caller. Only
+// the newest event for a key is retained while the dispatcher is busy. This is
+// intended for replaceable, high-cardinality state such as per-user roster
+// metadata; durable/control events must continue to use Emit.
+func (eb *EventBus) EmitLatest(key string, event Event) {
+	if key == "" {
+		return
+	}
+
+	eb.mu.Lock()
+	if eb.closed {
+		eb.mu.Unlock()
+		return
+	}
+	if _, exists := eb.latest[key]; !exists {
+		eb.latestOrder = append(eb.latestOrder, key)
+	}
+	eb.latest[key] = event
+	eb.mu.Unlock()
+
+	select {
+	case eb.latestReady <- struct{}{}:
+	default:
 	}
 }
 
