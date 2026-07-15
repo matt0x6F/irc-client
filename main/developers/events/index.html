@@ -539,6 +539,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Overview">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#delivery-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Delivery model
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1495,6 +1512,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Overview">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#delivery-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Delivery model
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1935,6 +1969,21 @@
 - <strong>Publishers</strong> emit events to the EventBus.
 - <strong>Subscribers</strong> register interest in specific event types.
 - The <strong>EventBus</strong> routes events to all relevant subscribers asynchronously.</p>
+<h3 id="delivery-model">Delivery model<a class="headerlink" href="#delivery-model" title="Permanent link">&para;</a></h3>
+<p>The EventBus has two delivery lanes:</p>
+<ul>
+<li><code>Emit</code> queues durable and control events on a bounded, ordered lane. A single
+  dispatcher delivers those events to subscribers in emission order.</li>
+<li><code>EmitLatest(key, event)</code> publishes replaceable snapshot state without
+  blocking its caller. While the dispatcher is busy, repeated events with the
+  same key are coalesced and only the latest value is retained. Ordered events
+  take priority over this snapshot lane.</li>
+</ul>
+<p>Use <code>EmitLatest</code> only when an event contains a complete current value and
+intermediate transitions are not meaningful. For example, <code>user.meta</code> is a
+full per-network, per-nickname roster snapshot. Messages, connection events,
+and completion markers must use <code>Emit</code> because dropping or reordering one would
+change their meaning.</p>
 <h2 id="architecture">Architecture<a class="headerlink" href="#architecture" title="Permanent link">&para;</a></h2>
 <pre class="mermaid"><code>flowchart LR
     irc[IRC Client]
@@ -2051,7 +2100,21 @@
 </li>
 <li><code>networkId</code> (int64): Network ID</li>
 <li><code>old_nickname</code> (string): Previous nickname</li>
-<li><code>nickname</code> (string): New nickname</li>
+<li>
+<p><code>nickname</code> (string): New nickname</p>
+</li>
+<li>
+<p><strong><code>user.meta</code></strong>: Replaceable snapshot of a user's live roster attributes</p>
+</li>
+<li><code>networkId</code> (int64): Network ID</li>
+<li><code>nickname</code> (string): User nickname</li>
+<li><code>away</code> (bool): Whether the user is away</li>
+<li><code>away_message</code> (string): Away message, when known</li>
+<li><code>account</code> (string): Authenticated account, when known</li>
+<li><code>host</code> (string): Current user and host, when known</li>
+<li><code>realname</code> (string): Current real name, when known</li>
+<li>Delivery is last-write-wins per network and nickname during a burst. Treat
+    this as current state, not as an audit stream of every transition.</li>
 </ul>
 <h4 id="channel-events">Channel Events<a class="headerlink" href="#channel-events" title="Permanent link">&para;</a></h4>
 <ul>
@@ -2075,7 +2138,15 @@
 <p><strong><code>channels.changed</code></strong>: Emitted when channel list changes</p>
 </li>
 <li><code>networkId</code> (int64): Network ID</li>
-<li><code>channels</code> ([]string): List of channel names</li>
+<li>
+<p><code>channels</code> ([]string): List of channel names</p>
+</li>
+<li>
+<p><strong><code>channel.names.complete</code></strong>: Emitted after a channel's NAMES reply completes</p>
+</li>
+<li><code>networkId</code> (int64): Network ID</li>
+<li><code>channel</code> (string): Channel name</li>
+<li><code>users</code> ([]string): Completed member snapshot</li>
 </ul>
 <h4 id="sasl-authentication-events">SASL Authentication Events<a class="headerlink" href="#sasl-authentication-events" title="Permanent link">&para;</a></h4>
 <ul>
@@ -2124,6 +2195,8 @@
 <li><code>value</code> (interface{}): Metadata value</li>
 <li><code>network_id</code> (int64): Network ID (optional)</li>
 <li><code>channel</code> (string): Channel name (optional)</li>
+<li>Bursts are trailing-edge coalesced by network, channel, type, and key. A
+    multi-value event contains an <code>updates</code> array of objects with these fields.</li>
 </ul>
 <h3 id="ui-events-future">UI Events (Future)<a class="headerlink" href="#ui-events-future" title="Permanent link">&para;</a></h3>
 <ul>
@@ -2164,7 +2237,8 @@
 </span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="p">})</span>
 </span></code></pre></div>
 <h3 id="synchronous-events">Synchronous Events<a class="headerlink" href="#synchronous-events" title="Permanent link">&para;</a></h3>
-<p>For testing or when order matters, use <code>EmitSync</code>:</p>
+<p>For tests or the rare case that delivery must finish before the caller
+continues, use <code>EmitSync</code>:</p>
 <div class="language-go highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nx">eventBus</span><span class="p">.</span><span class="nx">EmitSync</span><span class="p">(</span><span class="nx">event</span><span class="p">)</span>
 </span></code></pre></div>
 <p><strong>Note</strong>: Synchronous emission blocks until all subscribers process the event. Use sparingly.</p>
@@ -2181,22 +2255,26 @@
 <ol>
 <li><strong>Event Naming</strong>: Use dot-separated hierarchical names (e.g., <code>user.joined</code>, <code>channel.mode</code>)</li>
 <li><strong>Event Data</strong>: Include all relevant context (networkId, channel, etc.)</li>
-<li><strong>Async Processing</strong>: Events are delivered asynchronously, so don't block in <code>OnEvent</code></li>
+<li><strong>Async Processing</strong>: <code>Emit</code> is asynchronous to its caller, but subscribers
+   run serially on the dispatcher. Keep <code>OnEvent</code> bounded and non-blocking.</li>
 <li><strong>Error Handling</strong>: Handle errors gracefully in subscribers</li>
 <li><strong>Wildcard Subscriptions</strong>: Use sparingly; prefer specific event types for performance</li>
+<li><strong>Snapshot Semantics</strong>: Use <code>EmitLatest</code> only for complete, replaceable state</li>
 </ol>
 <h2 id="thread-safety">Thread Safety<a class="headerlink" href="#thread-safety" title="Permanent link">&para;</a></h2>
 <p>The EventBus is fully thread-safe:
 - Subscriptions/unsubscriptions are protected by mutex
-- Event emission copies subscriber lists to avoid blocking
-- Each subscriber receives events in a separate goroutine</p>
+- Subscriber lists are copied before callbacks run, so subscriptions can change
+  safely while an event is being delivered
+- One dispatcher calls subscribers synchronously; a slow subscriber delays
+  later delivery, so subscriber work must remain bounded
+- Snapshot publication is non-blocking and coalesces under load; ordered
+  publication applies bounded backpressure when its queue is saturated</p>
 <h2 id="future-enhancements">Future Enhancements<a class="headerlink" href="#future-enhancements" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Event filtering by data fields</li>
 <li>Event replay for debugging</li>
 <li>Event metrics and monitoring</li>
-<li>Priority-based event delivery</li>
-<li>Event batching for high-frequency events</li>
 </ul>
 <hr />
 <h2 id="frontend-events">Frontend events<a class="headerlink" href="#frontend-events" title="Permanent link">&para;</a></h2>

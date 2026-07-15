@@ -2079,9 +2079,11 @@ Account, Host, Realname}</code> (<code>internal/irc/events.go</code>, <code>inte
 deliberately not persisted; a nick's attributes are only meaningful for the current session
 and re-accrue on reconnect (same rationale as bot mode). <code>Realname</code> is fed by
 <a href="#setname">setname</a> and <code>extended-join</code>.</p>
-<p>Each signal updates the map through <code>applyUserMeta</code>, which is idempotent: it only stores and
-emits <code>EventUserMetaChanged</code> when an attribute actually changed, so high-frequency traffic
-(away toggles especially) never spams the UI.</p>
+<p>Each signal updates the map through <code>applyUserMeta</code>, which is idempotent: it only stores a new
+snapshot when an attribute actually changed. <code>EventUserMetaChanged</code> is published as
+replaceable state, so repeated snapshots for the same network and nick are last-write-wins
+while the event dispatcher is busy. High-frequency traffic cannot backpressure the IRC read
+loop, and consumers should treat the event as current state rather than an audit stream.</p>
 <table>
 <thead>
 <tr>
@@ -2121,9 +2123,10 @@ emits <code>EventUserMetaChanged</code> when an attribute actually changed, so h
 <p>Key lifecycle: a NICK change carries the attributes to the new nick (<code>renameUserMeta</code>) and a
 QUIT drops them (<code>removeUserMeta</code>); PART/KICK do not, since the user may remain in other
 channels and these attributes are network-wide.</p>
-<p>The backend forwards <code>EventUserMetaChanged</code> to the frontend as <code>usermeta-event</code>
-(<code>app_events.go</code>), and the store hydrates on select via <code>GetNetworkUserMeta</code> (<code>app.go</code>) into a
-per-network <code>userMeta</code> slice (<code>frontend/src/stores/network.ts</code>). Two surfaces read it:</p>
+<p>The backend forwards <code>EventUserMetaChanged</code> to the frontend as bounded <code>usermeta-event</code>
+batches (<code>app_events.go</code>). The frontend applies each batch in one store update, and the store
+hydrates on select via <code>GetNetworkUserMeta</code> (<code>app.go</code>) into a per-network <code>userMeta</code> slice
+(<code>frontend/src/stores/network.ts</code>). Two surfaces read it:</p>
 <ul>
 <li><strong>Nick list:</strong> away members are dimmed, with their away message on hover
   (<code>channel-info.tsx</code>). Per the design, presence transitions are silent: they update the

@@ -2554,6 +2554,15 @@
 <p><strong>Parameters:</strong>
 - <code>type</code> (string): Event type
 - <code>data</code> (object): Event-specific data (see <a href=".././events/">Events Documentation</a>)</p>
+<p>Event notifications are best-effort. Cascade hands them to a bounded writer
+queue so a plugin that stops reading stdin cannot stall IRC socket processing.
+If that queue fills, Cascade drops notifications for that plugin and writes a
+warning to the application log. Plugins should continuously drain stdin and
+must not treat the event stream as a durable audit log.</p>
+<p>Replaceable snapshot events may also be coalesced before plugin delivery. In
+particular, <code>user.meta</code> contains a complete current value and is
+last-write-wins per network and nickname during a burst. Process the snapshot
+as state; do not depend on receiving every intermediate value.</p>
 <p>Event notifications use newline-delimited JSON and are bounded to 48 KiB per
 frame. When a large batched event contains a top-level <code>updates</code> array, Cascade
 splits plugin delivery into multiple frames. Each frame includes <code>updates</code>,
@@ -2691,7 +2700,11 @@ The frontend still receives the event as one logical batch.</p>
 <p>Stores multiple metadata values in one registry transaction and publishes one
 coalesced update to the frontend. Use this for snapshots such as a completed
 channel roster. The manager also coalesces bursts of legacy <code>ui_metadata.set</code>
-notifications, so one-at-a-time plugins cannot saturate the shared event bus.</p>
+notifications, so one-at-a-time plugins cannot saturate the shared event bus.
+The flush occurs after the burst has been quiet for the debounce interval, and
+repeated writes with the same network, channel, type, and key use the latest
+value. Consumers of <code>metadata.updated</code> receive either one update directly or a
+top-level <code>updates</code> array, which may be split into bounded plugin event frames.</p>
 <div class="language-json highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="p">{</span>
 </span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span><span class="nt">&quot;jsonrpc&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2.0&quot;</span><span class="p">,</span>
 </span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">  </span><span class="nt">&quot;method&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;ui_metadata.set_batch&quot;</span><span class="p">,</span>
@@ -3021,6 +3034,8 @@ notifications, so one-at-a-time plugins cannot saturate the shared event bus.</p
 <li><strong>Error Handling</strong>: Always handle errors gracefully, don't crash</li>
 <li><strong>Logging</strong>: Use stderr for debug logs (they're captured by Cascade)</li>
 <li><strong>Buffering</strong>: Flush stdout after each message (or use line buffering)</li>
+<li><strong>Input Draining</strong>: Continuously read stdin; event notifications are dropped
+   if the bounded writer queue fills</li>
 <li><strong>Event Filtering</strong>: Subscribe only to events you need (avoid <code>["*"]</code> if possible)</li>
 <li><strong>Input Limits</strong>: Configure line readers for at least 48 KiB JSON-RPC frames</li>
 <li><strong>Metadata Keys</strong>: Use consistent key formats (e.g., <code>"nickname:Alice"</code>)</li>
