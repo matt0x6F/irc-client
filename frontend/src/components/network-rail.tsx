@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Bell, Plus, Settings } from 'lucide-react';
+import { Bell, Files, Plus, Settings } from 'lucide-react';
 import { storage } from '../../wailsjs/go/models';
 import { OpenSettings } from '../../wailsjs/go/main/App';
 import { NetworkTile } from './network-tile';
@@ -13,12 +13,15 @@ interface NetworkRailProps {
   networks: storage.Network[];
   selectedNetwork: number | null;
   activityActive: boolean;
+  fileTransfersActive: boolean;
+  fileTransferAttention: number;
   connectionStatus: Record<number, boolean>;
   connectingNetworks: Record<number, boolean>;
   unreadCounts: Map<string, number>;
   activityItems: Parameters<typeof unseenGroupCount>[0];
   onSelectNetwork: (id: number) => void;
   onSelectActivity: () => void;
+  onSelectFileTransfers: () => void;
   onAddNetwork: () => void;
   onNetworkContextMenu: (e: React.MouseEvent, id: number) => void;
   onReordered: (orderedIds: number[]) => void;
@@ -26,8 +29,8 @@ interface NetworkRailProps {
 
 export function NetworkRail(props: NetworkRailProps) {
   const {
-    networks, selectedNetwork, activityActive, connectionStatus, connectingNetworks,
-    unreadCounts, activityItems, onSelectNetwork, onSelectActivity, onAddNetwork,
+    networks, selectedNetwork, activityActive, fileTransfersActive, fileTransferAttention, connectionStatus, connectingNetworks,
+    unreadCounts, activityItems, onSelectNetwork, onSelectActivity, onSelectFileTransfers, onAddNetwork,
     onNetworkContextMenu, onReordered,
   } = props;
 
@@ -79,6 +82,31 @@ export function NetworkRail(props: NetworkRailProps) {
         </div>
       </RailTooltip>
 
+      <RailTooltip label="File Transfers">
+        <div className="relative mb-2" style={{ width: 44 }}>
+          <button
+            type="button"
+            data-testid="rail-file-transfers"
+            data-active={fileTransfersActive ? 'true' : 'false'}
+            aria-label="File Transfers"
+            onClick={onSelectFileTransfers}
+            style={{
+              width: 44, height: 44, clipPath: SQUIRCLE,
+              background: fileTransfersActive ? 'var(--primary)' : 'var(--accent)',
+              color: fileTransfersActive ? 'var(--primary-foreground)' : 'var(--accent-foreground)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+          >
+            <Files size={20} />
+          </button>
+          {fileTransferAttention > 0 && (
+            <span data-testid="rail-file-transfers-badge" className="absolute" style={{ right: -4, top: -4, minWidth: 18, height: 18, padding: '0 4px', borderRadius: 9, background: 'var(--destructive)', color: 'var(--destructive-foreground)', fontSize: 11, fontWeight: 500, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 0 2px var(--background)' }}>
+              {fileTransferAttention > 99 ? '99+' : fileTransferAttention}
+            </span>
+          )}
+        </div>
+      </RailTooltip>
+
       <div style={{ width: 32, height: 1, background: 'var(--border)', margin: '2px 0 8px' }} />
 
       {/* 4px top padding gives the first tile's badge (top: -4) headroom inside
@@ -95,7 +123,7 @@ export function NetworkRail(props: NetworkRailProps) {
             >
               <NetworkTile
                 network={n}
-                selected={!activityActive && selectedNetwork === n.id}
+                selected={!activityActive && !fileTransfersActive && selectedNetwork === n.id}
                 connected={connectionStatus[n.id] || false}
                 connecting={connectingNetworks[n.id] || false}
                 unread={networkUnreadTotal(unreadCounts, n.id)}

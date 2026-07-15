@@ -17,6 +17,7 @@ require (
 	golang.org/x/image v0.44.0
 	golang.org/x/mod v0.35.0
 	golang.org/x/net v0.56.0
+	golang.org/x/sys v0.46.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )
 
@@ -32,7 +33,6 @@ require (
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/wailsapp/wails/webview2 v1.0.27 // indirect
-	golang.org/x/sys v0.46.0 // indirect
 )
 
 replace github.com/matt0x6f/irc-client/cascade => ./cascade

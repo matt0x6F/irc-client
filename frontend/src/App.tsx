@@ -30,6 +30,8 @@ import { AuthBanner } from './components/AuthBanner';
 import { DeepLinkDisambiguation } from './components/deeplink-disambiguation';
 import { InviteToChannelModal } from './components/invite-to-channel-modal';
 import { ActivityInbox } from './components/activity-inbox';
+import { FileTransfers } from './components/file-transfers';
+import { transferAttentionCount, useFileTransfersStore } from './stores/file-transfers';
 import { List } from 'lucide-react';
 
 function App() {
@@ -68,7 +70,12 @@ function App() {
   const connectingNetworks = useNetworkStore((s) => s.connectingNetworks);
   const setSelectedNetwork = useNetworkStore((s) => s.setSelectedNetwork);
   const selectActivityInbox = useNetworkStore((s) => s.selectActivityInbox);
+  const selectFileTransfers = useNetworkStore((s) => s.selectFileTransfers);
   const restoreLastPane = useNetworkStore((s) => s.restoreLastPane);
+  const fileTransfers = useFileTransfersStore((s) => s.live);
+  const initializeFileTransfers = useFileTransfersStore((s) => s.initialize);
+  const receiveFileTransferEvent = useFileTransfersStore((s) => s.receiveEvent);
+  const refreshFileTransferSettings = useFileTransfersStore((s) => s.refreshSettings);
 
   // Network-rail right-click menu: which tile, at what viewport coordinates.
   const [networkMenu, setNetworkMenu] = useState<{ x: number; y: number; networkId: number } | null>(null);
@@ -79,6 +86,15 @@ function App() {
 
   useNotificationRouting();
   useTypingRouting();
+
+  useEffect(() => {
+    void initializeFileTransfers();
+    const offTransfers = EventsOn('file-transfer:event', receiveFileTransferEvent);
+    const offSettings = EventsOn('setting:changed', (payload: { key?: string }) => {
+      if (payload?.key?.startsWith('fileTransfers.')) void refreshFileTransferSettings();
+    });
+    return () => { offTransfers(); offSettings(); };
+  }, [initializeFileTransfers, receiveFileTransferEvent, refreshFileTransferSettings]);
 
   // UI store
   const showTopicModal = useUIStore((s) => s.showTopicModal);
@@ -752,6 +768,7 @@ function App() {
   // in that window would crash on a missing network.
   const panelNetwork =
     selectedNetwork !== null ? networks.find((n) => n.id === selectedNetwork) : undefined;
+  const globalPane = selectedChannel === 'activity' || selectedChannel === 'file-transfers';
 
   return (
     <div className="flex h-screen bg-background overflow-hidden">
@@ -768,6 +785,8 @@ function App() {
           networks={networks}
           selectedNetwork={selectedNetwork}
           activityActive={selectedChannel === 'activity'}
+          fileTransfersActive={selectedChannel === 'file-transfers'}
+          fileTransferAttention={transferAttentionCount(fileTransfers)}
           connectionStatus={connectionStatus}
           connectingNetworks={connectingNetworks}
           unreadCounts={unreadCounts}
@@ -777,6 +796,7 @@ function App() {
             selectPane(id, 'status');
           }}
           onSelectActivity={() => void selectActivityInbox()}
+          onSelectFileTransfers={selectFileTransfers}
           onAddNetwork={() => void OpenSettings()}
           onNetworkContextMenu={openNetworkContextMenu}
           onReordered={async (ids) => {
@@ -787,7 +807,7 @@ function App() {
 
         {/* Channel panel — the selected network, hidden during the Activity
             takeover, when no network is selected, or when collapsed */}
-        {selectedChannel !== 'activity' && panelNetwork && !leftSidebarCollapsed && (
+        {!globalPane && panelNetwork && !leftSidebarCollapsed && (
           <div
             className="border-r border-border flex-shrink-0 relative bg-card/30"
             style={{ width: `${leftSidebarWidth}px`, transition: 'width 0.2s ease' }}
@@ -888,7 +908,7 @@ function App() {
                   )}
                   {selectedChannel &&
                     selectedChannel !== 'status' &&
-                    selectedChannel !== 'activity' &&
+                    !globalPane &&
                     !selectedChannel.startsWith('pm:') && (
                       <>
                         <span className="text-muted-foreground/50">/</span>
@@ -925,7 +945,7 @@ function App() {
               )}
             </div>
             <div className="flex items-center gap-1 flex-shrink-0">
-              <button
+              {!globalPane && <button
                 onClick={openSearch}
                 className="flex items-center gap-2 px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground rounded-md hover:bg-accent/50 transition-colors cursor-pointer"
                 title="Search messages (Ctrl+K)"
@@ -948,7 +968,7 @@ function App() {
                 <kbd className="hidden sm:inline-flex h-5 select-none items-center gap-1 rounded border border-border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-60">
                   {navigator.platform?.includes('Mac') ? '\u2318' : 'Ctrl+'}K
                 </kbd>
-              </button>
+              </button>}
               {/* Browse channels — for the selected network */}
               {selectedNetwork !== null && (
                 <button
@@ -965,7 +985,7 @@ function App() {
                 </button>
               )}
               {/* Right sidebar toggle — show for channels and PMs */}
-              {selectedChannel && selectedChannel !== 'status' && selectedChannel !== 'activity' && (
+              {selectedChannel && selectedChannel !== 'status' && !globalPane && (
                 <button
                   onClick={toggleRightSidebar}
                   data-testid="toggle-right-sidebar"
@@ -982,7 +1002,7 @@ function App() {
           </div>
           {selectedChannel &&
             selectedChannel !== 'status' &&
-            selectedChannel !== 'activity' &&
+            !globalPane &&
             !selectedChannel.startsWith('pm:') &&
             channelInfo?.channel && (
               <div className="px-5 pb-3 flex items-center gap-4 text-sm border-t border-border/50 pt-2">
@@ -1019,6 +1039,8 @@ function App() {
           <div className="flex-1 overflow-y-auto">
             {selectedChannel === 'activity' ? (
               <ActivityInbox />
+            ) : selectedChannel === 'file-transfers' ? (
+              <FileTransfers />
             ) : selectedNetwork !== null ? (
               <MessageView
                 networkId={selectedNetwork}
@@ -1039,7 +1061,7 @@ function App() {
           {/* Right Sidebar — Users (channels only) + Pinned messages */}
           {selectedChannel &&
             selectedChannel !== 'status' &&
-            selectedChannel !== 'activity' &&
+            !globalPane &&
             (() => {
               const isPM = selectedChannel.startsWith('pm:');
               // PMs have no user list, so the pinned tab is the only option there.
@@ -1128,7 +1150,7 @@ function App() {
         </div>
 
         {/* Input Area */}
-        {selectedNetwork !== null && selectedChannel !== null && selectedChannel !== 'activity' && (
+        {selectedNetwork !== null && selectedChannel !== null && !globalPane && (
           <InputArea
             onSendMessage={handleSendMessage}
             placeholder={
@@ -1147,7 +1169,7 @@ function App() {
         selectedNetwork !== null &&
         selectedChannel !== null &&
         selectedChannel !== 'status' &&
-        selectedChannel !== 'activity' &&
+        !globalPane &&
         channelInfo?.channel && (
           <TopicEditModal
             networkId={selectedNetwork}
@@ -1162,7 +1184,7 @@ function App() {
         selectedNetwork !== null &&
         selectedChannel !== null &&
         selectedChannel !== 'status' &&
-        selectedChannel !== 'activity' &&
+        !globalPane &&
         channelInfo?.channel && (
           <ChannelModeEditor
             networkId={selectedNetwork}

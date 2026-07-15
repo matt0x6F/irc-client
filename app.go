@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/matt0x6f/irc-client/cascade"
+	"github.com/matt0x6f/irc-client/internal/dcc"
 	"github.com/matt0x6f/irc-client/internal/events"
 	"github.com/matt0x6f/irc-client/internal/irc"
 	"github.com/matt0x6f/irc-client/internal/logger"
@@ -35,6 +36,7 @@ type App struct {
 	scriptMgr     *script.Manager
 	creds         *security.CredentialStore
 	notifier      *notification.Notifier
+	dccManager    *dcc.Manager
 	// notifyWindow is set once at startup (AttachNotifications) and only read on
 	// the Wails main-thread bound path (FocusMainWindow), so no mutex is needed.
 	notifyWindow          *application.WebviewWindow
@@ -135,6 +137,10 @@ func NewApp() (*App, error) {
 		stsUpgrading:          make(map[int64]bool),
 		intentionalDisconnect: make(map[int64]bool),
 		channelListCache:      make(map[int64]channelListCacheEntry),
+	}
+	if err := app.initializeFileTransfers(); err != nil {
+		_ = stor.Close()
+		return nil, fmt.Errorf("failed to initialize file transfers: %w", err)
 	}
 
 	scriptDir := filepath.Join(baseDir, "scripts")
@@ -408,6 +414,12 @@ func (a *App) ServiceShutdown() error {
 			case <-shutdownCtx.Done():
 				logger.Log.Warn().Msg("Timeout closing plugin manager, continuing shutdown")
 			}
+		}
+
+		// Direct connections are independent of IRC and must be stopped before
+		// storage closes so their final state can be persisted.
+		if a.dccManager != nil {
+			a.dccManager.Close()
 		}
 
 		// All event producers are stopped at this point. Close the bus before

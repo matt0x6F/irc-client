@@ -13,6 +13,7 @@ export {
     ChannelInfo,
     ChannelListCacheResult,
     CommandInfo,
+    FileTransferPage,
     InviteView,
     LastOpenPane,
     LogConfig,

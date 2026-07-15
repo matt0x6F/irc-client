@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { main, storage } from '../../wailsjs/go/models';
-import { GetChannelInfo } from '../../wailsjs/go/main/App';
+import { ChooseAndSendFiles, GetChannelInfo } from '../../wailsjs/go/main/App';
 import { useNetworkStore } from '../stores/network';
 import { useUIStore } from '../stores/ui';
+import { useFileTransfersStore } from '../stores/file-transfers';
 
 interface UserContextMenuProps {
   networkId: number;
@@ -47,6 +48,7 @@ export function UserContextMenu({
   const addMonitorNick = useNetworkStore((s) => s.addMonitorNick);
   const selectPane = useNetworkStore((s) => s.selectPane);
   const setChannelContext = useNetworkStore((s) => s.setChannelContext);
+  const fileTransfersEnabled = useFileTransfersStore((s) => s.settings?.enabled ?? true);
 
   const [channelInfo, setChannelInfo] = useState<main.ChannelInfo | null>(null);
 
@@ -264,6 +266,18 @@ export function UserContextMenu({
             }}
           >
             Message privately (re: {channelName})
+          </button>
+        )}
+        {!isSelf && fileTransfersEnabled && (
+          <button
+            className={itemClass}
+            style={{ transition: 'var(--transition-base)' }}
+            onClick={() => {
+              onClose();
+              void ChooseAndSendFiles(networkId, targetNick).catch((error) => console.error('Send files:', error));
+            }}
+          >
+            Send a file…
           </button>
         )}
         <div className="border-t border-border my-1" />

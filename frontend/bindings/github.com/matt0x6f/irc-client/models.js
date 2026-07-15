@@ -8,6 +8,9 @@ import { Create as $Create } from "@wailsio/runtime";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
+import * as dcc$0 from "./internal/dcc/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
 import * as storage$0 from "./internal/storage/models.js";
 
 /**
@@ -308,6 +311,48 @@ export class CommandInfo {
             $$parsedSource["aliases"] = $$createField1_0($$parsedSource["aliases"]);
         }
         return new CommandInfo(/** @type {Partial<CommandInfo>} */($$parsedSource));
+    }
+}
+
+/**
+ * FileTransferPage is the paginated Wails response for the History tab.
+ */
+export class FileTransferPage {
+    /**
+     * Creates a new FileTransferPage instance.
+     * @param {Partial<FileTransferPage>} [$$source = {}] - The source object to create the FileTransferPage.
+     */
+    constructor($$source = {}) {
+        if (!("transfers" in $$source)) {
+            /**
+             * @member
+             * @type {dcc$0.View[]}
+             */
+            this["transfers"] = [];
+        }
+        if (/** @type {any} */(false)) {
+            /**
+             * @member
+             * @type {string | undefined}
+             */
+            this["nextCursor"] = undefined;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new FileTransferPage instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {FileTransferPage}
+     */
+    static createFrom($$source = {}) {
+        const $$createField0_0 = $$createType10;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("transfers" in $$parsedSource) {
+            $$parsedSource["transfers"] = $$createField0_0($$parsedSource["transfers"]);
+        }
+        return new FileTransferPage(/** @type {Partial<FileTransferPage>} */($$parsedSource));
     }
 }
 
@@ -630,7 +675,7 @@ export class NetworkConfig {
      * @returns {NetworkConfig}
      */
     static createFrom($$source = {}) {
-        const $$createField4_0 = $$createType10;
+        const $$createField4_0 = $$createType12;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("servers" in $$parsedSource) {
             $$parsedSource["servers"] = $$createField4_0($$parsedSource["servers"]);
@@ -1044,7 +1089,7 @@ export class ServerCapabilitiesInfo {
      * @returns {ServerCapabilitiesInfo}
      */
     static createFrom($$source = {}) {
-        const $$createField0_0 = $$createType11;
+        const $$createField0_0 = $$createType13;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("prefix" in $$parsedSource) {
             $$parsedSource["prefix"] = $$createField0_0($$parsedSource["prefix"]);
@@ -1116,6 +1161,8 @@ const $$createType5 = ServerCapabilitiesInfo.createFrom;
 const $$createType6 = $Create.Nullable($$createType5);
 const $$createType7 = $Create.Map($Create.Any, $Create.Any);
 const $$createType8 = $Create.Array($$createType7);
-const $$createType9 = ServerConfig.createFrom;
+const $$createType9 = dcc$0.View.createFrom;
 const $$createType10 = $Create.Array($$createType9);
-const $$createType11 = $Create.Map($Create.Any, $Create.Any);
+const $$createType11 = ServerConfig.createFrom;
+const $$createType12 = $Create.Array($$createType11);
+const $$createType13 = $Create.Map($Create.Any, $Create.Any);

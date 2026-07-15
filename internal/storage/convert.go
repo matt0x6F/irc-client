@@ -281,6 +281,76 @@ func convertActivityItemToCreateParams(a ActivityItem) db.CreateActivityItemPara
 	}
 }
 
+func convertFileTransferFromDB(t db.FileTransfer) FileTransfer {
+	result := FileTransfer{
+		ID:               t.ID,
+		TransferID:       t.TransferID,
+		NetworkName:      t.NetworkName,
+		Peer:             t.Peer,
+		Direction:        t.Direction,
+		Filename:         t.Filename,
+		LocalPath:        t.LocalPath,
+		PartialPath:      t.PartialPath,
+		SizeBytes:        t.SizeBytes,
+		TransferredBytes: t.TransferredBytes,
+		State:            t.State,
+		Error:            t.Error,
+		Resumable:        t.Resumable != 0,
+		CreatedAt:        t.CreatedAt,
+		UpdatedAt:        t.UpdatedAt,
+	}
+	if t.NetworkID.Valid {
+		networkID := t.NetworkID.Int64
+		result.NetworkID = &networkID
+	}
+	if t.FinishedAt.Valid {
+		finishedAt := t.FinishedAt.Time
+		result.FinishedAt = &finishedAt
+	}
+	return result
+}
+
+func convertFileTransfersFromDB(rows []db.FileTransfer) []FileTransfer {
+	result := make([]FileTransfer, len(rows))
+	for i, row := range rows {
+		result[i] = convertFileTransferFromDB(row)
+	}
+	return result
+}
+
+func convertFileTransferToUpsertParams(t FileTransfer) db.UpsertFileTransferParams {
+	var networkID sql.NullInt64
+	if t.NetworkID != nil {
+		networkID = sql.NullInt64{Int64: *t.NetworkID, Valid: true}
+	}
+	var finishedAt sql.NullTime
+	if t.FinishedAt != nil {
+		finishedAt = sql.NullTime{Time: t.FinishedAt.UTC(), Valid: true}
+	}
+	var resumable int64
+	if t.Resumable {
+		resumable = 1
+	}
+	return db.UpsertFileTransferParams{
+		TransferID:       t.TransferID,
+		NetworkID:        networkID,
+		NetworkName:      t.NetworkName,
+		Peer:             t.Peer,
+		Direction:        t.Direction,
+		Filename:         t.Filename,
+		LocalPath:        t.LocalPath,
+		PartialPath:      t.PartialPath,
+		SizeBytes:        t.SizeBytes,
+		TransferredBytes: t.TransferredBytes,
+		State:            t.State,
+		Error:            t.Error,
+		Resumable:        resumable,
+		CreatedAt:        t.CreatedAt.UTC(),
+		UpdatedAt:        t.UpdatedAt.UTC(),
+		FinishedAt:       finishedAt,
+	}
+}
+
 func convertPinnedMessageWithChannelFromDB(p db.GetPinnedMessagesWithChannelRow) PinnedMessage {
 	result := PinnedMessage{
 		Message: Message{

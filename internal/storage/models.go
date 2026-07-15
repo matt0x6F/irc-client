@@ -151,6 +151,29 @@ type CachedPreview struct {
 	FetchedAt    int64
 }
 
+// FileTransfer is the backend-only durable representation of a direct file
+// transfer. LocalPath and PartialPath must be removed when constructing a Wails
+// view; this storage type is not a frontend API model.
+type FileTransfer struct {
+	ID               int64
+	TransferID       string
+	NetworkID        *int64
+	NetworkName      string
+	Peer             string
+	Direction        string
+	Filename         string
+	LocalPath        string
+	PartialPath      string
+	SizeBytes        int64
+	TransferredBytes int64
+	State            string
+	Error            string
+	Resumable        bool
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	FinishedAt       *time.Time
+}
+
 // PluginConfig represents user configuration for a plugin
 type PluginConfig struct {
 	Name         string                 `db:"name" json:"name"`

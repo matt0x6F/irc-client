@@ -16,6 +16,7 @@ import (
 const (
 	notifyCategoryMessage    = "message"
 	notifyCategoryConnection = "connection"
+	notifyCategoryTransfer   = "file-transfer"
 
 	notifyActionReply     = "REPLY"
 	notifyActionMarkRead  = "MARK_READ"
@@ -87,6 +88,9 @@ func (a *App) AttachNotifications(svc *notifications.NotificationService, win *a
 	if err := d.RegisterCategory(connectionCategory()); err != nil {
 		logger.Log.Warn().Err(err).Msg("register connection notification category")
 	}
+	if err := d.RegisterCategory(fileTransferCategory()); err != nil {
+		logger.Log.Warn().Err(err).Msg("register file transfer notification category")
+	}
 
 	svc.OnNotificationResponse(a.handleNotificationResponse)
 	a.refreshNotificationPrefs()
@@ -110,6 +114,10 @@ func connectionCategory() notification.Category {
 		ID:      notifyCategoryConnection,
 		Actions: []notification.Action{{ID: notifyActionReconnect, Title: "Reconnect"}},
 	}
+}
+
+func fileTransferCategory() notification.Category {
+	return notification.Category{ID: notifyCategoryTransfer}
 }
 
 // RequestNotificationPermission asks the OS for notification permission. Bound to

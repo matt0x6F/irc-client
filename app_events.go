@@ -50,12 +50,29 @@ var appForwardedEventTypes = []string{
 	irc.EventSTSPolicy,
 	irc.EventInviteReceived,
 	irc.EventStatusMessage,
+	irc.EventDCCControl,
 }
 
 // OnEvent implements the events.Subscriber interface to forward events to frontend
 func (a *App) OnEvent(event events.Event) {
 	if a.app == nil {
 		logger.Log.Debug().Msg("OnEvent: application not yet initialized, skipping event")
+		return
+	}
+
+	// DCC negotiation belongs to the transfer manager, not the ordinary CTCP
+	// message stream. The manager enforces the feature gate before opening a
+	// listener or making an outbound connection.
+	if event.Type == irc.EventDCCControl {
+		networkID, found := a.resolveNetworkID(event.Data)
+		peer, _ := event.Data["peer"].(string)
+		payload, _ := event.Data["payload"].(string)
+		networkName, _ := event.Data["networkName"].(string)
+		if found && peer != "" && payload != "" && a.dccManager != nil {
+			if err := a.dccManager.HandleControl(networkID, networkName, peer, payload); err != nil {
+				logger.Log.Warn().Err(err).Msg("Rejected file transfer negotiation")
+			}
+		}
 		return
 	}
 

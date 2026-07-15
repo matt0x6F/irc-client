@@ -34,6 +34,7 @@ const (
 	EventTypingReceived        = "typing.received" // a peer sent an IRCv3 +typing client tag (active/paused/done)
 	EventInviteReceived        = "invite.received" // an INVITE addressed to us (actionable)
 	EventStatusMessage         = "status.message"  // a line was written to a network's status buffer (server log)
+	EventDCCControl            = "dcc.control"     // an inbound CTCP DCC negotiation message
 )
 
 // UserMeta holds the live, session-local roster attributes Cascade tracks for a
