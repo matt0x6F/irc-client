@@ -476,6 +476,40 @@ func TestChannelUsers(t *testing.T) {
 	}
 }
 
+func TestAddChannelUsersBatch(t *testing.T) {
+	s := newTestStorage(t)
+	net := makeNetwork("BatchUserNet")
+	if err := s.CreateNetwork(net); err != nil {
+		t.Fatalf("CreateNetwork: %v", err)
+	}
+	ch := &Channel{NetworkID: net.ID, Name: "#batch-users", CreatedAt: time.Now()}
+	if err := s.CreateChannel(ch); err != nil {
+		t.Fatalf("CreateChannel: %v", err)
+	}
+
+	if err := s.AddChannelUsers(ch.ID, []ChannelUser{
+		{Nickname: "alice", Modes: "@"},
+		{Nickname: "bob", Modes: "+"},
+	}); err != nil {
+		t.Fatalf("AddChannelUsers: %v", err)
+	}
+	// A later NAMES chunk can update an existing nick through the same path.
+	if err := s.AddChannelUsers(ch.ID, []ChannelUser{{Nickname: "alice", Modes: "@+"}}); err != nil {
+		t.Fatalf("AddChannelUsers update: %v", err)
+	}
+
+	users, err := s.GetChannelUsers(ch.ID)
+	if err != nil {
+		t.Fatalf("GetChannelUsers: %v", err)
+	}
+	if len(users) != 2 {
+		t.Fatalf("got %d users, want 2", len(users))
+	}
+	if users[0].Nickname != "alice" || users[0].Modes != "@+" {
+		t.Fatalf("alice = %+v, want updated modes @+", users[0])
+	}
+}
+
 func TestUpdateChannelUserNickname(t *testing.T) {
 	s := newTestStorage(t)
 	net := makeNetwork("NickNet")

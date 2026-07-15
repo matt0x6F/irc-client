@@ -875,6 +875,37 @@ func (s *Storage) AddChannelUser(channelID int64, nickname string, modes string)
 	return err
 }
 
+// AddChannelUsers adds or updates a batch of users in one transaction. NAMES
+// replies for large channels can contain hundreds of nicks; committing each row
+// separately stalls the IRC read goroutine long enough for a server's SendQ to
+// overflow while several auto-joined channels are streaming their rosters.
+func (s *Storage) AddChannelUsers(channelID int64, users []ChannelUser) error {
+	if len(users) == 0 {
+		return nil
+	}
+
+	tx, err := s.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		return fmt.Errorf("begin channel-user batch: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	queries := s.queries.WithTx(tx)
+	for _, user := range users {
+		if err := queries.AddChannelUser(context.Background(), db.AddChannelUserParams{
+			ChannelID: channelID,
+			Nickname:  user.Nickname,
+			Modes:     convertToNullString(user.Modes),
+		}); err != nil {
+			return fmt.Errorf("add channel user %q: %w", user.Nickname, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit channel-user batch: %w", err)
+	}
+	return nil
+}
+
 // RemoveChannelUser removes a user from a channel
 func (s *Storage) RemoveChannelUser(channelID int64, nickname string) error {
 	err := s.queries.RemoveChannelUser(context.Background(), db.RemoveChannelUserParams{
