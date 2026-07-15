@@ -24,7 +24,8 @@ The plugin is already built and installed in `~/.cascade-chat/plugins/cascade-ni
 1. The plugin listens for IRC events (`message.received`, `user.joined`,
    `channel.names.complete`, `user.nick`)
 2. When it sees a nickname, it calculates a color using MD5 hash of the nickname
-3. It sends a `ui_metadata.set` notification to the backend with the color
+3. It sends `ui_metadata.set` for live single-user changes and
+   `ui_metadata.set_batch` for completed channel rosters
 4. The backend stores the color in the metadata registry
 5. The frontend retrieves and displays the colors
 

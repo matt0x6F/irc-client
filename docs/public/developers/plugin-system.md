@@ -167,6 +167,12 @@ Sent to plugin when subscribed events occur.
 - `type` (string): Event type
 - `data` (object): Event-specific data (see [Events Documentation](./events.md))
 
+Event notifications use newline-delimited JSON and are bounded to 48 KiB per
+frame. When a large batched event contains a top-level `updates` array, Cascade
+splits plugin delivery into multiple frames. Each frame includes `updates`,
+`batch_index` (1-based), and `batch_total`; process every chunk independently.
+The frontend still receives the event as one logical batch.
+
 **Example:**
 
 ```json
@@ -292,6 +298,36 @@ Plugin sends this to set UI metadata (colors, badges, etc.).
     "value": "#FF6B6B",
     "network_id": 1,
     "priority": 0
+  }
+}
+```
+
+#### `ui_metadata.set_batch` (Notification)
+
+Stores multiple metadata values in one registry transaction and publishes one
+coalesced update to the frontend. Use this for snapshots such as a completed
+channel roster. The manager also coalesces bursts of legacy `ui_metadata.set`
+notifications, so one-at-a-time plugins cannot saturate the shared event bus.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "ui_metadata.set_batch",
+  "params": {
+    "updates": [
+      {
+        "type": "nickname_color",
+        "key": "nickname:alice",
+        "value": "#4ECDC4",
+        "network_id": 1
+      },
+      {
+        "type": "nickname_color",
+        "key": "nickname:bob",
+        "value": "#F8B739",
+        "network_id": 1
+      }
+    ]
   }
 }
 ```
@@ -653,10 +689,11 @@ plugins := pm.ListPlugins()
 2. **Logging**: Use stderr for debug logs (they're captured by Cascade)
 3. **Buffering**: Flush stdout after each message (or use line buffering)
 4. **Event Filtering**: Subscribe only to events you need (avoid `["*"]` if possible)
-5. **Metadata Keys**: Use consistent key formats (e.g., `"nickname:Alice"`)
-6. **Configuration**: Provide sensible defaults in config schema
-7. **Versioning**: Include version in plugin metadata
-8. **Graceful Shutdown**: Exit cleanly when stdin closes (EOF)
+5. **Input Limits**: Configure line readers for at least 48 KiB JSON-RPC frames
+6. **Metadata Keys**: Use consistent key formats (e.g., `"nickname:Alice"`)
+7. **Configuration**: Provide sensible defaults in config schema
+8. **Versioning**: Include version in plugin metadata
+9. **Graceful Shutdown**: Exit cleanly when stdin closes (EOF)
 
 ## Troubleshooting
 
