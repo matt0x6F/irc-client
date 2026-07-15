@@ -1,0 +1,2575 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="A modern, multi-platform IRC client">
+      
+      
+        <meta name="author" content="Matt Ouille">
+      
+      
+        <link rel="canonical" href="https://matt0x6f.github.io/irc-client/26.7.5-rc.154/developers/ircv3-support/">
+      
+      
+        <link rel="prev" href="../ircv3-roadmap/">
+      
+      
+        <link rel="next" href="../plugin-system/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/cascade-chat.svg">
+      <meta name="generator" content="zensical-0.0.46">
+    
+    
+      
+        <title>IRCv3 Support - Cascade Chat</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.19d3147f.min.css">
+      
+        
+          
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.dfe2e883.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-label="Navigation"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#ircv3-support" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Cascade Chat" class="md-header__button md-logo" aria-label="Cascade Chat" data-md-component="logo">
+      
+  <img src="../../assets/cascade-chat.svg" alt="Cascade Chat">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Cascade Chat
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              IRCv3 Support
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-moon" viewBox="0 0 24 24"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/matt0x6F/irc-client" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    matt0x6F/irc-client
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  Cascade Chat
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+      
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../events/" class="md-tabs__link">
+          
+  
+  Developers
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+      
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../scripting/" class="md-tabs__link">
+          
+  
+  Scripting
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+      
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../users/commands/" class="md-tabs__link">
+          
+  
+  Users
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Cascade Chat" class="md-nav__button md-logo" aria-label="Cascade Chat" data-md-component="logo">
+      
+  <img src="../../assets/cascade-chat.svg" alt="Cascade Chat">
+
+    </a>
+    Cascade Chat
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/matt0x6F/irc-client" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    matt0x6F/irc-client
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Cascade Chat
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Developers
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Developers
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../events/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Events System
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ircv3-roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  IRCv3 Roadmap
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  IRCv3 Support
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  IRCv3 Support
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-you-get" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What you get
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#capability-status-matrix" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Capability status matrix
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#per-capability-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Per-capability reference
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Per-capability reference">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#capability-negotiation-cap-ls-302" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Capability negotiation (CAP LS 302)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sasl-authentication" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        SASL authentication
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#server-time" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        server-time
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#message-tags" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        message-tags
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#echo-message" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        echo-message
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#batch" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        batch
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#chathistory" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        chathistory
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#multi-prefix" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        multi-prefix
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#userhost-in-names" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        userhost-in-names
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#live-roster-away-notify-account-notify-extended-join-chghost-account-tag" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Live roster (away-notify / account-notify / extended-join / chghost / account-tag)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#whox-extended-who" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        WHOX (extended WHO)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#labeled-response" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        labeled-response
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#setname" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        setname
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#invite-notify" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        invite-notify
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plugin-system/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Plugin System
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../protocol-references/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Protocol references
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../releases/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Releases &amp; Update Channels
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../scripting/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Scripting
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Scripting
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../scripting/api-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API Reference
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../scripting/examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Examples
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../scripting/lifecycle-and-limits/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Lifecycle &amp; limits
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../scripting/managing-scripts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Managing scripts
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../scripting/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Quickstart
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../scripting/writing-scripts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Writing scripts
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Users
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+  Users
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../users/commands/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Commands &amp; shortcuts
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../users/connecting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Connecting to a network
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../users/install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Install &amp; first run
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../users/plugins/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Using plugins
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-you-get" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What you get
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#capability-status-matrix" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Capability status matrix
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#per-capability-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Per-capability reference
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Per-capability reference">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#capability-negotiation-cap-ls-302" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Capability negotiation (CAP LS 302)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sasl-authentication" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        SASL authentication
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#server-time" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        server-time
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#message-tags" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        message-tags
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#echo-message" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        echo-message
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#batch" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        batch
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#chathistory" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        chathistory
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#multi-prefix" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        multi-prefix
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#userhost-in-names" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        userhost-in-names
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#live-roster-away-notify-account-notify-extended-join-chghost-account-tag" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Live roster (away-notify / account-notify / extended-join / chghost / account-tag)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#whox-extended-who" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        WHOX (extended WHO)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#labeled-response" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        labeled-response
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#setname" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        setname
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#invite-notify" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        invite-notify
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+  
+
+
+  <nav class="md-path" aria-label="Navigation" >
+    <ol class="md-path__list">
+      
+        
+  
+  
+    <li class="md-path__item">
+      <a href="../.." class="md-path__link">
+        
+  
+  <span class="md-ellipsis">
+    Cascade Chat
+  </span>
+
+      </a>
+    </li>
+  
+
+      
+      
+        
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      <li class="md-path__item">
+        <a href="../events/" class="md-path__link">
+          
+  
+  <span class="md-ellipsis">
+    Developers
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ol>
+  </nav>
+
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+  
+    <a href="https://github.com/matt0x6F/irc-client/edit/master/docs/public/developers/ircv3-support.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-file-pen" viewBox="0 0 24 24"><path d="M12.659 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v9.34"/><path d="M14 2v5a1 1 0 0 0 1 1h5M10.378 12.622a1 1 0 0 1 3 3.003L8.36 20.637a2 2 0 0 1-.854.506l-2.867.837a.5.5 0 0 1-.62-.62l.836-2.869a2 2 0 0 1 .506-.853z"/></svg>
+    </a>
+  
+  
+    
+      
+    
+    <a href="https://github.com/matt0x6F/irc-client/raw/master/docs/public/developers/ircv3-support.md" title="View source of this page" class="md-content__button md-icon">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-file-code-2" viewBox="0 0 24 24"><path d="M4 12.15V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2h-3.35"/><path d="M14 2v5a1 1 0 0 0 1 1h5M5 16l-3 3 3 3M9 22l3-3-3-3"/></svg>
+    </a>
+  
+
+
+<h1 id="ircv3-support">IRCv3 Support<a class="headerlink" href="#ircv3-support" title="Permanent link">&para;</a></h1>
+<p>Cascade is a modern IRC client with first-class <a href="https://ircv3.net/">IRCv3</a> support. This
+document describes every IRCv3 capability Cascade negotiates, what it does with each one,
+and how each surfaces in the client.</p>
+<p>It serves two audiences:</p>
+<ul>
+<li><strong>Users / evaluators</strong>: start with <a href="#what-you-get">What you get</a>.</li>
+<li><strong>Contributors</strong>: the <a href="#capability-status-matrix">capability status matrix</a> and
+  <a href="#per-capability-reference">per-capability reference</a> include code pointers
+  (<code>file:line</code>) and screenshots produced by the e2e suite.</li>
+</ul>
+<blockquote>
+<p>Screenshots in this document are generated by Playwright tests against a real
+<a href="https://ergo.chat/">Ergo</a> server — see <a href="#how-the-screenshots-are-made">How the screenshots are made</a>.</p>
+</blockquote>
+<h2 id="what-you-get">What you get<a class="headerlink" href="#what-you-get" title="Permanent link">&para;</a></h2>
+<p>Because of its IRCv3 support, Cascade gives you:</p>
+<ul>
+<li><strong>Secure login:</strong> SASL authentication (including SCRAM and TLS client certificates), so
+  your password is never sent in the clear and you're identified to services automatically
+  on connect.</li>
+<li><strong>Accurate timestamps:</strong> messages are stamped with the server's time (<code>server-time</code>), so
+  backlog and replayed history show when a message was sent, not when your client received
+  it.</li>
+<li><strong>Durable scrollback:</strong> when you join a channel or reconnect, Cascade pulls recent history
+  from the server (<code>chathistory</code>) and scrolls back further on demand, with duplicates
+  filtered out by message ID.</li>
+<li><strong>No echoed duplicates:</strong> when the server supports <code>echo-message</code>, your own messages are
+  reconciled with the server's canonical copy instead of appearing twice.</li>
+<li><strong>Every role at a glance:</strong> with <code>multi-prefix</code>, the nick list shows all of a user's channel
+  roles (e.g. an op who is also voiced) rather than only the highest one.</li>
+<li><strong>A buddy list:</strong> track specific nicks' online/offline presence across restarts in a
+  dedicated Buddies pane, even when you share no channel with them (<code>monitor</code>). With
+  <code>extended-monitor</code>, buddies also show live away state.</li>
+<li><strong>Typing indicators:</strong> see when people in a channel or PM are composing a message, and
+  optionally let them see when you are (<code>+typing</code> client tag). Both directions toggle
+  independently in Settings.</li>
+<li><strong>Reply quotes:</strong> replies to specific messages render a quote block with the original
+  author and text, plus a jump arrow that scrolls to the original, even across buffers
+  (<code>+draft/reply</code> client tag).</li>
+<li><strong>Channel context in PMs:</strong> private messages originating from a channel carry an "in
+  #channel" pill. Clicking it opens the channel, and replies in the PM thread automatically
+  carry the same channel context (<code>+draft/channel-context</code> client tag).</li>
+</ul>
+<h2 id="capability-status-matrix">Capability status matrix<a class="headerlink" href="#capability-status-matrix" title="Permanent link">&para;</a></h2>
+<p>Legend: ✅ Supported · ◐ Partial · ⛔ Not yet</p>
+<table>
+<thead>
+<tr>
+<th>Capability</th>
+<th style="text-align: center;">Status</th>
+<th style="text-align: center;">Negotiated?</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sasl</code></td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">Yes (when configured)</td>
+<td>PLAIN, EXTERNAL, SCRAM-SHA-256, SCRAM-SHA-512</td>
+</tr>
+<tr>
+<td><code>server-time</code></td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">Yes</td>
+<td><code>@time</code> tag drives all message timestamps</td>
+</tr>
+<tr>
+<td><code>message-tags</code></td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">Yes</td>
+<td>Foundation for <code>@time</code> / <code>@msgid</code> consumption</td>
+</tr>
+<tr>
+<td><code>echo-message</code></td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">Yes</td>
+<td>Self-message reconciliation / dedup</td>
+</tr>
+<tr>
+<td><code>batch</code></td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">Yes</td>
+<td>Wraps <code>chathistory</code> replays</td>
+</tr>
+<tr>
+<td><code>chathistory</code> / <code>draft/chathistory</code></td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">Yes</td>
+<td>Latest-on-join + on-demand backscroll</td>
+</tr>
+<tr>
+<td><code>draft/event-playback</code></td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">Yes</td>
+<td>Replays JOIN/PART/QUIT/KICK/MODE as structured lines (not HistServ text) inside <code>chathistory</code> batches</td>
+</tr>
+<tr>
+<td><code>msgid</code> (via <code>message-tags</code>)</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">n/a</td>
+<td>Consumed for history deduplication</td>
+</tr>
+<tr>
+<td><code>sts</code></td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">Read (never <code>REQ</code>'d)</td>
+<td>Auto-upgrades plaintext→TLS; persists per-host TLS enforcement</td>
+</tr>
+<tr>
+<td>CAP LS 302 negotiation</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">n/a</td>
+<td>Full LS/REQ/ACK/NAK/END lifecycle</td>
+</tr>
+<tr>
+<td>ISUPPORT (<code>005</code>)</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">n/a</td>
+<td>PREFIX / CHANMODES parsing for mode handling</td>
+</tr>
+<tr>
+<td>WHOIS account (<code>330</code>)</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">n/a</td>
+<td>Shows the account a user is logged in as</td>
+</tr>
+<tr>
+<td>Bot mode</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">n/a (via <code>message-tags</code> + <code>335</code> + ISUPPORT)</td>
+<td>Detection via <code>bot</code> tag and RPL_WHOISBOT; <code>BOT=&lt;letter&gt;</code> token parsed into <code>ServerCapabilities.BotModeChar</code>; WHO <code>B</code> flag recognised via <code>markBot</code>; durable per-network "Identify as a bot" setting sends <code>MODE &lt;nick&gt; +&lt;letter&gt;</code> at connect</td>
+</tr>
+<tr>
+<td><code>multi-prefix</code></td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">Yes</td>
+<td>All membership prefixes parsed; shown as icon (highest) or text (full) per setting</td>
+</tr>
+<tr>
+<td><code>cap-notify</code></td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">Yes</td>
+<td><code>CAP NEW</code> auto-requests newly-offered wanted caps; <code>CAP DEL</code> disables withdrawn caps live</td>
+</tr>
+<tr>
+<td><code>account-notify</code></td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">Yes</td>
+<td>Live account login/logout drives the roster + WHOIS</td>
+</tr>
+<tr>
+<td><code>away-notify</code></td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">Yes</td>
+<td>Live away state dims members in the nick list</td>
+</tr>
+<tr>
+<td><code>extended-join</code></td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">Yes</td>
+<td>JOIN's account is recorded into the roster</td>
+</tr>
+<tr>
+<td><code>chghost</code></td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">Yes</td>
+<td>User host changes update the roster</td>
+</tr>
+<tr>
+<td><code>userhost-in-names</code></td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">Yes</td>
+<td>NAMES carries <code>nick!user@host</code>; the host seeds the roster</td>
+</tr>
+<tr>
+<td><code>account-tag</code></td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">Yes</td>
+<td><code>@account</code> on messages keeps the roster account current</td>
+</tr>
+<tr>
+<td><code>invite-notify</code></td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">Yes</td>
+<td>Inbound INVITEs shown as a clickable status line</td>
+</tr>
+<tr>
+<td><code>setname</code></td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">Yes</td>
+<td>Live realname changes update the roster + WHOIS panel</td>
+</tr>
+<tr>
+<td><code>monitor</code></td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">n/a (ISUPPORT)</td>
+<td>Durable per-network buddy list with live presence</td>
+</tr>
+<tr>
+<td><code>labeled-response</code></td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">Yes</td>
+<td>Correlates the WHOX roster query's reply by <code>@label</code></td>
+</tr>
+<tr>
+<td><code>standard-replies</code></td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">Yes</td>
+<td>FAIL/WARN/NOTE shown as error/warning/status lines</td>
+</tr>
+<tr>
+<td><code>extended-monitor</code></td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">Yes</td>
+<td>MONITORed nicks deliver AWAY/ACCOUNT/CHGHOST/SETNAME; buddy away state surfaces in the Buddies pane</td>
+</tr>
+<tr>
+<td><code>no-implicit-names</code></td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">Yes</td>
+<td>Suppresses the post-JOIN NAMES reply; we send an explicit <code>NAMES</code> on self-join so the roster still builds</td>
+</tr>
+<tr>
+<td><code>UTF8ONLY</code></td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">n/a (ISUPPORT)</td>
+<td>Server accepts only UTF-8; we already emit UTF-8 exclusively, so the token is recorded and honored by default</td>
+</tr>
+<tr>
+<td><code>account-extban</code></td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">n/a (ISUPPORT <code>EXTBAN</code>)</td>
+<td><code>$a</code> / <code>$a:account</code> ban masks rendered with a semantic label in the mode editor</td>
+</tr>
+<tr>
+<td><code>+typing</code> (client tag)</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">n/a (via <code>message-tags</code>)</td>
+<td>Typing indicators in channels + PMs; send/receive independently toggleable</td>
+</tr>
+<tr>
+<td><code>+draft/reply</code> (client tag)</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">n/a (via <code>message-tags</code>)</td>
+<td>Inbound reply quotes rendered with quoted text + jump-to-original; emits <code>+draft/reply</code> on send</td>
+</tr>
+<tr>
+<td><code>+draft/channel-context</code> (client tag)</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">n/a (via <code>message-tags</code>)</td>
+<td>"in #channel" pill on PM messages; sticky per-PM context; triggers "message privately (re: #channel)" flow</td>
+</tr>
+<tr>
+<td><code>WHOX</code> (<code>354</code>)</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">n/a (ISUPPORT)</td>
+<td>Extended WHO on join bulk-seeds the roster</td>
+</tr>
+<tr>
+<td><code>draft/message-redaction</code></td>
+<td style="text-align: center;">⛔</td>
+<td style="text-align: center;">No</td>
+<td>No REDACT handling (draft, out of scope)</td>
+</tr>
+</tbody>
+</table>
+<p>The set of requested capabilities lives in one place, <code>internal/irc/client.go:31</code>:</p>
+<div class="language-go highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kd">var</span><span class="w"> </span><span class="nx">requestedCaps</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[]</span><span class="kt">string</span><span class="p">{</span><span class="s">&quot;sasl&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;server-time&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;echo-message&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;message-tags&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;batch&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;draft/chathistory&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;chathistory&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;draft/event-playback&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;multi-prefix&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;cap-notify&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;away-notify&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;account-notify&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;extended-join&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;chghost&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;account-tag&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;userhost-in-names&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;setname&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;invite-notify&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;standard-replies&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;labeled-response&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;extended-monitor&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;no-implicit-names&quot;</span><span class="p">}</span>
+</span></code></pre></div>
+<p><code>sasl</code> is only requested when the network has SASL configured (<code>client.go:1927</code>); the others
+are requested whenever the server advertises them.</p>
+<h2 id="per-capability-reference">Per-capability reference<a class="headerlink" href="#per-capability-reference" title="Permanent link">&para;</a></h2>
+<h3 id="capability-negotiation-cap-ls-302">Capability negotiation (CAP LS 302)<a class="headerlink" href="#capability-negotiation-cap-ls-302" title="Permanent link">&para;</a></h3>
+<p>Cascade negotiates capabilities using <code>CAP LS 302</code>, sent immediately after the connection
+opens and before registration completes (<code>client.go:441</code>, <code>client.go:2542</code>). The <code>CAP</code>
+handler implements the full lifecycle (<code>client.go:1875</code>):</p>
+<ol>
+<li><strong>LS:</strong> the advertised list is assembled across multi-line continuations by
+   <code>accumulateCapLS</code> (<code>client.go:2384</code>, called at <code>client.go:1896</code>), then intersected with
+   <code>requestedCaps</code>; only capabilities that are both wanted and offered are requested via
+   <code>CAP REQ</code>. A long list split across lines (as Ergo and Libera send) is handled correctly:
+   each non-final line carries a <code>*</code> marker and its capabilities are still collected.</li>
+<li><strong>ACK:</strong> acknowledged capabilities are recorded in <code>enabledCaps</code> (<code>client.go:1955</code>),
+   which every feature gate consults at runtime.</li>
+<li><strong>NAK / no-overlap:</strong> negotiation ends with <code>CAP END</code> (<code>client.go:1980</code>).</li>
+</ol>
+<p>When SASL is in use, <code>CAP END</code> is deferred until authentication finishes.</p>
+<pre class="mermaid"><code>sequenceDiagram
+    participant C as Cascade
+    participant S as IRC server
+
+    C-&gt;&gt;S: CAP LS 302
+    S--&gt;&gt;C: CAP * LS — advertised caps (may span lines)
+    C-&gt;&gt;S: CAP REQ — wanted ∩ offered
+    S--&gt;&gt;C: CAP ACK — granted caps
+
+    alt network configured for SASL
+        C-&gt;&gt;S: AUTHENTICATE (PLAIN / SCRAM / EXTERNAL)
+        S--&gt;&gt;C: AUTHENTICATE +
+        C-&gt;&gt;S: AUTHENTICATE credentials
+        S--&gt;&gt;C: 900 / 903 — logged in
+    end
+
+    C-&gt;&gt;S: CAP END
+    S--&gt;&gt;C: 001 — registration complete</code></pre>
+<p><strong>In the client:</strong> the full negotiation is logged to the network's Status buffer ("Requesting
+capabilities…", "Capabilities enabled…"), so you can see exactly what was negotiated.</p>
+<p><img alt="Status buffer showing the CAP LS / REQ / ACK exchange" src="../images/ircv3/cap-negotiation.png" /></p>
+<h3 id="sasl-authentication">SASL authentication<a class="headerlink" href="#sasl-authentication" title="Permanent link">&para;</a></h3>
+<p>Cascade requests <code>sasl</code> only when the network is configured for it (<code>client.go:1927</code>), and
+defers <code>CAP END</code> until authentication completes. Supported mechanisms (<code>client.go:2459-2466</code>):</p>
+<table>
+<thead>
+<tr>
+<th>Mechanism</th>
+<th>How it authenticates</th>
+<th>Code</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>PLAIN</code></td>
+<td>base64 <code>\0user\0pass</code></td>
+<td><code>client.go:2476</code></td>
+</tr>
+<tr>
+<td><code>EXTERNAL</code></td>
+<td>TLS client certificate (empty payload)</td>
+<td><code>client.go:2493</code></td>
+</tr>
+<tr>
+<td><code>SCRAM-SHA-256</code></td>
+<td>salted challenge-response, no password on the wire</td>
+<td><code>scram.go</code></td>
+</tr>
+<tr>
+<td><code>SCRAM-SHA-512</code></td>
+<td>as above, SHA-512</td>
+<td><code>scram.go</code></td>
+</tr>
+</tbody>
+</table>
+<p>The flow: <code>startSASLAuth</code> sends <code>AUTHENTICATE &lt;mechanism&gt;</code> (<code>client.go:2420</code>), and
+<code>handleAUTHENTICATE</code> dispatches server responses to the mechanism handler
+(<code>client.go:2452</code>). Progress is emitted on the event bus (<code>EventSASLStarted</code>) and written to
+the Status buffer.</p>
+<p><strong>In the client:</strong> SASL is configured per network in Settings (mechanism, username,
+password / certificate). Success and failure are reported in the network's Status buffer.</p>
+<p><img alt="SASL Authentication section of the network settings form" src="../images/ircv3/sasl-settings.png" /></p>
+<h3 id="server-time">server-time<a class="headerlink" href="#server-time" title="Permanent link">&para;</a></h3>
+<p>When <code>server-time</code> is enabled, Cascade reads the <code>@time</code> tag off each message and uses it as
+the message timestamp, parsing RFC3339 with and without fractional seconds and falling back
+to local time only if the tag is missing or unparseable (<code>getMessageTime</code>,
+<code>client.go:2091-2108</code>). Replayed history always honors <code>@time</code> regardless of the live cap
+(<code>getHistoryTime</code>, <code>client.go:2229-2239</code>), so backlog keeps its original times.</p>
+<p><strong>In the client:</strong> every message renders its timestamp via <code>toLocaleTimeString()</code>
+(<code>message-view.tsx:496</code>, <code>:528</code>, <code>:537</code>). With <code>server-time</code>, these reflect when the message
+was sent on the network, which matters for history and bouncer backlog.</p>
+<p><img alt="Channel messages, each prefixed with a server-time timestamp" src="../images/ircv3/server-time.png" /></p>
+<h3 id="message-tags">message-tags<a class="headerlink" href="#message-tags" title="Permanent link">&para;</a></h3>
+<p><code>message-tags</code> is the substrate the other tag-based features build on. Cascade consumes tags
+via the underlying <code>ergochat/irc-go</code> library's <code>GetTag()</code>:</p>
+<ul>
+<li><code>@time</code> → message timestamps (see <a href="#server-time">server-time</a>)</li>
+<li><code>@msgid</code> → history deduplication (see <a href="#chathistory">chathistory</a>)</li>
+</ul>
+<p>Tags Cascade does not yet consume (e.g. <code>@account</code>, <code>@label</code>) are simply ignored.</p>
+<h3 id="echo-message">echo-message<a class="headerlink" href="#echo-message" title="Permanent link">&para;</a></h3>
+<p>With <code>echo-message</code>, the server sends your own <code>PRIVMSG</code>s back to you. Cascade treats the
+echoed copy as canonical so messages aren't duplicated:</p>
+<ul>
+<li><code>isEchoMessage</code> detects a self-message by comparing the sender to your nick, gated on the
+  cap being enabled (<code>client.go:2112-2121</code>).</li>
+<li>The PRIVMSG path uses this to avoid double-storing locally sent messages
+  (<code>client.go:564-696</code>), and <code>pmPeer</code> keeps echoed private messages keyed to the right
+  conversation (<code>client.go:2127-2132</code>).</li>
+</ul>
+<p><strong>In the client:</strong> your messages appear exactly once, with the server's timestamp and msgid,
+whether or not <code>echo-message</code> is active.</p>
+<h3 id="batch">batch<a class="headerlink" href="#batch" title="Permanent link">&para;</a></h3>
+<p><code>batch</code> lets the server group related messages so the client treats them atomically. Cascade
+requires it for <code>chathistory</code>: replays arrive wrapped in a <code>BATCH +id chathistory … -id</code>
+group that <code>ergochat/irc-go</code> collects and hands to <code>handleChatHistoryBatch</code>
+(<code>client.go:1578-1581</code>, <code>client.go:2268-2323</code>). Non-chathistory batches are passed through
+unchanged.</p>
+<h3 id="chathistory">chathistory<a class="headerlink" href="#chathistory" title="Permanent link">&para;</a></h3>
+<p>Cascade requests both the ratified <code>chathistory</code> and legacy <code>draft/chathistory</code> names and
+uses whichever the server advertises (<code>client.go:31</code>, <code>chatHistoryEnabled</code>,
+<code>client.go:2197-2201</code>). It reads the advertised per-request maximum (<code>chathistory=N</code>) and
+clamps requests to it (<code>setChatHistoryMax</code>/<code>clampChatHistoryLimit</code>, <code>client.go:2185-2216</code>),
+defaulting to 100 when unadvertised (<code>client.go:2181</code>).</p>
+<p>Two request shapes:</p>
+<ul>
+<li><strong>Latest-on-join / open:</strong> <code>RequestChatHistoryLatest</code> pulls the most recent messages when
+  you join a channel or open a query (<code>client.go:2243</code>, triggered at <code>client.go:769-772</code>).</li>
+<li><strong>Backscroll:</strong> <code>RequestChatHistoryBefore</code> fetches older messages before a cursor
+  timestamp for on-demand scrollback (<code>client.go:2257</code>).</li>
+</ul>
+<p>Replays are deduplicated by <code>@msgid</code>: <code>getMsgID</code> extracts the tag (<code>client.go:2219-2224</code>) and
+the storage layer enforces uniqueness so the same message is never stored twice across
+overlapping history pulls and live traffic (unique index, <code>storage/schema.sql:120</code>).</p>
+<p>With <code>draft/event-playback</code> negotiated, the server also replays JOIN/PART/QUIT/KICK/MODE
+inside <code>chathistory</code> batches as real structured lines carrying their original <code>@msgid</code>,
+instead of narrating them as <code>HistServ</code> PRIVMSG text. <code>buildHistoryMessage</code> turns each into
+the same <code>join</code>/<code>part</code>/<code>quit</code>/<code>kick</code>/<code>mode</code> row type the live handlers already write
+(<code>client.go:1926</code> et al.), so a replayed membership event collides with — and is skipped
+against — the live row already stored for that event, via the per-conversation
+<code>(network_id, conversation, msgid)</code> unique index. Without the cap, Ergo instead narrates
+these as plain-text PRIVMSGs from <code>HistServ</code>, which don't carry the original msgid and can't
+dedup against the live structured row.</p>
+<p>Coverage lives in <code>internal/irc/chathistory_test.go</code> and <code>internal/storage/chathistory_test.go</code>.</p>
+<p><strong>In the client:</strong> joining a channel shows recent backlog immediately, and scrolling up loads
+older messages seamlessly without duplicates.</p>
+<p><img alt="Channel showing six messages replayed via CHATHISTORY on join, before the user's own join line" src="../images/ircv3/chathistory.png" /></p>
+<h3 id="multi-prefix">multi-prefix<a class="headerlink" href="#multi-prefix" title="Permanent link">&para;</a></h3>
+<p>Without <code>multi-prefix</code>, a <code>NAMES</code> (<code>353</code>) reply carries only the single highest membership
+prefix for each user, so someone who is both op and voiced appears as <code>@nick</code> and the voice is
+invisible. With the cap negotiated, the server sends every prefix the user holds,
+highest-privilege first (e.g. <code>@+nick</code>).</p>
+<p>The <code>353</code> handler parses all leading prefix characters off each entry with
+<code>splitMembershipPrefixes</code> (<code>client.go</code>), using the prefix set advertised in ISUPPORT <code>PREFIX</code>
+(falling back to the standard <code>~&amp;@%+</code> set before <code>005</code> is seen) and preserving the server's
+order. The result is stored in the existing <code>ChannelUser.Modes</code> string
+(<code>internal/storage/models.go</code>), which already accommodates several prefixes; <code>MODE</code> changes
+keep that string ordered via <code>applyUserPrefix</code> (<code>client.go</code>). No <code>enabledCaps</code> runtime gate is
+needed: the parser stores whatever the server sends.</p>
+<p><strong>In the client:</strong> the nick list groups each user under their highest role and surfaces the
+rest per a Display setting (<strong>Settings → Display → Member role display</strong>). "Icons" shows a
+single icon for the highest role; "Text" shows the full prefix string (e.g. <code>@+</code>), making
+every role visible. The preference is durable (SQLite settings table) and updates live.</p>
+<h3 id="userhost-in-names">userhost-in-names<a class="headerlink" href="#userhost-in-names" title="Permanent link">&para;</a></h3>
+<p>Without this cap a <code>NAMES</code> (<code>353</code>) reply lists bare nicks, so a user's <code>user@host</code> is unknown
+until a <code>WHOIS</code> or a later <code>chghost</code>. With <code>userhost-in-names</code> negotiated, the server appends
+<code>!user@host</code> to every nick in <code>NAMES</code> (after any membership prefixes, e.g. <code>@alice!~alice@host</code>).</p>
+<p>The <code>353</code> handler peels prefixes with <code>splitMembershipPrefixes</code>, then splits the remainder with
+<code>splitNickUserHost</code> (<code>client.go</code>): the bare nick is stored as the channel member (unchanged),
+and the <code>user@host</code> is fed into the live roster via <code>applyUserMeta</code>. This is the same <code>Host</code>
+field <code>chghost</code> maintains, so the two paths converge. No <code>enabledCaps</code> gate is needed: <code>!</code> is
+not a valid nick character, so its presence is itself the signal. Parsing is covered by
+<code>internal/irc/userhost_test.go</code>.</p>
+<p><strong>In the client:</strong> hovering a member in the nick list shows their <code>user@host</code> in the tooltip
+(<code>channel-info.tsx</code>), alongside away/colour info, so hosts are visible on join rather than only
+after a WHOIS.</p>
+<h3 id="live-roster-away-notify-account-notify-extended-join-chghost-account-tag">Live roster (away-notify / account-notify / extended-join / chghost / account-tag)<a class="headerlink" href="#live-roster-away-notify-account-notify-extended-join-chghost-account-tag" title="Permanent link">&para;</a></h3>
+<p>These five capabilities keep the channel member list current as people go away, log in or
+out of an account, or change host, all without a manual <code>/who</code>. They feed one piece of
+session-local state: a per-network map of lowercased nick → <code>UserMeta{Away, AwayMessage,
+Account, Host, Realname}</code> (<code>internal/irc/events.go</code>, <code>internal/irc/client.go</code>). The map is
+deliberately not persisted; a nick's attributes are only meaningful for the current session
+and re-accrue on reconnect (same rationale as bot mode). <code>Realname</code> is fed by
+<a href="#setname">setname</a> and <code>extended-join</code>.</p>
+<p>Each signal updates the map through <code>applyUserMeta</code>, which is idempotent: it only stores and
+emits <code>EventUserMetaChanged</code> when an attribute actually changed, so high-frequency traffic
+(away toggles especially) never spams the UI.</p>
+<table>
+<thead>
+<tr>
+<th>Capability</th>
+<th>Trigger</th>
+<th>Handler</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>away-notify</code></td>
+<td><code>:nick AWAY [:msg]</code></td>
+<td><code>handleAway</code></td>
+</tr>
+<tr>
+<td><code>account-notify</code></td>
+<td><code>:nick ACCOUNT &lt;acct\|*&gt;</code></td>
+<td><code>handleAccount</code></td>
+</tr>
+<tr>
+<td><code>extended-join</code></td>
+<td><code>JOIN #chan &lt;acct&gt; :realname</code></td>
+<td><code>maybeApplyExtendedJoin</code> (in the JOIN handler)</td>
+</tr>
+<tr>
+<td><code>chghost</code></td>
+<td><code>:nick CHGHOST &lt;user&gt; &lt;host&gt;</code></td>
+<td><code>handleChghost</code></td>
+</tr>
+<tr>
+<td><code>account-tag</code></td>
+<td><code>@account</code> on any PRIVMSG/NOTICE/JOIN</td>
+<td><code>maybeApplyAccountTag</code></td>
+</tr>
+</tbody>
+</table>
+<p>Key lifecycle: a NICK change carries the attributes to the new nick (<code>renameUserMeta</code>) and a
+QUIT drops them (<code>removeUserMeta</code>); PART/KICK do not, since the user may remain in other
+channels and these attributes are network-wide.</p>
+<p>The backend forwards <code>EventUserMetaChanged</code> to the frontend as <code>usermeta-event</code>
+(<code>app_events.go</code>), and the store hydrates on select via <code>GetNetworkUserMeta</code> (<code>app.go</code>) into a
+per-network <code>userMeta</code> slice (<code>frontend/src/stores/network.ts</code>). Two surfaces read it:</p>
+<ul>
+<li><strong>Nick list:</strong> away members are dimmed, with their away message on hover
+  (<code>channel-info.tsx</code>). Per the design, presence transitions are silent: they update the
+  roster/WHOIS but never write status lines into the channel buffer.</li>
+<li><strong>WHOIS panel:</strong> shows a live <code>away</code> pill + away message, and the account
+  (<code>user-info.tsx</code>), staying current while the panel is open.</li>
+</ul>
+<p>This cluster also motivated making auto-join evented. JOIN (which triggers the NAMES list
+that builds the roster) now fires on registration completion at <code>RPL_ENDOFMOTD</code> (376) /
+<code>ERR_NOMOTD</code> (422), with a fallback timer armed at <code>RPL_WELCOME</code> (001). The old behavior was a
+fixed 2-second timer that could send JOINs before the server was ready (<code>triggerAutoJoin</code> /
+<code>doAutoJoin</code>, <code>client.go</code>).</p>
+<h3 id="whox-extended-who">WHOX (extended WHO)<a class="headerlink" href="#whox-extended-who" title="Permanent link">&para;</a></h3>
+<p>The live-roster caps fill in attributes as they change, but a freshly-joined channel starts
+blank until someone goes away or speaks. <a href="https://ircv3.net/specs/extensions/whox">WHOX</a>, an
+extended <code>WHO</code> advertised by the <code>WHOX</code> ISUPPORT token (not a CAP), closes that gap by fetching
+every member's attributes in one shot.</p>
+<p>On our own JOIN, when the server advertised <code>WHOX</code> (<code>c.supportsWHOX</code>, set in the <code>005</code> handler),
+<code>requestWHOX</code> issues <code>WHO &lt;channel&gt; %tcuhnfar,&lt;token&gt;</code> (<code>client.go</code>). The reply rows arrive as
+<code>354</code> (RPL_WHOSPCRPL) in WHOX's canonical field order — token, channel, user, host, nick, flags,
+account, realname — and each is folded into the live roster by <code>applyWhoxRow</code> via <code>applyUserMeta</code>:
+host (<code>user@host</code>), away (the <code>flags</code> field begins with <code>G</code>), account (<code>"0"</code>/<code>"*"</code> → none), and
+realname. Correlation uses one of two paths: when <code>labeled-response</code> is available the reply is a
+label-correlated batch (see <a href="#labeled-response">labeled-response</a>); otherwise the fixed
+<code>whoxRosterToken</code> lets <code>handleWhoxReply</code> ignore <code>354</code>s from any user-initiated <code>WHO</code>. Coverage:
+<code>internal/irc/whox_test.go</code>.</p>
+<p><strong>In the client:</strong> there is no dedicated UI. WHOX makes the existing roster surfaces
+(nick-list away dimming, host tooltip, WHOIS account/realname) accurate the instant you join,
+rather than after the first event for each user.</p>
+<h3 id="labeled-response">labeled-response<a class="headerlink" href="#labeled-response" title="Permanent link">&para;</a></h3>
+<p><a href="https://ircv3.net/specs/extensions/labeled-response">labeled-response</a> lets a client tag an
+outbound command with <code>@label=&lt;id&gt;</code>; the server echoes that label on the reply (wrapped in a
+<code>batch</code>), so the reply can be matched to the request even when several are outstanding.</p>
+<p>Cascade's underlying <code>ergochat/irc-go</code> implements this around <code>SendWithLabel</code>: a labeled command's
+reply is collected into a <code>*Batch</code> and delivered to a callback rather than the normal
+handlers. (Inbound labels the library didn't generate are dropped, so labels must only be sent
+this way.) The library learns the cap is active by passively observing our <code>CAP ACK</code>, and gates it
+on <code>batch</code> also being enabled, since the reply is delivered as a batch.</p>
+<p>Cascade's consumer is the WHOX roster query. When <code>labeled-response</code> is negotiated,
+<code>requestWHOX</code> sends the <code>WHO</code> via <code>SendWithLabel</code>, and <code>handleWhoxBatch</code> folds the collected <code>354</code>
+rows into the roster with no token matching needed. Without the cap, WHOX falls back to token
+correlation. WHOX is a good fit because it is a command whose whole multi-line reply we want
+collected, which is exactly the shape labeled-response is built for. Cascade processes ordinary
+server messages globally, so it does not label every command, only this one, where correlation
+adds value. Coverage: the batch path in <code>internal/irc/whox_test.go</code>.</p>
+<p><strong>In the client:</strong> no visible surface. labeled-response only makes the WHOX reply correlation
+exact. It is the one ratified cap with no direct UI.</p>
+<h3 id="setname">setname<a class="headerlink" href="#setname" title="Permanent link">&para;</a></h3>
+<p><a href="https://ircv3.net/specs/extensions/setname">setname</a> lets a user change their realname (GECOS)
+mid-session; the server announces it as <code>:nick SETNAME :new real name</code>. Without it, a realname is
+fixed at connect and only seen via <code>WHOIS</code>.</p>
+<p><code>handleSetname</code> (<code>client.go</code>) records the new realname into the live roster's <code>Realname</code> field
+via <code>applyUserMeta</code>, the same idempotent path the rest of the roster uses. The same field is
+also seeded by <code>extended-join</code>, whose third parameter is the joiner's realname
+(<code>maybeApplyExtendedJoin</code>), so a user's realname is often known from the moment they join, then
+kept current by <code>SETNAME</code>. Coverage: <code>internal/irc/setname_test.go</code>.</p>
+<p><strong>In the client:</strong> the WHOIS panel's Real Name row prefers the live roster value over the
+point-in-time <code>WHOIS</code> reply (<code>user-info.tsx</code>), so it updates the moment a <code>SETNAME</code> arrives while
+the panel is open, mirroring how the live account is shown.</p>
+<h3 id="invite-notify">invite-notify<a class="headerlink" href="#invite-notify" title="Permanent link">&para;</a></h3>
+<p>The invitee form of <code>INVITE</code> (<code>:inviter INVITE you #chan</code>) is delivered whether or not this cap
+is negotiated. With <code>invite-notify</code>, the server also relays invites of other users to a
+channel's operators (<code>:inviter INVITE someone #chan</code>), so ops can see who is being invited.</p>
+<p><code>handleInvite</code> (<code>client.go</code>) handles both: it compares the target to <code>CurrentNick()</code> and writes a
+status-buffer line, "<em>inviter</em> invited <strong>you</strong> to #chan" or "<em>inviter</em> invited <em>someone</em> to</p>
+<h1 id="chan-the-line-is-written-with-writemessagesync-so-the-row-is-committed-before-the-refresh">chan". The line is written with <code>WriteMessageSync</code> (so the row is committed before the refresh<a class="headerlink" href="#chan-the-line-is-written-with-writemessagesync-so-the-row-is-committed-before-the-refresh" title="Permanent link">&para;</a></h1>
+<p>event fires, avoiding a write/notify race) under a dedicated <code>invite</code> message type, then an
+<code>EventMessageReceived</code> with <code>channel: nil</code> routes it to the status buffer and refreshes it live.
+Coverage: <code>internal/irc/invite_test.go</code>.</p>
+<p><strong>In the client:</strong> invites render as a dimmed status line in which the channel name is a clickable
+link that issues <code>/join</code> (<code>message-view.tsx</code>), so you can accept an invite with one click.</p>
+<p><img alt="Status buffer showing an &quot;invited you to #cc-invite&quot; line with a clickable channel" src="../images/ircv3/invite-notify.png" /></p>
+<h3 id="standard-replies">standard-replies<a class="headerlink" href="#standard-replies" title="Permanent link">&para;</a></h3>
+<p><a href="https://ircv3.net/specs/extensions/standard-replies">standard-replies</a> gives servers a uniform
+shape for out-of-band feedback: <code>FAIL</code>, <code>WARN</code>, and <code>NOTE</code>, each carrying
+<code>&lt;command&gt; &lt;code&gt; [&lt;context&gt;...] :&lt;description&gt;</code>. Without it, such feedback arrives as ad-hoc
+notices that are easy to miss or misattribute.</p>
+<p><code>handleStandardReply</code> (<code>client.go</code>) formats the reply as "<code>&lt;TYPE&gt; &lt;command&gt; (&lt;code&gt;): &lt;description&gt;</code>"
+and writes it to the status buffer via the shared <code>writeStatusLine</code> helper, mapping severity to a
+message type: <code>FAIL</code> → <code>error</code>, <code>WARN</code> → <code>warning</code>, <code>NOTE</code> → <code>status</code>. Coverage:
+<code>internal/irc/standard_replies_test.go</code>.</p>
+<p><strong>In the client:</strong> the existing message renderer styles these by type: <code>error</code> in red with a ⚠,
+the <code>warning</code> type in amber with a ⚠, and <code>NOTE</code> as a dimmed status line
+(<code>message-view.tsx</code>), so a server-side failure is visually distinct from an informational note.</p>
+<h3 id="extended-monitor">extended-monitor<a class="headerlink" href="#extended-monitor" title="Permanent link">&para;</a></h3>
+<p><a href="https://ircv3.net/specs/extensions/extended-monitor">extended-monitor</a> extends
+<a href="#monitor-buddy-list">MONITOR</a> so the server also pushes <code>AWAY</code>, <code>ACCOUNT</code>, <code>CHGHOST</code>, and
+<code>SETNAME</code> notifications for nicks you monitor, even ones you share no channel with. Without it,
+a buddy's only observable state is online/offline.</p>
+<p>This was nearly free in Cascade because the live-roster path is membership-agnostic: <code>applyUserMeta</code>
+(<code>client.go</code>) stores metadata for any nick unconditionally, and the existing
+<code>handleAway</code>/<code>handleAccount</code>/<code>handleChghost</code>/<code>handleSetname</code> handlers already funnel into it. So the
+backend change is just adding <code>extended-monitor</code> to <code>requestedCaps</code> (<code>client.go:31</code>); once the
+server ACKs it, notifications for monitored-only nicks flow through the same idempotent
+<code>EventUserMetaChanged</code> → <code>usermeta-event</code> path as channel members. Coverage:
+<code>internal/irc/extended_monitor_test.go</code>.</p>
+<p><strong>In the client:</strong> the Buddies pane (<code>monitor-list.tsx</code>) renders a three-state dot: green
+(online), amber (online but away, with the away message on hover), and grey (offline), via the
+pure <code>buddyPresence</code> helper (<code>frontend/src/lib/presence.ts</code>), joining live MONITOR presence with
+the roster's away state. Previously a buddy could only be green or grey.</p>
+<h3 id="no-implicit-names">no-implicit-names<a class="headerlink" href="#no-implicit-names" title="Permanent link">&para;</a></h3>
+<p><a href="https://ircv3.net/specs/extensions/no-implicit-names">no-implicit-names</a> lets a client opt out of
+the implicit <code>NAMES</code> reply (<code>353</code>/<code>366</code>) the server sends after each <code>JOIN</code>, which saves traffic
+for bouncers and mobile clients rejoining many channels at once.</p>
+<p>There is a catch: Cascade builds its nick list solely from that post-join <code>353</code>, and the
+WHOX roster seed fills only attributes (away/account/host/realname), not membership prefixes
+(<code>@</code>/<code>+</code>). So negotiating the cap naively would leave joined channels with a flat or empty roster.
+Cascade handles this by issuing an explicit <code>NAMES &lt;channel&gt;</code> on our own JOIN when the cap is
+enabled (<code>namesOnSelfJoin</code>, gated on <code>enabledCaps</code>, wired into the JOIN handler in <code>client.go</code>); the
+unchanged <code>353</code>/<code>366</code> handlers then rebuild the roster exactly as before. Coverage:
+<code>internal/irc/no_implicit_names_test.go</code>.</p>
+<p><strong>In the client:</strong> no visible change. The cap is a wire-level optimization, and the roster appears
+on join just as it does without it.</p>
+<h3 id="utf8only">UTF8ONLY<a class="headerlink" href="#utf8only" title="Permanent link">&para;</a></h3>
+<p><a href="https://ircv3.net/specs/extensions/utf8-only">UTF8ONLY</a> is a valueless ISUPPORT token by which a
+server declares it accepts only UTF-8 content; a compliant client MUST set its outgoing encoding to
+UTF-8 without user intervention. Cascade already emits Go strings (UTF-8) exclusively and has no
+legacy-charset path, so it is compliant by construction. The <code>005</code> handler records the token onto
+<code>ServerCapabilities.UTF8Only</code> (<code>applyISUPPORTToken</code>, <code>client.go</code>), exposed to the frontend via
+<code>GetServerCapabilities</code>; no encoding change is required. Coverage:
+<code>internal/irc/isupport_test.go</code>.</p>
+<h3 id="account-extban">account-extban<a class="headerlink" href="#account-extban" title="Permanent link">&para;</a></h3>
+<p>Account <a href="https://ircv3.net/specs/extensions/extended-ban">EXTBAN</a> is the ratified account-based ban
+type: a server advertises <code>EXTBAN=&lt;prefix&gt;,&lt;types&gt;</code> (e.g. <code>EXTBAN=$,ajrxc</code>) and, when the <code>a</code> type
+is present, a ban mask like <code>$a</code> (any logged-in user) or <code>$a:account</code> bans by services account
+rather than hostmask.</p>
+<p>The <code>005</code> handler parses <code>EXTBAN</code> into <code>ServerCapabilities.ExtbanPrefix</code> (the prefix rune) and
+<code>ExtbanTypes</code> (the type set) via the pure <code>parseExtban</code> (<code>modeparse.go</code>), surfaced to the frontend
+through <code>ExtbanInfo</code> / <code>GetServerCapabilities</code>. Coverage: <code>internal/irc/extban_test.go</code>,
+<code>internal/irc/isupport_test.go</code>.</p>
+<p><strong>In the client:</strong> the channel mode editor's ban list (<code>channel-mode-editor.tsx</code>) renders extban
+masks with a semantic label via the pure <code>describeBan</code> helper
+(<code>frontend/src/lib/extban.ts</code>) instead of the opaque raw mask: <code>$a:alice</code> shows as an account
+badge with "account: alice", and <code>$a</code> as "any logged-in account". The add-ban placeholder hints
+the <code>$a:account</code> form when the server advertises it. Coverage: <code>frontend/src/lib/extban.test.ts</code>.</p>
+<h3 id="bot-mode">Bot mode<a class="headerlink" href="#bot-mode" title="Permanent link">&para;</a></h3>
+<p><a href="https://ircv3.net/specs/extensions/bot-mode">Bot mode</a> lets a server mark certain users as
+automated bots. Cascade recognizes a bot from two signals, neither of which needs a capability
+beyond <code>message-tags</code>:</p>
+<ul>
+<li>the valueless <code>bot</code> message tag on an incoming PRIVMSG / NOTICE or JOIN
+  (<code>maybeMarkBotFromTag</code>, <code>client.go:471</code>, called from the PRIVMSG, JOIN, and notice paths at
+  <code>client.go:864</code>, <code>:1004</code>, <code>:3584</code>), and</li>
+<li><code>RPL_WHOISBOT</code> (<code>335</code>) in a WHOIS reply (<code>handleWhoisBot</code>, <code>client.go:479</code>).</li>
+</ul>
+<p>Both funnel into <code>markBot</code> (<code>client.go:441</code>), which is idempotent: it records the nick in a
+session-local per-network set and emits <code>EventBotDetected</code> (<code>"bot.detected"</code>) only the first
+time, so repeated bot traffic never re-notifies. Like the live-roster attributes, the set is
+not persisted; it re-accrues on reconnect.</p>
+<p>The backend forwards the event to the frontend as <code>bot-event</code> (<code>app_events.go:137</code>), and the
+store keeps a per-network <code>botNicks</code> set (<code>frontend/src/stores/network.ts:119</code>), hydrated on
+select via <code>GetNetworkBots</code>.</p>
+<p><strong>In the client:</strong> bot users get a "bot" badge in the nick list (<code>channel-info.tsx:534</code>) and
+in the WHOIS panel (<code>user-info.tsx:138</code>), so automated participants are visually distinct from
+people.</p>
+<p>The <code>+B</code> user-mode half is also implemented. The <code>BOT=&lt;letter&gt;</code> ISUPPORT token is parsed
+by <code>applyISUPPORTToken</code> (<code>client.go</code>) into <code>ServerCapabilities.BotModeChar</code>, the server's
+advertised letter, never hardcoded. A bot is recognised at rest from the <code>B</code> flag in a
+WHO/WHOX reply (the <code>flags</code> field), folded through the existing <code>markBot</code> path. A durable
+per-network <strong>Identify as a bot (+B)</strong> setting (<code>identify_as_bot</code>) sends
+<code>MODE &lt;nick&gt; +&lt;letter&gt;</code> after registration on each connect, using the server-advertised letter
+from <code>BotModeChar</code>; the setting is gated on the server advertising <code>BOT=</code> and writes a
+status-line warning when it does not. Cascade's own <code>+B</code> MODE echo is handled by
+<code>markSelfBotFromUserMode</code>, which calls <code>markBot</code> on our own nick so the bot badge appears for
+self. The pre-existing recognition surfaces, the <code>bot</code> tag and RPL_WHOISBOT (<code>335</code>), are
+unchanged. The only new user-facing surface is the <strong>Identify as a bot (+B)</strong> checkbox in
+network settings; the bot badge in the nick list and WHOIS panel reuses the existing UI.</p>
+<h3 id="typing-indicators-typing-client-tag">Typing indicators (<code>+typing</code> client tag)<a class="headerlink" href="#typing-indicators-typing-client-tag" title="Permanent link">&para;</a></h3>
+<p>The <a href="https://ircv3.net/specs/client-tags/typing"><code>typing</code> client tag</a> carries a peer's
+composing state (<code>active</code>, <code>paused</code>, or <code>done</code>) as a <code>TAGMSG</code> with no message body. It
+needs no dedicated capability: it rides on <code>message-tags</code> (already negotiated) and the
+server relays the client-only <code>+typing</code> tag like any other message.</p>
+<p><strong>Send.</strong> The React composer owns the timing. A small DOM-free state
+machine (<code>frontend/src/lib/typing-sender.ts</code>) re-asserts <code>active</code> at most once every 3s while
+you type, emits <code>paused</code> after 6s idle with text still in the box, and <code>done</code> when you send,
+clear the input, or leave the conversation. Slash commands never broadcast typing
+(<code>shouldBroadcastTyping</code>), since composing <code>/msg</code> or <code>/join</code> isn't writing a message. Each transition calls the bound <code>App.SendTyping</code>
+(<code>app_commands.go</code>), which is a thin relay over <code>IRCClient.SendTyping</code> (<code>internal/irc/client.go</code>):
+it validates the state, no-ops silently if <code>message-tags</code> isn't enabled, and otherwise sends
+<code>conn.SendWithTags({"+typing": state}, "TAGMSG", target)</code>.</p>
+<p><strong>Receive.</strong> <code>handleTypingTag</code> (<code>internal/irc/client.go</code>) reads the <code>+typing</code> tag off an
+inbound <code>TAGMSG</code>, drops our own <code>echo-message</code> echo via <code>isMe</code>, routes channel-vs-PM by the
+target, and emits <code>EventTypingReceived</code>; nothing is persisted. The backend forwards it to the
+frontend as <code>typing-event</code> (<code>app_events.go</code>), where an ephemeral store
+(<code>frontend/src/stores/typing.ts</code>) tracks who is typing per conversation and self-expires each
+entry after 6s (so a dropped <code>done</code> can't leave a stuck indicator); it also clears a network's
+typers on disconnect. Coverage: <code>internal/irc/typing_test.go</code>, <code>frontend/src/lib/typing-sender.test.ts</code>,
+<code>frontend/src/stores/typing.test.ts</code>, <code>frontend/src/hooks/useTypingRouting.test.ts</code>.</p>
+<p><strong>In the client:</strong> a line above the message input shows "Alice is typing…", aggregating in
+channels ("Alice and 2 others are typing…"). Two durable settings (<strong>Settings → Display →
+Typing notifications</strong>) gate it independently: "Send typing notifications" (default on) and
+"Show others' typing" (default on). You can keep seeing others while staying invisible
+yourself, or quiet a busy channel's indicators.</p>
+<h3 id="reply-quotes-draftreply-client-tag">Reply quotes (<code>+draft/reply</code> client tag)<a class="headerlink" href="#reply-quotes-draftreply-client-tag" title="Permanent link">&para;</a></h3>
+<p>The <a href="https://ircv3.net/specs/client-tags/reply"><code>+draft/reply</code> client tag</a> carries a <code>@+draft/reply=&lt;msgid&gt;</code> reference on a <code>PRIVMSG</code>, identifying which earlier message the sender is replying to. It needs no dedicated capability: it rides on <code>message-tags</code> (already negotiated), and also benefits from <code>echo-message</code> so that a sent reply is reconciled with the server's copy and the <code>@msgid</code> is authoritative.</p>
+<p><strong>Inbound.</strong> <code>getReplyTag</code> (<code>internal/irc/tags.go</code>) reads the <code>+draft/reply</code> tag (falling back to the bare <code>reply</code> form for compatibility) off an inbound <code>PRIVMSG</code>. The tag value is the <code>@msgid</code> of the parent message, which Cascade already stores in SQLite for history deduplication. The backend carries only that raw msgid through the message event (the <code>reply_msgid</code> storage field), so no separate table or schema change is needed. The parent text is resolved client-side: <code>resolveParent(replyMsgid, index)</code> (<code>frontend/src/lib/reply.ts</code>) looks the msgid up synchronously in a local index of already-loaded messages, falling back to <code>App.GetMessageByMsgID</code> (<code>app.go</code>) for a cross-buffer parent that isn't currently loaded.</p>
+<p><strong>Outbound.</strong> When you click Reply on a message, the frontend passes the target msgid to <code>App.SendMessageWithContext</code> (<code>app_commands.go</code>), which calls <code>IRCClient.SendMessageWithTags</code> (<code>internal/irc/client.go</code>) and emits a <code>PRIVMSG</code> carrying the <code>+draft/reply</code> tag.</p>
+<p>Cascade accepts both the <code>+draft/reply</code> and bare <code>reply</code> tag forms inbound (the draft prefix was dropped in the ratified spec but some servers and clients still emit the prefixed form). Outbound it always emits <code>+draft/reply</code>.</p>
+<p><strong>In the client:</strong> a replied-to message renders a quote block above the reply body, showing the replier's nick, a snippet of the original text, and a jump arrow. Clicking the jump arrow scrolls to the original message if it is in the same buffer, or opens the source buffer and scrolls there for cross-buffer replies (e.g. a channel message replied to from a PM). Coverage: <code>internal/irc/reply_test.go</code>, <code>frontend/src/lib/reply.test.ts</code>.</p>
+<p><img alt="A channel message showing a reply quote with the original author's nick, a text snippet, and a jump arrow" src="../images/ircv3/reply-quote.png" /></p>
+<h3 id="channel-context-draftchannel-context-client-tag">Channel context (<code>+draft/channel-context</code> client tag)<a class="headerlink" href="#channel-context-draftchannel-context-client-tag" title="Permanent link">&para;</a></h3>
+<p>The <a href="https://ircv3.net/specs/client-tags/channel-context"><code>+draft/channel-context</code> client tag</a> carries a <code>@+draft/channel-context=#channel</code> reference on a <code>PRIVMSG</code>, indicating that a private message is contextually related to a specific channel. Like <code>+draft/reply</code>, it needs no dedicated capability: it rides on <code>message-tags</code>.</p>
+<p><strong>Inbound.</strong> <code>getChannelContext</code> (<code>internal/irc/tags.go</code>) reads the <code>+draft/channel-context</code> tag off an inbound <code>PRIVMSG</code> in a PM conversation. The tag value is a channel name. The backend carries it through the message event and stores it alongside the message so that the channel context remains visible in scrollback.</p>
+<p><strong>Outbound.</strong> When you initiate a private message by clicking "Message privately (re: #channel)", a flow available from a channel's nick list or from a channel-context pill, the frontend passes the channel name to <code>App.SendMessageWithContext</code> (<code>app_commands.go</code>), whose 5<sup>th</sup> argument carries the channel context. It calls <code>IRCClient.SendMessageWithTags</code> (<code>internal/irc/client.go</code>), which emits a <code>PRIVMSG</code> carrying the <code>+draft/channel-context</code> tag. The context is sticky per PM conversation: once a channel context is established (either received inbound or sent outbound), subsequent messages in that PM automatically carry the same <code>+draft/channel-context</code> tag until the context is cleared or changed.</p>
+<p>Cascade accepts both the <code>+draft/channel-context</code> and bare <code>channel-context</code> tag forms inbound. Outbound it always emits the <code>+draft/</code> form.</p>
+<p><strong>In the client:</strong> a PM message with a channel context renders a "in #channel" pill alongside the message. Clicking the pill opens or focuses that channel's buffer. A "Message privately (re: #channel)" entry in the channel nick-list context menu opens a PM with the channel context pre-set, so the first and subsequent messages in that thread all carry the tag. Coverage: <code>internal/irc/channel_context_test.go</code>, <code>frontend/src/lib/channel-context.test.ts</code>.</p>
+<p><img alt="A private message showing an &quot;in #channel&quot; pill linking the conversation to its originating channel" src="../images/ircv3/channel-context-pill.png" /></p>
+<h3 id="strict-transport-security-sts">Strict Transport Security (STS)<a class="headerlink" href="#strict-transport-security-sts" title="Permanent link">&para;</a></h3>
+<p><a href="https://ircv3.net/specs/extensions/sts">STS</a> lets a server tell the client to always use
+TLS. It is read from the <code>CAP LS</code> value and never <code>CAP REQ</code>'d, so it is deliberately
+absent from <code>requestedCaps</code>; the LS handler parses it directly (<code>client.go</code>,
+<code>handleSTSAdvertisement</code>). How much it's trusted depends on the transport it arrived over:</p>
+<ul>
+<li><strong>Over plaintext:</strong> only the <code>port</code> directive is honored. Cascade records a one-shot
+  in-session upgrade and reconnects over TLS to that port, but persists nothing (a
+  network attacker could have injected the advertisement, so it must not outlive the
+  session).</li>
+<li><strong>Over TLS:</strong> the <code>duration</code> is trusted. Cascade persists a per-host policy (<code>sts_policies</code>
+  table, keyed by hostname) so every future connection to that host is forced onto TLS at the
+  policy port, even if the stored server config says plaintext. <code>duration=0</code> removes the
+  policy.</li>
+</ul>
+<p>Enforcement happens before each dial in the server loop (<code>applySTS</code>, <code>app_connection.go</code>): a
+host under an active policy is rewritten to TLS on the policy port, and because no plaintext
+fallback is added, a host under STS can never be dialed in plaintext and a failed TLS dial
+won't silently downgrade. Per spec, STS is ignored for connections made to an IP literal
+(<code>irc.IsIPLiteral</code>). Parsing and the policy store are covered by <code>internal/irc/sts_test.go</code>
+and <code>internal/storage/sts_policies_test.go</code>.</p>
+<p><strong>In the client:</strong> the upgrade and policy lifecycle are written to the network's Status
+buffer ("Server advertised STS policy…", "Connecting to host:6697 (TLS enforced by STS)…"),
+and the Settings → Networks pane shows a 🔒 "TLS enforced until …" badge per server, with a
+Clear control (gated behind a confirmation, since clearing is a security downgrade).</p>
+<h3 id="monitor-buddy-list">MONITOR (buddy list)<a class="headerlink" href="#monitor-buddy-list" title="Permanent link">&para;</a></h3>
+<p><a href="https://ircv3.net/specs/extensions/monitor">MONITOR</a> tracks the online/offline presence of
+specific nicks, even ones not in any shared channel, so you can keep a "buddy list". It is
+advertised via the <code>MONITOR=&lt;limit&gt;</code> ISUPPORT token (not a CAP).</p>
+<p>Unlike the session-local roster, the buddy list is durable: monitored nicks are stored per
+network in the <code>monitored_nicks</code> table (<code>internal/storage/</code>). On registration,
+<code>sendInitialMonitor</code> re-sends the saved list to the server (<code>MONITOR +</code>, chunked); thereafter
+<code>MonitorAdd</code>/<code>MonitorRemove</code> add and drop nicks. Presence replies — <code>730</code> (RPL_MONONLINE) and
+<code>731</code> (RPL_MONOFFLINE), each a comma-separated target list — are parsed by
+<code>handleMonitorPresence</code> and folded into a session presence map by the idempotent
+<code>setMonitorPresence</code>, which emits <code>EventMonitorChanged</code> only on a real change. The bound methods
+<code>AddMonitor</code> / <code>RemoveMonitor</code> / <code>GetMonitorList</code> (<code>app.go</code>) coordinate persistence, the live
+<code>MONITOR</code> command, and presence for the UI. Coverage: <code>internal/irc/monitor_test.go</code> and
+<code>internal/storage/monitored_nicks_test.go</code>.</p>
+<p><strong>Two monitoring sources, one server list.</strong> MONITOR is fed by two sources that are unioned onto
+the single server-side list:</p>
+<ol>
+<li><strong>Durable buddies:</strong> the curated, persisted list described above (shown in the Buddies pane).</li>
+<li><strong>Open PM correspondents:</strong> every open private-message conversation is auto-monitored so
+   the DM-list entry shows real presence, then dropped from MONITOR when the PM closes. These are
+   transient and session-derived (computed from open PMs each connect); they never enter
+   <code>monitored_nicks</code> or the Buddies pane. Opening a DM does not add a buddy.</li>
+</ol>
+<p>The rule is centralized in <code>desiredMonitorState</code>: a nick is monitored iff it is a durable buddy
+or has an open PM, excluding yourself and service pseudo-clients (<code>IsServiceNick</code>:
+NickServ/ChanServ/SaslServ/…). <code>MonitorReconcileNick</code> applies it after any buddy add/remove
+(<code>AddMonitor</code>/<code>RemoveMonitor</code>) or PM open/close (<code>SetPrivateMessageOpen</code>), and <code>sendInitialMonitor</code>
+arms the whole union on connect (buddies first, so they keep their slots under a tight
+<code>MONITOR=&lt;limit&gt;</code>). <code>MonitorSet</code> tracks the armed-set and honors the advertised limit; <code>734</code>
+(ERR_MONLISTFULL) degrades gracefully, with extra nicks simply shown as "unknown".</p>
+<p><strong>In the client:</strong> the right sidebar has a <strong>Users / Buddies</strong> tab switcher (<code>channel-info.tsx</code>);
+the Buddies pane (<code>monitor-list.tsx</code>) lists each buddy with a green (online) / grey (offline)
+dot, an "Add nick" input, and a remove control, and updates live via the <code>monitor-event</code>. A
+nick can also be added straight from the member list's right-click menu ("Monitor this user").
+In the <strong>Direct Messages</strong> list, each conversation shows a presence dot driven by the same
+MONITOR data (<code>GetMonitorPresence</code> seeds it, <code>monitor-event</code> keeps it live): solid green for
+online, solid grey for offline, and a hollow neutral dot for unknown (a service nick, or not yet
+tracked). See <code>dmPresenceState</code> in <code>frontend/src/lib/presence.ts</code>.</p>
+<p><img alt="The Buddies pane showing a monitored nick &quot;buddybot&quot; with a green online dot" src="../images/ircv3/monitor.png" /></p>
+<h3 id="supporting-features">Supporting features<a class="headerlink" href="#supporting-features" title="Permanent link">&para;</a></h3>
+<p>These are not CAP capabilities but are part of Cascade's modern-IRC behavior and interact
+with the IRCv3 features above.</p>
+<ul>
+<li><strong>ISUPPORT (<code>005</code>):</strong> Cascade parses <code>PREFIX</code> and <code>CHANMODES</code> from ISUPPORT
+  (<code>client.go:1767-1805</code>, <code>modeparse.go</code>) to classify channel and membership modes correctly
+  per server. This drives the mode editor UI (<code>channel-mode-editor.tsx</code>).</li>
+<li><strong>WHOIS account (<code>330</code>, RPL_WHOISACCOUNT):</strong> when a user is logged in, the account name is
+  captured (<code>client.go:1748-1762</code>) and shown in the user info panel
+  (<code>user-info.tsx:128-130</code>).</li>
+</ul>
+<p><img alt="User info panel showing the WHOIS account name (RPL_WHOISACCOUNT / 330)" src="../images/ircv3/whois-account.png" /></p>
+<h2 id="not-yet-supported">Not yet supported<a class="headerlink" href="#not-yet-supported" title="Permanent link">&para;</a></h2>
+<p>The ratified IRCv3 set is fully implemented, with no remaining ratified gaps (see
+the matrix above). Everything outstanding is a draft extension, deliberately out of scope for
+ratified compliance and belonging to the future modern-chat product rather than this client:</p>
+<ul>
+<li><code>draft/message-redaction</code> (handle REDACT/DELETE) needs message-mutation handling.</li>
+<li><code>draft/multiline</code>, <code>draft/metadata-2</code>, <code>draft/read-marker</code>, <code>draft/chathistory</code> targets, and the
+  remaining client-only UX tag (<code>draft/react</code>). The <code>+typing</code>, <code>+draft/reply</code>, and
+  <code>+draft/channel-context</code> client tags are now supported. See
+  <a href="#typing-indicators-typing-client-tag">Typing indicators</a>,
+  <a href="#reply-quotes-draftreply-client-tag">Reply quotes</a>, and
+  <a href="#channel-context-draftchannel-context-client-tag">Channel context</a>.</li>
+</ul>
+<p><code>WebSocket</code> and <code>WebIRC</code> are ratified but server/transport-side (gateway concerns), not
+client-negotiated capabilities, so they are intentionally absent.</p>
+<p>A prioritized, checkbox-tracked list of all outstanding work, including the ratified gaps
+above and the draft extensions below, lives in the <a href="../ircv3-roadmap/">IRCv3 Roadmap</a>.</p>
+<p>When implementing any future cap, add it to <code>requestedCaps</code> (<code>client.go:31</code>), gate behavior on
+<code>enabledCaps</code> (or the relevant ISUPPORT token), and update this matrix.</p>
+<h2 id="how-the-screenshots-are-made">How the screenshots are made<a class="headerlink" href="#how-the-screenshots-are-made" title="Permanent link">&para;</a></h2>
+<p>Screenshots are generated by the Playwright e2e suite rather than captured by hand, so they
+regenerate as the UI evolves and stay in sync with real behavior.</p>
+<ul>
+<li><strong>Specs:</strong> <code>e2e/tests/screenshots-ircv3.spec.ts</code></li>
+<li><strong>Harness:</strong> the suite boots the headless Wails server-mode binary and a real Ergo IRC
+  server via Docker (<code>e2e/global-setup.ts</code>, <code>docker-compose.yml</code>). Ergo supports the
+  capabilities Cascade negotiates, so the rendered behavior is genuine.</li>
+<li><strong>Traffic:</strong> <code>e2e/lib/irc-peer.ts</code> (<code>IrcPeer</code>) generates real IRC messages against Ergo;
+  helpers in <code>e2e/lib/actions.ts</code> drive connect/join/select.</li>
+<li><strong>Output:</strong> committed under <code>docs/public/developers/images/ircv3/</code> and referenced from this document.</li>
+</ul>
+<p>The specs are gated behind the <code>CASCADE_SCREENSHOTS</code> env var, so a normal <code>task e2e</code> / CI run
+skips them and never rewrites the committed PNGs. Regenerate them intentionally:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nb">cd</span><span class="w"> </span>e2e<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nv">CASCADE_SCREENSHOTS</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>npx<span class="w"> </span>playwright<span class="w"> </span><span class="nb">test</span><span class="w"> </span>tests/screenshots-ircv3.spec.ts
+</span></code></pre></div>
+<blockquote>
+<p>Note: because regeneration is explicit (not part of the default suite), the committed images
+only change when someone deliberately re-runs the specs and commits the result.</p>
+</blockquote>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-circle-arrow-up" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m16 12-4-4-4 4M12 16V8"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../ircv3-roadmap/" class="md-footer__link md-footer__link--prev" aria-label="Previous: IRCv3 Roadmap">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                IRCv3 Roadmap
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../plugin-system/" class="md-footer__link md-footer__link--next" aria-label="Next: Plugin System">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Plugin System
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 Matt Ouille
+    </div>
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/matt0x6F/irc-client" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["announce.dismiss","content.action.edit","content.action.view","content.code.annotate","content.code.copy","content.code.select","content.footnote.tooltips","content.tabs.link","content.tooltips","navigation.footer","navigation.indexes","navigation.instant","navigation.instant.prefetch","navigation.path","navigation.sections","navigation.tabs","navigation.top","navigation.tracking","search.highlight","toc.follow"],"search":"../../assets/javascripts/workers/search.b6b7e04f.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","nav":[{"Home":"index.md"},{"User Guide":["users/install.md","users/connecting.md","users/commands.md","users/plugins.md"]},{"Developers":["developers/plugin-system.md","developers/events.md","developers/ircv3-support.md","developers/protocol-references.md","developers/releases.md"]},{"Scripting":["scripting/index.md","scripting/quickstart.md","scripting/writing-scripts.md","scripting/examples.md","scripting/api-reference.md","scripting/lifecycle-and-limits.md","scripting/managing-scripts.md"]}],"provider":"mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.ee611ef6.min.js"></script>
+      
+    
+  </body>
+</html>
