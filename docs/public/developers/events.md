@@ -9,6 +9,23 @@ The events system uses a publisher-subscriber pattern:
 - **Subscribers** register interest in specific event types.
 - The **EventBus** routes events to all relevant subscribers asynchronously.
 
+### Delivery model
+
+The EventBus has two delivery lanes:
+
+- `Emit` queues durable and control events on a bounded, ordered lane. A single
+  dispatcher delivers those events to subscribers in emission order.
+- `EmitLatest(key, event)` publishes replaceable snapshot state without
+  blocking its caller. While the dispatcher is busy, repeated events with the
+  same key are coalesced and only the latest value is retained. Ordered events
+  take priority over this snapshot lane.
+
+Use `EmitLatest` only when an event contains a complete current value and
+intermediate transitions are not meaningful. For example, `user.meta` is a
+full per-network, per-nickname roster snapshot. Messages, connection events,
+and completion markers must use `Emit` because dropping or reordering one would
+change their meaning.
+
 ## Architecture
 
 ```mermaid
@@ -120,6 +137,17 @@ All IRC events are defined in `internal/irc/events.go`:
   - `old_nickname` (string): Previous nickname
   - `nickname` (string): New nickname
 
+- **`user.meta`**: Replaceable snapshot of a user's live roster attributes
+  - `networkId` (int64): Network ID
+  - `nickname` (string): User nickname
+  - `away` (bool): Whether the user is away
+  - `away_message` (string): Away message, when known
+  - `account` (string): Authenticated account, when known
+  - `host` (string): Current user and host, when known
+  - `realname` (string): Current real name, when known
+  - Delivery is last-write-wins per network and nickname during a burst. Treat
+    this as current state, not as an audit stream of every transition.
+
 #### Channel Events
 
 - **`channel.topic`**: Emitted when channel topic changes
@@ -137,6 +165,11 @@ All IRC events are defined in `internal/irc/events.go`:
 - **`channels.changed`**: Emitted when channel list changes
   - `networkId` (int64): Network ID
   - `channels` ([]string): List of channel names
+
+- **`channel.names.complete`**: Emitted after a channel's NAMES reply completes
+  - `networkId` (int64): Network ID
+  - `channel` (string): Channel name
+  - `users` ([]string): Completed member snapshot
 
 #### SASL Authentication Events
 
@@ -173,6 +206,8 @@ All IRC events are defined in `internal/irc/events.go`:
   - `value` (interface{}): Metadata value
   - `network_id` (int64): Network ID (optional)
   - `channel` (string): Channel name (optional)
+  - Bursts are trailing-edge coalesced by network, channel, type, and key. A
+    multi-value event contains an `updates` array of objects with these fields.
 
 ### UI Events (Future)
 
@@ -225,7 +260,8 @@ eventBus.Emit(events.Event{
 
 ### Synchronous Events
 
-For testing or when order matters, use `EmitSync`:
+For tests or the rare case that delivery must finish before the caller
+continues, use `EmitSync`:
 
 ```go
 eventBus.EmitSync(event)
@@ -246,24 +282,28 @@ eventBus.EmitSync(event)
 
 1. **Event Naming**: Use dot-separated hierarchical names (e.g., `user.joined`, `channel.mode`)
 2. **Event Data**: Include all relevant context (networkId, channel, etc.)
-3. **Async Processing**: Events are delivered asynchronously, so don't block in `OnEvent`
+3. **Async Processing**: `Emit` is asynchronous to its caller, but subscribers
+   run serially on the dispatcher. Keep `OnEvent` bounded and non-blocking.
 4. **Error Handling**: Handle errors gracefully in subscribers
 5. **Wildcard Subscriptions**: Use sparingly; prefer specific event types for performance
+6. **Snapshot Semantics**: Use `EmitLatest` only for complete, replaceable state
 
 ## Thread Safety
 
 The EventBus is fully thread-safe:
 - Subscriptions/unsubscriptions are protected by mutex
-- Event emission copies subscriber lists to avoid blocking
-- Each subscriber receives events in a separate goroutine
+- Subscriber lists are copied before callbacks run, so subscriptions can change
+  safely while an event is being delivered
+- One dispatcher calls subscribers synchronously; a slow subscriber delays
+  later delivery, so subscriber work must remain bounded
+- Snapshot publication is non-blocking and coalesces under load; ordered
+  publication applies bounded backpressure when its queue is saturated
 
 ## Future Enhancements
 
 - Event filtering by data fields
 - Event replay for debugging
 - Event metrics and monitoring
-- Priority-based event delivery
-- Event batching for high-frequency events
 
 ---
 

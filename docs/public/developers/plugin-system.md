@@ -167,6 +167,17 @@ Sent to plugin when subscribed events occur.
 - `type` (string): Event type
 - `data` (object): Event-specific data (see [Events Documentation](./events.md))
 
+Event notifications are best-effort. Cascade hands them to a bounded writer
+queue so a plugin that stops reading stdin cannot stall IRC socket processing.
+If that queue fills, Cascade drops notifications for that plugin and writes a
+warning to the application log. Plugins should continuously drain stdin and
+must not treat the event stream as a durable audit log.
+
+Replaceable snapshot events may also be coalesced before plugin delivery. In
+particular, `user.meta` contains a complete current value and is
+last-write-wins per network and nickname during a burst. Process the snapshot
+as state; do not depend on receiving every intermediate value.
+
 Event notifications use newline-delimited JSON and are bounded to 48 KiB per
 frame. When a large batched event contains a top-level `updates` array, Cascade
 splits plugin delivery into multiple frames. Each frame includes `updates`,
@@ -308,6 +319,10 @@ Stores multiple metadata values in one registry transaction and publishes one
 coalesced update to the frontend. Use this for snapshots such as a completed
 channel roster. The manager also coalesces bursts of legacy `ui_metadata.set`
 notifications, so one-at-a-time plugins cannot saturate the shared event bus.
+The flush occurs after the burst has been quiet for the debounce interval, and
+repeated writes with the same network, channel, type, and key use the latest
+value. Consumers of `metadata.updated` receive either one update directly or a
+top-level `updates` array, which may be split into bounded plugin event frames.
 
 ```json
 {
@@ -688,12 +703,14 @@ plugins := pm.ListPlugins()
 1. **Error Handling**: Always handle errors gracefully, don't crash
 2. **Logging**: Use stderr for debug logs (they're captured by Cascade)
 3. **Buffering**: Flush stdout after each message (or use line buffering)
-4. **Event Filtering**: Subscribe only to events you need (avoid `["*"]` if possible)
-5. **Input Limits**: Configure line readers for at least 48 KiB JSON-RPC frames
-6. **Metadata Keys**: Use consistent key formats (e.g., `"nickname:Alice"`)
-7. **Configuration**: Provide sensible defaults in config schema
-8. **Versioning**: Include version in plugin metadata
-9. **Graceful Shutdown**: Exit cleanly when stdin closes (EOF)
+4. **Input Draining**: Continuously read stdin; event notifications are dropped
+   if the bounded writer queue fills
+5. **Event Filtering**: Subscribe only to events you need (avoid `["*"]` if possible)
+6. **Input Limits**: Configure line readers for at least 48 KiB JSON-RPC frames
+7. **Metadata Keys**: Use consistent key formats (e.g., `"nickname:Alice"`)
+8. **Configuration**: Provide sensible defaults in config schema
+9. **Versioning**: Include version in plugin metadata
+10. **Graceful Shutdown**: Exit cleanly when stdin closes (EOF)
 
 ## Troubleshooting
 
