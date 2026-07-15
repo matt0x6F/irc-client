@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ergochat/irc-go/ircmsg"
 	"github.com/matt0x6f/irc-client/internal/events"
 	"github.com/matt0x6f/irc-client/internal/storage"
 )
@@ -23,6 +24,9 @@ type mockServer struct {
 	// when set, emit a post-registration RPL_LOGGEDOUT (901) right after 376, to
 	// simulate a benign account-state change (e.g. a user-issued NickServ REGAIN).
 	send901AfterReg bool
+	// when set, include a MOTD row before 376 so tests can hold application
+	// processing behind the protocol handshake and exercise the lifecycle barrier.
+	sendMOTD bool
 }
 
 func newMockServer(t *testing.T, failSASL bool) *mockServer {
@@ -41,6 +45,16 @@ func newMockServerRegain(t *testing.T) *mockServer {
 		t.Fatal(err)
 	}
 	s := &mockServer{ln: ln, send901AfterReg: true}
+	go s.serve()
+	return s
+}
+
+func newMockServerWithMOTD(t *testing.T) *mockServer {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &mockServer{ln: ln, sendMOTD: true}
 	go s.serve()
 	return s
 }
@@ -109,6 +123,9 @@ func (s *mockServer) serve() {
 		case strings.HasPrefix(up, "CAP END"):
 			if !s.failSASL {
 				w(":mock 001 nick :Welcome")
+				if s.sendMOTD {
+					w(":mock 372 nick :- registration callback barrier")
+				}
 				w(":mock 376 nick :End of /MOTD command")
 				if s.send901AfterReg {
 					w(":mock 901 nick :You are now logged out")
@@ -180,6 +197,58 @@ func TestSASLCompletesBeforeRegistration(t *testing.T) {
 	}
 	if auth == -1 {
 		t.Fatalf("no AUTHENTICATE seen — SASL did not run during the handshake: %v", lines)
+	}
+}
+
+// Connect is an application lifecycle boundary, not merely a socket-handshake
+// boundary. Once it reports success, all IRC events from the registration
+// transcript must already have been applied and connection.established must
+// already have been emitted. Otherwise app/plugin events produced immediately
+// after Connect can overtake MOTD/CAP/status events in the ordered EventBus.
+func TestConnectWaitsForRegistrationCallbacks(t *testing.T) {
+	srv := newMockServerWithMOTD(t)
+	c := testClient(t, srv.addr())
+
+	callbackStarted := make(chan struct{})
+	releaseCallback := make(chan struct{})
+	c.addCallback("372", func(ircmsg.Message) {
+		close(callbackStarted)
+		<-releaseCallback
+	})
+
+	done := make(chan error, 1)
+	go func() { done <- c.Connect() }()
+
+	select {
+	case <-callbackStarted:
+	case <-time.After(10 * time.Second):
+		t.Fatal("registration callback did not start")
+	}
+
+	select {
+	case err := <-done:
+		t.Fatalf("Connect returned before registration callbacks finished: %v", err)
+	case <-time.After(100 * time.Millisecond):
+		// Expected: irc-go has completed its handshake, but the Cascade
+		// lifecycle boundary is still held by application processing.
+	}
+
+	close(releaseCallback)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Connect failed: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Connect did not return after registration callbacks finished")
+	}
+	defer c.Disconnect()
+
+	if !c.IsConnected() {
+		t.Fatal("client must be marked connected before Connect returns")
+	}
+	if !statusBufferHas(t, c, "status", "Connected to server") {
+		t.Fatal("connection status callback must be persisted before Connect returns")
 	}
 }
 
