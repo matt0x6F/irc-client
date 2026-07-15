@@ -291,9 +291,11 @@ deliberately not persisted; a nick's attributes are only meaningful for the curr
 and re-accrue on reconnect (same rationale as bot mode). `Realname` is fed by
 [setname](#setname) and `extended-join`.
 
-Each signal updates the map through `applyUserMeta`, which is idempotent: it only stores and
-emits `EventUserMetaChanged` when an attribute actually changed, so high-frequency traffic
-(away toggles especially) never spams the UI.
+Each signal updates the map through `applyUserMeta`, which is idempotent: it only stores a new
+snapshot when an attribute actually changed. `EventUserMetaChanged` is published as
+replaceable state, so repeated snapshots for the same network and nick are last-write-wins
+while the event dispatcher is busy. High-frequency traffic cannot backpressure the IRC read
+loop, and consumers should treat the event as current state rather than an audit stream.
 
 | Capability | Trigger | Handler |
 |------------|---------|---------|
@@ -307,9 +309,10 @@ Key lifecycle: a NICK change carries the attributes to the new nick (`renameUser
 QUIT drops them (`removeUserMeta`); PART/KICK do not, since the user may remain in other
 channels and these attributes are network-wide.
 
-The backend forwards `EventUserMetaChanged` to the frontend as `usermeta-event`
-(`app_events.go`), and the store hydrates on select via `GetNetworkUserMeta` (`app.go`) into a
-per-network `userMeta` slice (`frontend/src/stores/network.ts`). Two surfaces read it:
+The backend forwards `EventUserMetaChanged` to the frontend as bounded `usermeta-event`
+batches (`app_events.go`). The frontend applies each batch in one store update, and the store
+hydrates on select via `GetNetworkUserMeta` (`app.go`) into a per-network `userMeta` slice
+(`frontend/src/stores/network.ts`). Two surfaces read it:
 
 - **Nick list:** away members are dimmed, with their away message on hover
   (`channel-info.tsx`). Per the design, presence transitions are silent: they update the

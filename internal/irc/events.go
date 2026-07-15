@@ -14,6 +14,7 @@ const (
 	EventChannelMode           = "channel.mode"
 	EventChannelUserMode       = "channel.usermode"
 	EventChannelBanList        = "channel.banlist"
+	EventChannelNamesComplete  = "channel.names.complete"
 	EventChannelsChanged       = "channels.changed"
 	EventConnectionEstablished = "connection.established"
 	EventConnectionLost        = "connection.lost"

@@ -38,7 +38,7 @@ var appForwardedEventTypes = []string{
 	irc.EventChannelUserMode,
 	irc.EventChannelBanList,
 	irc.EventError,
-	"channel.names.complete",
+	irc.EventChannelNamesComplete,
 	irc.EventWhoisReceived,
 	irc.EventChannelListEnd,
 	irc.EventHistoryReceived,
@@ -53,9 +53,15 @@ var appForwardedEventTypes = []string{
 	irc.EventDCCControl,
 }
 
+const (
+	userMetaFrontendBatchSize  = 256
+	userMetaFrontendDelay      = 16 * time.Millisecond
+	channelRosterFrontendDelay = 250 * time.Millisecond
+)
+
 // OnEvent implements the events.Subscriber interface to forward events to frontend
 func (a *App) OnEvent(event events.Event) {
-	if a.app == nil {
+	if a.app == nil && a.emitFn == nil {
 		logger.Log.Debug().Msg("OnEvent: application not yet initialized, skipping event")
 		return
 	}
@@ -159,12 +165,17 @@ func (a *App) OnEvent(event events.Event) {
 	}
 
 	// Forward message and user events to frontend for real-time updates
+	if event.Type == irc.EventChannelNamesComplete {
+		a.queueChannelRosterFrontend(event)
+		return
+	}
+
 	if event.Type == irc.EventMessageSent || event.Type == irc.EventMessageReceived ||
 		event.Type == irc.EventUserJoined || event.Type == irc.EventUserParted || event.Type == irc.EventUserQuit ||
 		event.Type == irc.EventUserKicked || event.Type == irc.EventUserNick ||
 		event.Type == irc.EventChannelTopic || event.Type == irc.EventChannelMode ||
 		event.Type == irc.EventChannelUserMode || event.Type == irc.EventChannelBanList ||
-		event.Type == irc.EventError || event.Type == "channel.names.complete" ||
+		event.Type == irc.EventError ||
 		event.Type == irc.EventStatusMessage {
 		a.emit("message-event", map[string]interface{}{
 			"type":      event.Type,
@@ -246,11 +257,8 @@ func (a *App) OnEvent(event events.Event) {
 	// Forward live-roster metadata changes to frontend (away-notify /
 	// account-notify / extended-join / chghost / account-tag)
 	if event.Type == irc.EventUserMetaChanged {
-		a.emit("usermeta-event", map[string]interface{}{
-			"type":      event.Type,
-			"data":      event.Data,
-			"timestamp": event.Timestamp.Format(time.RFC3339),
-		})
+		a.queueUserMetaFrontend(event)
+		return
 	}
 
 	// Forward plugin lifecycle changes so the frontend can refetch GetCommands()
@@ -298,6 +306,114 @@ func (a *App) OnEvent(event events.Event) {
 
 	// Desktop notifications
 	a.handleDesktopNotification(event)
+}
+
+// queueUserMetaFrontend coalesces the replaceable user-meta snapshots that the
+// event bus delivers on its low-priority lane. Crossing the Wails bridge once
+// per nick still forces the WebView to run thousands of event callbacks during
+// a large NAMES burst, which keeps the socket healthy but visibly freezes the
+// UI. Deliver bounded batches at roughly one animation-frame cadence instead.
+func (a *App) queueUserMetaFrontend(event events.Event) {
+	networkID, ok := event.Data["networkId"]
+	if !ok {
+		return
+	}
+	nick, _ := event.Data["nickname"].(string)
+	if nick == "" {
+		return
+	}
+
+	key := fmt.Sprintf("%v:%s", networkID, strings.ToLower(nick))
+	a.userMetaEmitMu.Lock()
+	if a.userMetaPending == nil {
+		a.userMetaPending = make(map[string]map[string]interface{})
+	}
+	a.userMetaPending[key] = event.Data
+	if !a.userMetaFlushSet {
+		a.userMetaFlushSet = true
+		time.AfterFunc(userMetaFrontendDelay, a.flushUserMetaFrontend)
+	}
+	a.userMetaEmitMu.Unlock()
+}
+
+func (a *App) flushUserMetaFrontend() {
+	a.userMetaEmitMu.Lock()
+	updates := make([]map[string]interface{}, 0, userMetaFrontendBatchSize)
+	for key, update := range a.userMetaPending {
+		updates = append(updates, update)
+		delete(a.userMetaPending, key)
+		if len(updates) == userMetaFrontendBatchSize {
+			break
+		}
+	}
+	more := len(a.userMetaPending) > 0
+	if more {
+		time.AfterFunc(userMetaFrontendDelay, a.flushUserMetaFrontend)
+	} else {
+		a.userMetaFlushSet = false
+	}
+	a.userMetaEmitMu.Unlock()
+
+	if len(updates) > 0 {
+		a.emit("usermeta-event", map[string]interface{}{
+			"type":    irc.EventUserMetaChanged,
+			"updates": updates,
+		})
+	}
+}
+
+// queueChannelRosterFrontend keeps NAMES completion useful to plugins
+// immediately while deferring frontend refreshes until a connection's roster
+// burst is quiet. A focused large channel otherwise performs bridge work and a
+// database read between the server's channel rosters, which can stop the socket
+// draining long enough for Libera to close it. Multiple channel completions are
+// coalesced into one small marker batch; the frontend re-reads only its visible
+// channel after the trailing edge.
+func (a *App) queueChannelRosterFrontend(event events.Event) {
+	networkID, ok := event.Data["networkId"]
+	if !ok {
+		return
+	}
+	channel, _ := event.Data["channel"].(string)
+	if channel == "" {
+		return
+	}
+
+	key := fmt.Sprintf("%v:%s", networkID, strings.ToLower(channel))
+	a.channelRosterEmitMu.Lock()
+	if a.channelRosterPending == nil {
+		a.channelRosterPending = make(map[string]map[string]interface{})
+	}
+	a.channelRosterPending[key] = map[string]interface{}{
+		"networkId": networkID,
+		"channel":   channel,
+	}
+	a.channelRosterLastWrite = time.Now()
+	if !a.channelRosterFlushSet {
+		a.channelRosterFlushSet = true
+		time.AfterFunc(channelRosterFrontendDelay, a.flushChannelRosterFrontend)
+	}
+	a.channelRosterEmitMu.Unlock()
+}
+
+func (a *App) flushChannelRosterFrontend() {
+	a.channelRosterEmitMu.Lock()
+	if quietFor := time.Since(a.channelRosterLastWrite); quietFor < channelRosterFrontendDelay {
+		time.AfterFunc(channelRosterFrontendDelay-quietFor, a.flushChannelRosterFrontend)
+		a.channelRosterEmitMu.Unlock()
+		return
+	}
+	updates := make([]map[string]interface{}, 0, len(a.channelRosterPending))
+	for _, update := range a.channelRosterPending {
+		updates = append(updates, update)
+	}
+	a.channelRosterPending = make(map[string]map[string]interface{})
+	a.channelRosterFlushSet = false
+	a.channelRosterEmitMu.Unlock()
+
+	if len(updates) > 0 {
+		a.emit("channel-rosters-complete", map[string]interface{}{"updates": updates})
+	}
 }
 
 // handleSTSPolicy reacts to an IRCv3 STS advertisement the client read from CAP LS.

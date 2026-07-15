@@ -112,6 +112,30 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
     const currentChannelNormalized = normalizeChannel(channelName);
     
     // Listen for user events to refresh immediately - this is the ONLY update mechanism
+    const handleRostersComplete = (envelope: any) => {
+      const currentNetworkId = networkIdRef.current;
+      const currentChannelName = channelNameRef.current;
+      if (currentNetworkId === null || currentChannelName === null) {
+        return;
+      }
+
+      const updates = Array.isArray(envelope?.updates) ? envelope.updates : [];
+      const currentCompleted = updates.some(
+        (update: any) =>
+          Number(update?.networkId) === Number(currentNetworkId) &&
+          normalizeChannel(update?.channel) === normalizeChannel(currentChannelName)
+      );
+      if (!currentCompleted) return;
+
+      if (namesPollIntervalRef.current) {
+        clearInterval(namesPollIntervalRef.current);
+        namesPollIntervalRef.current = null;
+      }
+      waitingForNamesRef.current = false;
+      loadChannelInfo();
+    };
+
+    const unsubscribeRoster = EventsOn('channel-rosters-complete', handleRostersComplete);
     const unsubscribe = EventsOn('message-event', (data: any) => {
       const eventType = data?.type;
       const eventData = data?.data || {};
@@ -127,7 +151,7 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
       
       // Refresh on user join/part/quit/kick/nick events or when NAMES list completes
       if (eventType === 'user.joined' || eventType === 'user.parted' || eventType === 'user.quit' ||
-          eventType === 'user.kicked' || eventType === 'user.nick' || eventType === 'channel.names.complete' ||
+          eventType === 'user.kicked' || eventType === 'user.nick' ||
           eventType === 'channel.usermode') {
         const eventNetworkId = eventData.networkId;
         
@@ -135,24 +159,6 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
         const networkMatch = Number(eventNetworkId) === Number(currentNetworkId);
         if (!networkMatch) {
           return; // Not for this network
-        }
-        
-        // For channel.names.complete, always refresh if it's for this network
-        // The channel name matching might fail due to case differences, so we refresh anyway
-        if (eventType === 'channel.names.complete') {
-          console.log('[ChannelInfo] Refreshing on channel.names.complete', {
-            eventChannel: eventData.channel,
-            currentChannel: currentChannelName,
-            networkId: currentNetworkId
-          });
-          // Stop polling since we got the NAMES response
-          if (namesPollIntervalRef.current) {
-            clearInterval(namesPollIntervalRef.current);
-            namesPollIntervalRef.current = null;
-          }
-          waitingForNamesRef.current = false;
-          loadChannelInfo();
-          return;
         }
         
         // If we joined and are waiting for NAMES, start polling
@@ -210,6 +216,7 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
     
     return () => {
       unsubscribe();
+      unsubscribeRoster();
       // Clean up polling interval
       if (namesPollIntervalRef.current) {
         clearInterval(namesPollIntervalRef.current);
@@ -409,4 +416,3 @@ export function ChannelInfo({ networkId, channelName, currentNickname, onSendCom
     </div>
   );
 }
-

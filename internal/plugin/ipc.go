@@ -15,7 +15,10 @@ import (
 )
 
 const (
-	maxPluginLogPreview        = 4096
+	// Logs are written through a process-wide synchronous writer. Keep previews
+	// small so one large plugin frame cannot monopolize that writer while the
+	// IRC read callback is draining a server burst.
+	maxPluginLogPreview        = 512
 	maxPluginNotificationBytes = 48 * 1024
 )
 

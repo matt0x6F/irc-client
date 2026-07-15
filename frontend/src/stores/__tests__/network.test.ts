@@ -164,6 +164,39 @@ describe('network store: user meta', () => {
     expect(second).not.toBe(first);
     expect(useNetworkStore.getState().isAway(1, 'alice')).toBe(false);
   });
+
+  it('setUserMetaBatch applies a large bridge batch in one store update', () => {
+    let notifications = 0;
+    const unsubscribe = useNetworkStore.subscribe(() => notifications++);
+    const updates = Array.from({ length: 256 }, (_, i) => ({
+      networkId: 1,
+      nickname: `User${i}`,
+      ...meta({ account: `account-${i}` }),
+    }));
+
+    useNetworkStore.getState().setUserMetaBatch(updates);
+    unsubscribe();
+
+    expect(notifications).toBe(1);
+    expect(Object.keys(useNetworkStore.getState().userMeta[1])).toHaveLength(256);
+    expect(useNetworkStore.getState().getUserMeta(1, 'USER255')?.account).toBe('account-255');
+  });
+
+  it('setUserMetaBatch coalesces networks and skips identical snapshots', () => {
+    const { setUserMetaBatch } = useNetworkStore.getState();
+    setUserMetaBatch([
+      { networkId: 1, nickname: 'Alice', ...meta({ account: 'a1' }) },
+      { networkId: 2, nickname: 'Bob', ...meta({ account: 'b2' }) },
+    ]);
+    const before = useNetworkStore.getState().userMeta;
+
+    setUserMetaBatch([
+      { networkId: 1, nickname: 'ALICE', ...meta({ account: 'a1' }) },
+      { networkId: 2, nickname: 'bob', ...meta({ account: 'b2' }) },
+    ]);
+
+    expect(useNetworkStore.getState().userMeta).toBe(before);
+  });
 });
 
 // The roster/presence/bot maps key by a CASEMAPPING-folded nick so the frontend

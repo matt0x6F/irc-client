@@ -2,7 +2,9 @@ package main
 
 import (
 	"testing"
+	"time"
 
+	"github.com/matt0x6f/irc-client/internal/events"
 	"github.com/matt0x6f/irc-client/internal/irc"
 )
 
@@ -21,7 +23,7 @@ func TestAppSubscribesPreviouslyDeadForwardedEvents(t *testing.T) {
 		irc.EventNickChanged,
 		irc.EventChannelTopic,
 		irc.EventError,
-		"channel.names.complete",
+		irc.EventChannelNamesComplete,
 		irc.EventHistoryReceived,
 		irc.EventTypingReceived,
 		irc.EventBotDetected,
@@ -34,5 +36,44 @@ func TestAppSubscribesPreviouslyDeadForwardedEvents(t *testing.T) {
 		if !subscribed[ev] {
 			t.Errorf("event %q is forwarded by OnEvent but missing from appForwardedEventTypes — dead forward", ev)
 		}
+	}
+}
+
+func TestNamesCompleteBatchesFrontendRefreshAfterTrailingEdge(t *testing.T) {
+	emitted := make(chan struct {
+		name string
+		data map[string]interface{}
+	}, 1)
+	a := &App{emitFn: func(name string, data ...any) {
+		var payload map[string]interface{}
+		if len(data) == 1 {
+			payload, _ = data[0].(map[string]interface{})
+		}
+		emitted <- struct {
+			name string
+			data map[string]interface{}
+		}{name: name, data: payload}
+	}}
+
+	a.OnEvent(events.Event{
+		Type: irc.EventChannelNamesComplete,
+		Data: map[string]interface{}{
+			"networkId": int64(7),
+			"channel":   "#large",
+			"users":     []string{"alice", "bob"},
+		},
+	})
+
+	select {
+	case got := <-emitted:
+		if got.name != "channel-rosters-complete" {
+			t.Fatalf("emitted event = %q, want channel-rosters-complete", got.name)
+		}
+		updates, ok := got.data["updates"].([]map[string]interface{})
+		if !ok || len(updates) != 1 || updates[0]["channel"] != "#large" {
+			t.Fatalf("emitted updates = %#v", got.data["updates"])
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for trailing-edge roster completion")
 	}
 }

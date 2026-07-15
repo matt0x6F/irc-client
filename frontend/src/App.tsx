@@ -64,7 +64,7 @@ function App() {
   const setMonitorOnline = useNetworkStore((s) => s.setMonitorOnline);
   const setPresence = useNetworkStore((s) => s.setPresence);
   const loadNetworkUserMeta = useNetworkStore((s) => s.loadNetworkUserMeta);
-  const setUserMeta = useNetworkStore((s) => s.setUserMeta);
+  const setUserMetaBatch = useNetworkStore((s) => s.setUserMetaBatch);
   const markActivity = useNetworkStore((s) => s.markActivity);
   const activityItems = useNetworkStore((s) => s.activityItems);
   const connectingNetworks = useNetworkStore((s) => s.connectingNetworks);
@@ -427,18 +427,22 @@ function App() {
   // WHOIS panel can show live account/away.
   useEffect(() => {
     const unsubscribe = EventsOn('usermeta-event', (data: any) => {
-      const d = data?.data;
-      const networkId = d?.networkId;
-      const nick = d?.nickname;
-      if (typeof networkId === 'number' && typeof nick === 'string' && nick) {
-        setUserMeta(networkId, nick, {
+      const rawUpdates = Array.isArray(data?.updates) ? data.updates : [data?.data];
+      const updates = rawUpdates.flatMap((d: any) => {
+        const networkId = d?.networkId;
+        const nickname = d?.nickname;
+        if (typeof networkId !== 'number' || typeof nickname !== 'string' || !nickname) return [];
+        return [{
+          networkId,
+          nickname,
           away: !!d.away,
           away_message: typeof d.away_message === 'string' ? d.away_message : '',
           account: typeof d.account === 'string' ? d.account : '',
           host: typeof d.host === 'string' ? d.host : '',
           realname: typeof d.realname === 'string' ? d.realname : '',
-        });
-      }
+        }];
+      });
+      if (updates.length > 0) setUserMetaBatch(updates);
     });
     return () => unsubscribe();
   }, []);

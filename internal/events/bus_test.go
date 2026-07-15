@@ -42,6 +42,13 @@ type blockingSub struct {
 	release chan struct{}
 }
 
+type typeRecordingSub struct {
+	mu     sync.Mutex
+	types  []string
+	events []Event
+	notify chan struct{}
+}
+
 func (s *blockingSub) OnEvent(Event) {
 	select {
 	case <-s.started:
@@ -49,6 +56,23 @@ func (s *blockingSub) OnEvent(Event) {
 		close(s.started)
 	}
 	<-s.release
+}
+
+func (s *typeRecordingSub) OnEvent(event Event) {
+	s.mu.Lock()
+	s.types = append(s.types, event.Type)
+	s.events = append(s.events, event)
+	s.mu.Unlock()
+	select {
+	case s.notify <- struct{}{}:
+	default:
+	}
+}
+
+func (s *typeRecordingSub) snapshot() ([]string, []Event) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.types...), append([]Event(nil), s.events...)
 }
 
 func (s *orderedSub) OnEvent(e Event) {
@@ -99,6 +123,75 @@ func TestEmitPreservesOrderAndDeliversAll(t *testing.T) {
 	for i, v := range got {
 		if v != i {
 			t.Fatalf("event at position %d delivered out of order: got %d", i, v)
+		}
+	}
+}
+
+func TestEmitLatestCoalescesWithoutBlocking(t *testing.T) {
+	eb := NewEventBus()
+	defer eb.Close()
+	blocker := &blockingSub{started: make(chan struct{}), release: make(chan struct{})}
+	eb.Subscribe("gate", blocker)
+	recorder := &typeRecordingSub{notify: make(chan struct{}, 1)}
+	eb.Subscribe("snapshot", recorder)
+
+	eb.Emit(Event{Type: "gate"})
+	<-blocker.started
+
+	done := make(chan struct{})
+	go func() {
+		for i := 0; i < 5000; i++ {
+			eb.EmitLatest("same-key", Event{Type: "snapshot", Data: map[string]interface{}{"i": i}})
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("EmitLatest blocked behind a stalled dispatcher")
+	}
+
+	close(blocker.release)
+	select {
+	case <-recorder.notify:
+	case <-time.After(time.Second):
+		t.Fatal("coalesced snapshot was not delivered")
+	}
+	_, got := recorder.snapshot()
+	if len(got) != 1 || got[0].Data["i"] != 4999 {
+		t.Fatalf("coalesced events = %#v, want only the latest value", got)
+	}
+}
+
+func TestOrdinaryEventOvertakesLatestBacklog(t *testing.T) {
+	eb := NewEventBus()
+	defer eb.Close()
+	blocker := &blockingSub{started: make(chan struct{}), release: make(chan struct{})}
+	eb.Subscribe("gate", blocker)
+	recorder := &typeRecordingSub{notify: make(chan struct{}, 4)}
+	eb.Subscribe("*", recorder)
+
+	eb.Emit(Event{Type: "gate"})
+	<-blocker.started
+	for i := 0; i < 100; i++ {
+		eb.EmitLatest(string(rune(i+1)), Event{Type: "snapshot"})
+	}
+	eb.Emit(Event{Type: "control"})
+	close(blocker.release)
+
+	deadline := time.After(time.Second)
+	for {
+		types, _ := recorder.snapshot()
+		if len(types) >= 2 {
+			if types[0] != "gate" || types[1] != "control" {
+				t.Fatalf("delivery order = %v, control event did not overtake snapshots", types[:2])
+			}
+			return
+		}
+		select {
+		case <-recorder.notify:
+		case <-deadline:
+			t.Fatal("timed out waiting for control event")
 		}
 	}
 }

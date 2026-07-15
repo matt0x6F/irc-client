@@ -21,6 +21,12 @@ export function useNicknameColors(networkId: number | null, nicknames: string[])
     return [...nicknames].sort().join(',');
   }, [nicknames]);
 
+  // Each hook instance only renders a small, visible set (the current message
+  // window, member list, or pins). Plugin snapshots can contain thousands of
+  // colors for the whole network, so do not copy the entire network-wide batch
+  // into every component-local cache.
+  const watchedNicknames = useMemo(() => new Set(nicknames), [nicknamesKey]);
+
   // Fetch colors for nicknames
   const fetchColors = useCallback(async () => {
     if (!networkId || nicknames.length === 0) {
@@ -58,8 +64,6 @@ export function useNicknameColors(networkId: number | null, nicknames: string[])
     // Fetch from backend (always fetch to ensure we have latest colors)
     try {
       const colorMap = await GetNicknameColorsBatch(networkId, nicknames);
-      console.log('[useNicknameColors] Fetched colors:', colorMap, 'for networkId:', networkId, 'nicknames:', nicknames);
-      console.log('[useNicknameColors] Color map entries:', Object.keys(colorMap).length, 'colors found');
       
       // Update cache
       if (!cacheRef.current[networkId]) {
@@ -68,7 +72,6 @@ export function useNicknameColors(networkId: number | null, nicknames: string[])
       Object.entries(colorMap).forEach(([nick, color]) => {
         if (typeof color === 'string') {
           cacheRef.current[networkId].colors[nick] = color;
-          console.log('[useNicknameColors] Cached color for', nick, ':', color);
         }
       });
       cacheRef.current[networkId].lastUpdate = now;
@@ -81,7 +84,6 @@ export function useNicknameColors(networkId: number | null, nicknames: string[])
             next.set(nick, color);
           }
         });
-        console.log('[useNicknameColors] Setting colors state with', next.size, 'entries');
         return next;
       });
     } catch (error) {
@@ -102,7 +104,10 @@ export function useNicknameColors(networkId: number | null, nicknames: string[])
       const updates = Array.isArray(data.updates) ? data.updates : [data];
       const applicable = updates.filter((update: any) => {
         const eventNetworkId = update.network_id != null ? Number(update.network_id) : null;
-        return eventNetworkId === networkId && update.type === 'nickname_color' && typeof update.key === 'string';
+        if (eventNetworkId !== networkId || update.type !== 'nickname_color' || typeof update.key !== 'string') {
+          return false;
+        }
+        return watchedNicknames.has(update.key.replace('nickname:', ''));
       });
       if (applicable.length > 0) {
         setColors(prev => {
@@ -133,7 +138,7 @@ export function useNicknameColors(networkId: number | null, nicknames: string[])
     });
     
     return unsubscribe;
-  }, [networkId]);
+  }, [networkId, watchedNicknames]);
 
   // Listen for user join events to fetch colors for newly joined users
   // This ensures we get colors immediately when users join, even if metadata-updated hasn't fired yet

@@ -1446,15 +1446,12 @@ func (c *IRCClient) applyUserMeta(nick string, mutate func(*UserMeta)) {
 // publication. nick must already be lowercased.
 //
 // This must never block: emitUserMeta runs on the irc-go read goroutine (via
-// applyUserMeta, from the NAMES/WHO/away/account handlers), and EventBus.Emit
-// applies backpressure onto its caller when the queue fills. Seeding a large
-// channel roster (e.g. ##chat, ~800 users) emits one event per user; if a slow
-// subscriber (the plugin manager fanning out to subprocesses) can't drain fast
-// enough, a blocking Emit here would stall the read loop, stop draining the
-// socket, and let the server drop the link — the reconnect-churn bug. So we
-// hand the snapshot to a background forwarder and return immediately. Snapshots
-// coalesce per nick (last write wins), which is correct: a user-meta event is a
-// full snapshot, so only the latest matters.
+// applyUserMeta, from the NAMES/WHO/away/account handlers). Seeding a large
+// channel roster can update thousands of users in one socket burst, so we hand
+// snapshots to a background forwarder and return immediately. The forwarder in
+// turn publishes through EventBus.EmitLatest: roster state cannot consume the
+// ordered/control queue, and repeated snapshots for one network+nick coalesce
+// (last write wins).
 func (c *IRCClient) emitUserMeta(nick string, meta UserMeta) {
 	c.startMetaEmitter()
 
@@ -1491,9 +1488,8 @@ func (c *IRCClient) startMetaEmitter() {
 	})
 }
 
-// metaEmitLoop drains coalesced user-meta snapshots to the event bus, off the
-// read goroutine. Blocking on Emit here is harmless — it throttles this
-// forwarder, not the socket read loop.
+// metaEmitLoop drains coalesced user-meta snapshots to the event bus off the
+// read goroutine.
 func (c *IRCClient) metaEmitLoop(signal <-chan struct{}, stop <-chan struct{}) {
 	for {
 		select {
@@ -1530,7 +1526,7 @@ func (c *IRCClient) drainMetaPending() {
 // publishUserMeta emits a single user-meta snapshot to the bus. nick must
 // already be lowercased.
 func (c *IRCClient) publishUserMeta(nick string, meta UserMeta) {
-	c.eventBus.Emit(events.Event{
+	c.eventBus.EmitLatest(fmt.Sprintf("user-meta:%d:%s", c.networkID, nick), events.Event{
 		Type: EventUserMetaChanged,
 		Data: map[string]interface{}{
 			"network":      c.network.Address,
@@ -2710,7 +2706,7 @@ func (c *IRCClient) setupHandlers() {
 			Int64("network_id", c.networkID).
 			Msg("NAMES list complete, emitting channel.names.complete event")
 		c.eventBus.Emit(events.Event{
-			Type: "channel.names.complete",
+			Type: EventChannelNamesComplete,
 			Data: map[string]interface{}{
 				"network":   c.network.Address,
 				"networkId": c.networkID,

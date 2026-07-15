@@ -69,6 +69,11 @@ export interface UserMetaT {
   realname: string;
 }
 
+export interface UserMetaUpdateT extends UserMetaT {
+  networkId: number;
+  nickname: string;
+}
+
 // One entry on a network's MONITOR buddy list: a monitored nick and whether it
 // is currently online (per the latest 730/731 from the server).
 export interface MonitorBuddy {
@@ -361,6 +366,7 @@ interface NetworkState {
   // Live roster metadata
   loadNetworkUserMeta: (networkId?: number) => Promise<void>;
   setUserMeta: (networkId: number, nick: string, meta: UserMetaT) => void;
+  setUserMetaBatch: (updates: UserMetaUpdateT[]) => void;
   getUserMeta: (networkId: number, nick: string) => UserMetaT | undefined;
   isAway: (networkId: number, nick: string) => boolean;
 
@@ -1493,6 +1499,39 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
       }
       const networkMeta = { ...(state.userMeta[networkId] ?? {}), [key]: meta };
       return { userMeta: { ...state.userMeta, [networkId]: networkMeta } };
+    }),
+
+  setUserMetaBatch: (updates) =>
+    set((state) => {
+      let nextUserMeta = state.userMeta;
+      const copiedNetworks = new Set<number>();
+
+      for (const update of updates) {
+        const { networkId, nickname, ...meta } = update;
+        if (!Number.isFinite(networkId) || !nickname) continue;
+        const key = casefold(get().caseMapping[networkId] ?? '', nickname);
+        const existing = nextUserMeta[networkId]?.[key];
+        if (
+          existing &&
+          existing.away === meta.away &&
+          existing.away_message === meta.away_message &&
+          existing.account === meta.account &&
+          existing.host === meta.host &&
+          existing.realname === meta.realname
+        ) {
+          continue;
+        }
+        if (nextUserMeta === state.userMeta) {
+          nextUserMeta = { ...state.userMeta };
+        }
+        if (!copiedNetworks.has(networkId)) {
+          nextUserMeta[networkId] = { ...(state.userMeta[networkId] ?? {}) };
+          copiedNetworks.add(networkId);
+        }
+        nextUserMeta[networkId][key] = meta;
+      }
+
+      return nextUserMeta === state.userMeta ? state : { userMeta: nextUserMeta };
     }),
 
   getUserMeta: (networkId, nick) =>

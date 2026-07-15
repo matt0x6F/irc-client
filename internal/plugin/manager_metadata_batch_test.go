@@ -129,3 +129,43 @@ func TestLegacyMetadataWritesAreCoalesced(t *testing.T) {
 	case <-time.After(3 * metadataEventFlushDelay):
 	}
 }
+
+func TestMetadataBurstUsesTrailingEdgeCoalescing(t *testing.T) {
+	bus := events.NewEventBus()
+	defer bus.Close()
+	got := make(chan events.Event, 2)
+	bus.Subscribe(events.EventMetadataUpdated, subscriberFunc(func(event events.Event) { got <- event }))
+	pm := NewManager(bus, t.TempDir())
+
+	pm.queueMetadataEvents([]map[string]interface{}{
+		{"type": "nickname_color", "key": "nickname:alice", "value": "#111111", "network_id": 7},
+	})
+	time.Sleep(metadataEventFlushDelay / 2)
+	pm.queueMetadataEvents([]map[string]interface{}{
+		{"type": "nickname_color", "key": "nickname:alice", "value": "#222222", "network_id": 7},
+		{"type": "nickname_color", "key": "nickname:bob", "value": "#333333", "network_id": 7},
+	})
+
+	select {
+	case event := <-got:
+		updates, ok := event.Data["updates"].([]map[string]interface{})
+		if !ok || len(updates) != 2 {
+			t.Fatalf("metadata event updates = %#v, want two coalesced updates", event.Data["updates"])
+		}
+		values := make(map[string]interface{}, len(updates))
+		for _, update := range updates {
+			values[update["key"].(string)] = update["value"]
+		}
+		if values["nickname:alice"] != "#222222" {
+			t.Fatalf("alice value = %v, want latest value", values["nickname:alice"])
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for trailing-edge metadata event")
+	}
+
+	select {
+	case event := <-got:
+		t.Fatalf("metadata burst produced an extra event: %#v", event.Data)
+	case <-time.After(3 * metadataEventFlushDelay):
+	}
+}
