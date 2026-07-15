@@ -34,6 +34,17 @@ const OPTIMISTIC_ID_THRESHOLD = 1_000_000_000_000;
 // formatter per render.
 const TIME_FORMAT = new Intl.DateTimeFormat(undefined, { timeStyle: 'medium' });
 
+// Action messages are currently persisted in their display form (`* nick text`).
+// Strip that legacy prefix when composing the dedicated action row so the author
+// is rendered exactly once. Accepting an unprefixed body also keeps this renderer
+// compatible if storage is normalized to action text only in the future.
+function actionBody(message: string, user: string): string {
+  const prefix = `* ${user}`;
+  if (message === prefix) return '';
+  if (message.startsWith(`${prefix} `)) return message.slice(prefix.length + 1);
+  return message;
+}
+
 export function MessageView({ networkId, selectedChannel }: MessageViewProps) {
   // Subscribe to the high-churn messages array here rather than in App (the root),
   // so a new message re-renders only this component's subtree, not the whole app.
@@ -630,6 +641,7 @@ export function MessageView({ networkId, selectedChannel }: MessageViewProps) {
           const isWarning = msg.message_type === 'warning';
           const isStatus = msg.message_type === 'status';
           const isCommand = msg.message_type === 'command';
+          const isAction = msg.message_type === 'action';
           const isSystemMessage = msg.message_type === 'join' || msg.message_type === 'part' || msg.message_type === 'quit' || msg.message_type === 'mode';
           const isEven = index % 2 === 0;
           const isRegularMessage = !isError && !isWarning && !isStatus && !isCommand && !isSystemMessage;
@@ -706,7 +718,7 @@ export function MessageView({ networkId, selectedChannel }: MessageViewProps) {
                   <span className="hidden sm:inline text-xs text-muted-foreground/60 flex-shrink-0 font-mono">
                     {TIME_FORMAT.format(new Date(msg.timestamp))}
                   </span>
-                  {msg.user !== '*' && !isSystemMessage && (
+                  {msg.user !== '*' && !isSystemMessage && !isAction && (
                     <span
                       data-testid="author-nick"
                       className={`text-sm font-medium ${
@@ -732,7 +744,7 @@ export function MessageView({ networkId, selectedChannel }: MessageViewProps) {
                       {msg.user}
                     </span>
                   )}
-                  {msg.user !== '*' && !isSystemMessage && botSet?.has(casefold(caseMapping, msg.user)) && (
+                  {msg.user !== '*' && !isSystemMessage && !isAction && botSet?.has(casefold(caseMapping, msg.user)) && (
                     <span
                       className="text-[10px] uppercase font-semibold tracking-wide px-1 py-0.5 rounded bg-accent text-muted-foreground flex-shrink-0"
                       title="This user is a bot (IRCv3 bot mode)"
@@ -807,6 +819,44 @@ export function MessageView({ networkId, selectedChannel }: MessageViewProps) {
                         msg.message
                       )}
                     </span>
+                  ) : isAction ? (
+                    <div className="text-sm flex-1 min-w-0 flex items-baseline gap-1 italic">
+                      <span aria-hidden="true">*</span>
+                      <span
+                        data-testid="author-nick"
+                        className="font-medium text-primary cursor-pointer hover:underline"
+                        style={{ color: nicknameColors.get(msg.user) || undefined }}
+                        title={`Double-click to message ${msg.user}, right-click for actions`}
+                        onDoubleClick={() => {
+                          if (networkId !== null) {
+                            void openQuery(networkId, msg.user);
+                          }
+                        }}
+                        onContextMenu={(e) => {
+                          if (networkId === null) return;
+                          e.preventDefault();
+                          e.stopPropagation();
+                          window.getSelection?.()?.removeAllRanges();
+                          setUserMenu({ x: e.clientX, y: e.clientY, nick: msg.user });
+                        }}
+                      >
+                        {msg.user}
+                      </span>
+                      {botSet?.has(casefold(caseMapping, msg.user)) && (
+                        <span
+                          className="text-[10px] not-italic uppercase font-semibold tracking-wide px-1 py-0.5 rounded bg-accent text-muted-foreground flex-shrink-0"
+                          title="This user is a bot (IRCv3 bot mode)"
+                        >
+                          bot
+                        </span>
+                      )}
+                      <IRCFormattedText
+                        text={actionBody(msg.message, msg.user)}
+                        networkId={networkId ?? undefined}
+                        className="min-w-0"
+                        enableUnfurls={unfurlsEnabled}
+                      />
+                    </div>
                   ) : (
                     <IRCFormattedText
                       text={msg.message}
@@ -913,4 +963,3 @@ export function MessageView({ networkId, selectedChannel }: MessageViewProps) {
     </div>
   );
 }
-

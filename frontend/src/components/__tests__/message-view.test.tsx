@@ -187,6 +187,24 @@ describe('MessageView bot badge', () => {
   })
 })
 
+describe('MessageView action messages', () => {
+  it('renders a /me action as one conventional action line without duplicating the nick', () => {
+    const msg = makeMessage({
+      id: 5,
+      user: 'matt0x6f',
+      message: '* matt0x6f test',
+      message_type: 'action',
+    })
+
+    renderView([msg], 1, '#chan')
+
+    const rowText = screen.getByTestId('message-item').textContent ?? ''
+    expect(rowText).toContain('*matt0x6ftest')
+    expect(rowText.match(/matt0x6f/g)).toHaveLength(1)
+    expect(screen.getByTestId('author-nick')).toHaveTextContent('matt0x6f')
+  })
+})
+
 describe('MessageView channel-context pill', () => {
   it('renders an in-#channel pill on a PM with channel_context', () => {
     const pm = makeMessage({
