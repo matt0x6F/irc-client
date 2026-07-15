@@ -84,51 +84,53 @@ type IRCClient struct {
 	loopDone              chan struct{} // Closed when the library's Loop() goroutine fully exits; lets teardown wait for a clean stop (guarded by mu)
 	saslEnabled           bool
 	saslAuthenticated     bool
-	authFailed            bool                   // True when SASL was enabled but did not succeed this session (guarded by mu)
-	saslConfigErr         error                  // Mechanism-construction error from NewIRCClient (unknown mechanism); surfaced by Connect() before dialing
-	namesInProgress       map[string]bool        // Track channels currently receiving NAMES list
-	namesMu               sync.Mutex             // Mutex for namesInProgress map
-	serverCapabilities    *ServerCapabilities    // Server capabilities from ISUPPORT
-	chanTypesAtomic       atomic.Pointer[string] // CHANTYPES from ISUPPORT (e.g. "#&"); lock-free so channel detection is callable anywhere
-	caseMappingAtomic     atomic.Pointer[string] // CASEMAPPING from ISUPPORT (e.g. "ascii"); lock-free so nick folding is callable anywhere
-	supportsWHOX          bool                   // Server advertised the WHOX token in ISUPPORT (guarded by mu)
-	supportsMonitor       bool                   // Server advertised the MONITOR token in ISUPPORT (guarded by mu)
-	monitorLimit          int                    // MONITOR=<limit> from ISUPPORT; 0 = unlimited/unknown (guarded by mu)
-	monitorStatus         map[string]bool        // MONITOR presence: lowercased nick -> online (guarded by monitorMu)
-	monitorArmed          map[string]bool        // Nicks currently on the server MONITOR list (guarded by monitorMu)
-	monitorMu             sync.Mutex             // Mutex for monitorStatus and monitorArmed
-	whoisInProgress       map[string]*WhoisInfo  // Track WHOIS requests in progress (key: nickname)
-	whoisMu               sync.Mutex             // Mutex for whoisInProgress map
-	whoPending            map[string]bool        // Targets of user-initiated /who awaiting replies (key: folded mask); distinguishes 352/315 from roster-seed WHOX (guarded by whoMu)
-	whoMu                 sync.Mutex             // Mutex for whoPending map
-	knownBots             map[string]bool        // Nicks recognized as IRCv3 bots this session (key: lowercased nick)
-	knownBotsMu           sync.Mutex             // Mutex for knownBots map
-	userMeta              map[string]*UserMeta   // Live roster attributes (away/account/host) this session (key: lowercased nick)
-	userMetaMu            sync.Mutex             // Mutex for userMeta map
-	metaEmitOnce          sync.Once              // Lazily starts the user-meta forwarder goroutine
-	metaEmitStopOnce      sync.Once              // Guards the single close of metaEmitStop
-	metaEmitMu            sync.Mutex             // Guards metaPending, metaEmitSignal, metaEmitStop
-	metaPending           map[string]UserMeta    // Coalesced pending user-meta snapshots awaiting emit (key: lowercased nick)
-	metaEmitSignal        chan struct{}          // Wakes the forwarder (buffered 1)
-	metaEmitStop          chan struct{}          // Closed on teardown to stop the forwarder
-	autoJoinOnce          *sync.Once             // Guards the one auto-join per connection; re-created each Connect (guarded by mu)
-	autoJoinAction        func()                 // What triggerAutoJoin runs once per connection; defaults to doAutoJoin (injectable for tests)
-	enabledCaps           map[string]bool        // IRCv3 capabilities granted by the server
-	chatHistoryMaxBatch   int                    // Max messages per CHATHISTORY request, from the chathistory=N cap value (0 = unknown, use default)
-	channelListItems      []ChannelListItem      // Temporary storage for LIST response
-	channelListMu         sync.Mutex             // Mutex for channelListItems
-	banLists              map[string][]BanEntry  // Per-channel ban entries collected between 367 and 368
-	banListsMu            sync.Mutex             // Mutex for banLists
-	rateLimiter           *RateLimiter           // Rate limiter for outgoing messages
-	currentNick           string                 // Nick the server currently knows us by; differs from the preferred nick during a collision (guarded by mu)
-	selfAway              bool                   // Server-acknowledged away state for our current nick (guarded by mu)
-	selfAwayMessage       string                 // Requested away reason committed by RPL_NOWAWAY (guarded by mu)
-	pendingAwayMessage    string                 // Away reason awaiting 305/306 acknowledgement (guarded by mu)
-	awayRequestPending    bool                   // Distinguishes a pending clear (empty message) from no request (guarded by mu)
-	nickCollisionNotified bool                   // True once we've told the user (one time) that the preferred nick was unavailable (guarded by mu)
-	pendingManualNick     string                 // Nick the user explicitly asked for via /nick and is awaiting; lets us surface a failure that the library's silent background reclaims would otherwise hide (guarded by mu)
-	reconnecting          bool                   // True when this connection is an auto-reconnect after an unexpected drop (guarded by mu)
-	pendingJoinKeys       map[string]string      // Case-folded channel -> key from a user-initiated JOIN, persisted when our JOIN echo confirms it worked (guarded by mu)
+	authFailed            bool                       // True when SASL was enabled but did not succeed this session (guarded by mu)
+	saslConfigErr         error                      // Mechanism-construction error from NewIRCClient (unknown mechanism); surfaced by Connect() before dialing
+	namesInProgress       map[string]bool            // Track channels currently receiving NAMES list
+	namesMu               sync.Mutex                 // Mutex for namesInProgress map
+	serverCapabilities    *ServerCapabilities        // Server capabilities from ISUPPORT
+	chanTypesAtomic       atomic.Pointer[string]     // CHANTYPES from ISUPPORT (e.g. "#&"); lock-free so channel detection is callable anywhere
+	caseMappingAtomic     atomic.Pointer[string]     // CASEMAPPING from ISUPPORT (e.g. "ascii"); lock-free so nick folding is callable anywhere
+	supportsWHOX          bool                       // Server advertised the WHOX token in ISUPPORT (guarded by mu)
+	supportsMonitor       bool                       // Server advertised the MONITOR token in ISUPPORT (guarded by mu)
+	monitorLimit          int                        // MONITOR=<limit> from ISUPPORT; 0 = unlimited/unknown (guarded by mu)
+	monitorStatus         map[string]bool            // MONITOR presence: lowercased nick -> online (guarded by monitorMu)
+	monitorArmed          map[string]bool            // Nicks currently on the server MONITOR list (guarded by monitorMu)
+	monitorMu             sync.Mutex                 // Mutex for monitorStatus and monitorArmed
+	whoisInProgress       map[string]*WhoisInfo      // Track WHOIS requests in progress (key: nickname)
+	whoisMu               sync.Mutex                 // Mutex for whoisInProgress map
+	whoPending            map[string]bool            // Targets of user-initiated /who awaiting replies (key: folded mask); distinguishes 352/315 from roster-seed WHOX (guarded by whoMu)
+	whoMu                 sync.Mutex                 // Mutex for whoPending map
+	knownBots             map[string]bool            // Nicks recognized as IRCv3 bots this session (key: lowercased nick)
+	knownBotsMu           sync.Mutex                 // Mutex for knownBots map
+	userMeta              map[string]*UserMeta       // Live roster attributes (away/account/host) this session (key: lowercased nick)
+	userMetaMu            sync.Mutex                 // Mutex for userMeta map
+	metaEmitOnce          sync.Once                  // Lazily starts the user-meta forwarder goroutine
+	metaEmitStopOnce      sync.Once                  // Guards the single close of metaEmitStop
+	metaEmitMu            sync.Mutex                 // Guards metaPending, metaEmitSignal, metaEmitStop
+	metaPending           map[string]UserMeta        // Coalesced pending user-meta snapshots awaiting emit (key: lowercased nick)
+	metaEmitSignal        chan struct{}              // Wakes the forwarder (buffered 1)
+	metaEmitStop          chan struct{}              // Closed on teardown to stop the forwarder
+	callbacks             *callbackDispatcher        // Ordered application work kept off irc-go's socket read goroutine
+	automaticRequests     *outboundRequestDispatcher // Serialized, rate-limited protocol requests generated by callbacks
+	autoJoinOnce          *sync.Once                 // Guards the one auto-join per connection; re-created each Connect (guarded by mu)
+	autoJoinAction        func()                     // What triggerAutoJoin runs once per connection; defaults to doAutoJoin (injectable for tests)
+	enabledCaps           map[string]bool            // IRCv3 capabilities granted by the server
+	chatHistoryMaxBatch   int                        // Max messages per CHATHISTORY request, from the chathistory=N cap value (0 = unknown, use default)
+	channelListItems      []ChannelListItem          // Temporary storage for LIST response
+	channelListMu         sync.Mutex                 // Mutex for channelListItems
+	banLists              map[string][]BanEntry      // Per-channel ban entries collected between 367 and 368
+	banListsMu            sync.Mutex                 // Mutex for banLists
+	rateLimiter           *RateLimiter               // Rate limiter for outgoing messages
+	currentNick           string                     // Nick the server currently knows us by; differs from the preferred nick during a collision (guarded by mu)
+	selfAway              bool                       // Server-acknowledged away state for our current nick (guarded by mu)
+	selfAwayMessage       string                     // Requested away reason committed by RPL_NOWAWAY (guarded by mu)
+	pendingAwayMessage    string                     // Away reason awaiting 305/306 acknowledgement (guarded by mu)
+	awayRequestPending    bool                       // Distinguishes a pending clear (empty message) from no request (guarded by mu)
+	nickCollisionNotified bool                       // True once we've told the user (one time) that the preferred nick was unavailable (guarded by mu)
+	pendingManualNick     string                     // Nick the user explicitly asked for via /nick and is awaiting; lets us surface a failure that the library's silent background reclaims would otherwise hide (guarded by mu)
+	reconnecting          bool                       // True when this connection is an auto-reconnect after an unexpected drop (guarded by mu)
+	pendingJoinKeys       map[string]string          // Case-folded channel -> key from a user-initiated JOIN, persisted when our JOIN echo confirms it worked (guarded by mu)
 }
 
 // ServerCapabilities stores parsed ISUPPORT information
@@ -630,34 +632,13 @@ func (c *IRCClient) handleJoin(e ircmsg.Message) {
 
 		// With no-implicit-names the server won't send the automatic NAMES
 		// reply, so request it explicitly — otherwise the roster stays empty
-		// (WHOX seeds attributes but not membership prefixes).
+		// (WHOX seeds attributes but not membership prefixes). Queue this on the
+		// amplification-aware automatic-request dispatcher: a callback backlog
+		// must not collapse one request per joined channel into a wire burst.
 		if cmd := c.namesOnSelfJoin(channel); cmd != "" {
-			if err := c.conn.SendRaw(cmd); err != nil {
-				logger.Log.Debug().Err(err).Str("channel", channel).Msg("explicit NAMES request failed")
-			}
-		}
-
-		// Catch-up: pull recent server-side history for the channel so anything
-		// said while we were away is backfilled. No-op when the server didn't
-		// grant CHATHISTORY. Replays arrive via handleChatHistoryBatch and are
-		// deduped by msgid, so re-joining a channel won't duplicate messages.
-		// This now also holds for membership events (JOIN/PART/QUIT/KICK/MODE)
-		// replayed under draft/event-playback: the live handlers persist @msgid
-		// on those rows too, and the dedup index is per-conversation, so a
-		// replayed JOIN/PART/QUIT that already happened live collapses onto the
-		// same row instead of duplicating it.
-		if c.chatHistoryEnabled() {
-			if err := c.RequestChatHistoryLatest(channel, defaultChatHistoryLimit); err != nil {
-				logger.Log.Debug().Err(err).Str("channel", channel).Msg("CHATHISTORY LATEST request skipped")
-			}
-		}
-
-		// Bulk-seed the roster (account/host/away/realname) with one extended
-		// WHO when the server supports WHOX, instead of waiting for live churn.
-		if c.whoxSupported() {
-			if err := c.requestWHOX(channel); err != nil {
-				logger.Log.Debug().Err(err).Str("channel", channel).Msg("WHOX request skipped")
-			}
+			c.enqueueAutomaticRequest("NAMES "+channel, func() error {
+				return c.conn.SendRaw(cmd)
+			})
 		}
 	}
 
@@ -1233,6 +1214,7 @@ func NewIRCClient(network *storage.Network, eventBus *events.EventBus, storage *
 		userMeta:          make(map[string]*UserMeta),
 		monitorStatus:     make(map[string]bool),
 		monitorArmed:      make(map[string]bool),
+		callbacks:         newCallbackDispatcher(),
 		autoJoinOnce:      &sync.Once{},
 		enabledCaps:       make(map[string]bool),
 		banLists:          make(map[string][]BanEntry),
@@ -1243,6 +1225,11 @@ func NewIRCClient(network *storage.Network, eventBus *events.EventBus, storage *
 		},
 		rateLimiter: NewRateLimiter(4, 2*time.Second),
 	}
+	// Automatic requests such as NAMES and WHO can amplify one short command into
+	// thousands of reply rows. Give them a deliberately conservative budget that
+	// is independent of ordinary user messages and auto-join commands.
+	automaticLimiter := NewRateLimiter(1, time.Second)
+	client.automaticRequests = newOutboundRequestDispatcher(automaticLimiter.Wait)
 
 	// Debug: Log SASL configuration
 	if network.SASLEnabled {
@@ -1445,11 +1432,10 @@ func (c *IRCClient) applyUserMeta(nick string, mutate func(*UserMeta)) {
 // emitUserMeta queues a snapshot of a nick's roster attributes for asynchronous
 // publication. nick must already be lowercased.
 //
-// This must never block: emitUserMeta runs on the irc-go read goroutine (via
-// applyUserMeta, from the NAMES/WHO/away/account handlers). Seeding a large
-// channel roster can update thousands of users in one socket burst, so we hand
-// snapshots to a background forwarder and return immediately. The forwarder in
-// turn publishes through EventBus.EmitLatest: roster state cannot consume the
+// This must never block the ordered application worker: seeding a large channel
+// roster can update thousands of users in one socket burst, so we hand snapshots
+// to a background forwarder and return immediately. The forwarder in turn
+// publishes through EventBus.EmitLatest: roster state cannot consume the
 // ordered/control queue, and repeated snapshots for one network+nick coalesce
 // (last write wins).
 func (c *IRCClient) emitUserMeta(nick string, meta UserMeta) {
@@ -1489,7 +1475,7 @@ func (c *IRCClient) startMetaEmitter() {
 }
 
 // metaEmitLoop drains coalesced user-meta snapshots to the event bus off the
-// read goroutine.
+// ordered application callback worker.
 func (c *IRCClient) metaEmitLoop(signal <-chan struct{}, stop <-chan struct{}) {
 	for {
 		select {
@@ -2282,10 +2268,10 @@ func (c *IRCClient) onConnect(e ircmsg.Message) {
 	})
 }
 
-// onDisconnect is the library disconnect callback: it marks the client
-// disconnected, records "Disconnected" in every open channel and the status
-// window, clears stale user lists, and announces EventConnectionLost (which the
-// app turns into an auto-reconnect with a fresh client).
+// onDisconnect is the library disconnect callback. This small synchronous
+// prelude must retire the library connection before irc-go's Loop can redial,
+// but all storage/event cleanup is queued behind previously received server
+// lines on the application callback worker.
 func (c *IRCClient) onDisconnect(e ircmsg.Message) {
 	c.mu.Lock()
 	wasAbandoned := c.abandoned
@@ -2306,7 +2292,15 @@ func (c *IRCClient) onDisconnect(e ircmsg.Message) {
 	c.nickCollisionNotified = false
 	c.pendingManualNick = ""
 	conn := c.conn
+	automaticRequests := c.automaticRequests
 	c.mu.Unlock()
+
+	// No connection-specific request may survive onto a dead socket. Stop this
+	// before retiring the library connection; any item already waiting on its
+	// pacing budget will observe the stop before it writes.
+	if automaticRequests != nil {
+		automaticRequests.stopNow()
+	}
 
 	// Also set the LIBRARY's quit flag, or the abandoned flag never gets its
 	// chance to matter: Loop() re-checks isQuitting() right after this callback
@@ -2321,6 +2315,22 @@ func (c *IRCClient) onDisconnect(e ircmsg.Message) {
 	if conn != nil {
 		conn.Quit()
 	}
+
+	if c.callbacks == nil || !c.callbacks.enqueue("disconnected", func() {
+		c.finishDisconnect(e, wasAbandoned)
+	}) {
+		// Construction-time failures can stop the dispatcher before irc-go fires
+		// a disconnect callback. Cleanup still has to run in that rare path.
+		c.finishDisconnect(e, wasAbandoned)
+		return
+	}
+	c.callbacks.stopAfterDrain()
+}
+
+// finishDisconnect records the drop, clears stale session state, and announces
+// EventConnectionLost after every application callback for an earlier server
+// line has completed.
+func (c *IRCClient) finishDisconnect(e ircmsg.Message, wasAbandoned bool) {
 
 	// The per-channel drop is surfaced by the QUIT/JOIN protocol messages the server
 	// echoes (see handleQuit / JOIN handler), so onDisconnect no longer writes its own
@@ -2443,82 +2453,82 @@ func (c *IRCClient) handleServerError(e ircmsg.Message) {
 // setupHandlers sets up IRC event handlers
 func (c *IRCClient) setupHandlers() {
 	// Connection established
-	c.conn.AddConnectCallback(c.onConnect)
+	c.addConnectCallback(c.onConnect)
 
 	// Connection lost
 	c.conn.AddDisconnectCallback(c.onDisconnect)
 
 	// Server-initiated disconnect reason (RFC 1459 §6.1 / RFC 2812 §3.7.4)
-	c.conn.AddCallback("ERROR", c.handleServerError)
+	c.addCallback("ERROR", c.handleServerError)
 
 	// PRIVMSG received
-	c.conn.AddCallback("PRIVMSG", c.handlePrivmsg)
+	c.addCallback("PRIVMSG", c.handlePrivmsg)
 
 	// User joined channel
-	c.conn.AddCallback("JOIN", c.handleJoin)
+	c.addCallback("JOIN", c.handleJoin)
 
 	// User parted channel
-	c.conn.AddCallback("PART", c.handlePart)
+	c.addCallback("PART", c.handlePart)
 
 	// ERR_LINKCHANNEL (470): a JOIN was forwarded to another channel (+f). Close
 	// the requested channel's buffer so it doesn't linger as a phantom membership.
-	c.conn.AddCallback("470", c.handleForwardedJoin)
+	c.addCallback("470", c.handleForwardedJoin)
 
 	// Standard JOIN-failure numerics: close the phantom channel and explain why,
 	// reusing the 470 forwarding pattern. Protocol-standard, no services logic.
-	c.conn.AddCallback("471", c.handleJoinError) // ERR_CHANNELISFULL
-	c.conn.AddCallback("473", c.handleJoinError) // ERR_INVITEONLYCHAN
-	c.conn.AddCallback("474", c.handleJoinError) // ERR_BANNEDFROMCHAN
-	c.conn.AddCallback("475", c.handleJoinError) // ERR_BADCHANNELKEY
-	c.conn.AddCallback("477", c.handleJoinError) // ERR_NEEDREGGEDNICK
+	c.addCallback("471", c.handleJoinError) // ERR_CHANNELISFULL
+	c.addCallback("473", c.handleJoinError) // ERR_INVITEONLYCHAN
+	c.addCallback("474", c.handleJoinError) // ERR_BANNEDFROMCHAN
+	c.addCallback("475", c.handleJoinError) // ERR_BADCHANNELKEY
+	c.addCallback("477", c.handleJoinError) // ERR_NEEDREGGEDNICK
 
 	// Surface common server error numerics that otherwise vanish — there is no
 	// catch-all callback in ergochat/irc-go, so an unregistered numeric is dropped
 	// without any user-visible output. See genericErrorNumerics.
 	for _, code := range genericErrorNumerics {
-		c.conn.AddCallback(code, c.handleServerNumeric)
+		c.addCallback(code, c.handleServerNumeric)
 	}
 
 	// User quit
-	c.conn.AddCallback("QUIT", c.handleQuit)
+	c.addCallback("QUIT", c.handleQuit)
 
 	// User kicked from channel
-	c.conn.AddCallback("KICK", c.handleKick)
+	c.addCallback("KICK", c.handleKick)
 
 	// Nick change
 	// Inbound NICK changes for everyone, with self-tracking. See handleNickMessage.
-	c.conn.AddCallback("NICK", c.handleNickMessage)
+	c.addCallback("NICK", c.handleNickMessage)
 
 	// Live-roster presence updates (IRCv3 away-notify / account-notify / chghost).
 	// These only arrive when the matching cap was negotiated; each updates the
 	// session-local UserMeta and emits EventUserMetaChanged when something changed.
-	c.conn.AddCallback("AWAY", c.handleAway)
-	c.conn.AddCallback("305", c.handleUnAway)  // RPL_UNAWAY
-	c.conn.AddCallback("306", c.handleNowAway) // RPL_NOWAWAY
-	c.conn.AddCallback("ACCOUNT", c.handleAccount)
-	c.conn.AddCallback("CHGHOST", c.handleChghost)
-	c.conn.AddCallback("SETNAME", c.handleSetname)
-	c.conn.AddCallback("INVITE", c.handleInvite)
-	c.conn.AddCallback("341", c.handleInviting)      // RPL_INVITING (INVITE send success)
-	c.conn.AddCallback("443", c.handleUserOnChannel) // ERR_USERONCHANNEL (INVITE target already on channel)
-	c.conn.AddCallback("354", c.handleWhoxReply)     // RPL_WHOSPCRPL (WHOX)
-	c.conn.AddCallback("352", c.handleWhoReply)      // RPL_WHOREPLY (user-initiated /who)
-	c.conn.AddCallback("315", c.handleEndOfWho)      // RPL_ENDOFWHO (closes a /who)
+	c.addCallback("AWAY", c.handleAway)
+	c.addCallback("305", c.handleUnAway)  // RPL_UNAWAY
+	c.addCallback("306", c.handleNowAway) // RPL_NOWAWAY
+	c.addCallback("ACCOUNT", c.handleAccount)
+	c.addCallback("CHGHOST", c.handleChghost)
+	c.addCallback("SETNAME", c.handleSetname)
+	c.addCallback("INVITE", c.handleInvite)
+	c.addCallback("341", c.handleInviting)      // RPL_INVITING (INVITE send success)
+	c.addCallback("443", c.handleUserOnChannel) // ERR_USERONCHANNEL (INVITE target already on channel)
+	c.addCallback("354", c.handleWhoxReply)     // RPL_WHOSPCRPL (WHOX)
+	c.addCallback("352", c.handleWhoReply)      // RPL_WHOREPLY (user-initiated /who)
+	c.addCallback("315", c.handleEndOfWho)      // RPL_ENDOFWHO (closes a /who)
 	// MONITOR presence: 730 RPL_MONONLINE, 731 RPL_MONOFFLINE.
-	c.conn.AddCallback("730", func(e ircmsg.Message) { c.handleMonitorPresence(e, true) })
-	c.conn.AddCallback("731", func(e ircmsg.Message) { c.handleMonitorPresence(e, false) })
+	c.addCallback("730", func(e ircmsg.Message) { c.handleMonitorPresence(e, true) })
+	c.addCallback("731", func(e ircmsg.Message) { c.handleMonitorPresence(e, false) })
 	// 734 ERR_MONLISTFULL: the MONITOR list is full; the trailing nicks were not
 	// added. We degrade gracefully — their presence simply shows as unknown.
-	c.conn.AddCallback("734", func(e ircmsg.Message) {
+	c.addCallback("734", func(e ircmsg.Message) {
 		logger.Log.Warn().Interface("params", e.Params).Msg("MONITOR list full (734); some nicks are not being tracked")
 	})
 	// IRCv3 standard-replies: FAIL (error), WARN (warning), NOTE (status).
-	c.conn.AddCallback("FAIL", func(e ircmsg.Message) { c.handleStandardReply(e, "error") })
-	c.conn.AddCallback("WARN", func(e ircmsg.Message) { c.handleStandardReply(e, "warning") })
-	c.conn.AddCallback("NOTE", func(e ircmsg.Message) { c.handleStandardReply(e, "status") })
+	c.addCallback("FAIL", func(e ircmsg.Message) { c.handleStandardReply(e, "error") })
+	c.addCallback("WARN", func(e ircmsg.Message) { c.handleStandardReply(e, "warning") })
+	c.addCallback("NOTE", func(e ircmsg.Message) { c.handleStandardReply(e, "status") })
 
 	// Channel topic (RPL_TOPIC = 332) - received when topic is retrieved
-	c.conn.AddCallback("332", func(e ircmsg.Message) {
+	c.addCallback("332", func(e ircmsg.Message) {
 		if len(e.Params) < 3 {
 			return
 		}
@@ -2547,7 +2557,7 @@ func (c *IRCClient) setupHandlers() {
 	// RPL_TOPICWHOTIME (333) - who set the current topic and when. Arrives right
 	// after 332 on join / topic query. Wire form: "<me> <channel> <setter> <unixtime>".
 	// Without a callback irc-go drops it, so the "topic set by …" context is lost.
-	c.conn.AddCallback("333", func(e ircmsg.Message) {
+	c.addCallback("333", func(e ircmsg.Message) {
 		if len(e.Params) < 4 {
 			return
 		}
@@ -2560,7 +2570,7 @@ func (c *IRCClient) setupHandlers() {
 
 	// RPL_NOTOPIC (331) - the channel has no topic set. Wire form:
 	// "<me> <channel> :No topic is set". Surfaced as a channel status line.
-	c.conn.AddCallback("331", func(e ircmsg.Message) {
+	c.addCallback("331", func(e ircmsg.Message) {
 		if len(e.Params) < 2 {
 			return
 		}
@@ -2573,7 +2583,7 @@ func (c *IRCClient) setupHandlers() {
 	})
 
 	// TOPIC command - when someone changes the topic
-	c.conn.AddCallback("TOPIC", func(e ircmsg.Message) {
+	c.addCallback("TOPIC", func(e ircmsg.Message) {
 		if len(e.Params) < 2 {
 			return
 		}
@@ -2604,7 +2614,7 @@ func (c *IRCClient) setupHandlers() {
 
 	// Track NAMES responses for building user list
 	// RPL_NAMREPLY (353) - list of users in channel
-	c.conn.AddCallback("353", func(e ircmsg.Message) {
+	c.addCallback("353", func(e ircmsg.Message) {
 		if len(e.Params) < 4 {
 			return
 		}
@@ -2672,7 +2682,7 @@ func (c *IRCClient) setupHandlers() {
 	})
 
 	// RPL_ENDOFNAMES (366) - end of NAMES list
-	c.conn.AddCallback("366", func(e ircmsg.Message) {
+	c.addCallback("366", func(e ircmsg.Message) {
 		if len(e.Params) < 2 {
 			return
 		}
@@ -2716,11 +2726,18 @@ func (c *IRCClient) setupHandlers() {
 			Timestamp: time.Now(),
 			Source:    events.EventSourceIRC,
 		})
+
+		// NAMES is the membership-critical, potentially very large response. Only
+		// after it completes do we queue optional enrichment for this channel.
+		// Together with the automatic-request dispatcher this prevents NAMES and
+		// WHOX for every rejoined channel from multiplying into one server SendQ
+		// burst while preserving both features.
+		c.enqueuePostNamesRequests(channel)
 	})
 
 	// Handle IRC error numerics (400-599 range)
 	// Common errors: 482 ERR_CHANOPRIVSNEEDED, 442 ERR_NOTONCHANNEL, 481 ERR_NOPRIVILEGES, etc.
-	c.conn.AddCallback("482", func(e ircmsg.Message) {
+	c.addCallback("482", func(e ircmsg.Message) {
 		// ERR_CHANOPRIVSNEEDED - You're not a channel operator
 		// Format: :server 482 nick #channel :You're not a channel operator
 		errorMsg := "You're not a channel operator"
@@ -2771,7 +2788,7 @@ func (c *IRCClient) setupHandlers() {
 	})
 
 	// 442 ERR_NOTONCHANNEL
-	c.conn.AddCallback("442", func(e ircmsg.Message) {
+	c.addCallback("442", func(e ircmsg.Message) {
 		// Format: :server 442 nick #channel :You're not on that channel
 		errorMsg := "You're not on that channel"
 		var channel string
@@ -2819,7 +2836,7 @@ func (c *IRCClient) setupHandlers() {
 	})
 
 	// 481 ERR_NOPRIVILEGES
-	c.conn.AddCallback("481", func(e ircmsg.Message) {
+	c.addCallback("481", func(e ircmsg.Message) {
 		// Format: :server 481 nick :Permission denied
 		errorMsg := "Permission denied"
 		if len(e.Params) >= 2 {
@@ -2852,11 +2869,11 @@ func (c *IRCClient) setupHandlers() {
 	})
 
 	// Channel MODE changes
-	c.conn.AddCallback("MODE", c.handleMode)
+	c.addCallback("MODE", c.handleMode)
 
 	// RPL_CHANNELMODEIS (324) - authoritative channel modes, typically on join or
 	// in response to a "MODE #channel" query. Replaces the stored canonical string.
-	c.conn.AddCallback("324", func(e ircmsg.Message) {
+	c.addCallback("324", func(e ircmsg.Message) {
 		if len(e.Params) < 3 {
 			return
 		}
@@ -2889,7 +2906,7 @@ func (c *IRCClient) setupHandlers() {
 	})
 
 	// RPL_BANLIST (367) - a single ban entry: <channel> <mask> [<setter> <time>]
-	c.conn.AddCallback("367", func(e ircmsg.Message) {
+	c.addCallback("367", func(e ircmsg.Message) {
 		if len(e.Params) < 3 {
 			return
 		}
@@ -2908,7 +2925,7 @@ func (c *IRCClient) setupHandlers() {
 	})
 
 	// RPL_ENDOFBANLIST (368) - end of ban list; flush collected entries to the frontend.
-	c.conn.AddCallback("368", func(e ircmsg.Message) {
+	c.addCallback("368", func(e ircmsg.Message) {
 		if len(e.Params) < 2 {
 			return
 		}
@@ -2937,7 +2954,7 @@ func (c *IRCClient) setupHandlers() {
 	})
 
 	// MOTD (Message of the Day) - store in status window
-	c.conn.AddCallback("372", func(e ircmsg.Message) {
+	c.addCallback("372", func(e ircmsg.Message) {
 		// RPL_MOTD line
 		if len(e.Params) >= 2 {
 			motdLine := e.Params[1]
@@ -2957,21 +2974,31 @@ func (c *IRCClient) setupHandlers() {
 
 	// NOTICE messages - store in status window if not from a channel
 	// Also handle CTCP responses (CTCP replies come as NOTICE)
-	c.conn.AddCallback("NOTICE", c.handleNotice)
+	c.addCallback("NOTICE", c.handleNotice)
 
 	// TAGMSG carries IRCv3 client-only tags with no message body; handleTypingTag
 	// surfaces the +typing client tag (typing indicators) and ignores everything
 	// else. Ephemeral — nothing is stored.
-	c.conn.AddCallback("TAGMSG", c.handleTypingTag)
+	c.addCallback("TAGMSG", c.handleTypingTag)
 
 	// CHATHISTORY replays arrive wrapped in a BATCH. The library buffers the whole
 	// group and hands it to batch callbacks; handleChatHistoryBatch claims the
 	// "chathistory" batches (bulk dedup-insert + a single history event) and lets
 	// every other batch type fall through to the library's default dispatch.
-	c.conn.AddBatchCallback(c.handleChatHistoryBatch)
+	c.conn.AddBatchCallback(func(batch *ircevent.Batch) bool {
+		if !isChatHistoryBatch(batch) {
+			return false
+		}
+		// Claim the batch synchronously so irc-go does not flatten replay rows
+		// into live handlers, then do all storage work on the ordered worker.
+		if c.callbacks != nil {
+			c.callbacks.enqueue("BATCH chathistory", func() { c.handleChatHistoryBatch(batch) })
+		}
+		return true
+	})
 
 	// Numeric replies (like RPL_WELCOME, etc.) - store important ones in status
-	c.conn.AddCallback("001", func(e ircmsg.Message) {
+	c.addCallback("001", func(e ircmsg.Message) {
 		// RPL_WELCOME
 		if len(e.Params) >= 1 {
 			welcomeMsg := e.Params[len(e.Params)-1]
@@ -2992,14 +3019,14 @@ func (c *IRCClient) setupHandlers() {
 	// Track the nick the server actually assigned us (an alternative if our
 	// preferred nick was taken). Registered after the welcome-line writer above
 	// so the log shows the welcome first; see handleWelcome.
-	c.conn.AddCallback("001", c.handleWelcome)
+	c.addCallback("001", c.handleWelcome)
 
 	// Auto-join is gated on registration completion. The end-of-MOTD numerics are
 	// the primary trigger because they guarantee ISUPPORT (005) has arrived, so
 	// NAMES prefix parsing is correct before the first reply. A fallback timer
 	// armed at RPL_WELCOME (001) covers servers that send no MOTD terminator.
 	// autoJoinOnce ensures whichever fires first wins and we join exactly once.
-	c.conn.AddCallback("001", func(e ircmsg.Message) {
+	c.addCallback("001", func(e ircmsg.Message) {
 		c.mu.RLock()
 		once := c.autoJoinOnce
 		c.mu.RUnlock()
@@ -3014,8 +3041,8 @@ func (c *IRCClient) setupHandlers() {
 			}
 		})
 	})
-	c.conn.AddCallback("376", func(e ircmsg.Message) { c.triggerAutoJoin() }) // RPL_ENDOFMOTD
-	c.conn.AddCallback("422", func(e ircmsg.Message) { c.triggerAutoJoin() }) // ERR_NOMOTD
+	c.addCallback("376", func(e ircmsg.Message) { c.triggerAutoJoin() }) // RPL_ENDOFMOTD
+	c.addCallback("422", func(e ircmsg.Message) { c.triggerAutoJoin() }) // ERR_NOMOTD
 
 	// WHOIS response handlers
 	// RPL_WHOISUSER (311) - Basic user information
@@ -3023,7 +3050,7 @@ func (c *IRCClient) setupHandlers() {
 	// away user, and unsolicited when we message someone who is away. Without a
 	// callback irc-go drops it, so the away message never surfaced. When a WHOIS
 	// is in progress we fold it into that result; otherwise we show a status line.
-	c.conn.AddCallback("301", func(e ircmsg.Message) {
+	c.addCallback("301", func(e ircmsg.Message) {
 		if len(e.Params) < 3 {
 			return
 		}
@@ -3040,7 +3067,7 @@ func (c *IRCClient) setupHandlers() {
 		}
 	})
 
-	c.conn.AddCallback("311", func(e ircmsg.Message) {
+	c.addCallback("311", func(e ircmsg.Message) {
 		if len(e.Params) < 4 {
 			return
 		}
@@ -3066,7 +3093,7 @@ func (c *IRCClient) setupHandlers() {
 	})
 
 	// RPL_WHOISSERVER (312) - Server information
-	c.conn.AddCallback("312", func(e ircmsg.Message) {
+	c.addCallback("312", func(e ircmsg.Message) {
 		if len(e.Params) < 3 {
 			return
 		}
@@ -3090,7 +3117,7 @@ func (c *IRCClient) setupHandlers() {
 	})
 
 	// RPL_WHOISOPERATOR (313) - Operator status
-	c.conn.AddCallback("313", func(e ircmsg.Message) {
+	c.addCallback("313", func(e ircmsg.Message) {
 		if len(e.Params) < 2 {
 			return
 		}
@@ -3100,7 +3127,7 @@ func (c *IRCClient) setupHandlers() {
 	})
 
 	// RPL_WHOISIDLE (317) - Idle time and sign-on time
-	c.conn.AddCallback("317", func(e ircmsg.Message) {
+	c.addCallback("317", func(e ircmsg.Message) {
 		if len(e.Params) < 3 {
 			return
 		}
@@ -3130,7 +3157,7 @@ func (c *IRCClient) setupHandlers() {
 	})
 
 	// RPL_ENDOFWHOIS (318) - End of WHOIS
-	c.conn.AddCallback("318", func(e ircmsg.Message) {
+	c.addCallback("318", func(e ircmsg.Message) {
 		if len(e.Params) < 2 {
 			return
 		}
@@ -3157,7 +3184,7 @@ func (c *IRCClient) setupHandlers() {
 	})
 
 	// RPL_WHOISCHANNELS (319) - Channels user is in
-	c.conn.AddCallback("319", func(e ircmsg.Message) {
+	c.addCallback("319", func(e ircmsg.Message) {
 		if len(e.Params) < 3 {
 			return
 		}
@@ -3179,7 +3206,7 @@ func (c *IRCClient) setupHandlers() {
 	})
 
 	// RPL_WHOISACCOUNT (330) - Account name (if logged in)
-	c.conn.AddCallback("330", func(e ircmsg.Message) {
+	c.addCallback("330", func(e ircmsg.Message) {
 		if len(e.Params) < 3 {
 			return
 		}
@@ -3198,13 +3225,13 @@ func (c *IRCClient) setupHandlers() {
 	})
 
 	// RPL_WHOISBOT (335) - Target is a bot (IRCv3 bot mode)
-	c.conn.AddCallback("335", c.handleWhoisBot)
+	c.addCallback("335", c.handleWhoisBot)
 
 	// RPL_MYINFO (004) - Server software identity.
-	c.conn.AddCallback("004", func(e ircmsg.Message) { c.applyMyInfo(e) })
+	c.addCallback("004", func(e ircmsg.Message) { c.applyMyInfo(e) })
 
 	// ISUPPORT (005) - Server capabilities
-	c.conn.AddCallback("005", func(e ircmsg.Message) {
+	c.addCallback("005", func(e ircmsg.Message) {
 		// RPL_ISUPPORT - Server capability parameters
 		// Format: :server 005 nickname PREFIX=(ov)@+ CHANMODES=b,k,l,imnpst ... :are supported by this server
 		if len(e.Params) < 2 {
@@ -3223,7 +3250,7 @@ func (c *IRCClient) setupHandlers() {
 	})
 
 	// RPL_LISTSTART (321) - Beginning of LIST response
-	c.conn.AddCallback("321", func(e ircmsg.Message) {
+	c.addCallback("321", func(e ircmsg.Message) {
 		c.channelListMu.Lock()
 		c.channelListItems = nil // Reset list
 		c.channelListMu.Unlock()
@@ -3231,7 +3258,7 @@ func (c *IRCClient) setupHandlers() {
 	})
 
 	// RPL_LIST (322) - Channel list entry: <channel> <visible> :<topic>
-	c.conn.AddCallback("322", func(e ircmsg.Message) {
+	c.addCallback("322", func(e ircmsg.Message) {
 		if len(e.Params) < 3 {
 			return
 		}
@@ -3256,7 +3283,7 @@ func (c *IRCClient) setupHandlers() {
 	})
 
 	// RPL_LISTEND (323) - End of LIST response
-	c.conn.AddCallback("323", func(e ircmsg.Message) {
+	c.addCallback("323", func(e ircmsg.Message) {
 		c.channelListMu.Lock()
 		items := make([]ChannelListItem, len(c.channelListItems))
 		copy(items, c.channelListItems)
@@ -3290,7 +3317,7 @@ func (c *IRCClient) setupHandlers() {
 	// IRCv3 capability negotiation (always enabled, not just for SASL)
 	var capLSBuffer strings.Builder
 
-	c.conn.AddCallback("CAP", func(e ircmsg.Message) {
+	c.addCallback("CAP", func(e ircmsg.Message) {
 		rawLine, _ := e.Line()
 		c.writeStatusBuffer(storage.Message{
 			NetworkID:   c.networkID,
@@ -3454,38 +3481,38 @@ func (c *IRCClient) setupHandlers() {
 	// the SASL events, and flag auth failure; they send no protocol (no CAP END,
 	// no QUIT). No AUTHENTICATE callback is registered — the fork owns it.
 
-	c.conn.AddCallback("900", func(e ircmsg.Message) { // RPL_LOGGEDIN
+	c.addCallback("900", func(e ircmsg.Message) { // RPL_LOGGEDIN
 		if !c.saslEnabled {
 			return
 		}
 		c.observeSASLSuccess()
 	})
-	c.conn.AddCallback("903", func(e ircmsg.Message) { // RPL_SASLSUCCESS
+	c.addCallback("903", func(e ircmsg.Message) { // RPL_SASLSUCCESS
 		if !c.saslEnabled {
 			return
 		}
 		c.observeSASLSuccess()
 	})
 
-	c.conn.AddCallback("902", func(e ircmsg.Message) { // ERR_NICKLOCKED
+	c.addCallback("902", func(e ircmsg.Message) { // ERR_NICKLOCKED
 		if !c.saslEnabled {
 			return
 		}
 		c.observeSASLFailure("account locked")
 	})
-	c.conn.AddCallback("904", func(e ircmsg.Message) { // ERR_SASLFAIL
+	c.addCallback("904", func(e ircmsg.Message) { // ERR_SASLFAIL
 		if !c.saslEnabled {
 			return
 		}
 		c.observeSASLFailure("invalid credentials")
 	})
-	c.conn.AddCallback("905", func(e ircmsg.Message) { // ERR_SASLTOOLONG
+	c.addCallback("905", func(e ircmsg.Message) { // ERR_SASLTOOLONG
 		if !c.saslEnabled {
 			return
 		}
 		c.observeSASLFailure("credentials too long")
 	})
-	c.conn.AddCallback("906", func(e ircmsg.Message) { // ERR_SASLABORTED
+	c.addCallback("906", func(e ircmsg.Message) { // ERR_SASLABORTED
 		if !c.saslEnabled {
 			return
 		}
@@ -3496,15 +3523,15 @@ func (c *IRCClient) setupHandlers() {
 	// ERR_NICKNAMEINUSE (433). The library already selects an alternative
 	// pre-registration and re-requests the preferred nick on each keepalive, so
 	// we don't send our own NICK here — we only surface a one-time notice.
-	c.conn.AddCallback("433", c.handleNickInUse)
+	c.addCallback("433", c.handleNickInUse)
 
 	// Other nick-error numerics. These carry no background-reclaim traffic, so
 	// they only ever speak up when answering a user-initiated /nick (see
 	// surfaceManualNickError).
-	c.conn.AddCallback("431", c.handleNoNickGiven)     // ERR_NONICKNAMEGIVEN
-	c.conn.AddCallback("432", c.handleErroneousNick)   // ERR_ERRONEUSNICKNAME
-	c.conn.AddCallback("436", c.handleNickCollision)   // ERR_NICKCOLLISION
-	c.conn.AddCallback("437", c.handleNickUnavailable) // ERR_UNAVAILRESOURCE
+	c.addCallback("431", c.handleNoNickGiven)     // ERR_NONICKNAMEGIVEN
+	c.addCallback("432", c.handleErroneousNick)   // ERR_ERRONEUSNICKNAME
+	c.addCallback("436", c.handleNickCollision)   // ERR_NICKCOLLISION
+	c.addCallback("437", c.handleNickUnavailable) // ERR_UNAVAILRESOURCE
 }
 
 // contains checks if a capability string contains the given capability
@@ -3650,6 +3677,38 @@ func (c *IRCClient) namesOnSelfJoin(channel string) string {
 	return "NAMES " + channel
 }
 
+// enqueueAutomaticRequest hands an amplified protocol request to the dedicated
+// paced worker. The nil fallback keeps small unit-test clients usable; every
+// production client constructs the dispatcher in NewIRCClient.
+func (c *IRCClient) enqueueAutomaticRequest(name string, run func() error) {
+	if c.automaticRequests != nil {
+		if !c.automaticRequests.enqueue(name, run) {
+			logger.Log.Debug().Str("request", name).Msg("Dropped automatic IRC request after dispatcher shutdown")
+		}
+		return
+	}
+	if err := run(); err != nil {
+		logger.Log.Debug().Err(err).Str("request", name).Msg("Automatic IRC request failed")
+	}
+}
+
+// enqueuePostNamesRequests schedules optional per-channel enrichment only after
+// the membership-critical NAMES response is complete. These commands can each
+// produce hundreds of rows, so they share the same conservative paced queue as
+// explicit NAMES requests.
+func (c *IRCClient) enqueuePostNamesRequests(channel string) {
+	if c.chatHistoryEnabled() {
+		c.enqueueAutomaticRequest("CHATHISTORY "+channel, func() error {
+			return c.RequestChatHistoryLatest(channel, defaultChatHistoryLimit)
+		})
+	}
+	if c.whoxSupported() {
+		c.enqueueAutomaticRequest("WHOX "+channel, func() error {
+			return c.requestWHOX(channel)
+		})
+	}
+}
+
 func (c *IRCClient) capEnabled(name string) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -3736,7 +3795,11 @@ func (c *IRCClient) requestWHOX(channel string) error {
 	}
 	fields := fmt.Sprintf("%%tcuhnfar,%s", whoxRosterToken)
 	if c.capEnabled("labeled-response") {
-		if err := c.conn.SendWithLabel(c.handleWhoxBatch, nil, "WHO", channel, fields); err == nil {
+		if err := c.conn.SendWithLabel(func(batch *ircevent.Batch) {
+			if c.callbacks != nil {
+				c.callbacks.enqueue("WHOX labeled response", func() { c.handleWhoxBatch(batch) })
+			}
+		}, nil, "WHO", channel, fields); err == nil {
 			return nil
 		}
 		// Fall through to the unlabeled path if the label send was refused.
@@ -4188,13 +4251,14 @@ func (c *IRCClient) RequestChatHistoryBefore(target, beforeISO string, limit int
 // would emit a live message event and re-run notification logic for every replayed
 // line. Non-chathistory batches return false, so the library keeps handling them
 // exactly as before this callback existed.
+func isChatHistoryBatch(b *ircevent.Batch) bool {
+	return b != nil && len(b.Params) >= 2 && b.Params[1] == "chathistory"
+}
+
 func (c *IRCClient) handleChatHistoryBatch(b *ircevent.Batch) bool {
-	if b == nil {
-		return false
-	}
 	// BATCH start params: <+id> <type> [type-specific params…]. For chathistory the
 	// type is at Params[1] and the requested target at Params[2].
-	if len(b.Params) < 2 || b.Params[1] != "chathistory" {
+	if !isChatHistoryBatch(b) {
 		return false
 	}
 	target := ""
@@ -4544,6 +4608,12 @@ func (c *IRCClient) Connect() error {
 	// A bad SASL mechanism was caught at construction (NewIRCClient); fail before
 	// dialing rather than connecting unauthenticated.
 	if c.saslConfigErr != nil {
+		if c.automaticRequests != nil {
+			c.automaticRequests.stopNow()
+		}
+		if c.callbacks != nil {
+			c.callbacks.stopAfterDrain()
+		}
 		c.setAuthFailed(true)
 		c.eventBus.Emit(events.Event{
 			Type:      EventError,
@@ -4555,6 +4625,12 @@ func (c *IRCClient) Connect() error {
 	}
 
 	if err := c.conn.Connect(); err != nil {
+		if c.automaticRequests != nil {
+			c.automaticRequests.stopNow()
+		}
+		if c.callbacks != nil {
+			c.callbacks.stopAfterDrain()
+		}
 		// The library ran SASL during Connect(); a non-transport error under SASL
 		// is an auth failure. Flag it (so the app suppresses auto-reconnect) and
 		// write a status line — do NOT register unauthenticated.
@@ -4736,13 +4812,17 @@ func (c *IRCClient) signalQuit(reason string) <-chan struct{} {
 	// connected. Never cleared — an abandoned client is gone for good; a real
 	// reconnect always uses a fresh IRCClient.
 	c.abandoned = true
+	automaticRequests := c.automaticRequests
 	c.mu.Unlock()
+
+	if automaticRequests != nil {
+		automaticRequests.stopNow()
+	}
 
 	if conn == nil {
 		return nil
 	}
-	conn.QuitMessage = reason
-	conn.Quit()
+	conn.QuitWithMessage(reason)
 	return done
 }
 

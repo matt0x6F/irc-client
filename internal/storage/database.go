@@ -877,8 +877,8 @@ func (s *Storage) AddChannelUser(channelID int64, nickname string, modes string)
 
 // AddChannelUsers adds or updates a batch of users in one transaction. NAMES
 // replies for large channels can contain hundreds of nicks; committing each row
-// separately stalls the IRC read goroutine long enough for a server's SendQ to
-// overflow while several auto-joined channels are streaming their rosters.
+// separately needlessly stalls the ordered application callback worker while
+// several auto-joined channels are streaming their rosters.
 func (s *Storage) AddChannelUsers(channelID int64, users []ChannelUser) error {
 	if len(users) == 0 {
 		return nil
