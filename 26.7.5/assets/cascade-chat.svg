@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="Cascade Chat">
+  <defs>
+    <linearGradient id="cascade-bg" x1="190" y1="166" x2="842" y2="872" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#474040"/>
+      <stop offset="0.52" stop-color="#272323"/>
+      <stop offset="1" stop-color="#080808"/>
+    </linearGradient>
+  </defs>
+  <path d="M285 100h454c102.08 0 185 82.92 185 185v454c0 102.08-82.92 185-185 185H285c-102.08 0-185-82.92-185-185V285c0-102.08 82.92-185 185-185Z" fill="url(#cascade-bg)"/>
+  <path d="m202 672 142-244 98 126 164-278 218 396" fill="none" stroke="#fff" stroke-width="58" stroke-linecap="round" stroke-linejoin="round"/>
+  <g fill="#fff">
+    <rect x="287" y="720" width="450" height="42" rx="21" opacity="0.48"/>
+    <rect x="342" y="778" width="340" height="42" rx="21" opacity="0.72"/>
+    <rect x="397" y="836" width="230" height="42" rx="21"/>
+  </g>
+</svg>
