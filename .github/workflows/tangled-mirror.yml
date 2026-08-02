@@ -6,6 +6,7 @@ on:
       - '**'
     tags:
       - '**'
+  delete:
   workflow_dispatch:
 
 permissions:
@@ -34,9 +35,12 @@ jobs:
             fi
           done
 
-      - name: Check out GitHub repository
+      - name: Check out GitHub default branch
         uses: actions/checkout@v4
         with:
+          # Delete events expose the default branch rather than the removed ref.
+          # Every event uses it only to bootstrap an authenticated full ref fetch.
+          ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 0
           persist-credentials: true
 
