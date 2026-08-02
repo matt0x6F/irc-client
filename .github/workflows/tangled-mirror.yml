@@ -1,0 +1,98 @@
+name: Mirror to Tangled
+
+on:
+  push:
+    branches:
+      - '**'
+    tags:
+      - '**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tangled-mirror
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    name: Mirror Git refs
+    # This repository-scoped ARC scale set must exist before the job can run.
+    runs-on: irc-client-runners
+    timeout-minutes: 10
+
+    steps:
+      - name: Verify runner dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          for dependency in git ssh install; do
+            if ! command -v "$dependency" >/dev/null 2>&1; then
+              echo "::error::Required runner dependency is missing: $dependency"
+              exit 1
+            fi
+          done
+
+      - name: Check out GitHub repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Configure Tangled SSH access
+        shell: bash
+        env:
+          TANGLED_KEY: ${{ secrets.TANGLED_KEY }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "$TANGLED_KEY" ]]; then
+            echo "::error::The TANGLED_KEY repository secret is required"
+            exit 1
+          fi
+
+          ssh_dir="$RUNNER_TEMP/tangled-ssh"
+          install -d -m 700 "$ssh_dir"
+          printf '%s\n' "$TANGLED_KEY" > "$ssh_dir/key"
+          chmod 600 "$ssh_dir/key"
+
+          # Pin tangled.org's ED25519 host key; never accept an unverified key.
+          printf '%s\n' \
+            'tangled.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAII2UShEm/FFPmYZUizaPnIqOJuynoCQpcLhl5PPHd02n' \
+            > "$ssh_dir/known_hosts"
+          chmod 600 "$ssh_dir/known_hosts"
+
+          {
+            printf '%s\n' 'Host tangled.org'
+            printf '%s\n' '  HostName tangled.org'
+            printf '%s\n' '  User git'
+            printf '  IdentityFile %s\n' "$ssh_dir/key"
+            printf '%s\n' '  IdentitiesOnly yes'
+            printf '%s\n' '  BatchMode yes'
+            printf '%s\n' '  AddressFamily inet'
+            printf '%s\n' '  StrictHostKeyChecking yes'
+            printf '  UserKnownHostsFile %s\n' "$ssh_dir/known_hosts"
+          } > "$ssh_dir/config"
+          chmod 600 "$ssh_dir/config"
+
+          printf 'GIT_SSH_COMMAND=ssh -F %s\n' "$ssh_dir/config" >> "$GITHUB_ENV"
+
+      - name: Mirror branches and tags
+        shell: bash
+        env:
+          TANGLED_REMOTE: git@tangled.org:did:plc:ht6dlahjm4hoh2ts2enqeijp
+        run: |
+          set -euo pipefail
+
+          git remote add tangled "$TANGLED_REMOTE"
+
+          # Reconcile complete GitHub branch/tag namespaces on every run. The
+          # private namespace avoids accidentally pushing checkout-only refs.
+          git fetch --force --prune origin \
+            '+refs/heads/*:refs/tangled-mirror/heads/*' \
+            '+refs/tags/*:refs/tangled-mirror/tags/*'
+
+          git push --force --prune tangled \
+            '+refs/tangled-mirror/heads/*:refs/heads/*' \
+            '+refs/tangled-mirror/tags/*:refs/tags/*'
