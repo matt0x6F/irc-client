@@ -19,8 +19,7 @@ concurrency:
 jobs:
   mirror:
     name: Mirror Git refs
-    # This repository-scoped ARC scale set must exist before the job can run.
-    runs-on: irc-client-runners
+    runs-on: ubuntu-latest
     timeout-minutes: 10
 
     steps:
