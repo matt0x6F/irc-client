@@ -9,4 +9,4 @@ RUN if command -v dnf >/dev/null; then \
         && rm -rf /var/lib/apt/lists/*; \
     fi
 COPY smoke.py /smoke.py
-CMD ["xvfb-run", "-a", "dbus-run-session", "--", "python3", "/smoke.py", "/input/cascade.AppImage"]
+CMD ["timeout", "60s", "xvfb-run", "-a", "dbus-run-session", "--", "python3", "/smoke.py", "/input/cascade.AppImage"]

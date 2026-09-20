@@ -47,6 +47,7 @@ def check(image):
                         raise AssertionError(f'AppImage exited early: {proc.returncode}')
                     helpers = set()
                     cascade_pid = None
+                    libraries_loaded = False
                     for pid in descendants(proc.pid):
                         try:
                             exe = Path(f'/proc/{pid}/exe').resolve(strict=True)
@@ -56,15 +57,19 @@ def check(image):
                             elif exe.name == 'cascade':
                                 cascade_pid = pid
                                 maps = Path(f'/proc/{pid}/maps').read_text()
+                                libraries_loaded = True
                                 for library in ('libwebkitgtk-6.0', 'libjavascriptcoregtk-6.0', 'libgtk-4'):
                                     paths = {line.split()[-1] for line in maps.splitlines() if library in line}
-                                    assert paths and all(p.startswith(('/usr/lib/', '/usr/lib64/')) for p in paths), paths
+                                    # The ELF loader may still be mapping libraries
+                                    # when we first observe the cascade process.
+                                    libraries_loaded = libraries_loaded and bool(paths)
+                                    assert all(p.startswith(('/usr/lib/', '/usr/lib64/')) for p in paths), paths
                         except FileNotFoundError:
                             continue
                     window = subprocess.run(
                         ['xdotool', 'search', '--onlyvisible', '--pid', str(cascade_pid or 0), '--name', 'Cascade Chat'],
-                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
-                    if len(helpers) == 2 and window:
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3).returncode == 0
+                    if len(helpers) == 2 and window and libraries_loaded:
                         healthy_since = healthy_since or time.monotonic()
                         if time.monotonic() - healthy_since >= 5:
                             print('PASS: Cascade window and both host WebKit helpers survived for 5 seconds')

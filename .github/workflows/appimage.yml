@@ -14,6 +14,7 @@ permissions:
 jobs:
   appimage:
     name: AppImage (${{ matrix.arch }}) on Fedora and Ubuntu
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
