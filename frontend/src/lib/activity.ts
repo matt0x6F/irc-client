@@ -28,6 +28,8 @@ export interface ActivityEvent {
   target?: string | null;
   // Sender (for echo detection on received PMs).
   user?: string | null;
+  // Explicit row type, when supplied; system rows are not unread messages.
+  messageType?: string | null;
 }
 
 export interface ActivityTarget {
@@ -61,6 +63,9 @@ export function activityTargetForEvent(
   networks: ActivityNetwork[],
 ): ActivityTarget | null {
   if (eventType !== 'message.received' && eventType !== 'message.sent') return null;
+  // Some message events also refresh informational rows. Only chat text,
+  // /me actions, and notices count; absent types support existing sent/actions.
+  if (e.messageType && !['privmsg', 'action', 'notice'].includes(e.messageType)) return null;
 
   const network = resolveNetwork(e, networks);
   if (!network) return null;

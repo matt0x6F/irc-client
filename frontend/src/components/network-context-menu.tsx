@@ -8,6 +8,7 @@ import {
   RemoveNetworkIcon,
 } from '../../wailsjs/go/main/App';
 import { useUIStore } from '../stores/ui';
+import { useNetworkStore } from '../stores/network';
 import { NETWORK_COLORS } from '../lib/network-color';
 
 interface NetworkContextMenuProps {
@@ -233,6 +234,18 @@ export function NetworkContextMenu({
       }}
     >
       <div className="px-2 py-1 text-xs font-semibold text-muted-foreground uppercase">Network</div>
+
+      <button
+        className={itemClass}
+        onClick={() => {
+          useNetworkStore.getState().clearNetworkActivity(networkId);
+          onClose();
+        }}
+      >
+        Mark as read
+      </button>
+
+      <div className="border-t border-border my-1" />
 
       {connecting ? (
         <button

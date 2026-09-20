@@ -10,6 +10,32 @@ const NETWORKS: ActivityNetwork[] = [
 ];
 
 describe('activityTargetForEvent', () => {
+  it.each(['privmsg', 'action', 'notice'])('counts %s as message activity', (messageType) => {
+    expect(activityTargetForEvent('message.received', {
+      networkId: 1, channel: '#chat', user: 'alice', messageType,
+    }, NETWORKS)?.activityKey).toBe('1:#chat');
+  });
+
+  it.each([
+    'user.joined', 'user.parted', 'user.quit', 'user.kicked', 'user.nick',
+    'channel.topic', 'channel.mode', 'channel.usermode', 'channel.banlist',
+    'channel.names.complete', 'status.message', 'history.received', 'typing.received', 'error',
+  ])('does not count %s as message activity', (eventType) => {
+    expect(activityTargetForEvent(eventType, {
+      networkId: 1, channel: '#chat', user: 'alice',
+    }, NETWORKS)).toBeNull();
+  });
+
+  it.each(['join', 'part', 'quit', 'kick', 'nick', 'topic', 'mode', 'status', 'error', 'unknown'])(
+    'does not count a %s row even when delivered as a message event', (messageType) => {
+      for (const eventType of ['message.received', 'message.sent']) {
+        expect(activityTargetForEvent(eventType, {
+          networkId: 1, channel: '#chat', user: '*', messageType,
+        }, NETWORKS)).toBeNull();
+      }
+    },
+  );
+
   it('keys channel activity by the event networkId, not the address', () => {
     const t = activityTargetForEvent(
       'message.received',

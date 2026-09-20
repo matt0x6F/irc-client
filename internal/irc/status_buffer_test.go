@@ -80,6 +80,35 @@ func TestWriteStatusLineEmitsStatusMessageNotMessageReceived(t *testing.T) {
 	}
 }
 
+// Channel metadata must refresh its channel while bypassing unread-message,
+// highlight, and desktop-notification classification.
+func TestChannelSystemLineEmitsStatusMessage(t *testing.T) {
+	c, _ := newUserMetaTestClient(t)
+	channel := &storage.Channel{NetworkID: c.networkID, Name: "#chat"}
+	if err := c.storage.CreateChannel(channel); err != nil {
+		t.Fatal(err)
+	}
+	sink := &statusEventSink{ch: make(chan events.Event, 16)}
+	c.eventBus.Subscribe("*", sink)
+	c.writeChannelSystemLine("#chat", "status", "No topic is set")
+
+	select {
+	case got := <-sink.ch:
+		if got.Type != EventStatusMessage || got.Data["messageType"] != "status" {
+			t.Fatalf("system line must not be chat activity: %+v", got)
+		}
+		if got.Data["networkId"] != c.networkID || got.Data["channel"] != "#chat" {
+			t.Fatalf("system line must refresh its channel: %+v", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for channel system event")
+	}
+	rows, err := c.storage.GetMessages(c.networkID, &channel.ID, 10)
+	if err != nil || len(rows) != 1 || rows[0].MessageType != "status" {
+		t.Fatalf("system line must remain in channel history: rows=%+v err=%v", rows, err)
+	}
+}
+
 // writeStatusBuffer is the shared write-and-notify path: the row is committed
 // synchronously (readable immediately by the reload the event triggers) and the
 // event carries the network id used for pane routing.

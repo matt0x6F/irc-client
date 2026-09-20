@@ -1837,15 +1837,16 @@ func (c *IRCClient) writeChannelSystemLine(channel, messageType, text string) {
 	}); err != nil {
 		logger.Log.Warn().Err(err).Str("channel", channel).Str("type", messageType).Msg("Failed to write channel system line")
 	}
+	// Refresh the channel without classifying server metadata as incoming chat.
 	c.eventBus.Emit(events.Event{
-		Type: EventMessageReceived,
+		Type: EventStatusMessage,
 		Data: map[string]interface{}{
 			"network":     c.network.Address,
 			"networkId":   c.networkID,
 			"channel":     channel,
 			"user":        "*",
 			"message":     text,
-			"messageType": "privmsg",
+			"messageType": messageType,
 		},
 		Timestamp: time.Now(),
 		Source:    events.EventSourceIRC,
