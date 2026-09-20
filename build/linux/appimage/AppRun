@@ -1,0 +1,23 @@
+#!/bin/sh
+set -eu
+
+appdir=$(CDPATH= cd -- "$(dirname -- "$(readlink -f -- "$0")")" && pwd)
+binary="$appdir/usr/bin/cascade"
+
+# Do not set LD_LIBRARY_PATH, WebKit helper paths, or disable its sandbox.
+# The distribution supplies a coherent, security-updated GTK/WebKit runtime.
+dependencies=$(ldd "$binary" 2>&1) || {
+    printf '%s\n' "$dependencies" >&2
+    exit 1
+}
+if printf '%s\n' "$dependencies" | grep -q 'not found'; then
+    cat >&2 <<'MESSAGE'
+Cascade requires the system GTK 4 and WebKitGTK 6.0 runtime.
+Fedora: sudo dnf install gtk4 webkitgtk6.0
+Ubuntu 24.04+ / Debian 13+: sudo apt install libgtk-4-1 libwebkitgtk-6.0-4
+Missing libraries:
+MESSAGE
+    printf '%s\n' "$dependencies" | grep 'not found' >&2
+    exit 1
+fi
+exec "$binary" "$@"

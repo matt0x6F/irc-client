@@ -250,8 +250,10 @@ jobs:
         include:
           - arch: amd64
             runner: ubuntu-24.04
+            appimage_arch: x86_64
           - arch: arm64
             runner: ubuntu-24.04-arm
+            appimage_arch: aarch64
     runs-on: ${{ matrix.runner }}
     env:
       CGO_ENABLED: '1'
@@ -275,7 +277,7 @@ jobs:
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
       - name: Install GTK/WebKit build dependencies
-        run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev
+        run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config file libgtk-4-dev libwebkitgtk-6.0-dev
       - name: Install Wails v3 CLI
         run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha2.108
       - name: Build updater tarball, AppImage, deb & rpm
@@ -288,6 +290,10 @@ jobs:
           export APP_BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           wails3 task linux:targz:updater ARCH=${{ matrix.arch }}
           wails3 task linux:package ARCH=${{ matrix.arch }}
+      - name: Verify AppImage on Fedora
+        run: bash build/linux/appimage/test-runtime.sh bin/cascade-${{ matrix.appimage_arch }}.AppImage fedora:44
+      - name: Verify AppImage on Ubuntu
+        run: bash build/linux/appimage/test-runtime.sh bin/cascade-${{ matrix.appimage_arch }}.AppImage ubuntu:24.04
       - uses: actions/upload-artifact@v4
         with:
           name: dist-linux-${{ matrix.arch }}
