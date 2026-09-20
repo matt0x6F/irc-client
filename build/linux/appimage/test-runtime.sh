@@ -34,6 +34,8 @@ docker build --build-arg "DISTRO=$distro" -f "$script_dir/Dockerfile.smoke" \
 # Docker's default seccomp/user-namespace restrictions prevent WebKit's
 # nested bubblewrap sandbox. Disable it ONLY for this disposable GUI test;
 # AppRun must leave the production sandbox enabled. No IRC servers are used.
-docker run --rm -v "$image:/input/cascade.AppImage:ro" \
+# xvfb-run needs a real parent process for Xvfb's readiness signal; --init also
+# reaps the GUI's child processes after the test exits.
+docker run --rm --init -v "$image:/input/cascade.AppImage:ro" \
     -e WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 -e GSK_RENDERER=cairo \
     "$test_image"
