@@ -438,6 +438,16 @@ export function ChannelPanel({
                 Channel
               </div>
               <button
+                className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground"
+                onClick={() => {
+                  useNetworkStore.getState().clearActivity(`${networkId}:${contextMenu.channel}`);
+                  setContextMenu({ x: 0, y: 0, type: null });
+                }}
+              >
+                Mark as read
+              </button>
+              <div className="border-t border-border my-1" />
+              <button
                 className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
                 style={{ transition: 'var(--transition-base)' }}
                 onClick={async () => {

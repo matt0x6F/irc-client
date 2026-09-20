@@ -34,7 +34,7 @@ const (
 	EventMonitorChanged        = "monitor.changed" // a monitored nick's online/offline state changed (MONITOR)
 	EventTypingReceived        = "typing.received" // a peer sent an IRCv3 +typing client tag (active/paused/done)
 	EventInviteReceived        = "invite.received" // an INVITE addressed to us (actionable)
-	EventStatusMessage         = "status.message"  // a line was written to a network's status buffer (server log)
+	EventStatusMessage         = "status.message"  // a system line was written to the server log or a channel buffer
 	EventDCCControl            = "dcc.control"     // an inbound CTCP DCC negotiation message
 )
 
