@@ -1,0 +1,12 @@
+ARG DISTRO=ubuntu:24.04
+FROM ${DISTRO}
+RUN if command -v dnf >/dev/null; then \
+      dnf install -y gtk4 webkitgtk6.0 xorg-x11-server-Xvfb xorg-x11-xauth \
+        dbus-daemon python3 xdotool mesa-dri-drivers && dnf clean all; \
+    else \
+      apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        libgtk-4-1 libwebkitgtk-6.0-4 xvfb xauth dbus python3 xdotool libgl1-mesa-dri \
+        && rm -rf /var/lib/apt/lists/*; \
+    fi
+COPY smoke.py /smoke.py
+CMD ["timeout", "60s", "xvfb-run", "-a", "dbus-run-session", "--", "python3", "/smoke.py", "/input/cascade.AppImage"]

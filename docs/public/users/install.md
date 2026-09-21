@@ -35,9 +35,27 @@ follow either channel.
     Three packages are published per architecture (`amd64` and `arm64`); pick the
     one that matches your distro:
 
-    - **AppImage** — `chmod +x` it and run directly, no install needed.
+    - **AppImage** — install the runtime packages below, then `chmod +x` it and
+      run directly. Cascade itself does not need installation.
     - **`.deb`** — `sudo apt install ./Cascade-*.deb` (Debian/Ubuntu).
     - **`.rpm`** — `sudo dnf install ./Cascade-*.rpm` (Fedora/RHEL/openSUSE).
+
+    AppImages use your distribution's **GTK 4 and WebKitGTK 6.0** libraries and
+    helper processes together. This keeps WebKit security updates under your
+    package manager and avoids mixing Ubuntu libraries with Fedora helpers.
+
+    ```bash
+    # Fedora
+    sudo dnf install gtk4 webkitgtk6.0
+    # Ubuntu 24.04+ / Debian 13+
+    sudo apt install libgtk-4-1 libwebkitgtk-6.0-4
+    ```
+
+    If FUSE is unavailable, launch with
+    `./cascade-<arch>.AppImage --appimage-extract-and-run`.
+    Older AppImages affected by the `WebKitNetworkProcess` crash need to be
+    replaced; installing WebKit alone does not repair their bundled Ubuntu
+    library paths.
 
 ## Building from source
 

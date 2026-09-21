@@ -1,0 +1,48 @@
+name: AppImage compatibility
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'build/linux/**'
+      - '.github/workflows/appimage.yml'
+      - '.github/workflows/release.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  appimage:
+    name: AppImage (${{ matrix.arch }}) on Fedora and Ubuntu
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+            appimage_arch: x86_64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            appimage_arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config file libgtk-4-dev libwebkitgtk-6.0-dev
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha2.108
+      - name: Build AppImage
+        run: wails3 task linux:create:appimage ARCH=${{ matrix.arch }}
+      - name: Test on Fedora
+        run: bash build/linux/appimage/test-runtime.sh bin/cascade-${{ matrix.appimage_arch }}.AppImage fedora:44
+      - name: Test on Ubuntu
+        run: bash build/linux/appimage/test-runtime.sh bin/cascade-${{ matrix.appimage_arch }}.AppImage ubuntu:24.04
