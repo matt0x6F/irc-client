@@ -7,6 +7,13 @@
     ]
   },
   {
+    "version": "26.9.0",
+    "title": "26.9.0",
+    "aliases": [
+      "stable"
+    ]
+  },
+  {
     "version": "26.7.6-rc.166",
     "title": "26.7.6-rc.166",
     "aliases": [
@@ -31,9 +38,7 @@
   {
     "version": "26.7.5",
     "title": "26.7.5",
-    "aliases": [
-      "stable"
-    ]
+    "aliases": []
   },
   {
     "version": "26.7.5-rc.161",
