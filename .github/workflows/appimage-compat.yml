@@ -1,0 +1,50 @@
+name: AppImage compatibility
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/appimage-compat.yml
+      - .github/workflows/release.yml
+      - build/linux/**
+      - build/config.yml
+      - frontend/**
+      - '**/*.go'
+      - go.mod
+      - go.sum
+      - Taskfile.yml
+
+permissions:
+  contents: read
+
+jobs:
+  appimage-amd64:
+    name: Build and launch on Ubuntu 22.04 (x86_64)
+    runs-on: ubuntu-24.04
+    env:
+      CGO_ENABLED: '1'
+      GOARCH: amd64
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build AppImage against Ubuntu 22.04 glibc
+        run: |
+          docker build --platform linux/amd64 \
+            -f build/linux/appimage/Dockerfile.jammy \
+            -t cascade-appimage-builder:amd64 build/linux/appimage
+          docker run --rm --platform linux/amd64 \
+            -v "$PWD:/src" -w /src -e GOARCH -e CGO_ENABLED \
+            cascade-appimage-builder:amd64 \
+            bash build/linux/appimage/build_portable.sh
+      - name: Smoke test the bundled AppImage
+        run: |
+          docker build --platform linux/amd64 \
+            -f build/linux/appimage/Dockerfile.smoke \
+            -t cascade-appimage-smoke:amd64 build/linux/appimage
+          docker run --rm --privileged --platform linux/amd64 \
+            -v "$PWD/bin/cascade-x86_64.AppImage:/input/cascade.AppImage:ro" \
+            cascade-appimage-smoke:amd64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cascade-appimage-amd64
+          path: bin/cascade-x86_64.AppImage
+          retention-days: 7
+          if-no-files-found: error

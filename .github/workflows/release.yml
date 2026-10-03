@@ -288,6 +288,30 @@ jobs:
           export APP_BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           wails3 task linux:targz:updater ARCH=${{ matrix.arch }}
           wails3 task linux:package ARCH=${{ matrix.arch }}
+      - name: Build AppImage against Ubuntu 22.04 glibc
+        # The host runner's glibc is too new for AppImageHub. Keep deb/rpm and
+        # the updater on the native runner, then replace only the AppImage with
+        # a Jammy build whose GTK stack is new enough for Wails v3.
+        run: |
+          export APP_COMMIT="${APP_COMMIT::7}"
+          export APP_BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          docker build --platform linux/${{ matrix.arch }} \
+            -f build/linux/appimage/Dockerfile.jammy \
+            -t cascade-appimage-builder:${{ matrix.arch }} build/linux/appimage
+          docker run --rm --platform linux/${{ matrix.arch }} \
+            -v "$PWD:/src" -w /src \
+            -e APP_VERSION -e APP_COMMIT -e APP_BUILD_DATE -e GOARCH -e CGO_ENABLED \
+            cascade-appimage-builder:${{ matrix.arch }} \
+            bash build/linux/appimage/build_portable.sh
+      - name: Smoke test the bundled AppImage on Ubuntu 22.04
+        run: |
+          if [[ '${{ matrix.arch }}' == 'arm64' ]]; then image_arch=aarch64; else image_arch=x86_64; fi
+          docker build --platform linux/${{ matrix.arch }} \
+            -f build/linux/appimage/Dockerfile.smoke \
+            -t cascade-appimage-smoke:${{ matrix.arch }} build/linux/appimage
+          docker run --rm --privileged --platform linux/${{ matrix.arch }} \
+            -v "$PWD/bin/cascade-$image_arch.AppImage:/input/cascade.AppImage:ro" \
+            cascade-appimage-smoke:${{ matrix.arch }}
       - uses: actions/upload-artifact@v4
         with:
           name: dist-linux-${{ matrix.arch }}
