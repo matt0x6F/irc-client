@@ -1,0 +1,53 @@
+FROM ubuntu:22.04
+
+ARG TARGETARCH
+ENV DEBIAN_FRONTEND=noninteractive
+ENV APPIMAGE_EXTRACT_AND_RUN=1
+ENV CGO_CFLAGS=-D_GNU_SOURCE
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    binutils build-essential ca-certificates curl file git libdrm-dev libffi-dev \
+    libfuse2 libgtk-4-dev libpcre2-dev libwebkitgtk-6.0-dev ninja-build \
+    pkg-config python3 python3-pip wget xz-utils \
+    && python3 -m pip install --no-cache-dir meson==1.4.2 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL "https://go.dev/dl/go1.25.0.linux-${TARGETARCH}.tar.gz" | tar -xz -C /usr/local
+RUN case "$TARGETARCH" in amd64) node_arch=x64 ;; arm64) node_arch=arm64 ;; *) exit 1 ;; esac \
+    && mkdir -p /opt/node \
+    && curl -fsSL "https://nodejs.org/dist/v20.19.0/node-v20.19.0-linux-${node_arch}.tar.xz" \
+      | tar -xJ --strip-components=1 -C /opt/node
+
+ENV PATH=/opt/cascade/bin:/usr/local/go/bin:/opt/node/bin:/root/go/bin:${PATH}
+ENV PKG_CONFIG_PATH=/opt/cascade/lib/x86_64-linux-gnu/pkgconfig:/opt/cascade/lib/aarch64-linux-gnu/pkgconfig:/opt/cascade/lib/pkgconfig:/opt/cascade/share/pkgconfig
+ENV LD_LIBRARY_PATH=/opt/cascade/lib/x86_64-linux-gnu:/opt/cascade/lib/aarch64-linux-gnu:/opt/cascade/lib
+
+# Jammy has the older glibc required by AppImageHub, but its stock GTK is too
+# old for the Wails v3 GTK4 backend. Build only the newer GTK stack on Jammy.
+RUN curl -fsSL https://download.gnome.org/sources/glib/2.76/glib-2.76.6.tar.xz -o /tmp/glib.tar.xz \
+    && mkdir /tmp/glib && tar -xf /tmp/glib.tar.xz -C /tmp/glib --strip-components=1 \
+    && meson setup /tmp/glib-build /tmp/glib --prefix=/opt/cascade \
+       -Dtests=false -Dlibmount=disabled -Dselinux=disabled \
+    && meson compile -C /tmp/glib-build -j 4 \
+    && meson install -C /tmp/glib-build
+
+RUN curl -fsSL https://gitlab.freedesktop.org/wayland/wayland/-/releases/1.22.0/downloads/wayland-1.22.0.tar.xz -o /tmp/wayland.tar.xz \
+    && mkdir /tmp/wayland && tar -xf /tmp/wayland.tar.xz -C /tmp/wayland --strip-components=1 \
+    && meson setup /tmp/wayland-build /tmp/wayland --prefix=/opt/cascade \
+       -Dtests=false -Ddocumentation=false -Ddtd_validation=false \
+    && meson compile -C /tmp/wayland-build -j 4 \
+    && meson install -C /tmp/wayland-build
+
+RUN curl -fsSL https://gitlab.freedesktop.org/wayland/wayland-protocols/-/releases/1.31/downloads/wayland-protocols-1.31.tar.xz -o /tmp/wayland-protocols.tar.xz \
+    && mkdir /tmp/wayland-protocols && tar -xf /tmp/wayland-protocols.tar.xz -C /tmp/wayland-protocols --strip-components=1 \
+    && meson setup /tmp/wayland-protocols-build /tmp/wayland-protocols --prefix=/opt/cascade \
+    && meson install -C /tmp/wayland-protocols-build
+
+RUN curl -fsSL https://download.gnome.org/sources/gtk/4.14/gtk-4.14.5.tar.xz -o /tmp/gtk.tar.xz \
+    && mkdir /tmp/gtk && tar -xf /tmp/gtk.tar.xz -C /tmp/gtk --strip-components=1 \
+    && meson setup /tmp/gtk-build /tmp/gtk --prefix=/opt/cascade \
+       -Dintrospection=disabled -Ddocumentation=false \
+       -Dbuild-demos=false -Dbuild-testsuite=false -Dbuild-tests=false -Dbuild-examples=false \
+       -Dwayland-backend=true -Dmedia-gstreamer=disabled -Dprint-cups=disabled -Dvulkan=disabled \
+    && meson compile -C /tmp/gtk-build -j 4 \
+    && meson install -C /tmp/gtk-build

@@ -1,0 +1,8 @@
+FROM ubuntu:22.04
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bubblewrap dbus libegl1 libfontconfig1 libfuse2 libgbm1 libgl1 \
+    libgl1-mesa-dri libgles2 libgtk-4-1 python3 xauth xdg-dbus-proxy xdotool xvfb \
+    && rm -rf /var/lib/apt/lists/*
+COPY smoke.py /smoke.py
+CMD ["timeout", "60s", "xvfb-run", "-a", "dbus-run-session", "--", "python3", "/smoke.py", "/input/cascade.AppImage"]
