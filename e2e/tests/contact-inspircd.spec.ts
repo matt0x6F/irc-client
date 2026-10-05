@@ -1,9 +1,21 @@
 import {test,expect} from '../lib/fixtures';
-import {openSettings,addNetwork,selectNetwork,joinChannel,networkTile} from '../lib/actions';
+import {
+  openSettings,addNetwork,selectNetwork,joinChannel,networkTile,
+  connectViaContextMenu,disconnectViaContextMenu,deleteNetwork,
+} from '../lib/actions';
 import {IrcPeer} from '../lib/irc-peer';
 import {getFreePort} from '../lib/ports';
 import {waitForTcp} from '../lib/wait';
 import {spawnSync} from 'child_process';
+
+const NAME='inspircd';
+
+// The suite shares one backend DB. Remove this network even after a failed or
+// timed-out test so later specs do not inherit an extra disconnected network.
+test.afterEach(async({page})=>{
+  await deleteNetwork(page,NAME);
+  await expect(networkTile(page,NAME)).toHaveCount(0);
+});
 
 // A second real server with no services: live NICK continuity works, while a
 // missed rename has no durable account evidence and must remain unresolved.
@@ -18,11 +30,10 @@ test('InspIRCd follows live nick changes and avoids guessing a missed unidentifi
     await waitForTcp('localhost',port,30_000);
     await page.goto(runtime.bridgeUrl);
     const settings=await openSettings(page,runtime);
-    await addNetwork(settings,{...runtime,ergoPort:port},{name:'inspircd',nick:'inspuser'});
-    await settings.getByTestId('network-connect-button').last().click();
-    await expect(networkTile(page,'inspircd').locator('..').locator('[data-testid="network-status-indicator"]')).toHaveAttribute('data-connected','true');
+    await addNetwork(settings,{...runtime,ergoPort:port},{name:NAME,nick:'inspuser'});
     await settings.close();
-    await selectNetwork(page,'inspircd');
+    await connectViaContextMenu(page,NAME);
+    await selectNetwork(page,NAME);
     await joinChannel(page,'#identity');
     peer=new IrcPeer('localhost',port,'autumnPeer');
     await peer.connect();
@@ -42,15 +53,12 @@ test('InspIRCd follows live nick changes and avoids guessing a missed unidentifi
     await expect(saved).toHaveClass(/cc-active-pane/);
 
     // Disconnect Cascade, so its new client cannot witness the next rename.
-    await networkTile(page,'inspircd').click({button:'right'});
-    await page.getByRole('button',{name:'Disconnect',exact:true}).click();
+    await disconnectViaContextMenu(page,NAME);
     await expect(saved.getByTitle('Presence unknown',{exact:true})).toBeVisible();
     renamed=peer.waitForLine(/ NICK :?winterPeer$/);
     peer.sendRaw('NICK winterPeer');
     await renamed;
-    await networkTile(page,'inspircd').click({button:'right'});
-    await page.getByRole('button',{name:'Connect',exact:true}).click();
-    await expect(networkTile(page,'inspircd').locator('..').locator('[data-testid="network-status-indicator"]')).toHaveAttribute('data-connected','true');
+    await connectViaContextMenu(page,NAME);
     await joinChannel(page,'#identity');
     peer.say('inspuser','inspircd-unidentified-after-reconnect');
     const separate=page.locator('[data-testid="pm-node"][data-peer="winterPeer"]');
