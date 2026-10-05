@@ -277,27 +277,24 @@ func cmdQuery(a *App, client *irc.IRCClient, networkID int64, args []string) err
 	if len(args) >= 2 {
 		return client.SendMessage(nickname, strings.Join(args[1:], " "))
 	}
-	network, err := a.storage.GetNetwork(networkID)
-	if err != nil {
-		return fmt.Errorf("network not found: %w", err)
-	}
 	// SetPrivateMessageOpen below emits the ui-pane-event that refreshes the DM
 	// list, so the created flag is not needed here.
-	if _, _, err = a.storage.GetOrCreatePMConversation(networkID, nickname, network.Nickname); err != nil {
+	contact, err := a.OpenPrivateContact(networkID, nickname)
+	if err != nil {
 		return fmt.Errorf("failed to create PM conversation: %w", err)
 	}
-	messages, err := a.storage.GetPrivateMessages(networkID, nickname, network.Nickname, 1)
+	messages, err := a.storage.GetPrivateMessages(networkID, contact.Reference, "", 1)
 	if err == nil && len(messages) == 0 {
 		placeholderMsg := storage.Message{
 			NetworkID: networkID, ChannelID: nil, User: nickname, Message: "",
 			MessageType: "privmsg", Timestamp: time.Now(),
-			RawLine: fmt.Sprintf("QUERY %s", nickname), PMTarget: nickname,
+			RawLine: fmt.Sprintf("QUERY %s", nickname), PMTarget: nickname, ConversationID: contact.ID,
 		}
 		if err := a.storage.WriteMessageSync(placeholderMsg); err != nil {
 			logger.Log.Warn().Err(err).Str("nickname", nickname).Msg("Failed to store placeholder message for PM conversation")
 		}
 	}
-	return a.SetPrivateMessageOpen(networkID, nickname, true)
+	return nil
 }
 
 func cmdClose(a *App, client *irc.IRCClient, networkID int64, args []string) error {

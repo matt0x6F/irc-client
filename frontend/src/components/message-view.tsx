@@ -49,6 +49,7 @@ export function MessageView({ networkId, selectedChannel }: MessageViewProps) {
   // Subscribe to the high-churn messages array here rather than in App (the root),
   // so a new message re-renders only this component's subtree, not the whole app.
   const messages = useNetworkStore((s) => s.messages);
+  const pmPaneRename = useNetworkStore((s) => s.pmPaneRename);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [isNearBottom, setIsNearBottom] = useState(true);
   const prevChannelRef = useRef<string | null | undefined>(selectedChannel);
@@ -574,15 +575,19 @@ export function MessageView({ networkId, selectedChannel }: MessageViewProps) {
     }
 
     if (selectedChannel !== prevChannelRef.current) {
+      const followsRename = pmPaneRename?.networkId === networkId &&
+        pmPaneRename.from === prevChannelRef.current && pmPaneRename.to === selectedChannel;
       prevChannelRef.current = selectedChannel;
-      stickToBottomRef.current = true; // a freshly opened pane starts at the latest message
-      setIsNearBottom(true);
+      if (!followsRename) {
+        stickToBottomRef.current = true; // a freshly opened pane starts at the latest message
+        setIsNearBottom(true);
+      }
     }
 
     if (stickToBottomRef.current && processedMessages.length > 0) {
       rowVirtualizer.scrollToEnd();
     }
-  }, [selectedChannel, messages, viewMode, processedMessages.length, rowVirtualizer]);
+  }, [networkId, selectedChannel, pmPaneRename, messages, viewMode, processedMessages.length, rowVirtualizer]);
 
   // Scroll-to-bottom / return-to-live handler for the floating badge.
   const handleScrollToBottom = useCallback(() => {

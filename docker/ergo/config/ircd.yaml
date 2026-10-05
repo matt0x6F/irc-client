@@ -570,7 +570,9 @@ accounts:
         # account name as their nickname. when combined with strict nickname
         # enforcement, this lets users treat nicknames and account names
         # as equivalent for the purpose of ban/invite/exception lists.
-        force-nick-equals-account: true
+        # Exercise ordinary IRC account/nick separation, including seasonal
+        # renames and several sessions of one account, in the acceptance fixture.
+        force-nick-equals-account: false
 
         # parallel setting to force-nick-equals-account: if true, this forbids
         # anonymous users (i.e., users not logged into an account) to change their

@@ -1181,12 +1181,14 @@ func (a *App) SetPrivateMessageOpen(networkID int64, targetUser string, isOpen b
 	client, exists := a.ircClients[networkID]
 	a.mu.RUnlock()
 	if exists {
-		client.MonitorReconcileNick(targetUser)
+		if contact, findErr := a.storage.FindPMConversation(networkID, targetUser); findErr == nil {
+			client.MonitorReconcileNick(contact.TargetUser)
+		}
 	}
 
 	// Try to get original case from messages
 	network, err := a.storage.GetNetwork(networkID)
-	if err == nil {
+	if err == nil && !strings.HasPrefix(targetUser, "@") {
 		messages, err := a.storage.GetPrivateMessages(networkID, targetUser, network.Nickname, 10)
 		if err == nil && len(messages) > 0 {
 			for _, msg := range messages {
@@ -1240,6 +1242,9 @@ func (a *App) GetLastOpenPane() (*LastOpenPane, error) {
 	}
 	if pane == nil {
 		return nil, nil
+	}
+	if pane.Type == "pm" {
+		pane.Name = storage.PMReference(pane.ConversationID)
 	}
 	return &LastOpenPane{
 		NetworkID: pane.NetworkID,

@@ -16,6 +16,7 @@ a fast SQLite-backed message store, and handles the full IRCv3 capability set.
 - [Events](developers/events.md)
 - [IRCv3 support](developers/ircv3-support.md)
 - [IRCv3 roadmap](developers/ircv3-roadmap.md)
+- [Contact identity and reconnect recovery](developers/contact-identity.md) — Planned identity and presence behavior.
 - [Releases & update channels](developers/releases.md)
 - [Scripting](scripting/index.md) — Automate Cascade with in-process, statically-typed Go scripts.
 

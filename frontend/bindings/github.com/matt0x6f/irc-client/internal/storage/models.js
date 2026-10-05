@@ -6,10 +6,6 @@
 // @ts-ignore: Unused imports
 import { Create as $Create } from "@wailsio/runtime";
 
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore: Unused imports
-import * as time$0 from "../../../../../time/models.js";
-
 /**
  * ActivityItem is one attention-inbox row (highlight, keyword, invite, or PM).
  */
@@ -91,9 +87,9 @@ export class ActivityItem {
         if (!("timestamp" in $$source)) {
             /**
              * @member
-             * @type {time$0.Time}
+             * @type {string}
              */
-            this["timestamp"] = null;
+            this["timestamp"] = "0001-01-01T00:00:00.000Z";
         }
         if (!("trusted" in $$source)) {
             /**
@@ -106,7 +102,7 @@ export class ActivityItem {
             /**
              * nullable; set only on invite rows
              * @member
-             * @type {time$0.Time | null}
+             * @type {string | null}
              */
             this["expires_at"] = null;
         }
@@ -188,14 +184,14 @@ export class Channel {
         if (!("created_at" in $$source)) {
             /**
              * @member
-             * @type {time$0.Time}
+             * @type {string}
              */
-            this["created_at"] = null;
+            this["created_at"] = "0001-01-01T00:00:00.000Z";
         }
         if (!("updated_at" in $$source)) {
             /**
              * @member
-             * @type {time$0.Time | null}
+             * @type {string | null}
              */
             this["updated_at"] = null;
         }
@@ -255,16 +251,16 @@ export class ChannelUser {
         if (!("created_at" in $$source)) {
             /**
              * @member
-             * @type {time$0.Time}
+             * @type {string}
              */
-            this["created_at"] = null;
+            this["created_at"] = "0001-01-01T00:00:00.000Z";
         }
         if (!("updated_at" in $$source)) {
             /**
              * @member
-             * @type {time$0.Time}
+             * @type {string}
              */
-            this["updated_at"] = null;
+            this["updated_at"] = "0001-01-01T00:00:00.000Z";
         }
 
         Object.assign(this, $$source);
@@ -383,9 +379,9 @@ export class Message {
         if (!("timestamp" in $$source)) {
             /**
              * @member
-             * @type {time$0.Time}
+             * @type {string}
              */
-            this["timestamp"] = null;
+            this["timestamp"] = "0001-01-01T00:00:00.000Z";
         }
         if (!("raw_line" in $$source)) {
             /**
@@ -402,6 +398,14 @@ export class Message {
              * @type {string}
              */
             this["pm_target"] = "";
+        }
+        if (!("conversation_id" in $$source)) {
+            /**
+             * Stable PM conversation (0 for other buffers)
+             * @member
+             * @type {number}
+             */
+            this["conversation_id"] = 0;
         }
         if (!("msgid" in $$source)) {
             /**
@@ -555,16 +559,16 @@ export class Network {
         if (!("created_at" in $$source)) {
             /**
              * @member
-             * @type {time$0.Time}
+             * @type {string}
              */
-            this["created_at"] = null;
+            this["created_at"] = "0001-01-01T00:00:00.000Z";
         }
         if (!("updated_at" in $$source)) {
             /**
              * @member
-             * @type {time$0.Time}
+             * @type {string}
              */
-            this["updated_at"] = null;
+            this["updated_at"] = "0001-01-01T00:00:00.000Z";
         }
         if (/** @type {any} */(false)) {
             /**
@@ -687,9 +691,9 @@ export class PinnedMessage {
         if (!("timestamp" in $$source)) {
             /**
              * @member
-             * @type {time$0.Time}
+             * @type {string}
              */
-            this["timestamp"] = null;
+            this["timestamp"] = "0001-01-01T00:00:00.000Z";
         }
         if (!("raw_line" in $$source)) {
             /**
@@ -706,6 +710,14 @@ export class PinnedMessage {
              * @type {string}
              */
             this["pm_target"] = "";
+        }
+        if (!("conversation_id" in $$source)) {
+            /**
+             * Stable PM conversation (0 for other buffers)
+             * @member
+             * @type {number}
+             */
+            this["conversation_id"] = 0;
         }
         if (!("msgid" in $$source)) {
             /**
@@ -741,9 +753,9 @@ export class PinnedMessage {
         if (!("pinned_at" in $$source)) {
             /**
              * @member
-             * @type {time$0.Time}
+             * @type {string}
              */
-            this["pinned_at"] = null;
+            this["pinned_at"] = "0001-01-01T00:00:00.000Z";
         }
 
         Object.assign(this, $$source);
@@ -757,6 +769,135 @@ export class PinnedMessage {
     static createFrom($$source = {}) {
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         return new PinnedMessage(/** @type {Partial<PinnedMessage>} */($$parsedSource));
+    }
+}
+
+/**
+ * PrivateMessageConversation represents a private message conversation with a user
+ */
+export class PrivateMessageConversation {
+    /**
+     * Creates a new PrivateMessageConversation instance.
+     * @param {Partial<PrivateMessageConversation>} [$$source = {}] - The source object to create the PrivateMessageConversation.
+     */
+    constructor($$source = {}) {
+        if (!("reference" in $$source)) {
+            /**
+             * Resolved view fields; current sessions and presence are never persisted.
+             * @member
+             * @type {string}
+             */
+            this["reference"] = "";
+        }
+        if (!("presence" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["presence"] = "";
+        }
+        if (!("target" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["target"] = "";
+        }
+        if (!("sessions" in $$source)) {
+            /**
+             * @member
+             * @type {string[]}
+             */
+            this["sessions"] = [];
+        }
+        if (!("id" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["id"] = 0;
+        }
+        if (!("network_id" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["network_id"] = 0;
+        }
+        if (!("target_user" in $$source)) {
+            /**
+             * The other user in the conversation (lowercase for case-insensitive matching)
+             * @member
+             * @type {string}
+             */
+            this["target_user"] = "";
+        }
+        if (!("nickname_key" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["nickname_key"] = "";
+        }
+        if (!("account" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["account"] = "";
+        }
+        if (!("identity_source" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["identity_source"] = "";
+        }
+        if (!("identity_observed_at" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["identity_observed_at"] = 0;
+        }
+        if (!("is_open" in $$source)) {
+            /**
+             * Dialog/pane is open
+             * @member
+             * @type {boolean}
+             */
+            this["is_open"] = false;
+        }
+        if (!("created_at" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["created_at"] = "0001-01-01T00:00:00.000Z";
+        }
+        if (!("updated_at" in $$source)) {
+            /**
+             * @member
+             * @type {string | null}
+             */
+            this["updated_at"] = null;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new PrivateMessageConversation instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {PrivateMessageConversation}
+     */
+    static createFrom($$source = {}) {
+        const $$createField3_0 = $$createType0;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("sessions" in $$parsedSource) {
+            $$parsedSource["sessions"] = $$createField3_0($$parsedSource["sessions"]);
+        }
+        return new PrivateMessageConversation(/** @type {Partial<PrivateMessageConversation>} */($$parsedSource));
     }
 }
 
@@ -863,9 +1004,9 @@ export class SearchResult {
         if (!("timestamp" in $$source)) {
             /**
              * @member
-             * @type {time$0.Time}
+             * @type {string}
              */
-            this["timestamp"] = null;
+            this["timestamp"] = "0001-01-01T00:00:00.000Z";
         }
         if (!("raw_line" in $$source)) {
             /**
@@ -882,6 +1023,14 @@ export class SearchResult {
              * @type {string}
              */
             this["pm_target"] = "";
+        }
+        if (!("conversation_id" in $$source)) {
+            /**
+             * Stable PM conversation (0 for other buffers)
+             * @member
+             * @type {number}
+             */
+            this["conversation_id"] = 0;
         }
         if (!("msgid" in $$source)) {
             /**
@@ -991,9 +1140,9 @@ export class Server {
         if (!("created_at" in $$source)) {
             /**
              * @member
-             * @type {time$0.Time}
+             * @type {string}
              */
-            this["created_at"] = null;
+            this["created_at"] = "0001-01-01T00:00:00.000Z";
         }
 
         Object.assign(this, $$source);
@@ -1009,3 +1158,6 @@ export class Server {
         return new Server(/** @type {Partial<Server>} */($$parsedSource));
     }
 }
+
+// Private type creation functions
+const $$createType0 = $Create.Array($Create.Any);

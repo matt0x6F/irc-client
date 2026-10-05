@@ -12,7 +12,7 @@ import (
 )
 
 const getMessagesAfterWithChannel = `-- name: GetMessagesAfterWithChannel :many
-SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, msgid, reply_msgid, channel_context FROM messages
+SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, conversation_id, msgid, reply_msgid, channel_context FROM messages
 WHERE network_id = ? AND channel_id = ? AND id > ?
 ORDER BY id ASC
 LIMIT ?
@@ -49,6 +49,7 @@ func (q *Queries) GetMessagesAfterWithChannel(ctx context.Context, arg GetMessag
 			&i.Timestamp,
 			&i.RawLine,
 			&i.PmTarget,
+			&i.ConversationID,
 			&i.Msgid,
 			&i.ReplyMsgid,
 			&i.ChannelContext,
@@ -67,7 +68,7 @@ func (q *Queries) GetMessagesAfterWithChannel(ctx context.Context, arg GetMessag
 }
 
 const getMessagesAfterWithoutChannel = `-- name: GetMessagesAfterWithoutChannel :many
-SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, msgid, reply_msgid, channel_context FROM messages
+SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, conversation_id, msgid, reply_msgid, channel_context FROM messages
 WHERE network_id = ? AND channel_id IS NULL AND pm_target IS NULL AND id > ?
 ORDER BY id ASC
 LIMIT ?
@@ -98,6 +99,7 @@ func (q *Queries) GetMessagesAfterWithoutChannel(ctx context.Context, arg GetMes
 			&i.Timestamp,
 			&i.RawLine,
 			&i.PmTarget,
+			&i.ConversationID,
 			&i.Msgid,
 			&i.ReplyMsgid,
 			&i.ChannelContext,
@@ -116,7 +118,7 @@ func (q *Queries) GetMessagesAfterWithoutChannel(ctx context.Context, arg GetMes
 }
 
 const getMessagesBeforeTimePM = `-- name: GetMessagesBeforeTimePM :many
-SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, msgid, reply_msgid, channel_context FROM messages
+SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, conversation_id, msgid, reply_msgid, channel_context FROM messages
 WHERE network_id = ? AND channel_id IS NULL
   AND message_type IN ('privmsg', 'action', 'notice', 'marker')
   AND LOWER(pm_target) = ? AND timestamp < ?
@@ -155,6 +157,7 @@ func (q *Queries) GetMessagesBeforeTimePM(ctx context.Context, arg GetMessagesBe
 			&i.Timestamp,
 			&i.RawLine,
 			&i.PmTarget,
+			&i.ConversationID,
 			&i.Msgid,
 			&i.ReplyMsgid,
 			&i.ChannelContext,
@@ -174,7 +177,7 @@ func (q *Queries) GetMessagesBeforeTimePM(ctx context.Context, arg GetMessagesBe
 
 const getMessagesBeforeTimeWithChannel = `-- name: GetMessagesBeforeTimeWithChannel :many
 
-SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, msgid, reply_msgid, channel_context FROM messages
+SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, conversation_id, msgid, reply_msgid, channel_context FROM messages
 WHERE network_id = ? AND channel_id = ? AND timestamp < ?
 ORDER BY timestamp DESC, id DESC
 LIMIT ?
@@ -215,6 +218,7 @@ func (q *Queries) GetMessagesBeforeTimeWithChannel(ctx context.Context, arg GetM
 			&i.Timestamp,
 			&i.RawLine,
 			&i.PmTarget,
+			&i.ConversationID,
 			&i.Msgid,
 			&i.ReplyMsgid,
 			&i.ChannelContext,
@@ -233,7 +237,7 @@ func (q *Queries) GetMessagesBeforeTimeWithChannel(ctx context.Context, arg GetM
 }
 
 const getMessagesBeforeTimeWithoutChannel = `-- name: GetMessagesBeforeTimeWithoutChannel :many
-SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, msgid, reply_msgid, channel_context FROM messages
+SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, conversation_id, msgid, reply_msgid, channel_context FROM messages
 WHERE network_id = ? AND channel_id IS NULL AND pm_target IS NULL AND timestamp < ?
 ORDER BY timestamp DESC, id DESC
 LIMIT ?
@@ -264,6 +268,7 @@ func (q *Queries) GetMessagesBeforeTimeWithoutChannel(ctx context.Context, arg G
 			&i.Timestamp,
 			&i.RawLine,
 			&i.PmTarget,
+			&i.ConversationID,
 			&i.Msgid,
 			&i.ReplyMsgid,
 			&i.ChannelContext,
@@ -282,7 +287,7 @@ func (q *Queries) GetMessagesBeforeTimeWithoutChannel(ctx context.Context, arg G
 }
 
 const getMessagesBeforeWithChannel = `-- name: GetMessagesBeforeWithChannel :many
-SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, msgid, reply_msgid, channel_context FROM messages
+SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, conversation_id, msgid, reply_msgid, channel_context FROM messages
 WHERE network_id = ? AND channel_id = ? AND id <= ?
 ORDER BY id DESC
 LIMIT ?
@@ -319,6 +324,7 @@ func (q *Queries) GetMessagesBeforeWithChannel(ctx context.Context, arg GetMessa
 			&i.Timestamp,
 			&i.RawLine,
 			&i.PmTarget,
+			&i.ConversationID,
 			&i.Msgid,
 			&i.ReplyMsgid,
 			&i.ChannelContext,
@@ -337,7 +343,7 @@ func (q *Queries) GetMessagesBeforeWithChannel(ctx context.Context, arg GetMessa
 }
 
 const getMessagesBeforeWithoutChannel = `-- name: GetMessagesBeforeWithoutChannel :many
-SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, msgid, reply_msgid, channel_context FROM messages
+SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, conversation_id, msgid, reply_msgid, channel_context FROM messages
 WHERE network_id = ? AND channel_id IS NULL AND pm_target IS NULL AND id <= ?
 ORDER BY id DESC
 LIMIT ?
@@ -368,6 +374,7 @@ func (q *Queries) GetMessagesBeforeWithoutChannel(ctx context.Context, arg GetMe
 			&i.Timestamp,
 			&i.RawLine,
 			&i.PmTarget,
+			&i.ConversationID,
 			&i.Msgid,
 			&i.ReplyMsgid,
 			&i.ChannelContext,

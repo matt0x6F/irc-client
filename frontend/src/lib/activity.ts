@@ -30,6 +30,7 @@ export interface ActivityEvent {
   user?: string | null;
   // Explicit row type, when supplied; system rows are not unread messages.
   messageType?: string | null;
+  conversationId?: number;
 }
 
 export interface ActivityTarget {
@@ -91,7 +92,8 @@ export function activityTargetForEvent(
       e.user.toLowerCase() === network.nickname.toLowerCase();
     if (!isEcho) {
       const pmUser = eventType === 'message.received' ? e.user || null : target;
-      if (pmUser) paneKey = `pm:${pmUser}`;
+      if (Number.isSafeInteger(e.conversationId) && e.conversationId! > 0) paneKey = `pm:@${e.conversationId}`;
+      else if (pmUser) paneKey = `pm:${pmUser}`;
     }
   }
 

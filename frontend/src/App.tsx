@@ -13,6 +13,7 @@ import { useNotificationRouting } from './hooks/useNotificationRouting';
 import { useTypingRouting } from './hooks/useTypingRouting';
 import { NetworkRail } from './components/network-rail';
 import { ChannelPanel } from './components/channel-panel';
+import { PrivateContactHeader } from './components/private-contact-header';
 import { NetworkContextMenu } from './components/network-context-menu';
 import { MessageView } from './components/message-view';
 import { InputArea } from './components/input-area';
@@ -39,6 +40,7 @@ function App() {
   const networks = useNetworkStore((s) => s.networks);
   const selectedNetwork = useNetworkStore((s) => s.selectedNetwork);
   const selectedChannel = useNetworkStore((s) => s.selectedChannel);
+  const privateContacts = useNetworkStore((s) => s.privateContacts);
   const connectionStatus = useNetworkStore((s) => s.connectionStatus);
   const currentNick = useNetworkStore((s) => s.currentNick);
   const channelInfo = useNetworkStore((s) => s.channelInfo);
@@ -470,6 +472,14 @@ function App() {
           : undefined;
       const target = eventData.target || eventData.channel;
 
+      // Stable contact panes retain their ID. Follow observed renames only for
+      // legacy nickname panes, including those on unfocused networks.
+      if (eventType === 'user.nick' && eventData.pmRenamed === true &&
+          networkId !== undefined && Number.isFinite(networkId) &&
+          typeof eventData.oldNick === 'string' && typeof eventData.newNick === 'string') {
+        useNetworkStore.getState().renamePrivateMessage(networkId, eventData.oldNick, eventData.newNick);
+      }
+
       // Track activity for unfocused channels/PMs. The activity target is resolved
       // by the event's unique networkId (see lib/activity.ts) — never by the
       // deprecated, non-unique `network` address, which collided across networks
@@ -554,7 +564,7 @@ function App() {
   useEffect(() => {
     const unsubscribe = EventsOn('history-event', (data: any) => {
       const eventData = data?.data || {};
-      const target = (eventData.target as string) || '';
+      const target = (eventData.reference as string) || (eventData.target as string) || '';
       const inserted = (eventData.inserted as number) || 0;
       const store = useNetworkStore.getState();
 
@@ -934,9 +944,7 @@ function App() {
                   {selectedChannel && selectedChannel.startsWith('pm:') && (
                     <>
                       <span className="text-muted-foreground/50">/</span>
-                      <span className="text-muted-foreground font-medium">
-                        PM: {selectedChannel.substring(3)}
-                      </span>
+                      <PrivateContactHeader networkId={selectedNetwork!} contact={privateContacts[selectedNetwork!]?.[selectedChannel.slice(3)]} fallback={selectedChannel.slice(3)} />
                     </>
                   )}
                   {selectedChannel === 'status' && (

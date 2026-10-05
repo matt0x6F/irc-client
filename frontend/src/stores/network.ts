@@ -16,6 +16,8 @@ import {
   GetMessagesAfter,
   GetMessagesBeforeTime,
   GetPrivateMessages,
+  GetPrivateContacts,
+  OpenPrivateContact,
   GetChannelIDByName,
   RequestChatHistoryBefore,
   RequestChatHistoryLatest,
@@ -131,6 +133,7 @@ function historyTargetFor(channel: string | null): { target: string; isPM: boole
 // (the conversation peer). Falls back to the legacy raw_line heuristic for rows
 // written before the pm_target column existed and not yet backfilled.
 function messageBelongsToPM(msg: storage.Message, user: string): boolean {
+  if (user.startsWith('@')) return msg.conversation_id === Number(user.slice(1));
   const target = user.toLowerCase();
   if (msg.pm_target) return msg.pm_target.toLowerCase() === target;
   // Legacy fallback (pm_target missing): received from the user, or sent to them.
@@ -206,6 +209,8 @@ export function mergeMessagesById(
 }
 
 interface NetworkState {
+  privateContacts: Record<number, Record<string, storage.PrivateMessageConversation>>;
+  loadPrivateContacts: (networkId: number) => Promise<storage.PrivateMessageConversation[]>;
   // Data
   networks: storage.Network[];
   connectionStatus: Record<number, boolean>;
@@ -285,6 +290,8 @@ interface NetworkState {
   // Selection
   selectedNetwork: number | null;
   selectedChannel: string | null;
+  // Distinguish an observed rename from navigation in the message viewport.
+  pmPaneRename: { networkId: number; from: string; to: string } | null;
 
   // Loading
   loadNetworks: () => Promise<void>;
@@ -312,6 +319,7 @@ interface NetworkState {
   setSelectedNetwork: (id: number | null) => void;
   setSelectedChannel: (channel: string | null) => void;
   selectPane: (networkId: number, channel: string | null) => Promise<void>;
+  renamePrivateMessage: (networkId: number, oldNick: string, newNick: string) => void;
   openOrJoinChannel: (networkId: number, channel: string, key?: string) => Promise<void>;
 
   // Network actions
@@ -390,6 +398,17 @@ interface NetworkState {
 }
 
 export const useNetworkStore = create<NetworkState>((set, get) => ({
+  privateContacts: {},
+  loadPrivateContacts: async (networkId) => {
+    const startedAt = get().connectionStatusAt[networkId];
+    const contacts = (await GetPrivateContacts(networkId)) ?? [];
+    const snapshot: Record<string, storage.PrivateMessageConversation> = {};
+    const state = get();
+    const stale = state.connectionStatus[networkId] === false || state.connectionStatusAt[networkId] !== startedAt;
+    for (const contact of contacts) snapshot[contact.reference] = stale ? {...contact,presence:'unknown',target:'',sessions:[]} : contact;
+    set((state) => ({ privateContacts: { ...state.privateContacts, [networkId]: snapshot } }));
+    return contacts;
+  },
   networks: [],
   connectionStatus: {},
   connectionStatusAt: {},
@@ -417,6 +436,7 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
   pendingScrollMsgid: null,
   selectedNetwork: null,
   selectedChannel: null,
+  pmPaneRename: null,
   activityItems: [],
 
   loadNetworks: async () => {
@@ -894,12 +914,12 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
     if (get().atBottom !== v) set({ atBottom: v });
   },
 
-  setSelectedNetwork: (id) => set({ selectedNetwork: id }),
+  setSelectedNetwork: (id) => set({ selectedNetwork: id, pmPaneRename: null }),
   setSelectedChannel: (channel) => {
     // Channel changes invalidate any in-flight scrollback history request and
     // reset CHATHISTORY pagination state for the new buffer.
     clearHistoryWaiter();
-    set({ selectedChannel: channel, loadingHistory: false, reachedStart: false });
+    set({ selectedChannel: channel, pmPaneRename: null, loadingHistory: false, reachedStart: false });
   },
 
   selectPane: async (networkId, channel) => {
@@ -913,6 +933,7 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
     set({
       selectedNetwork: networkId,
       selectedChannel: channel,
+      pmPaneRename: null,
       viewMode: 'live',
       atBottom: true, // a freshly opened pane starts pinned at the latest message
       anchoredMessageId: null,
@@ -955,6 +976,42 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
         console.error('Failed to set focus on pane:', error);
       }
     }
+  },
+
+  // Follow a backend-confirmed PM rename without treating it as navigation:
+  // retain the draft, reply, and reading position, and route the next send to
+  // the new nick. Historical sender names stay intact.
+  renamePrivateMessage: (networkId, oldNick, newNick) => {
+    const mapping = get().caseMapping[networkId] ?? '';
+    const oldKey = casefold(mapping, oldNick);
+    const newPane = `pm:${newNick}`;
+    const matches = (pane: string) => pane.startsWith('pm:') && casefold(mapping, pane.slice(3)) === oldKey;
+    set((state) => {
+      const patch: Partial<NetworkState> = {};
+      const unreadCounts = new Map(state.unreadCounts);
+      for (const [key, count] of state.unreadCounts) {
+        const prefix = `${networkId}:`;
+        if (key.startsWith(prefix) && matches(key.slice(prefix.length))) {
+          unreadCounts.delete(key);
+          const target = `${prefix}${newPane}`;
+          unreadCounts.set(target, (unreadCounts.get(target) ?? 0) + count);
+        }
+      }
+      patch.unreadCounts = unreadCounts;
+      if (state.selectedNetwork === networkId && state.selectedChannel && matches(state.selectedChannel)) {
+        clearHistoryWaiter();
+        patch.selectedChannel = newPane;
+        patch.pmPaneRename = { networkId, from: state.selectedChannel, to: newPane };
+        patch.loadingHistory = false;
+        patch.messages = state.messages.map((m) => ({ ...m, pm_target: newNick.toLowerCase() }));
+        const contexts = new Map(state.channelContextByPane);
+        const context = contexts.get(state.selectedChannel);
+        contexts.delete(state.selectedChannel);
+        if (context) contexts.set(newPane, context);
+        patch.channelContextByPane = contexts;
+      }
+      return patch;
+    });
   },
 
   openOrJoinChannel: async (networkId, channel, key) => {
@@ -1135,7 +1192,7 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
       // /msg must NOT navigate (it only sends a one-off message).
       const queryMatch = trimmedMessage.match(/^\/(?:query|q)\s+(\S+)\s*$/i);
       if (queryMatch) {
-        await get().selectPane(selectedNetwork, `pm:${queryMatch[1]}`);
+        await get().openQuery(selectedNetwork, queryMatch[1]);
       }
 
       return;
@@ -1156,6 +1213,7 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
         setTimeout(() => loadMessages(), 100);
       } catch (error) {
         console.error('Failed to send private message:', error);
+        throw error;
       }
       return;
     }
@@ -1229,7 +1287,7 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
         if (!ch) return; // parent's channel not known locally; give up quietly
         pane = ch.name;
       } else {
-        pane = `pm:${parent.pm_target}`;
+        pane = `pm:${parent.conversation_id ? `@${parent.conversation_id}` : parent.pm_target}`;
       }
       await get().selectPane(networkId, pane);
       set({ pendingScrollMsgid: msgid });
@@ -1278,6 +1336,12 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
       const withPresenceReset = (patch: Partial<NetworkState>): Partial<NetworkState> => {
         if (connected) return patch;
         const curPresence = state.presence[networkId];
+        const contacts = state.privateContacts[networkId];
+        if (contacts && Object.values(contacts).some((c) => c.presence === 'online' || c.target || c.sessions?.length)) {
+          patch.privateContacts = {...state.privateContacts, [networkId]:Object.fromEntries(
+            Object.entries(contacts).map(([ref,c])=>[ref,{...c,presence:'unknown',target:'',sessions:[]}])
+          )};
+        }
         if (curPresence && Object.keys(curPresence).length > 0) {
           patch.presence = { ...state.presence, [networkId]: {} };
         }
@@ -1542,11 +1606,16 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
 
   openQuery: async (networkId, nick) => {
     try {
-      await SetPrivateMessageOpen(networkId, nick, true);
+      const contact = await OpenPrivateContact(networkId, nick);
+      if (!contact) throw new Error('Could not open this contact');
+      set((state) => ({ privateContacts: {
+        ...state.privateContacts,
+        [networkId]: { ...state.privateContacts[networkId], [contact.reference]: contact },
+      } }));
+      await get().selectPane(networkId, `pm:${contact.reference}`);
     } catch (error) {
       console.error('Failed to open query:', error);
     }
-    await get().selectPane(networkId, `pm:${nick}`);
   },
 
   loadActivityItems: async () => {

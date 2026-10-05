@@ -74,7 +74,7 @@ func (a *App) SetActivitySettings(s ActivitySettings) error {
 
 // recordMessageActivity classifies one inbound message and, on a match, writes
 // an activity row and signals the frontend.
-func (a *App) recordMessageActivity(cfg irc.ActivityConfig, currentNick string, networkID int64, channel, sender, message, msgid, messageType string, isPM bool, ts time.Time) {
+func (a *App) recordMessageActivity(cfg irc.ActivityConfig, currentNick string, networkID int64, channel, sender, message, msgid, messageType string, isPM bool, ts time.Time, conversationIDs ...int64) {
 	if currentNick != "" && strings.EqualFold(sender, currentNick) {
 		return
 	}
@@ -88,6 +88,9 @@ func (a *App) recordMessageActivity(cfg irc.ActivityConfig, currentNick string, 
 		return
 	}
 	item := irc.ActivityItemFromMessage(networkID, src, keyword, channel, sender, message, msgid, isPM, ts)
+	if isPM && len(conversationIDs) > 0 && conversationIDs[0] > 0 {
+		item.Target = storage.PMReference(conversationIDs[0])
+	}
 	if _, err := a.storage.WriteActivityItem(item); err != nil {
 		logger.Log.Warn().Err(err).Msg("Failed to write activity item")
 		return
@@ -122,7 +125,8 @@ func (a *App) dispatchMessageActivity(event events.Event) {
 		return
 	}
 	currentNick := client.CurrentNick()
-	a.recordMessageActivity(settings.toConfig(), currentNick, networkID, channel, sender, message, msgid, messageType, isPM, event.Timestamp)
+	conversationID, _ := event.Data["conversationId"].(int64)
+	a.recordMessageActivity(settings.toConfig(), currentNick, networkID, channel, sender, message, msgid, messageType, isPM, event.Timestamp, conversationID)
 }
 
 const activityItemsLimit = 500

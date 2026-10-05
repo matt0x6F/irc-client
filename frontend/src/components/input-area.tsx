@@ -19,6 +19,7 @@ interface InputAreaProps {
 
 export function InputArea({ onSendMessage, placeholder = 'Type a message...', networkId, channelName }: InputAreaProps) {
   const [message, setMessage] = useState('');
+  const [sendError, setSendError] = useState('');
   const [completionIndex, setCompletionIndex] = useState(-1);
   const [completions, setCompletions] = useState<string[]>([]);
   const [lastCompletionPrefix, setLastCompletionPrefix] = useState('');
@@ -131,7 +132,13 @@ export function InputArea({ onSendMessage, placeholder = 'Type a message...', ne
     e.preventDefault();
     if (message.trim()) {
       const trimmed = message.trim();
-      await onSendMessage(trimmed);
+      setSendError('');
+      try {
+        await onSendMessage(trimmed);
+      } catch (error) {
+        setSendError(error instanceof Error ? error.message : String(error));
+        return;
+      }
 
       // Add to history if not a duplicate of the last entry
       const history = historyRef.current;
@@ -404,6 +411,7 @@ export function InputArea({ onSendMessage, placeholder = 'Type a message...', ne
           {typingLabel}
         </div>
       )}
+      {sendError && <div role="alert" className="mb-2 px-2 text-sm text-destructive">{sendError}</div>}
       <form onSubmit={handleSubmit} className="flex space-x-3">
         <input
           ref={inputRef}
@@ -434,4 +442,3 @@ export function InputArea({ onSendMessage, placeholder = 'Type a message...', ne
     </div>
   );
 }
-

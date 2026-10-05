@@ -202,6 +202,7 @@ func convertMessageFromDB(m db.Message) Message {
 		Timestamp:      m.Timestamp,
 		RawLine:        convertNullString(m.RawLine),
 		PMTarget:       convertNullString(m.PmTarget),
+		ConversationID: m.ConversationID.Int64,
 		MsgID:          convertNullString(m.Msgid),
 		ReplyMsgID:     convertNullString(m.ReplyMsgid),
 		ChannelContext: convertNullString(m.ChannelContext),
@@ -226,6 +227,7 @@ func convertMessageToDBCreateParams(m Message) db.CreateMessageParams {
 		Timestamp:      m.Timestamp.UTC(), // keep the TIMESTAMP text column in one UTC format (see normalizeForStore)
 		RawLine:        convertToNullString(m.RawLine),
 		PmTarget:       convertToNullString(m.PMTarget),
+		ConversationID: sql.NullInt64{Int64: m.ConversationID, Valid: m.ConversationID != 0},
 		Msgid:          convertToNullString(m.MsgID),
 		ReplyMsgid:     convertToNullString(m.ReplyMsgID),
 		ChannelContext: convertToNullString(m.ChannelContext),
@@ -395,11 +397,15 @@ func convertPinnedMessageWithoutChannelFromDB(p db.GetPinnedMessagesWithoutChann
 
 func convertPMConversationFromDB(pmc db.PrivateMessageConversation) PrivateMessageConversation {
 	result := PrivateMessageConversation{
-		ID:         pmc.ID,
-		NetworkID:  pmc.NetworkID,
-		TargetUser: pmc.TargetUser,
-		IsOpen:     pmc.IsOpen,
-		CreatedAt:  pmc.CreatedAt,
+		ID:                 pmc.ID,
+		NetworkID:          pmc.NetworkID,
+		TargetUser:         pmc.TargetUser,
+		NicknameKey:        pmc.NicknameKey,
+		Account:            pmc.Account,
+		IdentitySource:     pmc.IdentitySource,
+		IdentityObservedAt: pmc.IdentityObservedAt,
+		IsOpen:             pmc.IsOpen,
+		CreatedAt:          pmc.CreatedAt,
 	}
 	if pmc.UpdatedAt.Valid {
 		result.UpdatedAt = &pmc.UpdatedAt.Time

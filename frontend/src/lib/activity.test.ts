@@ -10,6 +10,11 @@ const NETWORKS: ActivityNetwork[] = [
 ];
 
 describe('activityTargetForEvent', () => {
+  it('keeps unread activity on the same conversation across nickname changes',()=>{
+    for(const user of ['alice','spookyAlice']) {
+      expect(activityTargetForEvent('message.received',{networkId:1,channel:'matt',user,conversationId:17} as any,NETWORKS)?.activityKey).toBe('1:pm:@17');
+    }
+  });
   it.each(['privmsg', 'action', 'notice'])('counts %s as message activity', (messageType) => {
     expect(activityTargetForEvent('message.received', {
       networkId: 1, channel: '#chat', user: 'alice', messageType,

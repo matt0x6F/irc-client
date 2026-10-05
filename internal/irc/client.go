@@ -84,27 +84,30 @@ type IRCClient struct {
 	loopDone              chan struct{} // Closed when the library's Loop() goroutine fully exits; lets teardown wait for a clean stop (guarded by mu)
 	saslEnabled           bool
 	saslAuthenticated     bool
-	authFailed            bool                       // True when SASL was enabled but did not succeed this session (guarded by mu)
-	saslConfigErr         error                      // Mechanism-construction error from NewIRCClient (unknown mechanism); surfaced by Connect() before dialing
-	namesInProgress       map[string]bool            // Track channels currently receiving NAMES list
-	namesMu               sync.Mutex                 // Mutex for namesInProgress map
-	serverCapabilities    *ServerCapabilities        // Server capabilities from ISUPPORT
-	chanTypesAtomic       atomic.Pointer[string]     // CHANTYPES from ISUPPORT (e.g. "#&"); lock-free so channel detection is callable anywhere
-	caseMappingAtomic     atomic.Pointer[string]     // CASEMAPPING from ISUPPORT (e.g. "ascii"); lock-free so nick folding is callable anywhere
-	supportsWHOX          bool                       // Server advertised the WHOX token in ISUPPORT (guarded by mu)
-	supportsMonitor       bool                       // Server advertised the MONITOR token in ISUPPORT (guarded by mu)
-	monitorLimit          int                        // MONITOR=<limit> from ISUPPORT; 0 = unlimited/unknown (guarded by mu)
-	monitorStatus         map[string]bool            // MONITOR presence: lowercased nick -> online (guarded by monitorMu)
-	monitorArmed          map[string]bool            // Nicks currently on the server MONITOR list (guarded by monitorMu)
-	monitorMu             sync.Mutex                 // Mutex for monitorStatus and monitorArmed
-	whoisInProgress       map[string]*WhoisInfo      // Track WHOIS requests in progress (key: nickname)
-	whoisMu               sync.Mutex                 // Mutex for whoisInProgress map
-	whoPending            map[string]bool            // Targets of user-initiated /who awaiting replies (key: folded mask); distinguishes 352/315 from roster-seed WHOX (guarded by whoMu)
-	whoMu                 sync.Mutex                 // Mutex for whoPending map
-	knownBots             map[string]bool            // Nicks recognized as IRCv3 bots this session (key: lowercased nick)
-	knownBotsMu           sync.Mutex                 // Mutex for knownBots map
-	userMeta              map[string]*UserMeta       // Live roster attributes (away/account/host) this session (key: lowercased nick)
-	userMetaMu            sync.Mutex                 // Mutex for userMeta map
+	authFailed            bool                   // True when SASL was enabled but did not succeed this session (guarded by mu)
+	saslConfigErr         error                  // Mechanism-construction error from NewIRCClient (unknown mechanism); surfaced by Connect() before dialing
+	namesInProgress       map[string]bool        // Track channels currently receiving NAMES list
+	namesMu               sync.Mutex             // Mutex for namesInProgress map
+	serverCapabilities    *ServerCapabilities    // Server capabilities from ISUPPORT
+	chanTypesAtomic       atomic.Pointer[string] // CHANTYPES from ISUPPORT (e.g. "#&"); lock-free so channel detection is callable anywhere
+	caseMappingAtomic     atomic.Pointer[string] // CASEMAPPING from ISUPPORT (e.g. "ascii"); lock-free so nick folding is callable anywhere
+	supportsWHOX          bool                   // Server advertised the WHOX token in ISUPPORT (guarded by mu)
+	supportsMonitor       bool                   // Server advertised the MONITOR token in ISUPPORT (guarded by mu)
+	monitorLimit          int                    // MONITOR=<limit> from ISUPPORT; 0 = unlimited/unknown (guarded by mu)
+	monitorStatus         map[string]bool        // MONITOR presence: lowercased nick -> online (guarded by monitorMu)
+	monitorArmed          map[string]bool        // Nicks currently on the server MONITOR list (guarded by monitorMu)
+	monitorMu             sync.Mutex             // Mutex for monitorStatus and monitorArmed
+	whoisInProgress       map[string]*WhoisInfo  // Track WHOIS requests in progress (key: nickname)
+	whoisMu               sync.Mutex             // Mutex for whoisInProgress map
+	whoPending            map[string]bool        // Targets of user-initiated /who awaiting replies (key: folded mask); distinguishes 352/315 from roster-seed WHOX (guarded by whoMu)
+	whoMu                 sync.Mutex             // Mutex for whoPending map
+	knownBots             map[string]bool        // Nicks recognized as IRCv3 bots this session (key: lowercased nick)
+	knownBotsMu           sync.Mutex             // Mutex for knownBots map
+	userMeta              map[string]*UserMeta   // Live roster attributes (away/account/host) this session (key: lowercased nick)
+	userMetaMu            sync.Mutex             // Mutex for userMeta map
+	contactMu             sync.Mutex
+	contactSessions       map[string]contactSession
+	historyContacts       map[string]int64
 	metaEmitOnce          sync.Once                  // Lazily starts the user-meta forwarder goroutine
 	metaEmitStopOnce      sync.Once                  // Guards the single close of metaEmitStop
 	metaEmitMu            sync.Mutex                 // Guards metaPending, metaEmitSignal, metaEmitStop
@@ -1130,6 +1133,9 @@ func (c *IRCClient) handleForwardedJoin(e ircmsg.Message) {
 // by — it tracks the new nick and, if we've reclaimed our preferred nick, says
 // so.
 func (c *IRCClient) handleNickMessage(e ircmsg.Message) {
+	if len(e.Params) == 0 || e.Nick() == "" || e.Params[0] == "" {
+		return
+	}
 	oldNick := e.Nick()
 	newNick := e.Params[0]
 
@@ -1144,6 +1150,24 @@ func (c *IRCClient) handleNickMessage(e ircmsg.Message) {
 	// badges and dimming don't go stale on a rename.
 	c.renameUserMeta(oldNick, newNick)
 
+	pmRenamed, err := c.renamePrivateContact(oldNick, newNick)
+	if err != nil {
+		logger.Log.Error().Err(err).Msg("Failed to follow nick change in private messages")
+	}
+	if pmRenamed {
+		// MONITOR follows nicknames, so replace the PM subscription. Reconcile
+		// the old name first to free its slot on servers with a small limit; an
+		// explicit buddy for the old nick still keeps its own subscription.
+		c.MonitorReconcileNick(oldNick)
+		c.MonitorReconcileNick(newNick)
+		c.monitorMu.Lock()
+		armed := c.monitorArmed[c.foldKey(newNick)]
+		c.monitorMu.Unlock()
+		if armed {
+			c.setMonitorPresence(newNick, true)
+		}
+	}
+
 	c.eventBus.Emit(events.Event{
 		Type: EventUserNick,
 		Data: map[string]interface{}{
@@ -1152,6 +1176,7 @@ func (c *IRCClient) handleNickMessage(e ircmsg.Message) {
 			"networkId":   c.networkID,
 			"oldNick":     oldNick,
 			"newNick":     newNick,
+			"pmRenamed":   pmRenamed,
 		},
 		Timestamp: time.Now(),
 		Source:    events.EventSourceIRC,
@@ -1583,6 +1608,7 @@ func (c *IRCClient) removeUserMeta(nick string) {
 	c.userMetaMu.Lock()
 	delete(c.userMeta, c.foldKey(nick))
 	c.userMetaMu.Unlock()
+	c.forgetContactSession(nick)
 }
 
 // handleAway processes away-notify: ":nick AWAY :message" marks the user away,
@@ -1692,6 +1718,7 @@ func (c *IRCClient) handleAccount(e ircmsg.Message) {
 		account = ""
 	}
 	c.applyUserMeta(e.Nick(), func(m *UserMeta) { m.Account = account })
+	c.observeContactAccount(e.Nick(), account, "account-notify")
 }
 
 // handleChghost processes chghost: ":nick CHGHOST <newuser> <newhost>" — the
@@ -1726,6 +1753,7 @@ func (c *IRCClient) maybeApplyExtendedJoin(e ircmsg.Message) {
 			m.Realname = realname
 		}
 	})
+	c.observeContactAccount(e.Nick(), account, "extended-join")
 }
 
 // handleInvite routes an inbound INVITE. An invite addressed to us is emitted as
@@ -1957,13 +1985,16 @@ func (c *IRCClient) handleSetname(e ircmsg.Message) {
 // handlers, alongside maybeMarkBotFromTag.
 func (c *IRCClient) maybeApplyAccountTag(e ircmsg.Message) {
 	present, account := e.GetTag("account")
-	if !present {
+	// With account-tag enabled, an untagged live user message means the sender
+	// is unidentified. JOIN has separate extended-join account semantics.
+	if !present && (!c.capEnabled("account-tag") || (e.Command != "PRIVMSG" && e.Command != "NOTICE" && e.Command != "TAGMSG")) {
 		return
 	}
 	if account == "*" {
 		account = ""
 	}
 	c.applyUserMeta(e.Nick(), func(m *UserMeta) { m.Account = account })
+	c.observeContactAccount(e.Nick(), account, "account-tag")
 }
 
 // UserMetaFor returns a copy of the roster attributes known for a nick this
@@ -2072,7 +2103,7 @@ func (c *IRCClient) handlePrivmsg(e ircmsg.Message) {
 				} else {
 					// Private message - create or get PM conversation keyed by the peer
 					pmTarget = c.pmPeer(user, channel)
-					_, created, err := c.storage.GetOrCreatePMConversation(c.networkID, pmTarget, c.network.Nickname)
+					_, created, err := c.getOrCreatePMContact(pmTarget)
 					if err != nil {
 						logger.Log.Error().Err(err).Str("user", user).Str("pmTarget", pmTarget).Msg("Failed to create/get PM conversation")
 					} else if created {
@@ -2091,6 +2122,7 @@ func (c *IRCClient) handlePrivmsg(e ircmsg.Message) {
 					Timestamp:      c.getMessageTime(e),
 					RawLine:        rawLine,
 					PMTarget:       pmTarget,
+					ConversationID: c.pmConversationID(pmTarget),
 					MsgID:          c.getMsgID(e),
 					ReplyMsgID:     c.getReplyTag(e),
 					ChannelContext: c.getChannelContext(e),
@@ -2099,16 +2131,17 @@ func (c *IRCClient) handlePrivmsg(e ircmsg.Message) {
 				c.eventBus.Emit(events.Event{
 					Type: EventMessageReceived,
 					Data: map[string]interface{}{
-						"network":     c.network.Address,
-						"networkId":   c.networkID,
-						"networkName": c.network.Name,
-						"channel":     channel,
-						"user":        user,
-						"message":     ctcpArgs,
-						"account":     c.accountFor(user),
-						"msgid":       c.getMsgID(e),
-						"messageUnix": c.getMessageTime(e).Unix(),
-						"isAction":    true,
+						"network":        c.network.Address,
+						"networkId":      c.networkID,
+						"networkName":    c.network.Name,
+						"channel":        channel,
+						"user":           user,
+						"message":        ctcpArgs,
+						"account":        c.accountFor(user),
+						"msgid":          c.getMsgID(e),
+						"messageUnix":    c.getMessageTime(e).Unix(),
+						"isAction":       true,
+						"conversationId": c.pmConversationID(pmTarget),
 					},
 					Timestamp: time.Now(),
 					Source:    events.EventSourceIRC,
@@ -2153,7 +2186,7 @@ func (c *IRCClient) handlePrivmsg(e ircmsg.Message) {
 	} else {
 		// Private message - create or get PM conversation keyed by the peer
 		pmTarget = c.pmPeer(user, channel)
-		_, created, err := c.storage.GetOrCreatePMConversation(c.networkID, pmTarget, c.network.Nickname)
+		_, created, err := c.getOrCreatePMContact(pmTarget)
 		if err != nil {
 			logger.Log.Error().Err(err).Str("user", user).Str("pmTarget", pmTarget).Msg("Failed to create/get PM conversation")
 		} else if created {
@@ -2173,6 +2206,7 @@ func (c *IRCClient) handlePrivmsg(e ircmsg.Message) {
 		Timestamp:      c.getMessageTime(e),
 		RawLine:        rawLine,
 		PMTarget:       pmTarget,
+		ConversationID: c.pmConversationID(pmTarget),
 		MsgID:          c.getMsgID(e),
 		ReplyMsgID:     c.getReplyTag(e),
 		ChannelContext: c.getChannelContext(e),
@@ -2206,6 +2240,7 @@ func (c *IRCClient) handlePrivmsg(e ircmsg.Message) {
 			"messageUnix":    c.getMessageTime(e).Unix(),
 			"isAction":       false,
 			"pmTarget":       pmTarget,
+			"conversationId": c.pmConversationID(pmTarget),
 			"messageType":    msg.MessageType,
 			"replyMsgid":     c.getReplyTag(e),
 			"channelContext": c.getChannelContext(e),
@@ -2339,6 +2374,10 @@ func (c *IRCClient) onDisconnect(e ircmsg.Message) {
 // EventConnectionLost after every application callback for an earlier server
 // line has completed.
 func (c *IRCClient) finishDisconnect(e ircmsg.Message, wasAbandoned bool) {
+	c.contactMu.Lock()
+	c.contactSessions = make(map[string]contactSession)
+	c.historyContacts = make(map[string]int64)
+	c.contactMu.Unlock()
 
 	// The per-channel drop is surfaced by the QUIT/JOIN protocol messages the server
 	// echoes (see handleQuit / JOIN handler), so onDisconnect no longer writes its own
@@ -3227,6 +3266,7 @@ func (c *IRCClient) setupHandlers() {
 		}
 		c.whoisInProgress[nickname].AccountName = accountName
 		c.whoisMu.Unlock()
+		c.observeContactAccount(nickname, accountName, "whois")
 	})
 
 	// RPL_WHOISBOT (335) - Target is a bot (IRCv3 bot mode)
@@ -3467,6 +3507,7 @@ func (c *IRCClient) setupHandlers() {
 					delete(c.enabledCaps, capName)
 				}
 				c.mu.Unlock()
+				c.invalidateContactSources()
 
 				c.writeStatusBuffer(storage.Message{
 					NetworkID:   c.networkID,
@@ -3774,6 +3815,13 @@ func (c *IRCClient) RequestChatHistoryLatest(target string, limit int) error {
 	if target == "" {
 		return fmt.Errorf("chathistory target required")
 	}
+	resolvedTarget, identityErr := c.ResolvePrivateTarget(target)
+	if identityErr != nil {
+		return identityErr
+	}
+	c.rememberHistoryContact(target, resolvedTarget)
+	target = resolvedTarget
+
 	limit = c.clampChatHistoryLimit(limit)
 	return c.conn.SendRaw(fmt.Sprintf("CHATHISTORY LATEST %s * %d", target, limit))
 }
@@ -3898,6 +3946,7 @@ func (c *IRCClient) applyWhoxRow(params []string) {
 			m.Realname = realname
 		}
 	})
+	c.observeContactAccount(nick, account, "whox")
 }
 
 // RequestWho issues a user-initiated WHO for target (a nick, channel, or mask) and
@@ -4252,6 +4301,13 @@ func (c *IRCClient) RequestChatHistoryBefore(target, beforeISO string, limit int
 	if target == "" || beforeISO == "" {
 		return fmt.Errorf("chathistory target and timestamp required")
 	}
+	resolvedTarget, identityErr := c.ResolvePrivateTarget(target)
+	if identityErr != nil {
+		return identityErr
+	}
+	c.rememberHistoryContact(target, resolvedTarget)
+	target = resolvedTarget
+
 	limit = c.clampChatHistoryLimit(limit)
 	return c.conn.SendRaw(fmt.Sprintf("CHATHISTORY BEFORE %s timestamp=%s %d", target, beforeISO, limit))
 }
@@ -4277,6 +4333,7 @@ func (c *IRCClient) handleChatHistoryBatch(b *ircevent.Batch) bool {
 	if len(b.Params) >= 3 {
 		target = b.Params[2]
 	}
+	reference := c.historyContactReference(target)
 
 	msgs := make([]storage.Message, 0, len(b.Items))
 	for _, item := range b.Items {
@@ -4304,6 +4361,7 @@ func (c *IRCClient) handleChatHistoryBatch(b *ircevent.Batch) bool {
 			"network":   c.network.Address,
 			"networkId": c.networkID,
 			"target":    target,
+			"reference": reference,
 			"inserted":  inserted,
 			"returned":  len(msgs),
 		},
@@ -4424,6 +4482,7 @@ func (c *IRCClient) buildHistoryChatMessage(e ircmsg.Message) (storage.Message, 
 
 	var channelID *int64
 	var pmTarget string
+	var conversationID int64
 	if len(target) > 0 && (target[0] == '#' || target[0] == '&') {
 		if ch, err := c.storage.GetChannelByName(c.networkID, target); err == nil {
 			channelID = &ch.ID
@@ -4432,22 +4491,38 @@ func (c *IRCClient) buildHistoryChatMessage(e ircmsg.Message) (storage.Message, 
 		pmTarget = c.pmPeer(user, target)
 		// History is bulk backfill for an already-targeted pane; the sidebar refresh
 		// for that pane is driven by the open/history flow, so don't announce per row.
-		if _, _, err := c.storage.GetOrCreatePMConversation(c.networkID, pmTarget, c.network.Nickname); err != nil {
-			logger.Log.Error().Err(err).Str("pmTarget", pmTarget).Msg("Failed to create/get PM conversation for history")
+		if present, account := e.GetTag("account"); c.capEnabled("account-tag") && present && account != "" && account != "*" && !c.isMe(user) {
+			contact, err := c.storage.FindPMContactByAccount(c.networkID, account)
+			if err != nil {
+				return storage.Message{}, false
+			}
+			conversationID = contact.ID
+		} else {
+			contact, err := c.storage.FindPMConversation(c.networkID, pmTarget)
+			if err != nil {
+				contact, _, err = c.storage.ReconcilePMIdentity(c.networkID, pmTarget, c.foldKey(pmTarget), "", "", true)
+			}
+			// A nickname-only history target cannot prove a saved account's peer
+			// identity at the original message time. Keep its local history intact.
+			if err != nil || contact.Account != "" {
+				return storage.Message{}, false
+			}
+			conversationID = contact.ID
 		}
 	}
 
 	rawLine, _ := e.Line()
 	return storage.Message{
-		NetworkID:   c.networkID,
-		ChannelID:   channelID,
-		User:        user,
-		Message:     text,
-		MessageType: messageType,
-		Timestamp:   c.getHistoryTime(e),
-		RawLine:     rawLine,
-		PMTarget:    pmTarget,
-		MsgID:       c.getMsgID(e),
+		NetworkID:      c.networkID,
+		ChannelID:      channelID,
+		User:           user,
+		Message:        text,
+		MessageType:    messageType,
+		Timestamp:      c.getHistoryTime(e),
+		RawLine:        rawLine,
+		PMTarget:       pmTarget,
+		ConversationID: conversationID,
+		MsgID:          c.getMsgID(e),
 	}, true
 }
 
@@ -4933,7 +5008,16 @@ func (c *IRCClient) SendTyping(target, state string) error {
 	}
 	c.mu.RUnlock()
 
+	resolvedTarget, identityErr := c.ResolvePrivateTarget(target)
+	if identityErr != nil {
+		return identityErr
+	}
 	c.rateLimiter.Wait()
+	resolvedTarget, identityErr = c.ResolvePrivateTarget(target)
+	if identityErr != nil {
+		return identityErr
+	}
+	target = resolvedTarget
 	if err := c.conn.SendWithTags(map[string]string{"+typing": state}, "TAGMSG", target); err != nil {
 		return fmt.Errorf("failed to send typing tag: %w", err)
 	}
@@ -4959,12 +5043,15 @@ func (c *IRCClient) handleTypingTag(e ircmsg.Message) {
 		return
 	}
 	dest := e.Params[0]
+	c.maybeApplyAccountTag(e)
 
 	// Channel-addressed: the conversation is the channel. Otherwise the tag was
 	// addressed to us by nick, so the conversation is the sender (the PM peer).
 	target := nick
 	if len(dest) > 0 && (dest[0] == '#' || dest[0] == '&') {
 		target = dest
+	} else if id := c.pmConversationID(nick); id != 0 {
+		target = storage.PMReference(id)
 	}
 
 	c.eventBus.Emit(events.Event{
@@ -4994,8 +5081,18 @@ func (c *IRCClient) SendNotice(target, message string) error {
 	if !connected {
 		return fmt.Errorf("not connected")
 	}
+	resolvedTarget, identityErr := c.ResolvePrivateTarget(target)
+	if identityErr != nil {
+		return identityErr
+	}
+	reference := target
+	target = resolvedTarget
 	for _, chunk := range splitOutboundMessage(message, c.maxMessageChunk(target)) {
 		c.rateLimiter.Wait()
+		target, identityErr = c.ResolvePrivateTarget(reference)
+		if identityErr != nil {
+			return identityErr
+		}
 		if err := c.conn.Send("NOTICE", target, chunk); err != nil {
 			return fmt.Errorf("failed to send notice: %w", err)
 		}
@@ -5011,8 +5108,18 @@ func (c *IRCClient) SendAction(target, message string) error {
 	if !connected {
 		return fmt.Errorf("not connected")
 	}
+	resolvedTarget, identityErr := c.ResolvePrivateTarget(target)
+	if identityErr != nil {
+		return identityErr
+	}
+	reference := target
+	target = resolvedTarget
 	for _, chunk := range splitOutboundMessage(message, c.maxMessageChunk(target)-len("\x01ACTION \x01")) {
 		c.rateLimiter.Wait()
+		target, identityErr = c.ResolvePrivateTarget(reference)
+		if identityErr != nil {
+			return identityErr
+		}
 		if err := c.conn.Send("PRIVMSG", target, "\x01ACTION "+chunk+"\x01"); err != nil {
 			return fmt.Errorf("failed to send action: %w", err)
 		}
@@ -5041,12 +5148,19 @@ func (c *IRCClient) sendMessage(target, message, replyMsgID, channelContext stri
 	}
 	c.mu.RUnlock()
 
+	resolvedTarget, identityErr := c.ResolvePrivateTarget(target)
+	if identityErr != nil {
+		return identityErr
+	}
+	reference := target
+	target = resolvedTarget
+
 	for i, chunk := range splitOutboundMessage(message, c.maxMessageChunk(target)) {
 		chunkReply := ""
 		if i == 0 {
 			chunkReply = replyMsgID
 		}
-		if err := c.sendMessageChunk(target, chunk, chunkReply, channelContext); err != nil {
+		if err := c.sendMessageChunk(reference, chunk, chunkReply, channelContext); err != nil {
 			return err
 		}
 	}
@@ -5059,6 +5173,11 @@ func (c *IRCClient) sendMessage(target, message, replyMsgID, channelContext stri
 func (c *IRCClient) sendMessageChunk(target, message, replyMsgID, channelContext string) error {
 	// Wait for rate limiter before sending
 	c.rateLimiter.Wait()
+	resolvedTarget, err := c.ResolvePrivateTarget(target)
+	if err != nil {
+		return err
+	}
+	target = resolvedTarget
 
 	if tags := buildSendTags(replyMsgID, channelContext); tags != nil {
 		if err := c.conn.SendWithTags(tags, "PRIVMSG", target, message); err != nil {
@@ -5087,7 +5206,7 @@ func (c *IRCClient) sendMessageChunk(target, message, replyMsgID, channelContext
 	} else {
 		// Private message - create or get PM conversation
 		pmTarget = target
-		_, created, err := c.storage.GetOrCreatePMConversation(c.networkID, target, c.network.Nickname)
+		_, created, err := c.getOrCreatePMContact(target)
 		if err != nil {
 			logger.Log.Error().Err(err).Str("target", target).Msg("Failed to create/get PM conversation")
 		} else if created {
@@ -5114,6 +5233,7 @@ func (c *IRCClient) sendMessageChunk(target, message, replyMsgID, channelContext
 			Timestamp:      time.Now(),
 			RawLine:        fmt.Sprintf("PRIVMSG %s :%s", target, message),
 			PMTarget:       pmTarget,
+			ConversationID: c.pmConversationID(pmTarget),
 			ReplyMsgID:     replyMsgID,
 			ChannelContext: channelContext,
 		}
@@ -5126,11 +5246,12 @@ func (c *IRCClient) sendMessageChunk(target, message, replyMsgID, channelContext
 	c.eventBus.Emit(events.Event{
 		Type: EventMessageSent,
 		Data: map[string]interface{}{
-			"network":   c.network.Address,
-			"networkId": c.networkID,
-			"target":    target,
-			"message":   message,
-			"pmTarget":  pmTarget,
+			"network":        c.network.Address,
+			"networkId":      c.networkID,
+			"target":         target,
+			"message":        message,
+			"pmTarget":       pmTarget,
+			"conversationId": c.pmConversationID(pmTarget),
 		},
 		Timestamp: time.Now(),
 		Source:    events.EventSourceIRC,
@@ -5883,7 +6004,7 @@ func (c *IRCClient) handleNotice(e ircmsg.Message) {
 
 		if pmTarget != "" {
 			// Open/refresh the query conversation so the pane appears in the sidebar.
-			if _, created, err := c.storage.GetOrCreatePMConversation(c.networkID, pmTarget, c.network.Nickname); err != nil {
+			if _, created, err := c.getOrCreatePMContact(pmTarget); err != nil {
 				logger.Log.Error().Err(err).Str("user", user).Str("pmTarget", pmTarget).Msg("Failed to create/get PM conversation for notice")
 			} else if created {
 				// A new query entry appeared — surface it in the sidebar now.
@@ -5899,7 +6020,8 @@ func (c *IRCClient) handleNotice(e ircmsg.Message) {
 			MessageType:    "notice",
 			Timestamp:      c.getMessageTime(e),
 			RawLine:        rawLine,
-			PMTarget:       pmTarget, // "" keeps it in Status; non-empty routes to a query pane
+			PMTarget:       pmTarget,
+			ConversationID: c.pmConversationID(pmTarget), // "" keeps it in Status; non-empty routes to a query pane
 			MsgID:          c.getMsgID(e),
 			ReplyMsgID:     c.getReplyTag(e),
 			ChannelContext: c.getChannelContext(e),
@@ -5918,16 +6040,18 @@ func (c *IRCClient) handleNotice(e ircmsg.Message) {
 			c.eventBus.Emit(events.Event{
 				Type: EventMessageReceived,
 				Data: map[string]interface{}{
-					"network":     c.network.Address,
-					"networkId":   c.networkID,
-					"channel":     target,
-					"user":        user,
-					"message":     notice,
-					"messageType": "notice",
-					"networkName": c.network.Name,
-					"account":     c.accountFor(user),
-					"msgid":       c.getMsgID(e),
-					"messageUnix": c.getMessageTime(e).Unix(),
+					"network":        c.network.Address,
+					"networkId":      c.networkID,
+					"channel":        target,
+					"user":           user,
+					"message":        notice,
+					"messageType":    "notice",
+					"pmTarget":       pmTarget,
+					"conversationId": c.pmConversationID(pmTarget),
+					"networkName":    c.network.Name,
+					"account":        c.accountFor(user),
+					"msgid":          c.getMsgID(e),
+					"messageUnix":    c.getMessageTime(e).Unix(),
 				},
 				Timestamp: time.Now(),
 				Source:    events.EventSourceIRC,

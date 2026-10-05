@@ -6,7 +6,22 @@ import (
 	"time"
 
 	"github.com/matt0x6f/irc-client/internal/irc"
+	"github.com/matt0x6f/irc-client/internal/storage"
 )
+
+func TestPrivateActivityRetainsConversationIdentity(t *testing.T) {
+	a := newTestApp(t)
+	n := makeAppTestNetwork(t, a.storage, "identity")
+	contact, _, err := a.storage.GetOrCreatePMConversation(n.ID, "bob", n.Nickname)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.recordMessageActivity(defaultActivitySettings().toConfig(), "me", n.ID, "me", "bob", "hello", "mid", "privmsg", true, time.Now(), contact.ID)
+	items, err := a.storage.ListActivityItems(20)
+	if err != nil || len(items) != 1 || items[0].Target != storage.PMReference(contact.ID) || items[0].Actor != "bob" {
+		t.Fatalf("activity lost saved identity/display nickname: %+v, %v", items, err)
+	}
+}
 
 func TestActivitySettings_DefaultsForMissingTypeToggles(t *testing.T) {
 	// Old settings persisted before the type toggles existed: keys absent.

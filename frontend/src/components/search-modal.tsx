@@ -8,6 +8,8 @@ interface SearchModalProps {
 }
 
 interface SearchResult {
+  conversation_id?:number;
+  pm_target?:string;
   id: number;
   network_id: number;
   channel_id?: number | null;
@@ -107,7 +109,7 @@ export function SearchModal({ onClose }: SearchModalProps) {
       await selectPane(result.network_id, result.channel_name);
     } else {
       // Private message -- navigate to PM with user
-      await selectPane(result.network_id, `pm:${result.user}`);
+      await selectPane(result.network_id, `pm:${result.conversation_id ? `@${result.conversation_id}` : result.pm_target || result.user}`);
     }
   };
 

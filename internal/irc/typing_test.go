@@ -6,6 +6,7 @@ import (
 
 	"github.com/ergochat/irc-go/ircmsg"
 	"github.com/matt0x6f/irc-client/internal/events"
+	"github.com/matt0x6f/irc-client/internal/storage"
 )
 
 // mustParseTagmsg parses a raw IRC line (with tags) into an ircmsg.Message for
@@ -40,6 +41,27 @@ func TestValidTypingState(t *testing.T) {
 		if validTypingState(s) {
 			t.Errorf("expected %q to be rejected", s)
 		}
+	}
+}
+
+func TestTypingTargetsTheStablePrivateContact(t *testing.T) {
+	c, _ := newWhoxBotTestClient(t)
+	c.enabledCaps["account-tag"] = true
+	contact, _, err := c.storage.GetOrCreatePMConversation(c.networkID, "alice", c.network.Nickname)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.handlePrivmsg(mustParseTagmsg(t, "@account=alice-account :alice!a@h PRIVMSG matt0x6f :hello"))
+	sink := &historyEventSink{ch: make(chan events.Event, 4)}
+	c.eventBus.Subscribe(EventTypingReceived, sink)
+	c.handleTypingTag(mustParseTagmsg(t, "@account=alice-account;+typing=active :alice!a@h TAGMSG matt0x6f"))
+	select {
+	case e := <-sink.ch:
+		if target, _ := e.Data["target"].(string); target != storage.PMReference(contact.ID) {
+			t.Fatalf("typing remained nickname keyed: %+v", e.Data)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no typing event")
 	}
 }
 

@@ -102,6 +102,7 @@ type Message struct {
 	Timestamp      time.Time `db:"timestamp" json:"timestamp"`
 	RawLine        string    `db:"raw_line" json:"raw_line"`               // Original IRC line
 	PMTarget       string    `db:"pm_target" json:"pm_target"`             // Conversation peer for PMs ("" for channel/status/server rows)
+	ConversationID int64     `db:"conversation_id" json:"conversation_id"` // Stable PM conversation (0 for other buffers)
 	MsgID          string    `db:"msgid" json:"msgid"`                     // IRCv3 message id ("" for legacy/local rows); dedup key for CHATHISTORY
 	ReplyMsgID     string    `db:"reply_msgid" json:"reply_msgid"`         // IRCv3 +draft/reply: msgid of the parent message ("" if not a reply)
 	ChannelContext string    `db:"channel_context" json:"channel_context"` // IRCv3 +draft/channel-context: channel a PM is about ("" otherwise)
@@ -132,12 +133,21 @@ type PinnedMessage struct {
 
 // PrivateMessageConversation represents a private message conversation with a user
 type PrivateMessageConversation struct {
-	ID         int64      `db:"id" json:"id"`
-	NetworkID  int64      `db:"network_id" json:"network_id"`
-	TargetUser string     `db:"target_user" json:"target_user"` // The other user in the conversation (lowercase for case-insensitive matching)
-	IsOpen     bool       `db:"is_open" json:"is_open"`         // Dialog/pane is open
-	CreatedAt  time.Time  `db:"created_at" json:"created_at"`
-	UpdatedAt  *time.Time `db:"updated_at" json:"updated_at"`
+	// Resolved view fields; current sessions and presence are never persisted.
+	Reference          string     `db:"-" json:"reference"`
+	Presence           string     `db:"-" json:"presence"`
+	Target             string     `db:"-" json:"target"`
+	Sessions           []string   `db:"-" json:"sessions"`
+	ID                 int64      `db:"id" json:"id"`
+	NetworkID          int64      `db:"network_id" json:"network_id"`
+	TargetUser         string     `db:"target_user" json:"target_user"` // The other user in the conversation (lowercase for case-insensitive matching)
+	NicknameKey        string     `db:"nickname_key" json:"nickname_key"`
+	Account            string     `db:"account" json:"account"`
+	IdentitySource     string     `db:"identity_source" json:"identity_source"`
+	IdentityObservedAt int64      `db:"identity_observed_at" json:"identity_observed_at"`
+	IsOpen             bool       `db:"is_open" json:"is_open"` // Dialog/pane is open
+	CreatedAt          time.Time  `db:"created_at" json:"created_at"`
+	UpdatedAt          *time.Time `db:"updated_at" json:"updated_at"`
 }
 
 // CachedPreview is a stored link-preview row. FetchedAt is unix seconds.

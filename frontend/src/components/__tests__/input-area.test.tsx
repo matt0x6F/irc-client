@@ -1,8 +1,18 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { InputArea } from '../input-area'
 
 const noop = async () => {}
+
+it('retains the draft and explains an unresolved contact when sending fails', async () => {
+  const send = vi.fn().mockRejectedValue(new Error("This contact's current nickname is unknown"))
+  render(<InputArea onSendMessage={send} networkId={1} channelName="pm:@17" />)
+  const input = screen.getByTestId('message-input')
+  fireEvent.change(input, {target:{value:'private reply'}})
+  fireEvent.click(screen.getByRole('button',{name:'Send'}))
+  await waitFor(()=>expect(screen.getByRole('alert')).toHaveTextContent('current nickname is unknown'))
+  expect(input).toHaveValue('private reply')
+})
 
 describe('InputArea auto-focus on buffer switch', () => {
   it('focuses the message input on mount', () => {
