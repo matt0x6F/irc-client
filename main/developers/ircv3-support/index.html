@@ -238,12 +238,14 @@
       
         
       
+        
+      
     
     
     
     
       <li class="md-tabs__item md-tabs__item--active">
-        <a href="../events/" class="md-tabs__link">
+        <a href="../contact-identity/" class="md-tabs__link">
           
   
   Developers
@@ -419,6 +421,8 @@
       
         
       
+        
+      
     
     
     
@@ -464,6 +468,33 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contact-identity/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Contact identity and reconnect recovery
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
             
               
                 
@@ -1584,12 +1615,14 @@
       
         
       
+        
+      
     
     
     
     
       <li class="md-path__item">
-        <a href="../events/" class="md-path__link">
+        <a href="../contact-identity/" class="md-path__link">
           
   
   <span class="md-ellipsis">
@@ -1660,6 +1693,10 @@ and how each surfaces in the client.</p>
 <li><strong>A buddy list:</strong> track specific nicks' online/offline presence across restarts in a
   dedicated Buddies pane, even when you share no channel with them (<code>monitor</code>). With
   <code>extended-monitor</code>, buddies also show live away state.</li>
+<li><strong>DM identity across nick changes:</strong> saved conversations follow a visible,
+  authenticated account using standard account metadata, including a rename missed
+  while Cascade was closed. When the server cannot resolve the current nickname,
+  presence is unknown and an account-bound reply keeps its draft instead of sending.</li>
 <li><strong>Typing indicators:</strong> see when people in a channel or PM are composing a message, and
   optionally let them see when you are (<code>+typing</code> client tag). Both directions toggle
   independently in Settings.</li>
@@ -1895,7 +1932,7 @@ and how each surfaces in the client.</p>
 </tbody>
 </table>
 <p>The set of requested capabilities lives in one place, <code>internal/irc/client.go:31</code>:</p>
-<div class="language-go highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kd">var</span><span class="w"> </span><span class="nx">requestedCaps</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[]</span><span class="kt">string</span><span class="p">{</span><span class="s">&quot;sasl&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;server-time&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;echo-message&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;message-tags&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;batch&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;draft/chathistory&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;chathistory&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;draft/event-playback&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;multi-prefix&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;cap-notify&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;away-notify&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;account-notify&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;extended-join&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;chghost&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;account-tag&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;userhost-in-names&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;setname&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;invite-notify&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;standard-replies&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;labeled-response&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;extended-monitor&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;no-implicit-names&quot;</span><span class="p">}</span>
+<div class="language-go highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kd">var</span><span class="w"> </span><span class="nx">requestedCaps</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[]</span><span class="kt">string</span><span class="p">{</span><span class="s">"sasl"</span><span class="p">,</span><span class="w"> </span><span class="s">"server-time"</span><span class="p">,</span><span class="w"> </span><span class="s">"echo-message"</span><span class="p">,</span><span class="w"> </span><span class="s">"message-tags"</span><span class="p">,</span><span class="w"> </span><span class="s">"batch"</span><span class="p">,</span><span class="w"> </span><span class="s">"draft/chathistory"</span><span class="p">,</span><span class="w"> </span><span class="s">"chathistory"</span><span class="p">,</span><span class="w"> </span><span class="s">"draft/event-playback"</span><span class="p">,</span><span class="w"> </span><span class="s">"multi-prefix"</span><span class="p">,</span><span class="w"> </span><span class="s">"cap-notify"</span><span class="p">,</span><span class="w"> </span><span class="s">"away-notify"</span><span class="p">,</span><span class="w"> </span><span class="s">"account-notify"</span><span class="p">,</span><span class="w"> </span><span class="s">"extended-join"</span><span class="p">,</span><span class="w"> </span><span class="s">"chghost"</span><span class="p">,</span><span class="w"> </span><span class="s">"account-tag"</span><span class="p">,</span><span class="w"> </span><span class="s">"userhost-in-names"</span><span class="p">,</span><span class="w"> </span><span class="s">"setname"</span><span class="p">,</span><span class="w"> </span><span class="s">"invite-notify"</span><span class="p">,</span><span class="w"> </span><span class="s">"standard-replies"</span><span class="p">,</span><span class="w"> </span><span class="s">"labeled-response"</span><span class="p">,</span><span class="w"> </span><span class="s">"extended-monitor"</span><span class="p">,</span><span class="w"> </span><span class="s">"no-implicit-names"</span><span class="p">}</span>
 </span></code></pre></div>
 <p><code>sasl</code> is only requested when the network has SASL configured (<code>client.go:1927</code>); the others
 are requested whenever the server advertises them.</p>
@@ -2393,10 +2430,21 @@ arms the whole union on connect (buddies first, so they keep their slots under a
 the Buddies pane (<code>monitor-list.tsx</code>) lists each buddy with a green (online) / grey (offline)
 dot, an "Add nick" input, and a remove control, and updates live via the <code>monitor-event</code>. A
 nick can also be added straight from the member list's right-click menu ("Monitor this user").
-In the <strong>Direct Messages</strong> list, each conversation shows a presence dot driven by the same
-MONITOR data (<code>GetMonitorPresence</code> seeds it, <code>monitor-event</code> keeps it live): solid green for
-online, solid grey for offline, and a hollow neutral dot for unknown (a service nick, or not yet
-tracked). See <code>dmPresenceState</code> in <code>frontend/src/lib/presence.ts</code>.</p>
+The <strong>Direct Messages</strong> list uses <code>GetPrivateContacts</code>: green means a current
+session belongs to the saved contact; a hollow neutral dot means presence unknown.
+An old monitored nick going offline is insufficient to mark its account offline.
+The Buddies pane retains the nickname watch the user explicitly added.</p>
+<p>DM history and pane state use stable local conversation IDs. Observed <code>NICK</code>
+changes update current routing, including for unidentified users. Fresh verified
+account evidence can recover a rename missed while Cascade was closed. Different
+accounts using the same nick keep separate histories, and an unresolved
+account-bound reply is blocked with the draft retained. A header selector chooses
+among multiple verified sessions. MONITOR remains a nickname mechanism; it does
+not identify a replacement nickname by itself.</p>
+<p>The <a href="../contact-identity/">contact identity implementation</a> documents storage,
+discovery limits, historical replay handling, and separate native and server-mode
+acceptance. Coverage includes <code>internal/irc/contact_identity_test.go</code>,
+<code>internal/storage/contact_identity_test.go</code>, and the nick-change/contact E2E specs.</p>
 <p><img alt="The Buddies pane showing a monitored nick &quot;buddybot&quot; with a green online dot" src="../images/ircv3/monitor.png" /></p>
 <h3 id="supporting-features">Supporting features<a class="headerlink" href="#supporting-features" title="Permanent link">&para;</a></h3>
 <p>These are not CAP capabilities but are part of Cascade's modern-IRC behavior and interact

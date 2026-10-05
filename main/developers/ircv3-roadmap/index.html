@@ -238,12 +238,14 @@
       
         
       
+        
+      
     
     
     
     
       <li class="md-tabs__item md-tabs__item--active">
-        <a href="../events/" class="md-tabs__link">
+        <a href="../contact-identity/" class="md-tabs__link">
           
   
   Developers
@@ -419,6 +421,8 @@
       
         
       
+        
+      
     
     
     
@@ -464,6 +468,33 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contact-identity/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Contact identity and reconnect recovery
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
             
               
                 
@@ -562,6 +593,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Ratified set: complete
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#contact-identity-and-reconnect-recovery" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Contact identity and reconnect recovery
       </span>
     </span>
   </a>
@@ -1198,6 +1240,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#contact-identity-and-reconnect-recovery" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Contact identity and reconnect recovery
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#draft-extensions-future-modern-chat" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1286,12 +1339,14 @@
       
         
       
+        
+      
     
     
     
     
       <li class="md-path__item">
-        <a href="../events/" class="md-path__link">
+        <a href="../contact-identity/" class="md-path__link">
           
   
   <span class="md-ellipsis">
@@ -1350,6 +1405,17 @@ holds the per-capability detail and code pointers; this is just the list.</p>
 <li>✅ <code>no-implicit-names</code> (#77)</li>
 <li>✅ <code>UTF8ONLY</code> (#77)</li>
 </ul>
+<h2 id="contact-identity-and-reconnect-recovery">Contact identity and reconnect recovery<a class="headerlink" href="#contact-identity-and-reconnect-recovery" title="Permanent link">&para;</a></h2>
+<ul class="task-list">
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Persist stable contact/conversation IDs and verified network/account bindings.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Resolve current nicknames from fresh server evidence after reconnect,
+      including a rename that happened while Cascade was closed.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Derive contact presence from verified sessions and report unknown when
+      discovery is incomplete; preserve explicit nickname-watch semantics.</li>
+</ul>
+<p>This builds on account capabilities Cascade already parses. The
+<a href="../contact-identity/">contact identity implementation</a> records the migration,
+routing, identity conflict handling, acceptance evidence, and visibility limits.</p>
 <h2 id="draft-extensions-future-modern-chat">Draft extensions (future modern-chat)<a class="headerlink" href="#draft-extensions-future-modern-chat" title="Permanent link">&para;</a></h2>
 <p>These fall outside ratified compliance, but they're deployed on real networks
 (Ergo, Soju) and fit Cascade's multi-platform direction. Listed in rough order
@@ -1369,7 +1435,10 @@ of value.</p>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> <strong><code>draft/pre-away</code></strong> — Away-on-idle support.</li>
 </ul>
 <h2 id="whats-next">What's next<a class="headerlink" href="#whats-next" title="Permanent link">&para;</a></h2>
-<p><code>draft/read-marker</code> is the highest-value item: cross-device read state reinforces
+<p>Contact identity and reconnect recovery have passed local acceptance, including
+a fully stopped client during a rename. Stronger provider discovery remains a
+separate feature. For the draft-extension backlog, <code>draft/read-marker</code> is the
+highest-value item: cross-device read state reinforces
 Cascade's multi-platform story and builds on the <code>chathistory</code> / <code>@msgid</code>
 machinery already in place. After that, <code>draft/message-redaction</code> and
 <code>draft/multiline</code> bring Cascade in line with what Ergo and Soju already do.</p>

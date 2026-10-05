@@ -236,12 +236,14 @@
       
         
       
+        
+      
     
     
     
     
       <li class="md-tabs__item">
-        <a href="../../developers/events/" class="md-tabs__link">
+        <a href="../../developers/contact-identity/" class="md-tabs__link">
           
   
   Developers
@@ -417,6 +419,8 @@
       
         
       
+        
+      
     
     
     
@@ -459,6 +463,33 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../developers/contact-identity/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Contact identity and reconnect recovery
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
             
               
                 
@@ -1441,7 +1472,7 @@
 </span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="c1">// cascade:description Greets people who say !hi</span>
 </span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="c1">// cascade:permissions network</span>
 </span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="kn">import</span><span class="w"> </span><span class="s">&quot;github.com/matt0x6f/irc-client/cascade&quot;</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="kn">import</span><span class="w"> </span><span class="s">"github.com/matt0x6f/irc-client/cascade"</span>
 </span></code></pre></div>
 <div class="admonition note">
 <p class="admonition-title">Permissions in v1</p>
@@ -1555,10 +1586,10 @@
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
 </span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="c1">// cascade:name echo</span>
 </span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="kn">import</span><span class="w"> </span><span class="s">&quot;github.com/matt0x6f/irc-client/cascade&quot;</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="kn">import</span><span class="w"> </span><span class="s">"github.com/matt0x6f/irc-client/cascade"</span>
 </span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>
 </span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="kd">func</span><span class="w"> </span><span class="nx">OnText</span><span class="p">(</span><span class="nx">e</span><span class="w"> </span><span class="nx">cascade</span><span class="p">.</span><span class="nx">TextEvent</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
-</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">e</span><span class="p">.</span><span class="nx">Arg</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s">&quot;!echo&quot;</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">e</span><span class="p">.</span><span class="nx">Arg</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s">"!echo"</span><span class="w"> </span><span class="p">{</span>
 </span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="w">        </span><span class="nx">e</span><span class="p">.</span><span class="nx">Reply</span><span class="p">(</span><span class="nx">e</span><span class="p">.</span><span class="nx">Message</span><span class="p">)</span>
 </span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="w">    </span><span class="p">}</span>
 </span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="p">}</span>
@@ -1567,16 +1598,16 @@
 <h2 id="acting-on-your-own-networks-users-and-timers">Acting on your own: networks, users, and timers<a class="headerlink" href="#acting-on-your-own-networks-users-and-timers" title="Permanent link">&para;</a></h2>
 <p><code>Setup</code> receives a <code>*cascade.Client</code> that you can use to schedule work and send messages independently of incoming events.</p>
 <p><strong>Sending a message:</strong></p>
-<div class="language-go highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nx">c</span><span class="p">.</span><span class="nx">Network</span><span class="p">(</span><span class="s">&quot;Libera&quot;</span><span class="p">).</span><span class="nx">Say</span><span class="p">(</span><span class="s">&quot;#team&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;hello from a script&quot;</span><span class="p">)</span>
+<div class="language-go highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nx">c</span><span class="p">.</span><span class="nx">Network</span><span class="p">(</span><span class="s">"Libera"</span><span class="p">).</span><span class="nx">Say</span><span class="p">(</span><span class="s">"#team"</span><span class="p">,</span><span class="w"> </span><span class="s">"hello from a script"</span><span class="p">)</span>
 </span></code></pre></div>
 <p><code>c.Network("&lt;name&gt;")</code> returns a handle to the named network. <code>.Say(target, message)</code> sends a PRIVMSG to <code>target</code> (a channel or nick).</p>
 <p>The same handle provides connection and identity queries plus common IRC actions:</p>
-<div class="language-go highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nx">net</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">c</span><span class="p">.</span><span class="nx">Network</span><span class="p">(</span><span class="s">&quot;Libera&quot;</span><span class="p">)</span>
+<div class="language-go highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nx">net</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">c</span><span class="p">.</span><span class="nx">Network</span><span class="p">(</span><span class="s">"Libera"</span><span class="p">)</span>
 </span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="k">if</span><span class="w"> </span><span class="nx">net</span><span class="p">.</span><span class="nx">IsConnected</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 </span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">    </span><span class="nx">me</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">net</span><span class="p">.</span><span class="nx">Self</span><span class="p">()</span>
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">    </span><span class="nx">alice</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">net</span><span class="p">.</span><span class="nx">User</span><span class="p">(</span><span class="s">&quot;alice&quot;</span><span class="p">)</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">    </span><span class="nx">alice</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">net</span><span class="p">.</span><span class="nx">User</span><span class="p">(</span><span class="s">"alice"</span><span class="p">)</span>
 </span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">alice</span><span class="p">.</span><span class="nx">Known</span><span class="p">()</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nx">alice</span><span class="p">.</span><span class="nx">IsAway</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
-</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">        </span><span class="nx">net</span><span class="p">.</span><span class="nx">Say</span><span class="p">(</span><span class="s">&quot;#team&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">me</span><span class="p">.</span><span class="nx">Nick</span><span class="p">()</span><span class="o">+</span><span class="s">&quot;: alice is away: &quot;</span><span class="o">+</span><span class="nx">alice</span><span class="p">.</span><span class="nx">Status</span><span class="p">().</span><span class="nx">AwayMessage</span><span class="p">)</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">        </span><span class="nx">net</span><span class="p">.</span><span class="nx">Say</span><span class="p">(</span><span class="s">"#team"</span><span class="p">,</span><span class="w"> </span><span class="nx">me</span><span class="p">.</span><span class="nx">Nick</span><span class="p">()</span><span class="o">+</span><span class="s">": alice is away: "</span><span class="o">+</span><span class="nx">alice</span><span class="p">.</span><span class="nx">Status</span><span class="p">().</span><span class="nx">AwayMessage</span><span class="p">)</span>
 </span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="w">    </span><span class="p">}</span>
 </span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="p">}</span>
 </span></code></pre></div>
@@ -1606,11 +1637,11 @@
 </span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
 </span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="c1">// cascade:name standup</span>
 </span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>
-</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="kn">import</span><span class="w"> </span><span class="s">&quot;github.com/matt0x6f/irc-client/cascade&quot;</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="kn">import</span><span class="w"> </span><span class="s">"github.com/matt0x6f/irc-client/cascade"</span>
 </span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>
 </span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="kd">func</span><span class="w"> </span><span class="nx">Setup</span><span class="p">(</span><span class="nx">c</span><span class="w"> </span><span class="o">*</span><span class="nx">cascade</span><span class="p">.</span><span class="nx">Client</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
-</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">    </span><span class="nx">c</span><span class="p">.</span><span class="nx">Every</span><span class="p">(</span><span class="s">&quot;1h&quot;</span><span class="p">,</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
-</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="w">        </span><span class="nx">c</span><span class="p">.</span><span class="nx">Network</span><span class="p">(</span><span class="s">&quot;Libera&quot;</span><span class="p">).</span><span class="nx">Say</span><span class="p">(</span><span class="s">&quot;#team&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;hourly check-in&quot;</span><span class="p">)</span>
+</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">    </span><span class="nx">c</span><span class="p">.</span><span class="nx">Every</span><span class="p">(</span><span class="s">"1h"</span><span class="p">,</span><span class="w"> </span><span class="kd">func</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="w">        </span><span class="nx">c</span><span class="p">.</span><span class="nx">Network</span><span class="p">(</span><span class="s">"Libera"</span><span class="p">).</span><span class="nx">Say</span><span class="p">(</span><span class="s">"#team"</span><span class="p">,</span><span class="w"> </span><span class="s">"hourly check-in"</span><span class="p">)</span>
 </span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="w">    </span><span class="p">})</span>
 </span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="p">}</span>
 </span></code></pre></div>
