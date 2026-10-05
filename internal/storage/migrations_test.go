@@ -36,7 +36,7 @@ func TestMigrateReplyAndContextAddsColumns(t *testing.T) {
 func TestMigrateEventDedupIndex(t *testing.T) {
 	s := newTestStorage(t)
 	// Simulate a legacy DB: drop the new index, recreate the old coarse one.
-	_, _ = s.db.Exec(`DROP INDEX IF EXISTS idx_messages_conv_msgid`)
+	_, _ = s.db.Exec(`DROP INDEX IF EXISTS idx_messages_contact_msgid`)
 	_, _ = s.db.Exec(`CREATE UNIQUE INDEX idx_messages_network_msgid ON messages(network_id, msgid) WHERE msgid IS NOT NULL`)
 
 	if err := migrateEventDedupIndex(s.db); err != nil {
@@ -48,7 +48,7 @@ func TestMigrateEventDedupIndex(t *testing.T) {
 	}
 
 	var name string
-	err := s.db.Get(&name, `SELECT name FROM sqlite_master WHERE type='index' AND name='idx_messages_conv_msgid'`)
+	err := s.db.Get(&name, `SELECT name FROM sqlite_master WHERE type='index' AND name='idx_messages_contact_msgid'`)
 	if err != nil {
 		t.Fatalf("new index missing: %v", err)
 	}

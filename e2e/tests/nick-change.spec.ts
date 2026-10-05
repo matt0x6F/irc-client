@@ -1,5 +1,6 @@
 import { test, expect } from '../lib/fixtures';
 import { addNetworkAndConnect, selectNetwork, joinChannel } from '../lib/actions';
+import { IrcPeer } from '../lib/irc-peer';
 
 // Reproduces: after a runtime `/nick`, the header nick chip stays stale.
 //
@@ -102,5 +103,70 @@ test('member list recognizes own renamed row as self', async ({ page, runtime })
     await input.fill('/nick e2euser');
     await input.press('Enter');
     await expect(userList).toContainText('e2euser', { timeout: 15_000 }).catch(() => {});
+  }
+});
+
+test('direct messages follow a seasonal nick change and keep presence, history, and replies', async ({ page, runtime }) => {
+  await page.setViewportSize({ width: 1200, height: 440 });
+  await page.goto(runtime.bridgeUrl);
+  await addNetworkAndConnect(page, runtime);
+  await selectNetwork(page);
+  await joinChannel(page, '#e2e');
+
+  const suffix = Date.now() % 100000;
+  const oldNick = `autumn${suffix}`;
+  const newNick = `Spooky${suffix}`;
+  const peer = new IrcPeer('localhost', runtime.ergoPort, oldNick);
+  await peer.connect();
+  try {
+    const joined = peer.waitForJoin('#e2e');
+    peer.join('#e2e');
+    await joined;
+    peer.say('e2euser', `before-rename-${suffix}`);
+    const sidebar = page.getByTestId('channel-panel');
+    const oldRow = sidebar.locator(`[data-testid="pm-node"][data-peer="${oldNick}"]`);
+    await oldRow.click();
+    await expect(oldRow.getByTitle('Online', { exact: true })).toBeVisible();
+    await expect(page.getByTestId('message-list').getByText(`before-rename-${suffix}`, { exact: true })).toBeVisible();
+
+    // Renaming a conversation must not snap someone reading earlier messages
+    // back to the newest line, as ordinary pane navigation does.
+    const list = page.getByTestId('message-list');
+    const pad = 'autumn leaves '.repeat(15).trim();
+    for (let i = 0; i < 20; i++) peer.say('e2euser', `history-${suffix}-${i} ${pad}`);
+    await expect(list.getByText(`history-${suffix}-19 ${pad}`, { exact: true })).toBeAttached();
+    await expect.poll(() => list.evaluate((el) => el.scrollHeight - el.clientHeight)).toBeGreaterThan(100);
+    await list.evaluate((el) => el.scrollTo({ top: 0 }));
+    await expect(page.getByTestId('scroll-to-bottom')).toBeVisible();
+
+    const renamed = peer.waitForLine(new RegExp(` NICK :?${newNick}$`));
+    peer.sendRaw(`NICK ${newNick}`);
+    await renamed;
+    const newRow = sidebar.locator(`[data-testid="pm-node"][data-peer="${newNick}" i]`);
+    await expect(newRow.getByTitle('Online', { exact: true })).toBeVisible();
+    await expect(oldRow).toHaveCount(0);
+    await expect(newRow).toHaveClass(/cc-active-pane/);
+    await expect(page.getByTestId('scroll-to-bottom')).toBeVisible();
+    await expect.poll(() => list.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight)).toBeGreaterThan(100);
+    await expect(page.getByTestId('message-list').getByText(`before-rename-${suffix}`, { exact: true })).toBeVisible();
+
+    const reply = `reply-after-rename-${suffix}`;
+    const received = peer.waitForLine(new RegExp(` PRIVMSG ${newNick} :${reply}$`));
+    const input = page.getByTestId('message-input');
+    await input.fill(reply);
+    await input.press('Enter');
+    await received;
+
+    // Saved conversation routing and history must survive a frontend reload.
+    await page.reload();
+    await expect(newRow.getByTitle('Online', { exact: true })).toBeVisible();
+    await expect(oldRow).toHaveCount(0);
+    await newRow.click();
+    await list.evaluate((el) => el.scrollTo({ top: 0 }));
+    await expect(page.getByTestId('message-list').getByText(`before-rename-${suffix}`, { exact: true })).toBeVisible();
+    peer.close();
+    await expect(newRow.getByTitle('Presence unknown', { exact: true })).toBeVisible();
+  } finally {
+    peer.close();
   }
 });

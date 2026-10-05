@@ -13,6 +13,7 @@ type Querier interface {
 	AddChannelUser(ctx context.Context, arg AddChannelUserParams) error
 	AddIgnoredSender(ctx context.Context, arg AddIgnoredSenderParams) error
 	AddMonitoredNick(ctx context.Context, arg AddMonitoredNickParams) error
+	BindPMConversationAccount(ctx context.Context, arg BindPMConversationAccountParams) error
 	ClearChannelUsers(ctx context.Context, channelID int64) error
 	ClearFileTransferHistory(ctx context.Context) error
 	ClearNetworkChannelUsers(ctx context.Context, networkID int64) error
@@ -41,6 +42,8 @@ type Querier interface {
 	GetChannelUserModes(ctx context.Context, arg GetChannelUserModesParams) (sql.NullString, error)
 	GetChannelUsers(ctx context.Context, channelID int64) ([]ChannelUser, error)
 	GetChannels(ctx context.Context, networkID int64) ([]Channel, error)
+	GetConversationMessages(ctx context.Context, arg GetConversationMessagesParams) ([]Message, error)
+	GetConversationMessagesBeforeTime(ctx context.Context, arg GetConversationMessagesBeforeTimeParams) ([]Message, error)
 	GetFileTransfer(ctx context.Context, transferID string) (FileTransfer, error)
 	GetJoinedChannels(ctx context.Context, arg GetJoinedChannelsParams) ([]Channel, error)
 	GetLastOpenChannel(ctx context.Context) (GetLastOpenChannelRow, error)
@@ -67,6 +70,8 @@ type Querier interface {
 	GetOpenChannels(ctx context.Context, arg GetOpenChannelsParams) ([]Channel, error)
 	GetOpenPMConversations(ctx context.Context, networkID int64) ([]PrivateMessageConversation, error)
 	GetPMConversation(ctx context.Context, arg GetPMConversationParams) (PrivateMessageConversation, error)
+	GetPMConversationByAccount(ctx context.Context, arg GetPMConversationByAccountParams) (PrivateMessageConversation, error)
+	GetPMConversationByID(ctx context.Context, arg GetPMConversationByIDParams) (PrivateMessageConversation, error)
 	GetPinnedMessagesWithChannel(ctx context.Context, arg GetPinnedMessagesWithChannelParams) ([]GetPinnedMessagesWithChannelRow, error)
 	GetPinnedMessagesWithoutChannel(ctx context.Context, networkID int64) ([]GetPinnedMessagesWithoutChannelRow, error)
 	GetPluginConfig(ctx context.Context, name string) (PluginConfig, error)
@@ -77,6 +82,8 @@ type Querier interface {
 	GetSTSPolicy(ctx context.Context, hostname string) (StsPolicy, error)
 	GetServers(ctx context.Context, networkID int64) ([]Server, error)
 	GetSetting(ctx context.Context, key string) (string, error)
+	GetUnboundPMContacts(ctx context.Context, networkID int64) ([]PrivateMessageConversation, error)
+	GetUnboundPMConversation(ctx context.Context, arg GetUnboundPMConversationParams) (PrivateMessageConversation, error)
 	ListActiveFileTransfers(ctx context.Context) ([]FileTransfer, error)
 	ListActivityItems(ctx context.Context, limit int64) ([]ActivityItem, error)
 	ListAllIgnoredSenders(ctx context.Context) ([]ListAllIgnoredSendersRow, error)
@@ -94,6 +101,8 @@ type Querier interface {
 	RemoveChannelUser(ctx context.Context, arg RemoveChannelUserParams) error
 	RemoveIgnoredSender(ctx context.Context, arg RemoveIgnoredSenderParams) error
 	RemoveMonitoredNick(ctx context.Context, arg RemoveMonitoredNickParams) error
+	SetPMContactTarget(ctx context.Context, arg SetPMContactTargetParams) error
+	SetPMConversationOpenByID(ctx context.Context, arg SetPMConversationOpenByIDParams) error
 	SetPluginConfig(ctx context.Context, arg SetPluginConfigParams) error
 	SetPluginConfigSchema(ctx context.Context, arg SetPluginConfigSchemaParams) error
 	SetPluginEnabled(ctx context.Context, arg SetPluginEnabledParams) error
@@ -114,6 +123,7 @@ type Querier interface {
 	UpdateNetworkIcon(ctx context.Context, arg UpdateNetworkIconParams) error
 	UpdateNetworkSortOrder(ctx context.Context, arg UpdateNetworkSortOrderParams) error
 	UpdatePMConversationIsOpen(ctx context.Context, arg UpdatePMConversationIsOpenParams) error
+	UpdatePMConversationTarget(ctx context.Context, arg UpdatePMConversationTargetParams) error
 	UpdateServer(ctx context.Context, arg UpdateServerParams) error
 	UpsertFileTransfer(ctx context.Context, arg UpsertFileTransferParams) error
 	UpsertLinkPreview(ctx context.Context, arg UpsertLinkPreviewParams) error

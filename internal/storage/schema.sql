@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS messages (
     timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     raw_line TEXT,
     pm_target TEXT, -- conversation peer for private messages (NULL for channel/status/server rows)
+    conversation_id INTEGER, -- stable PM identity; pm_target retains the routing name at receipt
     msgid TEXT, -- IRCv3 message id (NULL for legacy/local rows); used to dedup CHATHISTORY replays
     reply_msgid TEXT, -- IRCv3 +draft/reply: msgid of the parent message (NULL if not a reply)
     channel_context TEXT, -- IRCv3 +draft/channel-context: channel a private message is about (NULL otherwise)
@@ -99,12 +100,17 @@ CREATE TABLE IF NOT EXISTS private_message_conversations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     network_id INTEGER NOT NULL,
     target_user TEXT NOT NULL,
+    nickname_key TEXT NOT NULL DEFAULT '',
+    account TEXT NOT NULL DEFAULT '',
+    identity_source TEXT NOT NULL DEFAULT '',
+    identity_observed_at INTEGER NOT NULL DEFAULT 0,
     is_open BOOLEAN NOT NULL DEFAULT 0,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP,
-    FOREIGN KEY (network_id) REFERENCES networks(id) ON DELETE CASCADE,
-    UNIQUE(network_id, target_user)
+    FOREIGN KEY (network_id) REFERENCES networks(id) ON DELETE CASCADE
 );
+
+CREATE UNIQUE INDEX idx_pm_account ON private_message_conversations(network_id,account) WHERE account != '';
 
 CREATE TABLE IF NOT EXISTS plugin_configs (
     name TEXT PRIMARY KEY,
@@ -223,8 +229,8 @@ CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
 -- row per shared channel, so the key includes the conversation (channel_id for
 -- channels, pm_target for DMs). COALESCE avoids SQLite's "every NULL is distinct"
 -- behaviour that would otherwise defeat dedup for DM rows (channel_id IS NULL).
-CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_conv_msgid
-  ON messages(network_id, COALESCE(channel_id, 0), COALESCE(pm_target, ''), msgid)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_contact_msgid
+  ON messages(network_id, COALESCE(channel_id, 0), COALESCE('@'||conversation_id, pm_target, ''), msgid)
   WHERE msgid IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_servers_network_order ON servers(network_id, "order");
 CREATE INDEX IF NOT EXISTS idx_pinned_network_channel ON pinned_messages(network_id, channel_id);

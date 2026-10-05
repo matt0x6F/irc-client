@@ -51,6 +51,34 @@ func parseLine(t *testing.T, raw string) ircmsg.Message {
 	return e
 }
 
+func TestNickChangeFollowsOpenPrivateMessage(t *testing.T) {
+	c := newNickTestClient(t)
+	c.supportsMonitor = true
+	c.monitorArmed = make(map[string]bool)
+	c.monitorStatus = make(map[string]bool)
+	if _, _, err := c.storage.GetOrCreatePMConversation(c.networkID, "alice", c.network.Nickname); err != nil {
+		t.Fatal(err)
+	}
+	c.MonitorReconcileNick("alice")
+	c.setMonitorPresence("alice", true)
+
+	c.handleNickMessage(parseLine(t, ":alice!u@h NICK spookyAlice"))
+
+	peers, err := c.storage.GetPrivateMessageConversations(c.networkID, c.network.Nickname, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(peers) != 1 || peers[0] != "spookyalice" {
+		t.Fatalf("open DM peers after nick change = %v, want [spookyalice]", peers)
+	}
+	if !c.monitorArmed["spookyalice"] || c.monitorArmed["alice"] {
+		t.Fatalf("MONITOR subscriptions after nick change = %v, want only spookyalice", c.monitorArmed)
+	}
+	if !c.MonitorPresence()["spookyalice"] {
+		t.Fatalf("renamed peer should remain online: %v", c.MonitorPresence())
+	}
+}
+
 func statusMessages(t *testing.T, c *IRCClient) []storage.Message {
 	t.Helper()
 	msgs, err := c.storage.GetMessages(c.networkID, nil, 50)

@@ -2,6 +2,11 @@ import { describe, it, expect } from 'vitest';
 import { eventPaneKey, eventMatchesPane } from './pane-routing';
 
 describe('eventPaneKey', () => {
+  it('keeps a saved PM pane stable when its peer changes nick', () => {
+    expect(eventPaneKey({ channel: 'me', pmTarget: 'alice', conversationId: 17 })).toBe('pm:@17');
+    expect(eventPaneKey({ channel: 'me', pmTarget: 'spookyAlice', conversationId: 17 })).toBe('pm:@17');
+    expect(eventMatchesPane({ channel: 'me', pmTarget: 'spookyAlice', conversationId: 17 }, 'pm:@17')).toBe(true);
+  });
   it('routes a PM event to pm:<peer> using the backend-computed pmTarget', () => {
     // Inbound DM from alice: channel is *our* nick, but pmTarget is the peer.
     expect(eventPaneKey({ channel: 'matt0x6f', pmTarget: 'alice' })).toBe('pm:alice');

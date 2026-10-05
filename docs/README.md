@@ -59,6 +59,11 @@ Reference for every IRCv3 capability Cascade negotiates, what it does with each,
 - Tracking unsupported capabilities and what blocks them
 - Knowing how the capability screenshots are generated
 
+### [Contact Identity and Reconnect Recovery](./public/developers/contact-identity.md)
+Implementation of stable saved contacts, capability-driven account bindings, and
+recovery of nickname changes missed while Cascade was closed. Includes migration,
+discovery limits, and native / real-server acceptance evidence.
+
 ### [Releases & Update Channels](./public/developers/releases.md)
 How Cascade builds and ships (manual stable releases + auto pre-releases on every merge to `main`), and how the in-app updater's Stable/Prerelease channels work.
 
@@ -108,4 +113,3 @@ Track story status using:
 - Check [User Stories](./user-stories.md) for feature requirements
 - See [Events System](./public/developers/events.md) for event-related questions
 - See [Plugin System](./public/developers/plugin-system.md) for plugin development questions
-

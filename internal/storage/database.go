@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -28,6 +29,7 @@ type Storage struct {
 	wg            sync.WaitGroup
 	closed        bool
 	closedMu      sync.RWMutex
+	contactMu     sync.Mutex
 }
 
 // NewStorage creates a new storage instance
@@ -152,9 +154,9 @@ func (s *Storage) flushBuffer(allowClosed bool) {
 			// rows stay out of the partial unique index (so they never collide). The
 			// ON CONFLICT clause makes the live path idempotent against the msgid dedup
 			// index — e.g. an echo and a CHATHISTORY replay of the same line.
-			query := `INSERT INTO messages (network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, msgid, reply_msgid, channel_context)
-			          VALUES (:network_id, :channel_id, :user, :message, :message_type, :timestamp, :raw_line, NULLIF(:pm_target, ''), NULLIF(:msgid, ''), NULLIF(:reply_msgid, ''), NULLIF(:channel_context, ''))
-			          ON CONFLICT(network_id, COALESCE(channel_id,0), COALESCE(pm_target,''), msgid) WHERE msgid IS NOT NULL DO NOTHING`
+			query := `INSERT INTO messages (network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, conversation_id, msgid, reply_msgid, channel_context)
+			          VALUES (:network_id, :channel_id, :user, :message, :message_type, :timestamp, :raw_line, NULLIF(:pm_target, ''), NULLIF(:conversation_id, 0), NULLIF(:msgid, ''), NULLIF(:reply_msgid, ''), NULLIF(:channel_context, ''))
+			          ON CONFLICT(network_id, COALESCE(channel_id,0), COALESCE('@'||conversation_id,pm_target,''), msgid) WHERE msgid IS NOT NULL DO NOTHING`
 
 			_, err := s.db.NamedExec(query, messages)
 			if err != nil {
@@ -180,6 +182,11 @@ func normalizeForStore(msg Message) Message {
 
 // WriteMessage queues a message for batch insertion
 func (s *Storage) WriteMessage(msg Message) error {
+	var identityErr error
+	msg, identityErr = s.assignConversation(msg)
+	if identityErr != nil {
+		return identityErr
+	}
 	s.closedMu.RLock()
 	if s.closed {
 		s.closedMu.RUnlock()
@@ -213,6 +220,11 @@ func (s *Storage) WriteMessage(msg Message) error {
 // WriteMessageSync writes a message immediately (flushes buffer first)
 // Use this for messages that need to be immediately available (e.g., sent messages)
 func (s *Storage) WriteMessageSync(msg Message) error {
+	var identityErr error
+	msg, identityErr = s.assignConversation(msg)
+	if identityErr != nil {
+		return identityErr
+	}
 	// Check if storage is closed
 	s.closedMu.RLock()
 	if s.closed {
@@ -249,6 +261,11 @@ func (s *Storage) WriteMessageSync(msg Message) error {
 // WriteMessageDirect writes a message directly to the database, bypassing the buffer
 // Use this during shutdown to ensure messages are persisted
 func (s *Storage) WriteMessageDirect(msg Message) error {
+	var identityErr error
+	msg, identityErr = s.assignConversation(msg)
+	if identityErr != nil {
+		return identityErr
+	}
 	// Check if storage is closed
 	s.closedMu.RLock()
 	if s.closed {
@@ -285,13 +302,17 @@ func (s *Storage) WriteHistoryMessages(msgs []Message) (int, error) {
 	// Same NULLIF + ON CONFLICT semantics as flushBuffer: msgid-less rows are
 	// exempt from the dedup index; rows whose msgid already exists are skipped
 	// (and excluded from RowsAffected, so the returned count is new rows only).
-	query := `INSERT INTO messages (network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, msgid, reply_msgid, channel_context)
-	          VALUES (:network_id, :channel_id, :user, :message, :message_type, :timestamp, :raw_line, NULLIF(:pm_target, ''), NULLIF(:msgid, ''), NULLIF(:reply_msgid, ''), NULLIF(:channel_context, ''))
-	          ON CONFLICT(network_id, COALESCE(channel_id,0), COALESCE(pm_target,''), msgid) WHERE msgid IS NOT NULL DO NOTHING`
+	query := `INSERT INTO messages (network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, conversation_id, msgid, reply_msgid, channel_context)
+	          VALUES (:network_id, :channel_id, :user, :message, :message_type, :timestamp, :raw_line, NULLIF(:pm_target, ''), NULLIF(:conversation_id, 0), NULLIF(:msgid, ''), NULLIF(:reply_msgid, ''), NULLIF(:channel_context, ''))
+	          ON CONFLICT(network_id, COALESCE(channel_id,0), COALESCE('@'||conversation_id,pm_target,''), msgid) WHERE msgid IS NOT NULL DO NOTHING`
 
 	normalized := make([]Message, len(msgs))
 	for i := range msgs {
-		normalized[i] = normalizeForStore(msgs[i])
+		assigned, err := s.assignConversation(msgs[i])
+		if err != nil {
+			return 0, err
+		}
+		normalized[i] = normalizeForStore(assigned)
 	}
 
 	s.mu.Lock()
@@ -518,12 +539,15 @@ func (s *Storage) GetMessagesBeforeTime(networkID int64, channelID *int64, pmTar
 
 	switch {
 	case pmTarget != "":
-		dbMessages, err = s.queries.GetMessagesBeforeTimePM(context.Background(), db.GetMessagesBeforeTimePMParams{
-			NetworkID: networkID,
-			PmTarget:  sql.NullString{String: strings.ToLower(pmTarget), Valid: true},
-			Timestamp: before,
-			Limit:     int64(limit),
-		})
+		conv, findErr := s.FindPMConversation(networkID, pmTarget)
+		if errors.Is(findErr, sql.ErrNoRows) {
+			return []Message{}, nil
+		}
+		if findErr != nil {
+			return nil, findErr
+		}
+		dbMessages, err = s.queries.GetConversationMessagesBeforeTime(context.Background(), db.GetConversationMessagesBeforeTimeParams{NetworkID: networkID, ConversationID: sql.NullInt64{Int64: conv.ID, Valid: true}, Timestamp: before, Limit: int64(limit)})
+
 	case channelID != nil:
 		dbMessages, err = s.queries.GetMessagesBeforeTimeWithChannel(context.Background(), db.GetMessagesBeforeTimeWithChannelParams{
 			NetworkID: networkID,
@@ -943,13 +967,19 @@ func (s *Storage) UpdateChannelUserNickname(networkID int64, oldNickname string,
 // The currentUser parameter is retained for API compatibility but no longer used.
 func (s *Storage) GetPrivateMessages(networkID int64, targetUser string, currentUser string, limit int) ([]Message, error) {
 	_ = currentUser
-	targetUserLower := strings.ToLower(targetUser)
-
-	dbMessages, err := s.queries.GetPrivateMessages(context.Background(), db.GetPrivateMessagesParams{
-		NetworkID: networkID,
-		PmTarget:  sql.NullString{String: targetUserLower, Valid: true},
-		Limit:     int64(limit),
-	})
+	conv, err := s.FindPMConversation(networkID, targetUser)
+	if errors.Is(err, sql.ErrNoRows) {
+		rows, legacyErr := s.queries.GetPrivateMessages(context.Background(), db.GetPrivateMessagesParams{NetworkID: networkID, PmTarget: convertToNullString(strings.ToLower(targetUser)), Limit: int64(limit)})
+		messages := make([]Message, 0, len(rows))
+		for i := len(rows) - 1; i >= 0; i-- {
+			messages = append(messages, convertMessageFromDB(rows[i]))
+		}
+		return messages, legacyErr
+	}
+	if err != nil {
+		return nil, err
+	}
+	dbMessages, err := s.queries.GetConversationMessages(context.Background(), db.GetConversationMessagesParams{NetworkID: networkID, ConversationID: sql.NullInt64{Int64: conv.ID, Valid: true}, Limit: int64(limit)})
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to get private messages: %w", err)
@@ -1015,6 +1045,13 @@ func (s *Storage) GetPrivateMessageConversations(networkID int64, currentUser st
 // (channels.changed) only when a fresh DM entry actually appeared, so the DM list
 // refreshes for a new peer without re-fetching on every message to an open chat.
 func (s *Storage) GetOrCreatePMConversation(networkID int64, targetUser string, currentUser string) (*PrivateMessageConversation, bool, error) {
+	s.contactMu.Lock()
+	defer s.contactMu.Unlock()
+	if strings.HasPrefix(targetUser, "@") {
+		conv, err := s.FindPMConversation(networkID, targetUser)
+		return conv, false, err
+	}
+
 	// Normalize target user to lowercase for case-insensitive matching
 	targetUserLower := strings.ToLower(targetUser)
 
@@ -1054,6 +1091,28 @@ func (s *Storage) GetOrCreatePMConversation(networkID int64, targetUser string, 
 	return &conv, true, nil
 }
 
+// RenamePMConversation follows an observed IRC NICK change. Only the routing
+// target changes: recorded message senders retain the nick they used at the time.
+// Returns whether a saved conversation existed, including a closed one.
+func (s *Storage) RenamePMConversation(networkID int64, oldNick, newNick string) (bool, error) {
+	s.flushBuffer(false)
+	oldKey, newKey := strings.ToLower(oldNick), strings.ToLower(newNick)
+	if oldKey == "" || newKey == "" || oldKey == newKey {
+		return false, nil
+	}
+	conv, err := s.FindPMConversation(networkID, oldKey)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if err := s.queries.UpdatePMConversationTarget(context.Background(), db.UpdatePMConversationTargetParams{TargetUser: newKey, NetworkID: networkID, ID: conv.ID}); err != nil {
+		return false, fmt.Errorf("rename PM contact: %w", err)
+	}
+	return true, nil
+}
+
 // GetOpenPMConversations retrieves PM conversations where is_open = true
 func (s *Storage) GetOpenPMConversations(networkID int64, currentUser string) ([]PrivateMessageConversation, error) {
 	dbConversations, err := s.queries.GetOpenPMConversations(context.Background(), networkID)
@@ -1069,12 +1128,12 @@ func (s *Storage) GetOpenPMConversations(networkID int64, currentUser string) ([
 
 // UpdatePMConversationIsOpen updates the is_open status for a PM conversation
 func (s *Storage) UpdatePMConversationIsOpen(networkID int64, targetUser string, isOpen bool) error {
-	targetUserLower := strings.ToLower(targetUser)
-	err := s.queries.UpdatePMConversationIsOpen(context.Background(), db.UpdatePMConversationIsOpenParams{
-		IsOpen:     isOpen,
-		NetworkID:  networkID,
-		TargetUser: targetUserLower,
-	})
+	conv, err := s.FindPMConversation(networkID, targetUser)
+	if err != nil {
+		return err
+	}
+	err = s.queries.SetPMConversationOpenByID(context.Background(), db.SetPMConversationOpenByIDParams{IsOpen: isOpen, NetworkID: networkID, ID: conv.ID})
+
 	if err != nil {
 		return fmt.Errorf("failed to update PM conversation is_open: %w", err)
 	}
@@ -1084,9 +1143,10 @@ func (s *Storage) UpdatePMConversationIsOpen(networkID int64, targetUser string,
 // LastOpenPane represents the last open pane (channel or PM conversation)
 // This is exported so it can be used by the app package
 type LastOpenPane struct {
-	NetworkID int64  `json:"network_id"`
-	Type      string `json:"type"` // "channel" or "pm"
-	Name      string `json:"name"` // Channel name or PM target user
+	NetworkID      int64  `json:"network_id"`
+	Type           string `json:"type"` // "channel" or "pm"
+	ConversationID int64  `json:"conversation_id"`
+	Name           string `json:"name"` // Channel name or PM target user
 }
 
 // GetLastOpenPane retrieves the most recently updated open channel or PM conversation across all networks
@@ -1123,9 +1183,10 @@ func (s *Storage) GetLastOpenPane() (*LastOpenPane, error) {
 	if !channelFound {
 		// Only PM found
 		return &LastOpenPane{
-			NetworkID: pm.NetworkID,
-			Type:      "pm",
-			Name:      pm.TargetUser,
+			NetworkID:      pm.NetworkID,
+			Type:           "pm",
+			Name:           pm.TargetUser,
+			ConversationID: pm.ID,
 		}, nil
 	}
 
@@ -1150,9 +1211,10 @@ func (s *Storage) GetLastOpenPane() (*LastOpenPane, error) {
 	}
 	if channelUpdatedAt == nil {
 		return &LastOpenPane{
-			NetworkID: pm.NetworkID,
-			Type:      "pm",
-			Name:      pm.TargetUser,
+			NetworkID:      pm.NetworkID,
+			Type:           "pm",
+			Name:           pm.TargetUser,
+			ConversationID: pm.ID,
 		}, nil
 	}
 	if pmUpdatedAt == nil {
@@ -1173,9 +1235,10 @@ func (s *Storage) GetLastOpenPane() (*LastOpenPane, error) {
 	}
 
 	return &LastOpenPane{
-		NetworkID: pm.NetworkID,
-		Type:      "pm",
-		Name:      pm.TargetUser,
+		NetworkID:      pm.NetworkID,
+		Type:           "pm",
+		Name:           pm.TargetUser,
+		ConversationID: pm.ID,
 	}, nil
 }
 
@@ -1204,7 +1267,7 @@ func (s *Storage) SearchMessages(query string, networkID *int64, limit int) ([]S
 
 	if networkID != nil {
 		err = s.db.Select(&results, `
-			SELECT m.id, m.network_id, m.channel_id, m.user, m.message, m.message_type, m.timestamp, m.raw_line,
+			SELECT m.id, m.network_id, m.channel_id, m.user, m.message, m.message_type, m.timestamp, m.raw_line, COALESCE(m.conversation_id,0) as conversation_id, COALESCE(m.pm_target,'') as pm_target,
 				COALESCE(c.name, '') as channel_name,
 				COALESCE(n.name, '') as network_name
 			FROM messages m
@@ -1218,7 +1281,7 @@ func (s *Storage) SearchMessages(query string, networkID *int64, limit int) ([]S
 		`, sanitized, *networkID, limit)
 	} else {
 		err = s.db.Select(&results, `
-			SELECT m.id, m.network_id, m.channel_id, m.user, m.message, m.message_type, m.timestamp, m.raw_line,
+			SELECT m.id, m.network_id, m.channel_id, m.user, m.message, m.message_type, m.timestamp, m.raw_line, COALESCE(m.conversation_id,0) as conversation_id, COALESCE(m.pm_target,'') as pm_target,
 				COALESCE(c.name, '') as channel_name,
 				COALESCE(n.name, '') as network_name
 			FROM messages m
@@ -1545,4 +1608,44 @@ func (s *Storage) SetPluginConfigSchema(name string, schema map[string]interface
 		return fmt.Errorf("failed to set plugin config_schema: %w", err)
 	}
 	return nil
+}
+
+// PMReference is a local address accepted by PM APIs, never sent over IRC.
+func PMReference(id int64) string { return "@" + strconv.FormatInt(id, 10) }
+
+func (s *Storage) FindPMConversation(networkID int64, reference string) (*PrivateMessageConversation, error) {
+	var row db.PrivateMessageConversation
+	var err error
+	if strings.HasPrefix(reference, "@") {
+		id, parseErr := strconv.ParseInt(reference[1:], 10, 64)
+		if parseErr != nil || id <= 0 {
+			return nil, fmt.Errorf("invalid conversation reference %q", reference)
+		}
+		row, err = s.queries.GetPMConversationByID(context.Background(), db.GetPMConversationByIDParams{NetworkID: networkID, ID: id})
+	} else {
+		row, err = s.queries.GetPMConversation(context.Background(), db.GetPMConversationParams{NetworkID: networkID, TargetUser: strings.ToLower(reference)})
+	}
+	if err != nil {
+		return nil, err
+	}
+	conv := convertPMConversationFromDB(row)
+	return &conv, nil
+}
+
+func (s *Storage) assignConversation(msg Message) (Message, error) {
+	if msg.ChannelID != nil || msg.PMTarget == "" {
+		return msg, nil
+	}
+	if msg.ConversationID != 0 {
+		if _, err := s.FindPMConversation(msg.NetworkID, PMReference(msg.ConversationID)); err != nil {
+			return msg, err
+		}
+		return msg, nil
+	}
+	conv, _, err := s.GetOrCreatePMConversation(msg.NetworkID, msg.PMTarget, "")
+	if err != nil {
+		return msg, fmt.Errorf("resolve message conversation: %w", err)
+	}
+	msg.ConversationID = conv.ID
+	return msg, nil
 }

@@ -12,9 +12,9 @@ import (
 )
 
 const createMessage = `-- name: CreateMessage :one
-INSERT INTO messages (network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, msgid, reply_msgid, channel_context)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, msgid, reply_msgid, channel_context
+INSERT INTO messages (network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, conversation_id, msgid, reply_msgid, channel_context)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, conversation_id, msgid, reply_msgid, channel_context
 `
 
 type CreateMessageParams struct {
@@ -26,6 +26,7 @@ type CreateMessageParams struct {
 	Timestamp      time.Time      `json:"timestamp"`
 	RawLine        sql.NullString `json:"raw_line"`
 	PmTarget       sql.NullString `json:"pm_target"`
+	ConversationID sql.NullInt64  `json:"conversation_id"`
 	Msgid          sql.NullString `json:"msgid"`
 	ReplyMsgid     sql.NullString `json:"reply_msgid"`
 	ChannelContext sql.NullString `json:"channel_context"`
@@ -41,6 +42,7 @@ func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) (M
 		arg.Timestamp,
 		arg.RawLine,
 		arg.PmTarget,
+		arg.ConversationID,
 		arg.Msgid,
 		arg.ReplyMsgid,
 		arg.ChannelContext,
@@ -56,6 +58,7 @@ func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) (M
 		&i.Timestamp,
 		&i.RawLine,
 		&i.PmTarget,
+		&i.ConversationID,
 		&i.Msgid,
 		&i.ReplyMsgid,
 		&i.ChannelContext,
@@ -63,8 +66,110 @@ func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) (M
 	return i, err
 }
 
+const getConversationMessages = `-- name: GetConversationMessages :many
+SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, conversation_id, msgid, reply_msgid, channel_context FROM messages WHERE network_id = ? AND channel_id IS NULL AND conversation_id = ?
+ORDER BY timestamp DESC, id DESC LIMIT ?
+`
+
+type GetConversationMessagesParams struct {
+	NetworkID      int64         `json:"network_id"`
+	ConversationID sql.NullInt64 `json:"conversation_id"`
+	Limit          int64         `json:"limit"`
+}
+
+func (q *Queries) GetConversationMessages(ctx context.Context, arg GetConversationMessagesParams) ([]Message, error) {
+	rows, err := q.db.QueryContext(ctx, getConversationMessages, arg.NetworkID, arg.ConversationID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Message
+	for rows.Next() {
+		var i Message
+		if err := rows.Scan(
+			&i.ID,
+			&i.NetworkID,
+			&i.ChannelID,
+			&i.User,
+			&i.Message,
+			&i.MessageType,
+			&i.Timestamp,
+			&i.RawLine,
+			&i.PmTarget,
+			&i.ConversationID,
+			&i.Msgid,
+			&i.ReplyMsgid,
+			&i.ChannelContext,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getConversationMessagesBeforeTime = `-- name: GetConversationMessagesBeforeTime :many
+SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, conversation_id, msgid, reply_msgid, channel_context FROM messages WHERE network_id = ? AND channel_id IS NULL AND conversation_id = ? AND timestamp < ?
+ORDER BY timestamp DESC, id DESC LIMIT ?
+`
+
+type GetConversationMessagesBeforeTimeParams struct {
+	NetworkID      int64         `json:"network_id"`
+	ConversationID sql.NullInt64 `json:"conversation_id"`
+	Timestamp      time.Time     `json:"timestamp"`
+	Limit          int64         `json:"limit"`
+}
+
+func (q *Queries) GetConversationMessagesBeforeTime(ctx context.Context, arg GetConversationMessagesBeforeTimeParams) ([]Message, error) {
+	rows, err := q.db.QueryContext(ctx, getConversationMessagesBeforeTime,
+		arg.NetworkID,
+		arg.ConversationID,
+		arg.Timestamp,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Message
+	for rows.Next() {
+		var i Message
+		if err := rows.Scan(
+			&i.ID,
+			&i.NetworkID,
+			&i.ChannelID,
+			&i.User,
+			&i.Message,
+			&i.MessageType,
+			&i.Timestamp,
+			&i.RawLine,
+			&i.PmTarget,
+			&i.ConversationID,
+			&i.Msgid,
+			&i.ReplyMsgid,
+			&i.ChannelContext,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getMessageByMsgID = `-- name: GetMessageByMsgID :one
-SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, msgid, reply_msgid, channel_context FROM messages
+SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, conversation_id, msgid, reply_msgid, channel_context FROM messages
 WHERE network_id = ? AND msgid = ?
 LIMIT 1
 `
@@ -87,6 +192,7 @@ func (q *Queries) GetMessageByMsgID(ctx context.Context, arg GetMessageByMsgIDPa
 		&i.Timestamp,
 		&i.RawLine,
 		&i.PmTarget,
+		&i.ConversationID,
 		&i.Msgid,
 		&i.ReplyMsgid,
 		&i.ChannelContext,
@@ -111,9 +217,9 @@ func (q *Queries) GetMessageIDByMsgID(ctx context.Context, arg GetMessageIDByMsg
 }
 
 const getMessagesWithChannel = `-- name: GetMessagesWithChannel :many
-SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, msgid, reply_msgid, channel_context FROM messages 
-WHERE network_id = ? AND channel_id = ? 
-ORDER BY timestamp DESC 
+SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, conversation_id, msgid, reply_msgid, channel_context FROM messages
+WHERE network_id = ? AND channel_id = ?
+ORDER BY timestamp DESC
 LIMIT ?
 `
 
@@ -142,6 +248,7 @@ func (q *Queries) GetMessagesWithChannel(ctx context.Context, arg GetMessagesWit
 			&i.Timestamp,
 			&i.RawLine,
 			&i.PmTarget,
+			&i.ConversationID,
 			&i.Msgid,
 			&i.ReplyMsgid,
 			&i.ChannelContext,
@@ -160,7 +267,7 @@ func (q *Queries) GetMessagesWithChannel(ctx context.Context, arg GetMessagesWit
 }
 
 const getMessagesWithoutChannel = `-- name: GetMessagesWithoutChannel :many
-SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, msgid, reply_msgid, channel_context FROM messages
+SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, conversation_id, msgid, reply_msgid, channel_context FROM messages
 WHERE network_id = ? AND channel_id IS NULL AND pm_target IS NULL
 ORDER BY timestamp DESC
 LIMIT ?
@@ -190,6 +297,7 @@ func (q *Queries) GetMessagesWithoutChannel(ctx context.Context, arg GetMessages
 			&i.Timestamp,
 			&i.RawLine,
 			&i.PmTarget,
+			&i.ConversationID,
 			&i.Msgid,
 			&i.ReplyMsgid,
 			&i.ChannelContext,
@@ -208,9 +316,10 @@ func (q *Queries) GetMessagesWithoutChannel(ctx context.Context, arg GetMessages
 }
 
 const getPrivateMessages = `-- name: GetPrivateMessages :many
-SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, msgid, reply_msgid, channel_context FROM messages
+SELECT id, network_id, channel_id, user, message, message_type, timestamp, raw_line, pm_target, conversation_id, msgid, reply_msgid, channel_context FROM messages
 WHERE network_id = ? AND channel_id IS NULL AND message_type IN ('privmsg', 'action', 'notice', 'marker')
 AND LOWER(pm_target) = ?
+AND conversation_id IS NULL
 ORDER BY timestamp DESC
 LIMIT ?
 `
@@ -240,6 +349,7 @@ func (q *Queries) GetPrivateMessages(ctx context.Context, arg GetPrivateMessages
 			&i.Timestamp,
 			&i.RawLine,
 			&i.PmTarget,
+			&i.ConversationID,
 			&i.Msgid,
 			&i.ReplyMsgid,
 			&i.ChannelContext,

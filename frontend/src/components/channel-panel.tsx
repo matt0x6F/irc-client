@@ -1,10 +1,9 @@
 import { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { storage } from '../../wailsjs/go/models';
-import { GetChannels, GetJoinedChannels, GetOpenChannels, LeaveChannel, CloseChannel, ToggleChannelAutoJoin, GetPrivateMessageConversations, SendCommand, SetPrivateMessageOpen, ClearPaneFocus } from '../../wailsjs/go/main/App';
+import { GetChannels, GetJoinedChannels, GetOpenChannels, LeaveChannel, CloseChannel, ToggleChannelAutoJoin, SendCommand, SetPrivateMessageOpen, ClearPaneFocus } from '../../wailsjs/go/main/App';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 import { useNetworkStore } from '../stores/network';
 import { usePreferencesStore } from '../stores/preferences';
-import { dmPresenceState } from '../lib/presence';
 import { isChannelName } from '../lib/channel-name';
 import { casefold } from '../lib/casefold';
 import { Terminal } from 'lucide-react';
@@ -26,7 +25,8 @@ interface ContextMenu {
   y: number;
   type: 'channel' | 'pm' | null;
   channel?: string;
-  user?: string; // For PM context menu
+  user?: string; // Current display/routing nick
+  reference?: string; // Stable saved contact reference
 }
 
 export function ChannelPanel({
@@ -40,16 +40,17 @@ export function ChannelPanel({
 }: ChannelPanelProps) {
   const networkId = network.id;
   const [channelList, setChannelList] = useState<string[]>([]);
-  const [pmConversations, setPmConversations] = useState<string[]>([]);
+  const privateContacts = useNetworkStore((state) => state.privateContacts[networkId]);
+  const pmConversations = Object.values(privateContacts ?? {});
   const [contextMenu, setContextMenu] = useState<ContextMenu>({ x: 0, y: 0, type: null });
   const [contextMenuChannelData, setContextMenuChannelData] = useState<Channel | null>(null);
   const [contextMenuIsJoined, setContextMenuIsJoined] = useState<boolean>(false);
   const [contextMenuJoinedChannels, setContextMenuJoinedChannels] = useState<Channel[]>([]);
   const contextMenuRef = useRef<HTMLDivElement>(null);
+  const menuContact = contextMenu.reference ? privateContacts?.[contextMenu.reference] : undefined;
+  const recipientUnknown = !!menuContact?.account && (!connected || menuContact.presence !== 'online' || !menuContact.target);
 
-  // Live MONITOR presence for this network (lowercased nick -> online), driving
-  // the DM-list dots. Seeded on mount, kept fresh by 'monitor-event' in App.tsx.
-  const presence = useNetworkStore((s) => s.presence);
+  // Keep explicit nickname watches hydrated separately from saved contact presence.
   // CASEMAPPING for this network, so DM-presence lookups fold nicks the same way
   // the store keys them (rfc1459 []\~ -> {}|^). Empty falls back to rfc1459.
   const caseMapping = useNetworkStore((s) => s.caseMapping);
@@ -66,11 +67,9 @@ export function ChannelPanel({
 
   const refreshPmConversations = async (id: number) => {
     try {
-      const pmList = await GetPrivateMessageConversations(id, true);
-      setPmConversations(pmList && Array.isArray(pmList) ? pmList : []);
+      await useNetworkStore.getState().loadPrivateContacts(id);
     } catch (error) {
       console.error('Failed to load PM conversations:', error);
-      setPmConversations([]);
     }
   };
 
@@ -84,9 +83,8 @@ export function ChannelPanel({
         setChannelList([]);
       }
       await refreshPmConversations(networkId);
-      // Seed MONITOR presence for the DM-list dots (auto-monitored PM
-      // correspondents plus durable buddies). Live updates arrive via
-      // 'monitor-event'.
+      // Seed explicit nickname watches. Contact dots use the separate
+      // verified-session snapshot loaded above.
       void loadPresence(networkId);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -143,10 +141,12 @@ export function ChannelPanel({
   useEffect(() => {
     const unsubscribe = EventsOn('message-event', (data: any) => {
       const type = data?.type;
-      if (type !== 'message.received' && type !== 'message.sent') return;
       const d = data?.data || {};
       const id = d.networkId != null && d.networkId !== '' ? Number(d.networkId) : undefined;
-      if (id !== networkId || !d.pmTarget) return;
+      if (id !== networkId) return;
+      const renamed = type === 'user.nick' && d.pmRenamed === true;
+      const message = (type === 'message.received' || type === 'message.sent') && !!d.pmTarget;
+      if (!renamed && !message) return;
       refreshPmConversations(networkId).catch((error) => {
         console.error('Failed to refresh PM conversations after message-event:', error);
       });
@@ -190,7 +190,7 @@ export function ChannelPanel({
     };
   }, []);
 
-  const handleContextMenu = async (e: React.MouseEvent, type: 'channel' | 'pm', channel?: string, user?: string) => {
+  const handleContextMenu = async (e: React.MouseEvent, type: 'channel' | 'pm', channel?: string, user?: string, reference?: string) => {
     e.preventDefault();
     e.stopPropagation();
     // Prevent text selection
@@ -239,6 +239,7 @@ export function ChannelPanel({
       type,
       channel,
       user,
+      reference,
     });
   };
 
@@ -364,26 +365,29 @@ export function ChannelPanel({
               <div className="px-3 pt-3 pb-1 text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground/80">
                 Direct messages
               </div>
-              {pmConversations.map((user) => {
-                const pmKey = `pm:${user}`;
+              {pmConversations.map((contact) => {
+                const user = contact.target || contact.target_user;
+                const pmKey = `pm:${contact.reference}`;
                 const activityKey = `${networkId}:${pmKey}`;
-                const unreadCount = unreadCounts.get(activityKey) || 0;
-                const dotState = dmPresenceState(
-                  user,
-                  presence[networkId]?.[casefold(caseMapping?.[networkId] ?? '', user)],
-                  connected
-                );
+                const mapping = caseMapping?.[networkId] ?? '';
+                const foldedActivityKey = casefold(mapping, activityKey);
+                const unreadCount = Array.from(unreadCounts).reduce((total, [key, count]) =>
+                  total + (casefold(mapping, key) === foldedActivityKey ? count : 0), 0);
+                const dotState = connected && contact.presence === 'online' ? 'online' : 'unknown';
                 return (
                   <div
                     key={pmKey}
+                    data-testid="pm-node"
+                    data-peer={user}
+                    data-contact-id={contact.id}
                     className={`px-2 py-1.5 mr-1 rounded-md cursor-pointer select-none flex items-center justify-between transition-all ${
-                      selectedChannel === pmKey
+                      selectedChannel && casefold(caseMapping?.[networkId] ?? '', selectedChannel) === casefold(caseMapping?.[networkId] ?? '', pmKey)
                         ? 'cc-active-pane'
                         : 'hover:bg-accent/70'
                     }`}
                     style={{ transition: 'var(--transition-base)' }}
                     onClick={() => handleChannelClick(pmKey)}
-                    onContextMenu={(e) => handleContextMenu(e, 'pm', undefined, user)}
+                    onContextMenu={(e) => handleContextMenu(e, 'pm', undefined, user, contact.reference)}
                     onMouseDown={(e) => {
                       if (e.button === 2) {
                         e.preventDefault();
@@ -393,16 +397,14 @@ export function ChannelPanel({
                     <span className={`text-sm flex items-center gap-2 min-w-0 ${unreadCount > 0 ? 'font-semibold' : ''}`}>
                       <span
                         className="w-2 h-2 rounded-full flex-shrink-0"
-                        title={dotState === 'online' ? 'Online' : dotState === 'offline' ? 'Offline' : 'Presence unknown'}
+                        title={dotState === 'online' ? 'Online' : 'Presence unknown'}
                         style={
                           dotState === 'online'
                             ? { background: 'var(--presence-online)' }
-                            : dotState === 'offline'
-                              ? { background: 'var(--presence-offline)' }
-                              : { background: 'transparent', border: '1.5px solid var(--presence-offline)', opacity: 0.5 }
+                            : { background: 'transparent', border: '1.5px solid var(--presence-offline)', opacity: 0.5 }
                         }
                       />
-                      <span className="truncate">{user}</span>
+                      <span className="truncate">{user}{contact.account && <span className="ml-1.5 text-xs text-muted-foreground">{contact.account}</span>}</span>
                     </span>
                     {unreadCount > 0 && (
                       <span className="bg-primary text-primary-foreground text-xs px-1.5 min-w-[1.25rem] text-center rounded-full ml-2" title="Unread messages">
@@ -540,7 +542,7 @@ export function ChannelPanel({
                 style={{ transition: 'var(--transition-base)' }}
                 onClick={async () => {
                   if (contextMenu.user) {
-                    const user = contextMenu.user;
+                    const user = contextMenu.reference || contextMenu.user;
                     const pmKey = `pm:${user}`;
                     try {
                       // Close the PM conversation
@@ -564,6 +566,8 @@ export function ChannelPanel({
                 Close
               </button>
               <div className="border-t border-border my-1" />
+              {recipientUnknown && <div className="px-4 py-2 text-xs text-muted-foreground">Current nickname unknown</div>}
+              <fieldset disabled={recipientUnknown} className="contents">
               <button
                 className="w-full text-left px-4 py-2 text-sm cursor-pointer transition-all hover:bg-accent hover:border-l-4 hover:border-primary text-foreground "
                 style={{ transition: 'var(--transition-base)' }}
@@ -667,6 +671,7 @@ export function ChannelPanel({
               >
                 CTCP ClientInfo
               </button>
+              </fieldset>
             </>
           )}
         </div>

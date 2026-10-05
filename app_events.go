@@ -10,6 +10,7 @@ import (
 	"github.com/matt0x6f/irc-client/internal/irc"
 	"github.com/matt0x6f/irc-client/internal/logger"
 	"github.com/matt0x6f/irc-client/internal/notification"
+	"github.com/matt0x6f/irc-client/internal/storage"
 )
 
 // appForwardedEventTypes lists every event type OnEvent forwards to the frontend.
@@ -538,6 +539,10 @@ func (a *App) handleDesktopNotification(event events.Event) {
 			if !prefs.PrivateMessages {
 				return
 			}
+			target := "pm:" + user
+			if id, ok := event.Data["conversationId"].(int64); ok && id > 0 {
+				target = "pm:" + storage.PMReference(id)
+			}
 			a.sendNotification(notification.Notification{
 				ID:         newNotificationID(),
 				Title:      fmt.Sprintf("PM from %s", user),
@@ -545,7 +550,7 @@ func (a *App) handleDesktopNotification(event events.Event) {
 				CategoryID: notifyCategoryMessage,
 				Data: map[string]any{
 					"networkId": strconv.FormatInt(networkID, 10),
-					"target":    "pm:" + user,
+					"target":    target,
 					"kind":      "pm",
 				},
 			})

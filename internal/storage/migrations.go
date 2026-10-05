@@ -162,8 +162,82 @@ func Migrate(db *sqlx.DB) error {
 	if err := migrateFileTransfers(db); err != nil {
 		return fmt.Errorf("file transfers migration failed: %w", err)
 	}
+	if err := migrateContactConversations(db); err != nil {
+		return fmt.Errorf("contact conversation migration failed: %w", err)
+	}
+	if err := migrateContactAccounts(db); err != nil {
+		return fmt.Errorf("contact account migration failed: %w", err)
+	}
+	if err := migrateContactDedupIndex(db); err != nil {
+		return err
+	}
 
 	return nil
+}
+
+func migrateContactAccounts(db *sqlx.DB) error {
+	columns := []struct{ name, definition string }{
+		{"nickname_key", "TEXT NOT NULL DEFAULT ''"},
+		{"account", "TEXT NOT NULL DEFAULT ''"},
+		{"identity_source", "TEXT NOT NULL DEFAULT ''"},
+		{"identity_observed_at", "INTEGER NOT NULL DEFAULT 0"},
+	}
+	for _, column := range columns {
+		var exists int
+		if err := db.Get(&exists, "SELECT COUNT(*) FROM pragma_table_info('private_message_conversations') WHERE name=?", column.name); err != nil {
+			return err
+		}
+		if exists == 0 {
+			if _, err := db.Exec("ALTER TABLE private_message_conversations ADD COLUMN " + column.name + " " + column.definition); err != nil {
+				return err
+			}
+		}
+	}
+	_, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_pm_account ON private_message_conversations(network_id,account) WHERE account != ''`)
+	return err
+}
+
+// Rebuild the nickname-unique table once, preserving row IDs. Names are mutable
+// routing addresses; distinct saved contacts can have used the same nickname.
+func migrateContactConversations(db *sqlx.DB) error {
+	var exists int
+	if err := db.Get(&exists, "SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name='conversation_id'"); err != nil {
+		return err
+	}
+	if exists != 0 {
+		return nil
+	}
+	tx, err := db.Beginx()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	statements := []string{
+		`CREATE TABLE contact_conversations (
+		id INTEGER PRIMARY KEY AUTOINCREMENT, network_id INTEGER NOT NULL,
+		target_user TEXT NOT NULL, is_open BOOLEAN NOT NULL DEFAULT 0,
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP,
+		FOREIGN KEY(network_id) REFERENCES networks(id) ON DELETE CASCADE)`,
+		`INSERT INTO contact_conversations SELECT * FROM private_message_conversations`,
+		`DROP TABLE private_message_conversations`,
+		`ALTER TABLE contact_conversations RENAME TO private_message_conversations`,
+		`CREATE INDEX idx_pm_network_target ON private_message_conversations(network_id, target_user)`,
+		`ALTER TABLE messages ADD COLUMN conversation_id INTEGER`,
+		`INSERT INTO private_message_conversations(network_id,target_user,is_open,created_at)
+		 SELECT network_id,LOWER(pm_target),0,MIN(timestamp) FROM messages m
+		 WHERE channel_id IS NULL AND pm_target IS NOT NULL AND pm_target != ''
+		 AND NOT EXISTS(SELECT 1 FROM private_message_conversations p WHERE p.network_id=m.network_id AND p.target_user=LOWER(m.pm_target))
+		 GROUP BY network_id,LOWER(pm_target)`,
+		`UPDATE messages SET conversation_id=(SELECT id FROM private_message_conversations p WHERE p.network_id=messages.network_id AND p.target_user=LOWER(messages.pm_target) LIMIT 1)
+		 WHERE channel_id IS NULL AND pm_target IS NOT NULL`,
+		`CREATE INDEX idx_messages_conversation ON messages(network_id,conversation_id,timestamp)`,
+	}
+	for _, statement := range statements {
+		if _, err := tx.Exec(statement); err != nil {
+			return fmt.Errorf("migrate stable PM identity: %w", err)
+		}
+	}
+	return tx.Commit()
 }
 
 // migrateNormalizeMessageTimestamps rewrites legacy message timestamps into a single
@@ -237,6 +311,13 @@ func migrateMsgID(db *sqlx.DB) error {
 // with a per-conversation one so broadcast events (QUIT) keep one row per shared
 // channel while still deduping replayed-vs-live copies. Idempotent.
 func migrateEventDedupIndex(db *sqlx.DB) error {
+	var hasContactID int
+	if err := db.Get(&hasContactID, "SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name='conversation_id'"); err != nil {
+		return err
+	}
+	if hasContactID != 0 {
+		return migrateContactDedupIndex(db)
+	}
 	stmts := []string{
 		`DROP INDEX IF EXISTS idx_messages_network_msgid`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_conv_msgid
@@ -249,6 +330,36 @@ func migrateEventDedupIndex(db *sqlx.DB) error {
 		}
 	}
 	return nil
+}
+
+func migrateContactDedupIndex(db *sqlx.DB) error {
+	var exists int
+	if err := db.Get(&exists, "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_messages_contact_msgid'"); err != nil {
+		return err
+	}
+	if exists != 0 {
+		return nil
+	}
+	tx, err := db.Beginx()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, statement := range []string{
+		`DROP INDEX IF EXISTS idx_messages_network_msgid`,
+		`DROP INDEX IF EXISTS idx_messages_conv_msgid`,
+		// Historical aliases can contain two copies of one server message. Retain
+		// its first local row so existing pins/references keep their original ID.
+		`DELETE FROM messages WHERE msgid IS NOT NULL AND id NOT IN (
+		 SELECT MIN(id) FROM messages WHERE msgid IS NOT NULL
+		 GROUP BY network_id, COALESCE(channel_id,0), COALESCE('@'||conversation_id,pm_target,''), msgid)`,
+		`CREATE UNIQUE INDEX idx_messages_contact_msgid ON messages(network_id,COALESCE(channel_id,0),COALESCE('@'||conversation_id,pm_target,''),msgid) WHERE msgid IS NOT NULL`,
+	} {
+		if _, err := tx.Exec(statement); err != nil {
+			return fmt.Errorf("migrate contact message dedup: %w", err)
+		}
+	}
+	return tx.Commit()
 }
 
 // migrateReplyAndContext adds the nullable reply_msgid and channel_context

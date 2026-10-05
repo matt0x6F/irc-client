@@ -1,11 +1,52 @@
 package main
 
 import (
+	"github.com/matt0x6f/irc-client/internal/events"
+	"github.com/matt0x6f/irc-client/internal/irc"
+	"github.com/matt0x6f/irc-client/internal/storage"
 	"testing"
+	"time"
 
 	"github.com/matt0x6f/irc-client/internal/notification"
 	"github.com/wailsapp/wails/v3/pkg/services/notifications"
 )
+
+type contactNotificationDelivery struct {
+	sent chan notification.Notification
+}
+
+func (d *contactNotificationDelivery) Send(n notification.Notification) error {
+	d.sent <- n
+	return nil
+}
+func (d *contactNotificationDelivery) SendWithActions(n notification.Notification) error {
+	return d.Send(n)
+}
+func (d *contactNotificationDelivery) RegisterCategory(notification.Category) error { return nil }
+func (d *contactNotificationDelivery) RequestAuthorization() (bool, error)          { return true, nil }
+func (d *contactNotificationDelivery) CheckAuthorization() (bool, error)            { return true, nil }
+
+func TestPrivateNotificationRoutesToSavedConversation(t *testing.T) {
+	a := newTestApp(t)
+	n := makeAppTestNetwork(t, a.storage, "identity")
+	contact, _, err := a.storage.GetOrCreatePMConversation(n.ID, "alice", n.Nickname)
+	if err != nil {
+		t.Fatal(err)
+	}
+	delivery := &contactNotificationDelivery{sent: make(chan notification.Notification, 1)}
+	a.notifier = notification.NewNotifier()
+	a.notifier.SetDelivery(delivery)
+	a.notifier.SetPrefs(notification.Prefs{Enabled: true, PrivateMessages: true})
+	a.handleDesktopNotification(events.Event{Type: irc.EventMessageReceived, Data: map[string]interface{}{"networkId": n.ID, "channel": n.Nickname, "user": "alice", "message": "hello", "conversationId": contact.ID}})
+	select {
+	case msg := <-delivery.sent:
+		if msg.Data["target"] != "pm:"+storage.PMReference(contact.ID) {
+			t.Fatalf("notification recipient is nickname keyed: %+v", msg.Data)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no notification")
+	}
+}
 
 func TestRouteNotificationResponse(t *testing.T) {
 	type emitted struct {

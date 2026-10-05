@@ -94,6 +94,7 @@ type Message struct {
 	Timestamp      time.Time      `json:"timestamp"`
 	RawLine        sql.NullString `json:"raw_line"`
 	PmTarget       sql.NullString `json:"pm_target"`
+	ConversationID sql.NullInt64  `json:"conversation_id"`
 	Msgid          sql.NullString `json:"msgid"`
 	ReplyMsgid     sql.NullString `json:"reply_msgid"`
 	ChannelContext sql.NullString `json:"channel_context"`
@@ -153,12 +154,16 @@ type PluginConfig struct {
 }
 
 type PrivateMessageConversation struct {
-	ID         int64        `json:"id"`
-	NetworkID  int64        `json:"network_id"`
-	TargetUser string       `json:"target_user"`
-	IsOpen     bool         `json:"is_open"`
-	CreatedAt  time.Time    `json:"created_at"`
-	UpdatedAt  sql.NullTime `json:"updated_at"`
+	ID                 int64        `json:"id"`
+	NetworkID          int64        `json:"network_id"`
+	TargetUser         string       `json:"target_user"`
+	NicknameKey        string       `json:"nickname_key"`
+	Account            string       `json:"account"`
+	IdentitySource     string       `json:"identity_source"`
+	IdentityObservedAt int64        `json:"identity_observed_at"`
+	IsOpen             bool         `json:"is_open"`
+	CreatedAt          time.Time    `json:"created_at"`
+	UpdatedAt          sql.NullTime `json:"updated_at"`
 }
 
 type ScriptState struct {

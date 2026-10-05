@@ -20,6 +20,7 @@ export interface RoutableEvent {
   // The conversation peer for private messages (backend-computed). Empty/absent
   // for channel and server messages.
   pmTarget?: string | null;
+  conversationId?: number;
   // Events are loose maps carrying other fields (user, message, network, ...).
   [key: string]: unknown;
 }
@@ -27,6 +28,7 @@ export interface RoutableEvent {
 // The buffer key an event belongs to: "#chan"/"&chan", "status", or "pm:<peer>".
 // Returns null only when there is nothing routable (should not happen in practice).
 export function eventPaneKey(e: RoutableEvent): string | null {
+  if (typeof e.conversationId === 'number' && Number.isSafeInteger(e.conversationId) && e.conversationId > 0) return `pm:@${e.conversationId}`;
   if (e.pmTarget) return `pm:${e.pmTarget}`;
 
   // Received events carry `channel`; sent events carry `target`. Normalize the

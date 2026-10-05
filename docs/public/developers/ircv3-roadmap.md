@@ -25,6 +25,18 @@ holds the per-capability detail and code pointers; this is just the list.
 - ✅ `no-implicit-names` (#77)
 - ✅ `UTF8ONLY` (#77)
 
+## Contact identity and reconnect recovery
+
+- [x] Persist stable contact/conversation IDs and verified network/account bindings.
+- [x] Resolve current nicknames from fresh server evidence after reconnect,
+      including a rename that happened while Cascade was closed.
+- [x] Derive contact presence from verified sessions and report unknown when
+      discovery is incomplete; preserve explicit nickname-watch semantics.
+
+This builds on account capabilities Cascade already parses. The
+[contact identity implementation](contact-identity.md) records the migration,
+routing, identity conflict handling, acceptance evidence, and visibility limits.
+
 ## Draft extensions (future modern-chat)
 
 These fall outside ratified compliance, but they're deployed on real networks
@@ -46,7 +58,10 @@ of value.
 
 ## What's next
 
-`draft/read-marker` is the highest-value item: cross-device read state reinforces
+Contact identity and reconnect recovery have passed local acceptance, including
+a fully stopped client during a rename. Stronger provider discovery remains a
+separate feature. For the draft-extension backlog, `draft/read-marker` is the
+highest-value item: cross-device read state reinforces
 Cascade's multi-platform story and builds on the `chathistory` / `@msgid`
 machinery already in place. After that, `draft/message-redaction` and
 `draft/multiline` bring Cascade in line with what Ergo and Soju already do.

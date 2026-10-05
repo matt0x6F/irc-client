@@ -34,6 +34,10 @@ Because of its IRCv3 support, Cascade gives you:
 - **A buddy list:** track specific nicks' online/offline presence across restarts in a
   dedicated Buddies pane, even when you share no channel with them (`monitor`). With
   `extended-monitor`, buddies also show live away state.
+- **DM identity across nick changes:** saved conversations follow a visible,
+  authenticated account using standard account metadata, including a rename missed
+  while Cascade was closed. When the server cannot resolve the current nickname,
+  presence is unknown and an account-bound reply keeps its draft instead of sending.
 - **Typing indicators:** see when people in a channel or PM are composing a message, and
   optionally let them see when you are (`+typing` client tag). Both directions toggle
   independently in Settings.
@@ -647,10 +651,23 @@ arms the whole union on connect (buddies first, so they keep their slots under a
 the Buddies pane (`monitor-list.tsx`) lists each buddy with a green (online) / grey (offline)
 dot, an "Add nick" input, and a remove control, and updates live via the `monitor-event`. A
 nick can also be added straight from the member list's right-click menu ("Monitor this user").
-In the **Direct Messages** list, each conversation shows a presence dot driven by the same
-MONITOR data (`GetMonitorPresence` seeds it, `monitor-event` keeps it live): solid green for
-online, solid grey for offline, and a hollow neutral dot for unknown (a service nick, or not yet
-tracked). See `dmPresenceState` in `frontend/src/lib/presence.ts`.
+The **Direct Messages** list uses `GetPrivateContacts`: green means a current
+session belongs to the saved contact; a hollow neutral dot means presence unknown.
+An old monitored nick going offline is insufficient to mark its account offline.
+The Buddies pane retains the nickname watch the user explicitly added.
+
+DM history and pane state use stable local conversation IDs. Observed `NICK`
+changes update current routing, including for unidentified users. Fresh verified
+account evidence can recover a rename missed while Cascade was closed. Different
+accounts using the same nick keep separate histories, and an unresolved
+account-bound reply is blocked with the draft retained. A header selector chooses
+among multiple verified sessions. MONITOR remains a nickname mechanism; it does
+not identify a replacement nickname by itself.
+
+The [contact identity implementation](contact-identity.md) documents storage,
+discovery limits, historical replay handling, and separate native and server-mode
+acceptance. Coverage includes `internal/irc/contact_identity_test.go`,
+`internal/storage/contact_identity_test.go`, and the nick-change/contact E2E specs.
 
 ![The Buddies pane showing a monitored nick "buddybot" with a green online dot](images/ircv3/monitor.png)
 

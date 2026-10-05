@@ -13,7 +13,7 @@ vi.mock('../../../wailsjs/go/main/App', () => ({
     storage.Channel.createFrom({ name: '#cascade' }),
     storage.Channel.createFrom({ name: '#python' }),
   ]),
-  GetPrivateMessageConversations: vi.fn().mockResolvedValue(['bob']),
+  GetPrivateContacts: vi.fn().mockResolvedValue([storage.PrivateMessageConversation.createFrom({id:17,reference:'@17',target_user:'bob',presence:'unknown',sessions:[]})]),
   GetChannels: vi.fn().mockResolvedValue([]),
   GetJoinedChannels: vi.fn().mockResolvedValue([]),
   GetMonitorPresence: vi.fn().mockResolvedValue({}),

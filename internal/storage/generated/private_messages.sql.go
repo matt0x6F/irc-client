@@ -11,10 +11,36 @@ import (
 	"time"
 )
 
+const bindPMConversationAccount = `-- name: BindPMConversationAccount :exec
+UPDATE private_message_conversations SET account = ?, nickname_key = ?, identity_source = ?, identity_observed_at = ?
+WHERE network_id = ? AND id = ? AND account = ''
+`
+
+type BindPMConversationAccountParams struct {
+	Account            string `json:"account"`
+	NicknameKey        string `json:"nickname_key"`
+	IdentitySource     string `json:"identity_source"`
+	IdentityObservedAt int64  `json:"identity_observed_at"`
+	NetworkID          int64  `json:"network_id"`
+	ID                 int64  `json:"id"`
+}
+
+func (q *Queries) BindPMConversationAccount(ctx context.Context, arg BindPMConversationAccountParams) error {
+	_, err := q.db.ExecContext(ctx, bindPMConversationAccount,
+		arg.Account,
+		arg.NicknameKey,
+		arg.IdentitySource,
+		arg.IdentityObservedAt,
+		arg.NetworkID,
+		arg.ID,
+	)
+	return err
+}
+
 const createPMConversation = `-- name: CreatePMConversation :one
 INSERT INTO private_message_conversations (network_id, target_user, is_open, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?)
-RETURNING id, network_id, target_user, is_open, created_at, updated_at
+RETURNING id, network_id, target_user, nickname_key, account, identity_source, identity_observed_at, is_open, created_at, updated_at
 `
 
 type CreatePMConversationParams struct {
@@ -38,6 +64,10 @@ func (q *Queries) CreatePMConversation(ctx context.Context, arg CreatePMConversa
 		&i.ID,
 		&i.NetworkID,
 		&i.TargetUser,
+		&i.NicknameKey,
+		&i.Account,
+		&i.IdentitySource,
+		&i.IdentityObservedAt,
 		&i.IsOpen,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -67,7 +97,7 @@ func (q *Queries) GetLastOpenChannel(ctx context.Context) (GetLastOpenChannelRow
 }
 
 const getLastOpenPM = `-- name: GetLastOpenPM :one
-SELECT network_id, target_user, updated_at
+SELECT id, network_id, target_user, updated_at
 FROM private_message_conversations
 WHERE is_open = 1
 ORDER BY COALESCE(updated_at, created_at) DESC, created_at DESC
@@ -75,6 +105,7 @@ LIMIT 1
 `
 
 type GetLastOpenPMRow struct {
+	ID         int64        `json:"id"`
 	NetworkID  int64        `json:"network_id"`
 	TargetUser string       `json:"target_user"`
 	UpdatedAt  sql.NullTime `json:"updated_at"`
@@ -83,12 +114,17 @@ type GetLastOpenPMRow struct {
 func (q *Queries) GetLastOpenPM(ctx context.Context) (GetLastOpenPMRow, error) {
 	row := q.db.QueryRowContext(ctx, getLastOpenPM)
 	var i GetLastOpenPMRow
-	err := row.Scan(&i.NetworkID, &i.TargetUser, &i.UpdatedAt)
+	err := row.Scan(
+		&i.ID,
+		&i.NetworkID,
+		&i.TargetUser,
+		&i.UpdatedAt,
+	)
 	return i, err
 }
 
 const getOpenPMConversations = `-- name: GetOpenPMConversations :many
-SELECT id, network_id, target_user, is_open, created_at, updated_at FROM private_message_conversations 
+SELECT id, network_id, target_user, nickname_key, account, identity_source, identity_observed_at, is_open, created_at, updated_at FROM private_message_conversations
 WHERE network_id = ? AND is_open = 1
 ORDER BY updated_at DESC, created_at DESC
 `
@@ -106,6 +142,10 @@ func (q *Queries) GetOpenPMConversations(ctx context.Context, networkID int64) (
 			&i.ID,
 			&i.NetworkID,
 			&i.TargetUser,
+			&i.NicknameKey,
+			&i.Account,
+			&i.IdentitySource,
+			&i.IdentityObservedAt,
 			&i.IsOpen,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -124,7 +164,7 @@ func (q *Queries) GetOpenPMConversations(ctx context.Context, networkID int64) (
 }
 
 const getPMConversation = `-- name: GetPMConversation :one
-SELECT id, network_id, target_user, is_open, created_at, updated_at FROM private_message_conversations WHERE network_id = ? AND target_user = ?
+SELECT id, network_id, target_user, nickname_key, account, identity_source, identity_observed_at, is_open, created_at, updated_at FROM private_message_conversations WHERE network_id = ? AND LOWER(target_user) = ?2 ORDER BY updated_at DESC, id DESC LIMIT 1
 `
 
 type GetPMConversationParams struct {
@@ -139,6 +179,64 @@ func (q *Queries) GetPMConversation(ctx context.Context, arg GetPMConversationPa
 		&i.ID,
 		&i.NetworkID,
 		&i.TargetUser,
+		&i.NicknameKey,
+		&i.Account,
+		&i.IdentitySource,
+		&i.IdentityObservedAt,
+		&i.IsOpen,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getPMConversationByAccount = `-- name: GetPMConversationByAccount :one
+SELECT id, network_id, target_user, nickname_key, account, identity_source, identity_observed_at, is_open, created_at, updated_at FROM private_message_conversations WHERE network_id = ? AND account = ? AND account != ''
+`
+
+type GetPMConversationByAccountParams struct {
+	NetworkID int64  `json:"network_id"`
+	Account   string `json:"account"`
+}
+
+func (q *Queries) GetPMConversationByAccount(ctx context.Context, arg GetPMConversationByAccountParams) (PrivateMessageConversation, error) {
+	row := q.db.QueryRowContext(ctx, getPMConversationByAccount, arg.NetworkID, arg.Account)
+	var i PrivateMessageConversation
+	err := row.Scan(
+		&i.ID,
+		&i.NetworkID,
+		&i.TargetUser,
+		&i.NicknameKey,
+		&i.Account,
+		&i.IdentitySource,
+		&i.IdentityObservedAt,
+		&i.IsOpen,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getPMConversationByID = `-- name: GetPMConversationByID :one
+SELECT id, network_id, target_user, nickname_key, account, identity_source, identity_observed_at, is_open, created_at, updated_at FROM private_message_conversations WHERE network_id = ? AND id = ?
+`
+
+type GetPMConversationByIDParams struct {
+	NetworkID int64 `json:"network_id"`
+	ID        int64 `json:"id"`
+}
+
+func (q *Queries) GetPMConversationByID(ctx context.Context, arg GetPMConversationByIDParams) (PrivateMessageConversation, error) {
+	row := q.db.QueryRowContext(ctx, getPMConversationByID, arg.NetworkID, arg.ID)
+	var i PrivateMessageConversation
+	err := row.Scan(
+		&i.ID,
+		&i.NetworkID,
+		&i.TargetUser,
+		&i.NicknameKey,
+		&i.Account,
+		&i.IdentitySource,
+		&i.IdentityObservedAt,
 		&i.IsOpen,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -148,7 +246,7 @@ func (q *Queries) GetPMConversation(ctx context.Context, arg GetPMConversationPa
 
 const getPrivateMessageConversationsAll = `-- name: GetPrivateMessageConversationsAll :many
 SELECT MAX(user) as user
- FROM messages 
+ FROM messages
  WHERE network_id = ? AND channel_id IS NULL AND user != '*' AND LOWER(user) != ? AND message_type IN ('privmsg', 'action')
  GROUP BY LOWER(user)
  ORDER BY MAX(timestamp) DESC
@@ -184,12 +282,12 @@ func (q *Queries) GetPrivateMessageConversationsAll(ctx context.Context, arg Get
 
 const getPrivateMessageConversationsOpen = `-- name: GetPrivateMessageConversationsOpen :many
 SELECT COALESCE(
-    (SELECT m.user FROM messages m 
+    (SELECT m.user FROM messages m
      WHERE m.network_id = pmc.network_id
        AND m.channel_id IS NULL
        AND LOWER(m.user) = pmc.target_user
        AND m.message_type IN ('privmsg', 'action', 'notice')
-     ORDER BY m.timestamp DESC 
+     ORDER BY m.timestamp DESC
      LIMIT 1),
     pmc.target_user
 ) as user
@@ -221,6 +319,110 @@ func (q *Queries) GetPrivateMessageConversationsOpen(ctx context.Context, networ
 	return items, nil
 }
 
+const getUnboundPMContacts = `-- name: GetUnboundPMContacts :many
+SELECT id, network_id, target_user, nickname_key, account, identity_source, identity_observed_at, is_open, created_at, updated_at FROM private_message_conversations WHERE network_id = ? AND account = ''
+`
+
+func (q *Queries) GetUnboundPMContacts(ctx context.Context, networkID int64) ([]PrivateMessageConversation, error) {
+	rows, err := q.db.QueryContext(ctx, getUnboundPMContacts, networkID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PrivateMessageConversation
+	for rows.Next() {
+		var i PrivateMessageConversation
+		if err := rows.Scan(
+			&i.ID,
+			&i.NetworkID,
+			&i.TargetUser,
+			&i.NicknameKey,
+			&i.Account,
+			&i.IdentitySource,
+			&i.IdentityObservedAt,
+			&i.IsOpen,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getUnboundPMConversation = `-- name: GetUnboundPMConversation :one
+SELECT id, network_id, target_user, nickname_key, account, identity_source, identity_observed_at, is_open, created_at, updated_at FROM private_message_conversations
+WHERE network_id = ? AND account = '' AND (nickname_key = ? OR LOWER(target_user) = ?3)
+ORDER BY updated_at DESC, id DESC LIMIT 1
+`
+
+type GetUnboundPMConversationParams struct {
+	NetworkID   int64  `json:"network_id"`
+	NicknameKey string `json:"nickname_key"`
+	TargetUser  string `json:"target_user"`
+}
+
+func (q *Queries) GetUnboundPMConversation(ctx context.Context, arg GetUnboundPMConversationParams) (PrivateMessageConversation, error) {
+	row := q.db.QueryRowContext(ctx, getUnboundPMConversation, arg.NetworkID, arg.NicknameKey, arg.TargetUser)
+	var i PrivateMessageConversation
+	err := row.Scan(
+		&i.ID,
+		&i.NetworkID,
+		&i.TargetUser,
+		&i.NicknameKey,
+		&i.Account,
+		&i.IdentitySource,
+		&i.IdentityObservedAt,
+		&i.IsOpen,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const setPMContactTarget = `-- name: SetPMContactTarget :exec
+UPDATE private_message_conversations SET target_user = ?, nickname_key = ? WHERE network_id = ? AND id = ?
+`
+
+type SetPMContactTargetParams struct {
+	TargetUser  string `json:"target_user"`
+	NicknameKey string `json:"nickname_key"`
+	NetworkID   int64  `json:"network_id"`
+	ID          int64  `json:"id"`
+}
+
+func (q *Queries) SetPMContactTarget(ctx context.Context, arg SetPMContactTargetParams) error {
+	_, err := q.db.ExecContext(ctx, setPMContactTarget,
+		arg.TargetUser,
+		arg.NicknameKey,
+		arg.NetworkID,
+		arg.ID,
+	)
+	return err
+}
+
+const setPMConversationOpenByID = `-- name: SetPMConversationOpenByID :exec
+UPDATE private_message_conversations SET is_open = ?, updated_at = CURRENT_TIMESTAMP WHERE network_id = ? AND id = ?
+`
+
+type SetPMConversationOpenByIDParams struct {
+	IsOpen    bool  `json:"is_open"`
+	NetworkID int64 `json:"network_id"`
+	ID        int64 `json:"id"`
+}
+
+func (q *Queries) SetPMConversationOpenByID(ctx context.Context, arg SetPMConversationOpenByIDParams) error {
+	_, err := q.db.ExecContext(ctx, setPMConversationOpenByID, arg.IsOpen, arg.NetworkID, arg.ID)
+	return err
+}
+
 const updatePMConversationIsOpen = `-- name: UpdatePMConversationIsOpen :exec
 UPDATE private_message_conversations SET is_open = ?, updated_at = CURRENT_TIMESTAMP WHERE network_id = ? AND target_user = ?
 `
@@ -233,5 +435,21 @@ type UpdatePMConversationIsOpenParams struct {
 
 func (q *Queries) UpdatePMConversationIsOpen(ctx context.Context, arg UpdatePMConversationIsOpenParams) error {
 	_, err := q.db.ExecContext(ctx, updatePMConversationIsOpen, arg.IsOpen, arg.NetworkID, arg.TargetUser)
+	return err
+}
+
+const updatePMConversationTarget = `-- name: UpdatePMConversationTarget :exec
+UPDATE private_message_conversations SET target_user = ?, updated_at = CURRENT_TIMESTAMP
+WHERE network_id = ? AND id = ?
+`
+
+type UpdatePMConversationTargetParams struct {
+	TargetUser string `json:"target_user"`
+	NetworkID  int64  `json:"network_id"`
+	ID         int64  `json:"id"`
+}
+
+func (q *Queries) UpdatePMConversationTarget(ctx context.Context, arg UpdatePMConversationTargetParams) error {
+	_, err := q.db.ExecContext(ctx, updatePMConversationTarget, arg.TargetUser, arg.NetworkID, arg.ID)
 	return err
 }

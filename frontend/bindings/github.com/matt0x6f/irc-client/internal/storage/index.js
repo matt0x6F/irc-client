@@ -10,6 +10,7 @@ export {
     Message,
     Network,
     PinnedMessage,
+    PrivateMessageConversation,
     STSPolicy,
     SearchResult,
     Server

@@ -36,6 +36,7 @@ function ActivityRow({ group }: { group: ActivityGroup }) {
   const Icon = SOURCE_ICON[group.sourceType] ?? Bell;
   const isInvite = group.sourceType === 'invite';
   const newest = group.items.reduce((a, b) => (a.timestamp >= b.timestamp ? a : b));
+  const displayTarget = group.sourceType === 'pm' && group.target.startsWith('@') ? group.actor : group.target;
 
   const dismissGroup = () => {
     for (const i of group.items) void dismissActivity(i.id);
@@ -45,7 +46,7 @@ function ActivityRow({ group }: { group: ActivityGroup }) {
     <div
       role="button"
       tabIndex={0}
-      aria-label={`${group.target} — open`}
+      aria-label={`${displayTarget} — open`}
       onClick={() => void activateActivityGroup(group)}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') void activateActivityGroup(group);
@@ -59,7 +60,7 @@ function ActivityRow({ group }: { group: ActivityGroup }) {
       <div className="flex items-center gap-2 min-w-0">
         <Icon className={`w-3.5 h-3.5 flex-shrink-0 ${group.hasUnseen ? 'text-primary' : 'text-muted-foreground'}`} />
         <span className={`font-semibold truncate ${group.hasUnseen ? 'text-foreground' : 'text-muted-foreground'}`}>
-          {group.target}
+          {displayTarget}
         </span>
         {group.count > 1 && (
           <span className="text-xs text-muted-foreground flex-shrink-0">{summaryLabel(group)}</span>
